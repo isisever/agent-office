@@ -652,3 +652,164 @@ test('tool calls are coalesced into one write per PUBLISH_MS and the last state 
   await $.session.end({ reason: 'exit', sessionId: 'session-1' } as never)
   expect(stateOf(writes).workers[0]).toMatchObject({ toolCount: 7, detail: 'end', tool: 'Grep' })
 })
+
+// background shells (contract v2.3)
+
+type ShellState = { id: string; command: string; description?: string; agentId?: string; startAt: number; endAt?: number; exitCode?: number; status?: string }
+const shellsOf = (writes: { path: string; text: string }[]): ShellState[] => lastState(writes).shells ?? []
+
+// a session whose tools answer like the engine: a background Bash (run_in_background, or `backgroundTaskId`
+// given in args as a stand-in for Ctrl+B) gets task id bash-1, bash-2…, Monitor mon-1…, TaskStop names its task
+function setUpShells(on: Harness) {
+  const set = setUpTicking(on, { HOME: '/home/tester' })
+  let spawned = 0
+  on('agent.spawn', () => ({ model: 'test-model', agentId: `agent-${++spawned}` }))
+  on('agent.list', () => ({ value: [] }))
+  answerTurns(on)
+  let tasks = 0
+  on('tool.call', (_$, e) => {
+    const args = e as unknown as Record<string, unknown>
+    if (args.tool === 'Bash' && args.command === 'refused') return { deny: 'denied' } as never
+    if (args.tool === 'Bash' && (args.run_in_background || args.ctrlB))
+      return { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: `bash-${++tasks}`, ...(args.dies ? { backgroundEndsWithFinalResponse: true } : {}) } } as never
+    if (args.tool === 'Bash') return { result: { stdout: 'ok', stderr: '', interrupted: false } } as never
+    if (args.tool === 'Monitor') return { result: { taskId: `mon-${++tasks}`, timeoutMs: 1000 } } as never
+    if (args.tool === 'TaskStop') return { result: { message: 'stopped', task_id: args.task_id, task_type: 'local_bash' } } as never
+    return { result: 'ok' } as never
+  })
+  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  on('classic.Stop', () => ({}))
+  return set
+}
+
+const notification = (taskId: string, status: string, summary: string) =>
+  `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n<output-file>/tmp/${taskId}.output</output-file>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>`
+
+test('a background Bash call records a running shell; a foreground one does not', async ($, on) => {
+  const { writes, clock } = setUpShells(on)
+
+  await $.session.start(start)
+  await spawnAgent($, 'Run the tests', 'general-purpose')
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev\n  --port 3000', description: 'Start the dev server', run_in_background: true } as never)
+  await callTool($, 'agent-1', 'Bash', { command: 'npm test', description: 'Run tests', run_in_background: true })
+  await $.tool.call({ tool: 'Bash', command: 'ls', description: 'List files' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'refused', run_in_background: true } as never)
+  // a foreground command moved to the background (Ctrl+B) carries backgroundTaskId too
+  await $.tool.call({ tool: 'Bash', command: 'make all', ctrlB: true } as never)
+  await $.tool.call({ tool: 'Monitor', command: 'tail -f log', description: 'Watch the log', timeout_ms: 1000 } as never)
+  await $.tool.call({ tool: 'Monitor', ws: { url: 'wss://x' }, description: 'Socket', timeout_ms: 1000 } as never)
+  await clock.advance(PUBLISH_MS)
+
+  const shells = shellsOf(writes)
+  expect(shells.map(s => [s.id, s.command, s.description, s.agentId, s.status, s.endAt])).toEqual([
+    ['bash-1', 'npm run dev --port 3000', 'Start the dev server', undefined, 'running', undefined],
+    ['bash-2', 'npm test', 'Run tests', 'agent-1', 'running', undefined],
+    ['bash-3', 'make all', undefined, undefined, 'running', undefined],
+    ['mon-4', 'tail -f log', 'Watch the log', undefined, 'running', undefined],
+  ])
+  expect(shells.every(s => typeof s.startAt === 'number')).toBe(true)
+})
+
+test('a background shell ends by its notification with the exit code, by TaskStop, its agent answering, Stop or session end', async ($, on) => {
+  const { writes, clock } = setUpShells(on)
+  on('session.end', (_$, e) => e as never)
+
+  await $.session.start(start)
+  await spawnAgent($, 'Build', 'general-purpose')
+  for (let i = 1; i <= 7; i++) await $.tool.call({ tool: 'Bash', command: `job ${i}`, run_in_background: true } as never)
+  await callTool($, 'agent-1', 'Bash', { command: 'watch build', run_in_background: true, dies: true })
+
+  // idle: the notification is submitted as a prompt
+  await $.prompt.submit({ text: notification('bash-1', 'completed', 'Background command "job 1" completed (exit code 0)'), origin: { kind: 'task-notification' } } as never)
+  await $.prompt.submit({ text: notification('bash-2', 'failed', 'Background command "job 2" failed with exit code 144'), origin: { kind: 'task-notification' } } as never)
+  // a typed prompt quoting a notification ends nothing
+  await $.prompt.submit({ text: notification('bash-5', 'completed', 'completed (exit code 0)'), origin: { kind: 'composer' } } as never)
+  // mid-turn: absorbed as an attachment row
+  await $.session.append({
+    message: { type: 'attachment', name: 'queued_command', content: [{ type: 'text', text: `<system-reminder>${notification('bash-3', 'killed', 'Background command "job 3" was stopped')}</system-reminder>` }] },
+    door: 'attachment',
+    origin: { kind: 'task-notification' },
+    uuid: 'row-1',
+  } as never)
+  await $.tool.call({ tool: 'TaskStop', task_id: 'bash-4' } as never)
+  await completeTurn($, 'answer', 'agent-1', 'built')
+  await clock.advance(PUBLISH_MS)
+
+  let shells = shellsOf(writes)
+  const ended = () => shellsOf(writes).map(s => [s.id, s.status, s.exitCode, typeof s.endAt])
+  expect(ended()).toEqual([
+    ['bash-1', 'completed', 0, 'number'],
+    ['bash-2', 'failed', 144, 'number'],
+    ['bash-3', 'killed', undefined, 'number'],
+    ['bash-4', 'killed', undefined, 'number'],
+    ['bash-5', 'running', undefined, 'undefined'],
+    ['bash-6', 'running', undefined, 'undefined'],
+    ['bash-7', 'running', undefined, 'undefined'],
+    ['bash-8', 'killed', undefined, 'number'],
+  ])
+  // a second notification for an ended shell changes nothing
+  const endAt = shells[0]?.endAt
+  await $.prompt.submit({ text: notification('bash-1', 'failed', 'failed with exit code 1'), origin: { kind: 'task-notification' } } as never)
+  await clock.advance(PUBLISH_MS)
+  shells = shellsOf(writes)
+  expect([shells[0]?.status, shells[0]?.exitCode, shells[0]?.endAt]).toEqual(['completed', 0, endAt])
+
+  // Stop lists what is still in flight: a running shell missing from it has ended
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [{ id: 'bash-6', type: 'shell', status: 'running', description: 'job 6' }, { id: 'bash-7', type: 'shell', status: 'running', description: 'job 7' }] })
+  await clock.advance(PUBLISH_MS)
+  expect(ended()[4]).toEqual(['bash-5', 'completed', undefined, 'number'])
+
+  // the session ending stops the rest
+  await $.session.end({ reason: 'exit', sessionId: 'session-1' } as never)
+  expect(ended().slice(5)).toEqual([
+    ['bash-6', 'killed', undefined, 'number'],
+    ['bash-7', 'killed', undefined, 'number'],
+    ['bash-8', 'killed', undefined, 'number'],
+  ])
+})
+
+test('at most 20 shells are kept: finished ones are dropped first, then the oldest running', async ($, on) => {
+  const { writes, clock } = setUpShells(on)
+
+  await $.session.start(start)
+  for (let i = 1; i <= 20; i++) await $.tool.call({ tool: 'Bash', command: `job ${i}`, run_in_background: true } as never)
+  await $.prompt.submit({ text: notification('bash-5', 'completed', 'completed (exit code 0)'), origin: { kind: 'task-notification' } } as never)
+  await $.tool.call({ tool: 'Bash', command: 'job 21', run_in_background: true } as never)
+  await clock.advance(PUBLISH_MS)
+  let ids = shellsOf(writes).map(s => s.id)
+  expect(ids.length).toBe(20)
+  expect(ids.includes('bash-5')).toBe(false)
+  expect(ids[0]).toBe('bash-1')
+
+  await $.tool.call({ tool: 'Bash', command: 'job 22', run_in_background: true } as never)
+  await clock.advance(PUBLISH_MS)
+  ids = shellsOf(writes).map(s => s.id)
+  expect(ids.length).toBe(20)
+  expect([ids[0], ids[19]]).toEqual(['bash-2', 'bash-22'])
+})
+
+test('a finished shell leaves the state file once FORGET_MS has passed; running ones stay', async ($, on) => {
+  const { writes, clock } = setUpShells(on)
+  const now = Date.now()
+  const shell = (id: string, endAgo?: number) => ({
+    id,
+    command: id,
+    startAt: now - FORGET_MS * 2,
+    ...(endAgo === undefined ? { status: 'running' } : { endAt: now - endAgo, exitCode: 0, status: 'completed' }),
+  })
+  const seed = [shell('long-gone', FORGET_MS + 60_000), shell('just-done', 60_000), shell('still-running')]
+  let isRewritten = false
+  on('state.get', async (_$, e, next) => {
+    const read = await next(e)
+    return e.key === 'shells' && !isRewritten && read.value ? { ...read, value: { ...read.value, value: seed } } : read
+  })
+  on('state.set', (_$, e, next) => {
+    if (e.key === 'shells') isRewritten = true
+    return next(e)
+  })
+
+  await $.session.start(start)
+  expect(shellsOf(writes).map(s => s.id)).toEqual(['long-gone', 'just-done', 'still-running'])
+  await clock.advance(TICK_MS)
+  expect(shellsOf(writes).map(s => s.id)).toEqual(['just-done', 'still-running'])
+})
