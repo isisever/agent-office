@@ -16,13 +16,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-      - name: Install (no Electron download, no native builds)
-        run: npm ci --ignore-scripts
-        working-directory: app
+      # the tests need no packages; the type-check only typescript and Node's types (found from app/ upwards)
+      - name: Install the type-checker
+        run: npm install --no-save --no-package-lock typescript@5.6.3 @types/node@22
       - name: Type-check the main process
-        run: npx -y -p typescript@5.6.3 tsc -p app
+        run: npx tsc -p app
       - name: Main process tests
         run: node --test app/test/main.test.cjs
       - name: Office renderer and session reading
