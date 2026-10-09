@@ -21,8 +21,10 @@ function setUp(
   on('session.id', () => ({ value: 'session-1' }))
   on('session.root', () => ({ value: '/work/my-app' }))
   const commands: string[] = []
+  const registered: { name: string; description?: string; argumentHint?: string }[] = []
   on('command.register', (_$, e) => {
     commands.push(e.name)
+    registered.push(e)
     return { value: undefined as never }
   })
   const clock = isTicking ? mock.clock(on) : undefined
@@ -43,7 +45,7 @@ function setUp(
   on('session.start', (_$, e) => e)
   on('ui.render', { component: 'AbovePrompt' }, () => undefined as never)
 
-  return { writes, runs, clock, commands }
+  return { writes, runs, clock, commands, registered }
 }
 
 const nodeFound = (argv: readonly string[]) => (argv[0] === 'node' ? ran(0, '/usr/local/bin/node') : ran(1))
@@ -55,17 +57,75 @@ const band = {
   props: { hasSurvey: false, isWorking: false, maxRows: 24, bodyColumns: 120 } as never,
 } as const
 
-test('/office is registered in a terminal session but not inside the Agent Office app', async ($, on) => {
-  const { commands } = setUp(on, { HOME: '/home/tester' })
+test('/office is registered in a terminal session with the split, band and stats hint', async ($, on) => {
+  const { commands, registered } = setUp(on, { HOME: '/home/tester' })
   await $.session.start(start)
   expect(commands).toEqual(['office'])
+  expect(registered[0]?.argumentHint).toBe('[band|stats]')
 })
 
-test('inside the Agent Office app no /office command is registered and the state file is still written', async ($, on) => {
-  const { commands, writes } = setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1' })
+test('inside the Agent Office app /office is registered for the summary only and the state file is still written', async ($, on) => {
+  const { registered, writes } = setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1' })
   await $.session.start(start)
-  expect(commands).toEqual([])
+  expect(registered.map(r => r.name)).toEqual(['office'])
+  expect(registered[0]?.argumentHint).toBe('[stats]')
+  expect(registered[0]?.description).toContain("Today's summary")
   expect(writes.some(w => w.path.endsWith('/sessions/session-1.json'))).toBe(true)
+})
+
+test('inside the Agent Office app the Turkish hint names only istatistik', async ($, on) => {
+  const { registered } = setUp(on, { HOME: '/home/tester', LANG: 'tr_TR.UTF-8', AGENT_OFFICE_APP: '1' })
+  await $.session.start(start)
+  expect(registered[0]?.argumentHint).toBe('[istatistik]')
+})
+
+// inside the app: stats and plain /office give the summary; band or anything else only points to the window
+test('inside the Agent Office app /office stats and plain /office give the summary and start no viewer', async ($, on) => {
+  const env = { HOME: '/home/tester', LANG: 'en_US.UTF-8', TERM_PROGRAM: 'ghostty', AGENT_OFFICE_APP: '1' }
+  const { runs } = setUp(on, env, nodeFound)
+  on('fs.list', () => ({ value: [] }))
+
+  await $.session.start(start)
+  for (const args of ['stats', 'STATS', '', '  ']) {
+    const reply = await $.command.run({ command: 'office', args } as Parameters<typeof $.command.run>[0])
+    expect((reply as { text: string }).text).toContain('Agent Office · today')
+  }
+  // no split, no node lookup, no viewer: opening the band or a split would run processes first
+  expect(runs).toEqual([])
+})
+
+test('inside the Agent Office app /office istatistik answers in Turkish', async ($, on) => {
+  setUp(on, { HOME: '/home/tester', LANG: 'tr_TR.UTF-8', AGENT_OFFICE_APP: '1' }, nodeFound)
+  on('fs.list', () => ({ value: [] }))
+
+  await $.session.start(start)
+  for (const args of ['istatistik', 'İSTATİSTİK']) {
+    const reply = await $.command.run({ command: 'office', args } as Parameters<typeof $.command.run>[0])
+    expect((reply as { text: string }).text).toContain('Agent Ofis · bugün')
+  }
+})
+
+test('inside the Agent Office app /office band (or anything else) opens nothing and points to the window and stats', async ($, on) => {
+  const env = { HOME: '/home/tester', LANG: 'en_US.UTF-8', TERM_PROGRAM: 'ghostty', AGENT_OFFICE_APP: '1' }
+  const { runs } = setUp(on, env, nodeFound)
+
+  await $.session.start(start)
+  for (const args of ['band', 'band', 'whatever']) {
+    const reply = await $.command.run({ command: 'office', args } as Parameters<typeof $.command.run>[0])
+    expect((reply as { text: string }).text).toBe("The office is already shown in the Agent Office window. Run /office stats for today's summary.")
+  }
+  // the band stays closed: opening it would look up node and start the viewer, a split would run osascript
+  expect(runs).toEqual([])
+})
+
+test('inside the Agent Office app /office şerit answers in Turkish and opens nothing', async ($, on) => {
+  const { runs } = setUp(on, { HOME: '/home/tester', LANG: 'tr_TR.UTF-8', AGENT_OFFICE_APP: '1' }, nodeFound)
+
+  await $.session.start(start)
+  const reply = await $.command.run({ command: 'office', args: 'şerit' } as Parameters<typeof $.command.run>[0])
+  expect((reply as { text: string }).text).toContain('Ofis zaten Agent Ofis penceresinde görünüyor')
+  expect((reply as { text: string }).text).toContain('/office istatistik')
+  expect(runs).toEqual([])
 })
 
 test('a spawned agent is written to the session state file', async ($, on) => {

@@ -69,6 +69,7 @@ Agent Office checks GitHub Releases at start and every few hours (on Linux only 
 | **See what an agent does** | Click the worker in the office. Esc closes the panel. |
 | **Pick up where you left off** | **Continue last session** at the bottom of the sidebar (on by default): when the app starts, each project continues its last Claude session (`claude --continue`) |
 | **See what got done today** | Click the whiteboard: every delivery of the day with its project, duration, tool count and whether it succeeded |
+| **Today's summary in the terminal** | `/office stats` (Turkish: `/office istatistik`) in any project's Claude: today's deliveries, agent time, working agents and background shells as text |
 | **Change the language** | **Language** at the bottom of the sidebar: Auto (system language), English or Türkçe. The labels here are the English ones. |
 | **Change the bots' color** | **Bot color** at the bottom of the sidebar (↺ resets it) |
 | **Hide the sidebar** | ≡ in the title bar |
