@@ -2,7 +2,7 @@
 
 **A pixel-art office for Claude Code.** Run Claude Code in several projects at once and watch every subagent walk into one shared office, sit at a desk with its current tool, and carry its result to the boss when it is done.
 
-![Agent Office: the boss at work, subagents at their desks](plugin/docs/office.png)
+![Agent Office: subagents of three projects arrive, work at their desks, deliver to the boss and head to the party room while background servers run](plugin/docs/demo.gif)
 
 Agent Office is a macOS app (and a Claude Code plugin that powers it). It wraps the real `claude` CLI: nothing is re-implemented, your settings, MCP servers and permissions work as usual.
 
@@ -122,12 +122,27 @@ node plugin/tests/viewer-smoke.mjs        # terminal viewer
 
 `app/renderer/index.html` also opens in a plain browser with a fake backend (`renderer/dev-mock.js`), handy for UI work: serve `app/` with any static server and open `/renderer/index.html`.
 
+The demo GIF above is drawn by the office renderer itself: `node app/scripts/make-demo.mjs` rewrites `plugin/docs/demo.gif` (needs `ffmpeg`).
+
 ### Releasing
 
-1. Bump `version` in `app/package.json` (and `plugin/.claude-plugin/plugin.json`).
-2. `cd app && npm run dist:release` — signs with the maintainer's Developer ID and notarizes with Apple. It needs that certificate in the keychain and a notarytool profile stored once with `xcrun notarytool store-credentials agent-office --apple-id <apple id> --team-id <team id>` (override the names with `CSC_NAME` and `APPLE_KEYCHAIN_PROFILE`). Without them, `npm run dist` builds an ad-hoc-signed copy for local use.
-3. `gh release create v<version> app/release/AgentOffice-<version>-* app/release/latest-mac.yml` (the zips, blockmaps and `latest-mac.yml` are what the in-app updater downloads)
-4. `node packaging/homebrew/update-cask.mjs` and copy `packaging/homebrew/Casks/agent-office.rb` to the [tap](https://github.com/isisever/homebrew-tap).
+Write the release notes to a file, then from a clean `main` whose CI run passed:
+
+```sh
+node scripts/release.mjs 0.6.0 --notes notes.md --dry-run   # print every step, change nothing
+node scripts/release.mjs 0.6.0 --notes notes.md
+```
+
+It sets the version in `app/package.json`, `app/package-lock.json` and `plugin/.claude-plugin/plugin.json` and commits "Version 0.6.0"; runs `npm run dist:release` in `app/`; checks that each dmg's app is notarized (`spctl`); pushes and creates the GitHub release `v0.6.0` with the dmgs, zips, blockmaps and `latest-mac.yml` (what the in-app updater downloads); writes and commits the Homebrew cask and copies it to the [tap](https://github.com/isisever/homebrew-tap).
+
+`npm run dist:release` signs with the maintainer's Developer ID and notarizes with Apple. It needs that certificate in the keychain and a notarytool profile stored once with `xcrun notarytool store-credentials agent-office --apple-id <apple id> --team-id <team id>` (override the names with `CSC_NAME` and `APPLE_KEYCHAIN_PROFILE`). Without them, `npm run dist` builds an ad-hoc-signed copy for local use.
+
+By hand, if the script stops halfway:
+
+1. Bump `version` in `app/package.json`, `app/package-lock.json` and `plugin/.claude-plugin/plugin.json`; commit and push.
+2. `cd app && npm run dist:release`
+3. `gh release create v<version> --notes-file notes.md app/release/AgentOffice-<version>-* app/release/latest-mac.yml`
+4. `node packaging/homebrew/update-cask.mjs`, commit `packaging/homebrew/Casks/agent-office.rb` and copy it to the tap.
 
 ## Contributing
 

@@ -21,6 +21,7 @@ node app/test/visual.test.mjs            # office pictures; UPDATE_SNAPSHOTS=1 t
 claude plugin test plugin                # plugin hooks (Claude Code 2.1.295 or newer)
 node --test plugin/tests/viewer-smoke.mjs
 npx -p typescript@5.6.3 tsc -p app       # type-check (needs app/node_modules)
+npx -y eslint@9 .                        # lint (eslint.config.mjs: recommended rules only, no formatting)
 ```
 
 The renderer also opens in a plain browser with a fake backend: serve `app/` with any static server and open `/renderer/index.html` (`?lang=en`, `?asking`, `?select=m-1` and more, see the top of `renderer/dev-mock.js`).

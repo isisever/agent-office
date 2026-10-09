@@ -831,26 +831,6 @@ function clock(x, y, now) {
   line(cx, cy, cx + Math.round(Math.sin(ha) * 2.5), cy - Math.round(Math.cos(ha) * 2.5), C.accent)
 }
 
-function armchair(x, y) {
-  box(x, y, 22, 8, C.chairCreamDark)
-  box(x, y + 7, 22, 12, C.chairCream)
-  box(x - 2, y + 6, 5, 13, C.chairCreamDark)
-  box(x + 19, y + 6, 5, 13, C.chairCreamDark)
-  box(x + 5, y + 8, 12, 6, C.chairCushion)
-  shade(x - 2, y + 20, 26, 2, 0.75)
-}
-
-function coffeeTable(x, y, now) {
-  box(x, y, 26, 10, C.tableTop)
-  rect(x, y + 7, 26, 3, C.table)
-  box(x + 3, y - 3, 4, 4, C.mug)
-  px(x + 4, y - 2, C.coffee)
-  box(x + 15, y - 2, 7, 3, C.paper)
-  if (Math.floor(now / 400) % 2) px(x + 5, y - 5, C.white)
-  else px(x + 4, y - 6, C.white)
-  shade(x, y + 11, 26, 2, 0.75)
-}
-
 function counter(x, y, w, now, isBusy) {
   box(x, y, w, 7, C.deskEdge)
   box(x, y + 7, w, 10, C.wainscot)
