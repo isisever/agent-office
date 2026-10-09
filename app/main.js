@@ -337,22 +337,29 @@ ipcMain.on('pty:restart', (_e, id) => {
 });
 
 // Finder'da kopyalanan dosyalar: tek dosya public.file-url, birden çoksa NSFilenamesPboardType (plist).
+// Electron 44 pano API'si: has() ve readText() Promise döner, availableFormats/readImage yok.
+// Finder'da kopyalanan dosyaları görmez; onları macOS'un kendi panosu (osascript, furl) verir.
 function clipboardFiles() {
-  const plist = clipboard.read('NSFilenamesPboardType');
-  const many = [...(plist || '').matchAll(/<string>([^<]+)<\/string>/g)].map((m) => m[1]);
-  if (many.length) return many;
-  const url = clipboard.read('public.file-url');
-  if (!url?.startsWith('file://')) return [];
-  try { return [decodeURIComponent(new URL(url).pathname)]; } catch { return []; }
+  // önce panoda gerçekten dosya (furl) var mı bakılır: yoksa macOS düz metni de yola çevirir
+  const script = 'repeat with c in (clipboard info)\n if item 1 of c is «class furl» then return POSIX path of (the clipboard as «class furl»)\nend repeat\nreturn ""';
+  return new Promise((resolve) => {
+    execFile('/usr/bin/osascript', ['-e', script], { timeout: 3000 }, (err, stdout) => {
+      const p = String(stdout || '').trim();
+      resolve(!err && p.startsWith('/') ? [p] : []);
+    });
+  });
 }
-ipcMain.handle('clipboard:read', () => ({
-  files: clipboardFiles(),
-  hasImage: clipboard.availableFormats().some((f) => f.startsWith('image/')) || !clipboard.readImage().isEmpty(),
-  text: clipboard.readText(),
-}));
+const IMAGE_TYPES = ['image/png', 'image/tiff', 'image/jpeg', 'image/gif', 'image/heic'];
+async function clipboardHasImage() {
+  for (const t of IMAGE_TYPES) if (await clipboard.has(t)) return true;
+  return false;
+}
+ipcMain.handle('clipboard:read', async () => {
+  const files = await clipboardFiles();
+  return { files, hasImage: !files.length && await clipboardHasImage(), text: await clipboard.readText() };
+});
 ipcMain.on('edit:nativePaste', (e) => e.sender.paste());
-ipcMain.handle('clipboard:hasImage', () =>
-  clipboard.availableFormats().some((f) => f.startsWith('image/')) || !clipboard.readImage().isEmpty());
+ipcMain.handle('clipboard:hasImage', () => clipboardHasImage());
 ipcMain.handle('office:themes', () => {
   const s = office();
   try { return s ? s.readThemes() : {}; } catch { return {}; }

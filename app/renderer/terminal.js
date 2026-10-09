@@ -13,12 +13,15 @@ const xtermTheme = (t = {}) => ({
 
 // Açık terminaller: menüdeki Yapıştır (⌘V) odaktaki terminale gider (pasteIntoFocused).
 const terminals = new Set();
+// ⌘V üç yoldan gelebilir (terminalde keydown, Chromium'un paste olayı, menü); aynı basış bir kez yapıştırılır.
+let lastPaste = 0;
+const once = () => { const now = Date.now(); if (now - lastPaste < 400) return false; lastPaste = now; return true; };
 
 /** ⌘V: odak bir terminaldeyse panoyu ona yapıştırır ve true döner; değilse false (normal yapıştırma). */
 export async function pasteIntoFocused() {
   const t = [...terminals].find((x) => x.el.contains(document.activeElement));
   if (!t) return false;
-  await t.paste();
+  if (once()) await t.paste();
   return true;
 }
 
@@ -86,6 +89,19 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     if (paths.length && !dead) pty.write(projectId, paths.map(quote).join(' ') + ' ');
     term.focus();
   });
+
+  // ⌘V terminaldeyken burada yakalanır: Chromium'un kendi yapıştırması görsel/dosya için boş metin gönderirdi.
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== 'keydown' || !ev.metaKey || ev.ctrlKey || ev.altKey || ev.key.toLowerCase() !== 'v') return true;
+    ev.preventDefault();
+    if (once()) paste();
+    return false;
+  });
+  el.addEventListener('paste', (e) => {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (once()) paste();
+  }, true);
 
   const self = { el, paste };
   terminals.add(self);

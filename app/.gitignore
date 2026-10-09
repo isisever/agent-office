@@ -2,3 +2,5 @@ node_modules/
 dist/
 release/
 .DS_Store
+release-signed/
+signed-build.log
