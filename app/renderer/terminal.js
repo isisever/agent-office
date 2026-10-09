@@ -11,6 +11,17 @@ const xtermTheme = (t = {}) => ({
   selectionBackground: (t.accent || '#3fb6a8') + '66',
 });
 
+// Açık terminaller: menüdeki Yapıştır (⌘V) odaktaki terminale gider (pasteIntoFocused).
+const terminals = new Set();
+
+/** ⌘V: odak bir terminaldeyse panoyu ona yapıştırır ve true döner; değilse false (normal yapıştırma). */
+export async function pasteIntoFocused() {
+  const t = [...terminals].find((x) => x.el.contains(document.activeElement));
+  if (!t) return false;
+  await t.paste();
+  return true;
+}
+
 // restartable: false → pty kapanınca "Enter ile yeniden başlat" yok (giriş terminalleri, `login:<hesap>`).
 export function mountTerminal(el, { projectId, theme, restartable = !String(projectId).startsWith('login:') } = {}) {
   const { pty } = window.agentOffice;
@@ -47,15 +58,17 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     if (restartable && d === '\r') { dead = false; term.reset(); pty.restart(projectId); needSize = true; resize(); }
   });
 
-  // Panoda görsel varsa Ctrl+V gönder; Claude Code görseli panodan kendisi okur.
-  el.addEventListener('paste', async (e) => {
-    const types = [...(e.clipboardData?.types || [])];
-    const sync = types.some((t) => t.startsWith('image/'));
-    if (!sync && types.includes('text/plain')) return; // metin: xterm'in kendi (bracketed) yapıştırması
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    if (!dead && (sync || await window.agentOffice.clipboard.hasImage())) pty.write(projectId, '\x16');
-  }, true);
+  // Panodaki içeriğe göre: görsel → Ctrl+V (Claude Code görseli panodan kendisi okur), Finder'dan
+  // kopyalanmış dosyalar → tırnaklı yollar, metin → xterm'in (bracketed) yapıştırması.
+  async function paste() {
+    if (dead) return;
+    let clip = null;
+    try { clip = await window.agentOffice.clipboard.read(); } catch { return; }
+    if (clip.files?.length) pty.write(projectId, clip.files.map(quote).join(' ') + ' ');
+    else if (clip.hasImage) pty.write(projectId, '\x16');
+    else if (clip.text) term.paste(clip.text);
+    term.focus();
+  }
 
   // Dosya sürükle-bırak: yolları (boşluk içerenleri tırnaklı) terminale yaz.
   const quote = (p) => (/[\s'"\\$`!&;()<>|*?]/.test(p) ? `'${p.replace(/'/g, `'\\''`)}'` : p);
@@ -73,6 +86,9 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     if (paths.length && !dead) pty.write(projectId, paths.map(quote).join(' ') + ' ');
     term.focus();
   });
+
+  const self = { el, paste };
+  terminals.add(self);
 
   return {
     /** pty'den gelen veri (gizliyken de yazılır, geçmiş korunur). */
@@ -93,6 +109,6 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     fit: resize,
     /** Terminali temizler; restarting: pty main tarafından yeniden başlatılıyor. */
     reset({ restarting = false } = {}) { dead = false; quietExit = restarting; term.reset(); needSize = true; resize(); },
-    destroy() { ro.disconnect(); term.dispose(); },
+    destroy() { terminals.delete(self); ro.disconnect(); term.dispose(); },
   };
 }

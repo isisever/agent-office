@@ -1,5 +1,5 @@
 // Agent Office kabuğu: pencere, projeler, hesaplar, her projeye bir claude pty'si ve ofis verisi.
-const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -336,6 +336,21 @@ ipcMain.on('pty:restart', (_e, id) => {
   startLogin(acc);
 });
 
+// Finder'da kopyalanan dosyalar: tek dosya public.file-url, birden çoksa NSFilenamesPboardType (plist).
+function clipboardFiles() {
+  const plist = clipboard.read('NSFilenamesPboardType');
+  const many = [...(plist || '').matchAll(/<string>([^<]+)<\/string>/g)].map((m) => m[1]);
+  if (many.length) return many;
+  const url = clipboard.read('public.file-url');
+  if (!url?.startsWith('file://')) return [];
+  try { return [decodeURIComponent(new URL(url).pathname)]; } catch { return []; }
+}
+ipcMain.handle('clipboard:read', () => ({
+  files: clipboardFiles(),
+  hasImage: clipboard.availableFormats().some((f) => f.startsWith('image/')) || !clipboard.readImage().isEmpty(),
+  text: clipboard.readText(),
+}));
+ipcMain.on('edit:nativePaste', (e) => e.sender.paste());
 ipcMain.handle('clipboard:hasImage', () =>
   clipboard.availableFormats().some((f) => f.startsWith('image/')) || !clipboard.readImage().isEmpty());
 ipcMain.handle('office:themes', () => {
@@ -379,7 +394,25 @@ async function createWindow() {
 }
 
 fixSpawnHelper();
+// Uygulama menüsü: Yapıştır (⌘V) renderer'a gider; odak terminaldeyse panodaki görsel/dosya/metin
+// Claude Code'a uygun biçimde verilir, değilse normal yapıştırma yapılır.
+function buildMenu() {
+  const name = app.getName();
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: name, submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: 'Düzen', submenu: [
+      { role: 'undo', label: 'Geri al' }, { role: 'redo', label: 'Yinele' }, { type: 'separator' },
+      { role: 'cut', label: 'Kes' }, { role: 'copy', label: 'Kopyala' },
+      { label: 'Yapıştır', accelerator: 'CmdOrCtrl+V', click: () => send('edit:paste') },
+      { role: 'selectAll', label: 'Tümünü seç' },
+    ] },
+    { label: 'Görünüm', submenu: [{ role: 'reload', label: 'Yeniden yükle' }, { role: 'toggleDevTools', label: 'Geliştirici araçları' }, { type: 'separator' }, { role: 'togglefullscreen', label: 'Tam ekran' }] },
+    { role: 'windowMenu', label: 'Pencere' },
+  ]));
+}
+
 app.whenReady().then(() => {
+  buildMenu();
   state = P.normalizeState(loadState());
   saveState();
   lastFocusCheck = Date.now();

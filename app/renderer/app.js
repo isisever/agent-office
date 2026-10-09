@@ -1,5 +1,5 @@
 // Her şeyi bağlar: kenar çubuğu (projeler, hesaplar), proje başına terminal, ofis ve tema renkleri.
-import { mountTerminal } from './terminal.js';
+import { mountTerminal, pasteIntoFocused } from './terminal.js';
 import { mountSidebar } from './sidebar.js';
 import { mountLogin } from './login.js';
 
@@ -288,6 +288,11 @@ $('toggle-sidebar').addEventListener('click', () => {
 setCollapsed(store.get('sidebarCollapsed') === '1');
 
 $('empty-add').addEventListener('click', addProject);
+
+// ⌘V (menüden): odaktaki terminale akıllı yapıştırma; terminal dışında (ör. hesap adı) normal yapıştırma.
+api.clipboard.onPaste?.(async () => {
+  if (!(await pasteIntoFocused())) api.clipboard.nativePaste();
+});
 
 window.addEventListener('keydown', (e) => {
   if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;

@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('agentOffice', {
   },
   clipboard: {
     hasImage: () => ipcRenderer.invoke('clipboard:hasImage'),
+    read: () => ipcRenderer.invoke('clipboard:read'),   // { hasImage, text, files }
+    onPaste: listen('edit:paste'),                      // menüdeki Yapıştır (⌘V)
+    nativePaste: () => ipcRenderer.send('edit:nativePaste'), // terminal dışı: normal yapıştırma
   },
   pathForFile: (file) => webUtils.getPathForFile(file),
   office: {

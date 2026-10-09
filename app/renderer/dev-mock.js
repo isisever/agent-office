@@ -156,7 +156,7 @@ window.agentOffice = {
     onData: ev.office.add,
     themes: async () => ({}),
   },
-  clipboard: { hasImage: async () => false },
+  clipboard: { hasImage: async () => false, read: async () => ({ hasImage: false, text: '', files: [] }), onPaste: () => () => {}, nativePaste: () => document.execCommand('paste') },
   pathForFile: () => '',
 };
 
