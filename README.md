@@ -51,6 +51,7 @@ Agent Office checks GitHub Releases at start and every few hours. A new version 
 | --- | --- |
 | **Add a project** | **+ Add project** in the sidebar, or ⌘O |
 | **Switch projects** | Click a project, or ⌘1 … ⌘9 |
+| **Run several Claudes in a project** | Hover the terminal and click **+** (or ⌘T): pick the same folder or, in a git repository, a new git worktree (⇧⌘T). A worktree goes next to the repository as `<repo>-wt-<n>` on a new branch `agent-office/<n>`. Tabs appear above the terminal (⇧⌘[ / ⇧⌘] switch tabs). Closing a worktree tab asks whether to remove the worktree; git refuses if it has changes, and the branch is kept. The office counts a worktree's agents under its project. |
 | **Choose a project's account** | The **Account ▾** picker on the project's row. Its last entry, **+ New account…**, creates an account for that project. |
 | **Log in to an account** | **Log in** next to the account. A small terminal runs `claude auth login`; approve in the browser and it closes by itself. |
 | **See an account's usage** | The **5 h** and **Week** bars under the account: percentage used and reset time. They fill in once a project on that account has talked to Claude; hover for how old the value is. |

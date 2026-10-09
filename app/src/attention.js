@@ -4,14 +4,20 @@
 // - 'permission': oturumunda açık bir izin penceresi var (eklentinin stats.waiting'i).
 // - 'done': müdür çalışıyordu, turu bitti ve kullanıcı o projeye henüz bakmadı.
 // Bakmak = pencere odakta ve proje etkin. Bakılan projede bildirim çıkmaz, 'done' düşer.
+//
+// Sekmeler (sözleşme v3.0): bir projenin bütün sekmeleri (aynı klasör ya da git worktree) o projedir.
+// Aynı klasördeki sekmelerin oturumları zaten proje adını taşır; worktree oturumları klasör adını
+// (`<depo>-wt-<n>`) taşır ve aliases { oturum adı: proje adı } ile projesine katılır: biri meşgulse proje
+// meşgul, açık onay pencerelerinin en eskisi projenin onayıdır. readOffice aynı eşlemeyle zaten birleştirir;
+// burada yine birleştirilir ki eşlemesiz okunan veri de doğru sayılsın.
 
 /**
  * prev: { busy: Map<id, boolean>, waits: Map<id, string>, done: Set<id> } (ilk çağrıda boş)
  * projects: state.projects; office: readOffice(...).projects (ada göre); seenId: bakılan proje ya da null
  * → { state, attention: Map<id, 'permission' | 'done'>, events: [{ kind, id, tool? }] }
  */
-function nextAttention(prev, projects, office, seenId) {
-  const byName = new Map((office || []).map((p) => [p.name, p]));
+function nextAttention(prev, projects, office, seenId, aliases = null) {
+  const byName = mergeAliases(office, aliases);
   const state = { busy: new Map(), waits: new Map(), done: new Set() };
   const attention = new Map();
   const events = [];
@@ -38,6 +44,25 @@ function nextAttention(prev, projects, office, seenId) {
     else if (done) attention.set(proj.id, 'done');
   }
   return { state, attention, events };
+}
+
+/** office (readOffice().projects) → Map<proje adı, girdi>; eşlenen adların girdileri projesininkiyle birleşir. */
+function mergeAliases(office, aliases) {
+  const byName = new Map();
+  for (const p of office || []) {
+    const name = aliases?.[p.name] ?? p.name;
+    const old = byName.get(name);
+    if (!old) { byName.set(name, { ...p, name }); continue; }
+    const waits = [old.waiting, p.waiting].filter(Boolean).sort((a, b) => a.since - b.since);
+    byName.set(name, {
+      ...old,
+      working: (old.working || 0) + (p.working || 0),
+      delivered: (old.delivered || 0) + (p.delivered || 0),
+      isBossBusy: Boolean(old.isBossBusy || p.isBossBusy),
+      waiting: waits[0] || null,
+    });
+  }
+  return byName;
 }
 
 const emptyAttention = () => ({ busy: new Map(), waits: new Map(), done: new Set() });
@@ -67,4 +92,4 @@ function usageAlerts(accountId, usage, alerted, { seed = false, now = Date.now()
   return out;
 }
 
-module.exports = { nextAttention, emptyAttention, usageAlerts, LEVELS };
+module.exports = { nextAttention, mergeAliases, emptyAttention, usageAlerts, LEVELS };

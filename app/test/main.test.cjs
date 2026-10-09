@@ -294,3 +294,104 @@ test('historyDir: Claude Code oturum klasörü, harf/rakam dışı karakterler "
   assert.equal(P.historyDir('/Users/a/Documents/my.app', null, '/Users/a'), '/Users/a/.claude/projects/-Users-a-Documents-my-app');
   assert.equal(P.historyDir('/Users/a/.claude/x_y', '/acc', '/Users/a'), '/acc/projects/-Users-a--claude-x-y');
 });
+
+// ---- sekmeler ve worktree'ler (sözleşme v3.0)
+const path = require('path');
+
+test('normalize: eski dosyada tabs yok; bozuk, yinelenen ve ana (1) sekme atılır, worktree eksikse düz sekme', () => {
+  const old = P.normalizeState({ projects: [{ id: 'a', dir: '/r/shop', accountId: 'default' }] });
+  assert.equal('tabs' in old.projects[0], false);
+  const wt = { root: '/r/shop-wt-3', repo: '/r/shop', branch: 'agent-office/3' };
+  const s = P.normalizeState({ projects: [{ id: 'a', dir: '/r/shop', tabs: [
+    null, { n: 1 }, { n: 'x' }, { n: 2 }, { n: 2, dir: '/dup' }, { n: 3, dir: '/r/shop-wt-3', worktree: wt, extra: 1 },
+    { n: 4, dir: '/r/half', worktree: { root: '/r/half' } }, { n: 0 }, { n: 2.5 },
+  ] }, { id: 'b', dir: '/r/x', tabs: 'bozuk' }] });
+  assert.deepEqual(s.projects[0].tabs, [{ n: 2 }, { n: 3, dir: '/r/shop-wt-3', worktree: wt }, { n: 4 }]);
+  assert.equal('tabs' in s.projects[1], false);
+});
+
+test('pty kimlikleri: ana sekme projectId, ek sekme <id>:<n>; giriş pty\'si ve bozuk kimlik null', () => {
+  assert.equal(P.tabPtyId('abc'), 'abc');
+  assert.equal(P.tabPtyId('abc', 1), 'abc');
+  assert.equal(P.tabPtyId('abc', 3), 'abc:3');
+  assert.deepEqual(P.parsePtyId('abc'), { projectId: 'abc', n: 1 });
+  assert.deepEqual(P.parsePtyId('abc:3'), { projectId: 'abc', n: 3 });
+  assert.equal(P.parsePtyId('abc:1'), null);
+  assert.equal(P.parsePtyId('login:abc'), null);
+  assert.equal(P.parsePtyId('login:abc:2'), null);
+  assert.equal(P.parsePtyId(''), null);
+  assert.deepEqual(P.ptyIdsOf({ id: 'abc', tabs: [{ n: 2 }, { n: 5 }] }), ['abc', 'abc:2', 'abc:5']);
+  assert.deepEqual(P.ptyIdsOf({ id: 'abc' }), ['abc']);
+});
+
+test('sekme ekle / kaldır / çöz: ana sekme kaldırılamaz, son sekme gidince tabs alanı silinir', () => {
+  let s = P.addProject(empty(), '/r/shop', { id: () => 'a' }).state;
+  assert.equal(P.nextTabNumber(P.findProject(s, 'a')), 2);
+  s = P.addTab(s, 'a', { n: 2 });
+  const wt = { root: '/r/shop-wt-3', repo: '/r/shop', branch: 'agent-office/3' };
+  s = P.addTab(s, 'a', { n: 3, dir: '/r/shop-wt-3', worktree: wt });
+  assert.equal(P.addTab(s, 'a', { n: 3 }), s, 'aynı numara yok sayılır');
+  assert.equal(P.addTab(s, 'a', { n: 1 }), s, 'ana sekme eklenmez');
+  assert.equal(P.addTab(s, 'zz', { n: 9 }), s);
+  assert.equal(P.nextTabNumber(P.findProject(s, 'a')), 4);
+  assert.equal(P.nextTabNumber(P.findProject(s, 'a'), (k) => k < 6), 6, 'dolu numaralar atlanır');
+  assert.deepEqual(P.resolvePty(s, 'a'), { project: P.findProject(s, 'a'), tab: null, dir: '/r/shop' });
+  assert.equal(P.resolvePty(s, 'a:2').dir, '/r/shop', 'düz sekme proje klasöründe');
+  assert.equal(P.resolvePty(s, 'a:3').dir, '/r/shop-wt-3');
+  assert.equal(P.resolvePty(s, 'a:9'), null);
+  assert.equal(P.resolvePty(s, 'login:a'), null);
+  assert.equal(P.removeTab(s, 'a', 1), s, 'ana sekme kapanmaz');
+  s = P.removeTab(s, 'a', 2);
+  assert.deepEqual(P.findProject(s, 'a').tabs.map((t) => t.n), [3]);
+  s = P.removeTab(s, 'a', 3);
+  assert.equal('tabs' in P.findProject(s, 'a'), false);
+  // hesap değişimi ve normalize sekmeleri korur
+  s = P.addTab(s, 'a', { n: 2 });
+  assert.deepEqual(P.setProjectAccount({ ...s, accounts: [...s.accounts, { id: 'w', label: 'w', configDir: '/w' }] }, 'a', 'w').projects[0].tabs, [{ n: 2 }]);
+  assert.deepEqual(P.normalizeState(JSON.parse(JSON.stringify(s))).projects[0].tabs, [{ n: 2 }]);
+});
+
+test('worktree adlandırması: deponun yanında <depo>-wt-<n>, dal agent-office/<n>, alt klasör korunur', () => {
+  assert.equal(P.worktreeRoot('/u/p/shop', 2), path.join('/u/p', 'shop-wt-2'));
+  assert.equal(P.worktreeBranch(2), 'agent-office/2');
+  assert.equal(P.worktreeDir('/u/p/shop', '/u/p/shop-wt-2', '/u/p/shop'), '/u/p/shop-wt-2');
+  assert.equal(P.worktreeDir('/u/p/shop', '/u/p/shop-wt-2', '/u/p/shop/app'), '/u/p/shop-wt-2/app');
+  assert.equal(P.worktreeDir('/u/p/shop', '/u/p/shop-wt-2', '/elsewhere'), '/u/p/shop-wt-2');
+});
+
+test('sessionAliases: worktree klasörünün adı projesine; aynı adlı ve başka projenin adıyla çakışan eşlenmez', () => {
+  const wt = (root) => ({ root, repo: '/r/shop', branch: 'agent-office/2' });
+  const projects = [
+    { id: 'a', dir: '/r/shop', name: 'shop', tabs: [{ n: 2 }, { n: 3, dir: '/r/shop-wt-3', worktree: wt('/r/shop-wt-3') }, { n: 4, dir: '/r/other', worktree: wt('/r/other') }] },
+    { id: 'b', dir: '/r/mono/app', name: 'app', tabs: [{ n: 2, dir: '/r/mono-wt-2/app', worktree: wt('/r/mono-wt-2') }] },
+    { id: 'c', dir: '/r/other', name: 'other' },
+  ];
+  assert.deepEqual(P.sessionAliases(projects), { 'shop-wt-3': 'shop' });
+  assert.deepEqual(P.sessionAliases([]), {});
+});
+
+test('nextAttention: worktree oturumu (eşlenen ad) projesinin onayı ve bitişi sayılır', () => {
+  const projects = [{ id: 'a', name: 'shop' }];
+  const aliases = { 'shop-wt-2': 'shop' };
+  const office = (busy, waiting) => [
+    { name: 'shop', working: 0, delivered: 0, isBossBusy: false, waiting: null },
+    { name: 'shop-wt-2', working: 1, delivered: 0, isBossBusy: busy, waiting },
+  ];
+  let r = N.nextAttention(N.emptyAttention(), projects, office(true, null), null, aliases);
+  assert.equal(r.attention.size, 0);
+  r = N.nextAttention(r.state, projects, office(true, { tool: 'Bash', since: 5 }), null, aliases);
+  assert.deepEqual(r.events, [{ kind: 'permission', id: 'a', tool: 'Bash' }]);
+  assert.equal(r.attention.get('a'), 'permission');
+  r = N.nextAttention(r.state, projects, office(true, null), null, aliases);
+  r = N.nextAttention(r.state, projects, office(false, null), null, aliases);
+  assert.deepEqual(r.events, [{ kind: 'done', id: 'a' }]);
+  // eşleme yoksa worktree girdisi hiçbir projeye sayılmaz
+  const plain = N.nextAttention(N.emptyAttention(), projects, office(true, { tool: 'Bash', since: 5 }), null);
+  assert.equal(plain.attention.size, 0);
+  // birleştirme: en eski onay, meşgul VEYA
+  const m = N.mergeAliases([
+    { name: 'shop', working: 1, delivered: 2, isBossBusy: false, waiting: { tool: 'Edit', since: 9 } },
+    { name: 'shop-wt-2', working: 2, delivered: 1, isBossBusy: true, waiting: { tool: 'Bash', since: 3 } },
+  ], aliases);
+  assert.deepEqual(m.get('shop'), { name: 'shop', working: 3, delivered: 3, isBossBusy: true, waiting: { tool: 'Bash', since: 3 } });
+});

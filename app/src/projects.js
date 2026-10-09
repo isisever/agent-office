@@ -22,6 +22,7 @@ function normalizeState(raw, { id = newId } = {}) {
       dir: p.dir,
       name: projectName(p.dir),
       accountId: known.has(p.accountId) ? p.accountId : DEFAULT_ID,
+      ...withTabs(normalizeTabs(p.tabs)),
     });
   }
   if (!projects.length && typeof r.lastProject === 'string' && r.lastProject) {
@@ -29,6 +30,117 @@ function normalizeState(raw, { id = newId } = {}) {
   }
   const activeId = projects.some((p) => p.id === r.activeId) ? r.activeId : (projects[0]?.id ?? null);
   return { projects, accounts, activeId };
+}
+
+// --- sekmeler (sözleşme v3.0)
+// Proje.tabs yalnız ek sekmeleri tutar; ilk sekme (ana terminal) örtüktür, numarası 1 sayılır ve kapanmaz.
+// Tab = { n: number (≥ 2), dir?: string, worktree?: { root, repo, branch } }
+// dir yoksa sekme proje klasöründe çalışır; worktree varsa sekme `git worktree add` ile açılmış klasördedir.
+const MAIN_TAB = 1;
+const isObj = (o) => Boolean(o) && typeof o === 'object';
+const isStr = (s) => typeof s === 'string' && s.length > 0;
+
+// state.json'daki sekmeleri temizler: bozuk ve yinelenen numaralar atılır, sıraları korunur.
+function normalizeTabs(list) {
+  const out = [];
+  const seen = new Set();
+  for (const t of Array.isArray(list) ? list : []) {
+    if (!isObj(t) || !Number.isInteger(t.n) || t.n <= MAIN_TAB || seen.has(t.n)) continue;
+    seen.add(t.n);
+    const tab = { n: t.n };
+    const w = t.worktree;
+    if (isStr(t.dir) && isObj(w) && isStr(w.root) && isStr(w.repo) && isStr(w.branch)) {
+      tab.dir = t.dir;
+      tab.worktree = { root: w.root, repo: w.repo, branch: w.branch };
+    }
+    out.push(tab);
+  }
+  return out;
+}
+// sekmesiz proje eskisi gibi kalır (tabs alanı hiç yazılmaz)
+const withTabs = (tabs) => (tabs.length ? { tabs } : {});
+const tabsOf = (project) => (Array.isArray(project?.tabs) ? project.tabs : []);
+
+// pty kimliği: ana sekme projectId, ek sekme `<projectId>:<n>`. Giriş pty'leri `login:<hesap>` (karışmaz).
+const tabPtyId = (projectId, n = MAIN_TAB) => (n === MAIN_TAB ? projectId : `${projectId}:${n}`);
+/** pty kimliği → { projectId, n } (ana sekme n = 1); giriş pty'si ya da bozuk kimlik → null. */
+function parsePtyId(id) {
+  if (!isStr(id) || id.startsWith('login:')) return null;
+  const m = /^(.+):(\d+)$/.exec(id);
+  if (!m) return { projectId: id, n: MAIN_TAB };
+  const n = Number(m[2]);
+  return n > MAIN_TAB ? { projectId: m[1], n } : null;
+}
+/** Projenin bütün pty kimlikleri: önce ana sekme. */
+const ptyIdsOf = (project) => [project.id, ...tabsOf(project).map((t) => tabPtyId(project.id, t.n))];
+/** Sekmenin çalıştığı klasör. */
+const tabDir = (project, tab) => tab?.dir || project.dir;
+/** pty kimliğinden proje ve sekme (ana sekmede tab null); bilinmeyen → null. */
+function resolvePty(state, id) {
+  const r = parsePtyId(id);
+  const project = r && findProject(state, r.projectId);
+  if (!project) return null;
+  if (r.n === MAIN_TAB) return { project, tab: null, dir: project.dir };
+  const tab = tabsOf(project).find((t) => t.n === r.n);
+  return tab ? { project, tab, dir: tabDir(project, tab) } : null;
+}
+
+/**
+ * Yeni sekme numarası: en büyük numaradan sonraki. taken(n) true dönerse (ör. worktree klasörü ya da dalı
+ * zaten var) bir sonrakine geçilir; en çok 100 deneme.
+ * @param {{ tabs?: { n: number }[] } | null} project
+ * @param {(n: number) => boolean} [taken]
+ */
+function nextTabNumber(project, taken = (_n) => false) {
+  let n = Math.max(MAIN_TAB, ...tabsOf(project).map((t) => t.n)) + 1;
+  for (let i = 0; i < 100 && taken(n); i++) n++;
+  return n;
+}
+
+// Worktree adlandırması: deponun yanında `<depo>-wt-<n>` klasörü, `agent-office/<n>` dalı.
+// Proje deponun alt klasörüyse sekme worktree içindeki aynı alt klasörde çalışır.
+const worktreeRoot = (repo, n) => path.join(path.dirname(repo), `${path.basename(repo)}-wt-${n}`);
+const worktreeBranch = (n) => `agent-office/${n}`;
+/** projectDir deponun içindeyse worktree'deki karşılığı; dışındaysa worktree kökü. */
+function worktreeDir(repo, root, projectDir) {
+  const rel = path.relative(repo, projectDir);
+  return !rel || rel.startsWith('..') || path.isAbsolute(rel) ? root : path.join(root, rel);
+}
+
+function addTab(state, projectId, tab) {
+  const p = findProject(state, projectId);
+  if (!p || !Number.isInteger(tab?.n) || tab.n <= MAIN_TAB || tabsOf(p).some((t) => t.n === tab.n)) return state;
+  return { ...state, projects: state.projects.map((x) => (x.id === projectId ? { ...x, tabs: [...tabsOf(x), tab] } : x)) };
+}
+// Ana sekme kaldırılamaz; son ek sekme gidince tabs alanı silinir.
+function removeTab(state, projectId, n) {
+  const p = findProject(state, projectId);
+  if (!p || !tabsOf(p).some((t) => t.n === n)) return state;
+  return {
+    ...state,
+    projects: state.projects.map((x) => {
+      if (x.id !== projectId) return x;
+      const { tabs, ...rest } = x;
+      return { ...rest, ...withTabs(tabsOf(x).filter((t) => t.n !== n)) };
+    }),
+  };
+}
+
+/**
+ * Oturum adı → proje adı. Eklenti oturumu klasörün adıyla (basename) anar; worktree sekmesinin klasörü
+ * başka adlıysa (`<depo>-wt-<n>`) o oturumlar projesine sayılır. Bir projenin kendi adıyla çakışan
+ * ad eşlenmez (o ad o projenindir).
+ */
+function sessionAliases(projects) {
+  const names = new Set(projects.map((p) => p.name));
+  const out = {};
+  for (const p of projects) {
+    for (const t of tabsOf(p)) {
+      const name = path.basename(tabDir(p, t));
+      if (name && !names.has(name) && !(name in out)) out[name] = p.name;
+    }
+  }
+  return out;
 }
 
 const findProject = (state, id) => state.projects.find((p) => p.id === id) || null;
@@ -69,6 +181,8 @@ const historyDir = (projectDir, configDir, home) =>
 
 module.exports = {
   historyDir,
+  MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, tabDir, resolvePty,
+  nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases,
   newId, projectName, normalizeState, findProject, findByDir,
   addProject, removeProject, setActive, setProjectAccount,
 };

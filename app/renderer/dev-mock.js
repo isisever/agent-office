@@ -5,6 +5,8 @@
 // ?asking → ikinci proje onay bekler (tabela, ✋), üçüncüsü bitti (●).
 // ?select=<işçi id | @boss | shell:<id>> → birkaç saniye sonra o bota/raf yuvasına tıklanır (ajan paneli denemesi;
 // ör. ?select=m-1, ?select=shell:sh-1). ?noShells → eski veri (shells alanı yok).
+// ?tabs → ilk projede üç sekme (ana, aynı klasör, git worktree) ve worktree sekmesi açık (sözleşme v3.0);
+// "+" sahte bir worktree'siz sekme ekler, ⇧⌘T worktree'li; × sorusuz kapatır.
 const q = new URLSearchParams(location.search);
 const listeners = (set = new Set()) => ({ add: (cb) => (set.add(cb), () => set.delete(cb)), emit: (...a) => set.forEach((cb) => cb(...a)) });
 const ev = { projects: listeners(), data: listeners(), exit: listeners(), office: listeners(), accounts: listeners() };
@@ -66,27 +68,40 @@ const projects = q.has('empty') ? [] : [
   { id: rid(), dir: '/Users/me/Projects/shop-api', name: 'shop-api', accountId: 'is' },
   { id: rid(), dir: '/Users/me/Projects/notlar', name: 'notlar', accountId: 'default' },
 ];
-const running = new Map(projects.map((p, i) => [p.id, i !== 2]));
+if (q.has('tabs') && projects[0]) {
+  /** @type {any} */ (projects[0]).tabs = [
+    { n: 2 },
+    { n: 3, dir: '/Users/me/Projects/agent-office-wt-3', worktree: { root: '/Users/me/Projects/agent-office-wt-3', repo: '/Users/me/Projects/agent-office', branch: 'agent-office/3' } },
+  ];
+}
+const tabIds = (p) => [p.id, ...(p.tabs || []).map((t) => `${p.id}:${t.n}`)];
+const running = new Map(projects.flatMap((p, i) => tabIds(p).map((id) => [id, i !== 2])));
 let activeId = projects[0]?.id ?? null;
 
 const snapshot = () => ({
   projects: projects.map((p) => ({ ...p })),
   activeId,
-  status: projects.map((p, i) => ({ id: p.id, isRunning: !!running.get(p.id), attention: q.has('asking') ? [null, 'permission', 'done'][i] ?? null : null })),
+  status: projects.map((p, i) => ({
+    id: p.id, isRunning: !!running.get(p.id), attention: q.has('asking') ? [null, 'permission', 'done'][i] ?? null : null,
+    tabs: (p.tabs || []).map((t) => ({ n: t.n, isRunning: !!running.get(`${p.id}:${t.n}`) })),
+  })),
 });
 const changed = () => setTimeout(() => ev.projects.emit(snapshot()));
 
 function boot(id) {
   running.set(id, true);
-  const p = projects.find((x) => x.id === id);
+  const [pid, n] = id.split(':');
+  const p = projects.find((x) => x.id === pid);
+  const tab = (/** @type {any} */ (p)?.tabs || []).find((t) => String(t.n) === n);
   const acc = accounts.find((a) => a.id === p?.accountId);
   setTimeout(() => ev.data.emit(id,
     `\x1b[38;5;173m✻\x1b[0m Welcome to \x1b[1mClaude Code\x1b[0m (sahte)\r\n\r\n` +
-    `  cwd: ${p?.dir}\r\n  hesap: ${acc?.label}\r\n\r\n> `), 50);
+    `  cwd: ${tab?.dir || p?.dir}\r\n  hesap: ${acc?.label}${tab?.worktree ? `\r\n  dal: ${tab.worktree.branch}` : ''}\r\n\r\n> `), 50);
   changed();
 }
-for (const p of projects) if (running.get(p.id)) boot(p.id);
-for (const p of projects) if (!running.get(p.id)) setTimeout(() => ev.exit.emit(p.id, 1), 80);
+for (const p of projects) for (const id of tabIds(p)) if (running.get(id)) boot(id);
+for (const p of projects) for (const id of tabIds(p)) if (!running.get(id)) setTimeout(() => ev.exit.emit(id, 1), 80);
+if (q.has('tabs')) setTimeout(() => /** @type {HTMLElement | null} */ (document.querySelector('#tabs .tab[data-n="3"]'))?.click(), 1200);
 
 const names = ['yeni-proje', 'web-sitesi', 'mobil-uygulama', 'raporlar'];
 
@@ -116,10 +131,30 @@ window.agentOffice = {
     setAccount: async (id, accountId) => {
       const p = projects.find((x) => x.id === id);
       if (p) p.accountId = accountId;
-      ev.exit.emit(id, 0);
-      boot(id);
+      for (const tid of p ? tabIds(p) : [id]) { ev.exit.emit(tid, 0); boot(tid); }
     },
     onChange: ev.projects.add,
+  },
+  tabs: {
+    add: async (projectId, mode) => {
+      const p = /** @type {any} */ (projects.find((x) => x.id === projectId));
+      if (!p) return null;
+      const n = Math.max(1, ...(p.tabs || []).map((t) => t.n)) + 1;
+      const root = `${p.dir}-wt-${n}`;
+      const tab = mode === 'worktree' ? { n, dir: root, worktree: { root, repo: p.dir, branch: `agent-office/${n}` } } : { n };
+      p.tabs = [...(p.tabs || []), tab];
+      boot(`${p.id}:${n}`);
+      return tab;
+    },
+    close: async (projectId, n) => {
+      const p = /** @type {any} */ (projects.find((x) => x.id === projectId));
+      if (!p) return { closed: false };
+      p.tabs = (p.tabs || []).filter((t) => t.n !== n);
+      if (!p.tabs.length) delete p.tabs;
+      running.delete(`${projectId}:${n}`);
+      changed();
+      return { closed: true };
+    },
   },
   accounts: {
     list: async () => accountsCopy(),

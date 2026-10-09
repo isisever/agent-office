@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setAccount: (id, accountId) => ipcRenderer.invoke('projects:setAccount', id, accountId),
     onChange: listen('projects:changed'),
   },
+  tabs: {
+    add: (projectId, mode) => ipcRenderer.invoke('tabs:add', projectId, mode),   // mode: 'same' | 'worktree' | undefined (menü)
+    close: (projectId, n) => ipcRenderer.invoke('tabs:close', projectId, n),    // { closed, restarted? }
+  },
   accounts: {
     list: () => ipcRenderer.invoke('accounts:list'),
     add: (label) => ipcRenderer.invoke('accounts:add', label),

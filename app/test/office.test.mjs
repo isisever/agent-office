@@ -576,6 +576,39 @@ const shellShots = []
   rmSync(root, { recursive: true })
 }
 
+// ---------- sekmeler (sözleşme v3.0): worktree oturumları projesine sayılır ----------
+{
+  const root = mkdtempSync(join(tmpdir(), 'agent-office-tabs-'))
+  const dir = join(root, 'sessions')
+  mkdirSync(dir, { recursive: true })
+  const day = (() => { const d = new Date(NOW); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })()
+  const put = (name, obj) => {
+    const f = join(dir, `${name}.json`)
+    writeFileSync(f, JSON.stringify(obj))
+    utimesSync(f, NOW / 1000, NOW / 1000)
+  }
+  put('main', { format: 2, project: 'shop', updatedAt: NOW - 1000, workers: [{ id: 'a', type: 'Explore', spawnAt: NOW - 5000 }], stats: { isBossBusy: false } })
+  put('wt', {
+    format: 2, project: 'shop-wt-2', updatedAt: NOW - 500,
+    workers: [{ id: 'b', type: 'Plan', spawnAt: NOW - 4000 }, { id: 'c', type: 'Plan', spawnAt: NOW - 9000, doneAt: NOW - 2000, isOk: true }],
+    shells: [{ id: 's', command: 'npm test', startAt: NOW - 3000, status: 'running' }],
+    stats: { isBossBusy: true, waiting: { kind: 'permission', tool: 'Bash', since: NOW - 800 }, today: { date: day, ids: ['c'], log: [{ id: 'c', type: 'Plan', doneAt: NOW - 2000 }] } },
+  })
+  put('other', { format: 2, project: 'other', updatedAt: NOW - 500, workers: [{ id: 'z', type: 'x', spawnAt: NOW }], stats: {} })
+  const aliases = { 'shop-wt-2': 'shop' }
+  const d = readOffice(['shop'], NOW, root, aliases)
+  assert.deepEqual(d.projects.map(p => [p.name, p.working, p.delivered, p.isBossBusy, p.waiting?.tool]), [['shop', 2, 1, true, 'Bash']])
+  assert.deepEqual(d.workers.map(w => [w.id, w.project]).sort(), [['a', 'shop'], ['b', 'shop'], ['c', 'shop']])
+  assert.deepEqual(d.shells.map(s => s.project), ['shop'])
+  assert.equal(d.project, 'shop', 'en yeni oturum worktree\'de: tema yine projeden')
+  assert.equal(d.isBossAsking, true)
+  // eşleme yoksa worktree oturumu süzgecin dışında kalır (eski davranış)
+  assert.deepEqual(readOffice(['shop'], NOW, root).workers.map(w => w.id), ['a'])
+  const t = readToday(['shop'], NOW, root, aliases)
+  assert.deepEqual(t.deliveries.map(x => [x.id, x.project]), [['c', 'shop']])
+  rmSync(root, { recursive: true })
+}
+
 console.log('ok', shellShots)
 console.log('ok', selectShots)
 console.log('ok', multiShots)
