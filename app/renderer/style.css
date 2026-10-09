@@ -602,3 +602,26 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
 }
 .ap-empty { opacity: .55; padding: 4px 0; }
 .ap-shell-proj { display: block; margin: 6px 0 2px; }
+
+/* ---- Bot rengi (sidebar.js) ---- */
+.sb-botcolor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 10px;
+  font-size: 10px;
+  opacity: .8;
+}
+.sb-botcolor span { flex: 1; letter-spacing: 1px; }
+.sb-color {
+  width: 26px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+}
+.sb-color::-webkit-color-swatch-wrapper { padding: 1px; }
+.sb-color::-webkit-color-swatch { border: 0; border-radius: 2px; }
+.sb-botcolor .sb-x { opacity: .7; }

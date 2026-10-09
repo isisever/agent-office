@@ -263,6 +263,7 @@ async function removeAccount(a) {
 sidebar = mountSidebar($('sidebar'), {
   select: selectProject,
   addProject,
+  setBotColor,
   removeProject,
   setAccount,
   addAccount,
@@ -285,6 +286,13 @@ $('toggle-sidebar').addEventListener('click', () => {
   setCollapsed(!document.body.classList.contains('sidebar-collapsed'));
   focusActive();
 });
+// bot rengi: kullanıcı seçimi, bu bilgisayarda saklanır
+function setBotColor(hex) {
+  store.set('botColor', hex || '');
+  office?.setBotColor?.(hex);
+  sidebar.setBotColor(hex);
+}
+
 setCollapsed(store.get('sidebarCollapsed') === '1');
 
 $('empty-add').addEventListener('click', addProject);
@@ -355,6 +363,7 @@ try {
 try {
   const { mountOffice } = await import('./office-view.js');
   office = mountOffice($('office'), { onTheme: applyTheme, onSelect: (id) => selectAgent(id) });
+  setBotColor(store.get('botColor') || null);
   api.office.themes().then((t) => office.setThemes?.(t)).catch(() => {});
 } catch (e) {
   console.warn('Ofis görünümü yüklenemedi:', e.message);

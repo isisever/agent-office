@@ -29,7 +29,7 @@ const C = {
   deskTop: 0xd8a56a, deskEdge: 0xe9bd85, deskFront: 0xa8743f, deskLeg: 0x6a4425, plate: 0xf3d9b0,
   chair: 0x3b4252, chairHi: 0x535c70, bossChair: 0x6a2c36, bossChairHi: 0x8a4450,
   lid: 0xd6d8de, lidDark: 0xa9adb8, logo: 0x3fb6a8, logoOn: 0xa8f0e6, mug: 0xf4efe6, coffee: 0x6b4226,
-  body: 0x3fb6a8, bodyHi: 0x6fd6c9, shade: 0x2b8a7f, eye: 0x1a1a1a, tie: 0x2a3a6a, tieKnot: 0x1d2a50,
+  body: 0x3fb6a8, bodyHi: 0x6fd6c9, shade: 0x2b8a7f, eye: 0x1a1a1a, tie: 0x2a3a6a, tieKnot: 0x1d2a50, stache: 0x3b2418, collar: 0xf4efe6,
   paper: 0xf7f6f0, ink: 0x9a9a9a, bad: 0xe05050, good: 0x3fae55,
   white: 0xffffff, dark: 0x1d1a24, yellow: 0xf2c14e, accent: 0x3fb6a8, dim: 0xb8b0a4,
   chairCream: 0xebdcbc, chairCreamDark: 0xcdb990, chairCushion: 0xa87a52,
@@ -134,8 +134,22 @@ function useTheme(name) {
   themeName = name
   if (name.startsWith('auto:') && !THEMES[name]) THEMES[name] = projectTheme(name.slice(5))
   THEME = THEMES[name]
-  Object.assign(C, BASE, THEME.colors)
+  Object.assign(C, BASE, THEME.colors, botColors ?? {})
   return true
+}
+
+// bot rengi (kullanıcı seçimi, '#rrggbb'); gövde, parlak üst ve gölge bu renkten türetilir. null = temanın rengi
+let botColors = null
+export function setBotColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? ''))
+  if (!m) {
+    botColors = null
+    for (const k of ['body', 'bodyHi', 'shade']) C[k] = THEME.colors?.[k] ?? BASE[k]
+    return
+  }
+  const body = parseInt(m[1], 16)
+  botColors = { body, bodyHi: mix(body, 0xffffff, 0.35), shade: mix(body, 0x000000, 0.28) }
+  Object.assign(C, botColors)
 }
 
 
@@ -557,9 +571,14 @@ function bot(cx, by, { pose = 'stand', frame = 0, isBoss = false, look = 0, isBl
   rect(x0 + 5 + ex, top + 4 - eyeH, 1, eyeH, C.eye)
   rect(x0 + 10 + ex, top + 4 - eyeH, 1, eyeH, C.eye)
   if (isBoss) {
-    rect(x0 + 7, top + 5, 2, 1, C.tieKnot)
-    rect(x0 + 7, top + 6, 2, 2, C.tie)
-    px(x0 + 7, top + 8, C.tie)
+    // müdür: uçları sarkık pala bıyık, altında beyaz yaka ve kravat
+    rect(x0 + 5, top + 5, 6, 1, C.stache)
+    px(x0 + 5, top + 6, C.stache)
+    px(x0 + 10, top + 6, C.stache)
+    px(x0 + 6, top + 7, C.collar)
+    px(x0 + 9, top + 7, C.collar)
+    rect(x0 + 7, top + 7, 2, 1, C.tieKnot)
+    rect(x0 + 7, top + 8, 2, 1, C.tie)
   }
   if (hasMug) {
     box(x0 + 14, armY[1] - 2, 3, 3, C.mug)
