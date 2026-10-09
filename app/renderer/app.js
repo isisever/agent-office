@@ -89,6 +89,10 @@ function setStats(d) {
 
 // ---- Update: button in the title bar once a new version is downloaded; clicking restarts the app ----
 let updateVersion = null;
+let appVersion = null; // running version: tooltip of the title bar's app title
+function setVersionTitle() {
+  $('title').title = appVersion ? t('app.versionTitle', { version: appVersion }) : '';
+}
 function showUpdate(version) {
   const b = $('update');
   if (!version) return;
@@ -101,7 +105,11 @@ $('update').addEventListener('click', () => {
   if (confirm(t('app.updateConfirm'))) api.update?.install();
 });
 api.update?.onReady(showUpdate);
-api.update?.state().then((s) => showUpdate(s?.ready)).catch(() => {});
+api.update?.state().then((s) => {
+  appVersion = s?.version || null;
+  setVersionTitle();
+  showUpdate(s?.ready);
+}).catch(() => {});
 
 // ---- Terminals: one xterm per project, hidden ones keep their history ----
 function hint(projectId, text) {
@@ -431,6 +439,7 @@ setCollapsed(store.get('sidebarCollapsed') === '1');
 // ---- Language: title, empty state and hints; sidebar, office and panel redraw themselves ----
 function applyStaticText() {
   $('title').textContent = t('app.appTitle');
+  setVersionTitle();
   $('empty-title').textContent = t('app.emptyTitle');
   $('empty-add').textContent = t('app.emptyAdd');
   $('empty-add').title = t('app.emptyAddTitle', { mod: modLabel });

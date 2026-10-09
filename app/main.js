@@ -11,6 +11,7 @@ const U = require('./src/usage.js');
 const N = require('./src/attention.js');
 const OS = require('./src/platform.js');
 const L = require('./src/locales.js');
+const UP = require('./src/updates.js');
 const IS_MAC = OS.isMac();
 
 let win = null;
@@ -259,6 +260,7 @@ const checkAllAuth = (opts) => Promise.all(state.accounts.map((a) => checkAuth(a
 let lastFocusCheck = 0;
 function onFocus() {
   updateAttention();
+  checkUpdatesOnFocus();
   if (Date.now() - lastFocusCheck < 60000) return;
   lastFocusCheck = Date.now();
   checkAllAuth();
@@ -761,30 +763,54 @@ fixSpawnHelper();
 const linuxNoUpdates = () => !IS_MAC && !process.env.APPIMAGE;
 let updater = null;
 let updateReady = null; // downloaded version
-const UPDATE_EVERY_MS = 4 * 60 * 60 * 1000;
+let updateDownloading = null; // version being downloaded
+let updateCheck = null; // the check in flight (checks never overlap)
+let lastUpdateCheck = 0;
 function setupUpdates() {
   if (!app.isPackaged || linuxNoUpdates()) return;
   try { ({ autoUpdater: updater } = require('electron-updater')); } catch (e) { console.error('electron-updater yok:', e.message); return; }
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = true;
-  updater.on('update-downloaded', (info) => { updateReady = info.version; send('update:ready', info.version); });
-  updater.on('error', (e) => console.error('güncelleme:', e?.message || e));
-  const check = () => updater.checkForUpdates().catch((e) => console.error('güncelleme denetimi:', e?.message || e));
-  setTimeout(check, 10000);
-  setInterval(check, UPDATE_EVERY_MS);
+  updater.on('update-available', (info) => { if (info?.version !== updateReady) updateDownloading = info?.version || null; });
+  updater.on('update-not-available', () => { updateDownloading = null; });
+  updater.on('update-downloaded', (info) => { updateDownloading = null; updateReady = info.version; send('update:ready', info.version); });
+  updater.on('error', (e) => { updateDownloading = null; console.error('güncelleme:', e?.message || e); });
+  setTimeout(backgroundCheck, UP.FIRST_CHECK_MS);
+  setInterval(backgroundCheck, UP.UPDATE_EVERY_MS);
+}
+/** one check at a time: a second caller gets the check already in flight */
+function runUpdateCheck() {
+  if (!updater) return Promise.resolve(null);
+  if (updateCheck) return updateCheck;
+  lastUpdateCheck = Date.now();
+  updateCheck = updater.checkForUpdates().finally(() => { updateCheck = null; });
+  return updateCheck;
+}
+function backgroundCheck() {
+  if (!updater || updateDownloading) return;
+  runUpdateCheck().catch((e) => console.error('güncelleme denetimi:', e?.message || e));
+}
+function checkUpdatesOnFocus() {
+  if (updater && UP.shouldCheckOnFocus(lastUpdateCheck)) backgroundCheck();
 }
 // manual check from the menu: the result is shown in a short dialog
 async function checkUpdatesNow() {
   if (!updater) return dialog.showMessageBox(win, { message: app.isPackaged && linuxNoUpdates() ? T('main.updatesManual') : T('main.updatesOnlyInstalled') });
-  if (updateReady) return send('update:ready', updateReady);
-  try {
-    const r = await updater.checkForUpdates();
-    const latest = r?.updateInfo?.version;
-    if (!latest || latest === app.getVersion()) dialog.showMessageBox(win, { message: T('main.upToDate', { version: app.getVersion() }) });
-    else dialog.showMessageBox(win, { message: T('main.downloading', { version: latest }) });
-  } catch (e) {
-    dialog.showMessageBox(win, { type: 'warning', message: T('main.updateFailed'), detail: String(e?.message || e) });
+  const current = app.getVersion();
+  let latest = null;
+  if (!updateReady && !updateDownloading) {
+    try {
+      const r = await runUpdateCheck();
+      latest = r?.updateInfo?.version || null;
+    } catch (e) {
+      return dialog.showMessageBox(win, { type: 'warning', message: T('main.updateFailed'), detail: String(e?.message || e) });
+    }
   }
+  const m = UP.updateMessage({ current, ready: updateReady, downloading: updateDownloading, latest });
+  if (m.kind === 'ready') return send('update:ready', m.version);
+  if (m.kind === 'downloading') return dialog.showMessageBox(win, { message: T('main.downloading', { version: m.version }) });
+  if (m.kind === 'upToDate') return dialog.showMessageBox(win, { message: T('main.upToDate', { version: m.version }) });
+  dialog.showMessageBox(win, { type: 'warning', message: T('main.updateFailed'), detail: T('main.updateNoAnswer', { version: m.version }) });
 }
 ipcMain.handle('update:state', () => ({ version: app.getVersion(), ready: updateReady }));
 ipcMain.on('update:install', () => { if (updateReady && updater) { killAll(); updater.quitAndInstall(); } });
@@ -832,6 +858,7 @@ app.whenReady().then(async () => {
   await loadI18n();
   const raw = loadState();
   state = { ...P.normalizeState(raw), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false };
+  app.setAboutPanelOptions({ applicationName: app.getName(), applicationVersion: app.getVersion() });
   buildMenu();
   setupUpdates();
   saveState();

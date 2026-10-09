@@ -54,7 +54,9 @@ On Linux the window has the normal title bar, and the shortcuts use **Ctrl+Shift
 
 ### Updates
 
-Agent Office checks GitHub Releases at start and every few hours (on Linux only the AppImage does; the `.deb` is updated by installing the new one). A new version downloads in the background; then **⬆ … ready · restart** appears in the title bar (or it installs when you quit). You can also check from the app menu: **Check for Updates…**.
+Agent Office checks GitHub Releases shortly after it starts, then every hour, and when you come back to its window after half an hour or more (on Linux only the AppImage does; the `.deb` is updated by installing the new one). A new version downloads in the background; then **⬆ … ready · restart** appears in the title bar (or it installs when you quit). You can also check from the app menu: **Check for Updates…**. The running version is in **About Agent Office** and in the tooltip of the title bar's AGENT OFFICE.
+
+Homebrew keeps showing the version it installed, because the app updates itself: `brew outdated` may list an old version although the app is current. That is harmless; `brew upgrade --greedy agent-office` makes Homebrew reinstall the latest one.
 
 ## Using it
 

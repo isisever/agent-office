@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const P = require('../src/projects.js');
 const A = require('../src/accounts.js');
 const L = require('../src/locales.js');
+const UP = require('../src/updates.js');
 
 const LOCALES = L.loadLocales();
 /** a language's translator, as in main (src/i18n.mjs) */
@@ -456,4 +457,35 @@ test('diller: locales/*.json bulunur, adları kendi dilinde; sistem dili dosyas�
   const de = translator({ main: { cancel: 'Abbrechen' } }, LOCALES.en, 'de');
   assert.equal(de('main.cancel'), 'Abbrechen');
   assert.equal(de('main.edit'), 'Edit');
+});
+
+test('güncelleme: sürüm karşılaştırma sayısal (0.10.0 > 0.9.1), sürüm olmayan → null', () => {
+  assert.equal(UP.compareVersions('0.10.0', '0.9.1'), 1);
+  assert.equal(UP.compareVersions('0.9.1', '0.10.0'), -1);
+  assert.equal(UP.compareVersions('v1.2.3', '1.2.3'), 0);
+  assert.equal(UP.compareVersions('1.2.10', '1.2.9'), 1);
+  assert.equal(UP.compareVersions(null, '1.0.0'), null);
+  assert.equal(UP.compareVersions('', '1.0.0'), null);
+  assert.equal(UP.compareVersions('1.0', '1.0.0'), null);
+});
+
+test('güncelleme: elle denetimin iletisi', () => {
+  const current = '0.9.1';
+  assert.deepEqual(UP.updateMessage({ current, latest: '0.10.0' }), { kind: 'downloading', version: '0.10.0' });
+  assert.deepEqual(UP.updateMessage({ current, latest: '0.9.1' }), { kind: 'upToDate', version: '0.9.1' });
+  assert.deepEqual(UP.updateMessage({ current, latest: '0.9.0' }), { kind: 'upToDate', version: '0.9.1' });
+  // no answer is not "up to date"
+  assert.deepEqual(UP.updateMessage({ current, latest: null }), { kind: 'unknown', version: '0.9.1' });
+  assert.deepEqual(UP.updateMessage({ current }), { kind: 'unknown', version: '0.9.1' });
+  // a download in progress or finished wins over the check result
+  assert.deepEqual(UP.updateMessage({ current, downloading: '0.10.0', latest: null }), { kind: 'downloading', version: '0.10.0' });
+  assert.deepEqual(UP.updateMessage({ current, ready: '0.10.0', downloading: '0.10.1', latest: '0.10.1' }), { kind: 'ready', version: '0.10.0' });
+});
+
+test('güncelleme: odakta denetim yalnız son denetim 30 dakikadan eskiyse; saatte bir', () => {
+  const now = 10 * 3600e3;
+  assert.equal(UP.UPDATE_EVERY_MS, 3600e3);
+  assert.equal(UP.shouldCheckOnFocus(0, now), true);
+  assert.equal(UP.shouldCheckOnFocus(now - 29 * 60e3, now), false);
+  assert.equal(UP.shouldCheckOnFocus(now - 30 * 60e3, now), true);
 });
