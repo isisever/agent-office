@@ -289,3 +289,8 @@ test('usageAlerts: %80 ve %95 bir kez, sıfırlanınca yeniden; açılışta yal
   assert.deepEqual(N.usageAlerts('b', u(90), fresh, { seed: true, now: NOW }), []);
   assert.deepEqual(N.usageAlerts('b', u(91), fresh, { now: NOW }), []);
 });
+
+test('historyDir: Claude Code oturum klasörü, harf/rakam dışı karakterler "-"', () => {
+  assert.equal(P.historyDir('/Users/a/Documents/my.app', null, '/Users/a'), '/Users/a/.claude/projects/-Users-a-Documents-my-app');
+  assert.equal(P.historyDir('/Users/a/.claude/x_y', '/acc', '/Users/a'), '/acc/projects/-Users-a--claude-x-y');
+});

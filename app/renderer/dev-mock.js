@@ -159,6 +159,10 @@ window.agentOffice = {
     onExit: ev.exit.add,
     restart: (id) => boot(id),
   },
+  prefs: {
+    get: async () => ({ resume: true }),
+    set: async (p) => ({ resume: p?.resume !== false }),
+  },
   language: {
     get: async () => langInfo(),
     set: async (v) => { langSetting = ['en', 'tr'].includes(v) ? v : 'auto'; setTimeout(() => langEv.emit(langInfo())); },

@@ -348,6 +348,7 @@ sidebar = mountSidebar($('sidebar'), {
   logout: logoutAccount,
   refreshAuth,
   setLanguage: (setting) => api.language?.set(setting).catch((e) => console.error(e)),
+  setResume: (on) => api.prefs?.set({ resume: on }).then((p) => sidebar.setResume(p?.resume)).catch((e) => console.error(e)),
 });
 
 login = mountLogin(document.body, { getTheme: () => theme, onClose: () => focusActive() });
@@ -392,6 +393,7 @@ function applyLanguage(li) {
 }
 onLang(applyStaticText);
 applyStaticText();
+api.prefs?.get().then((p) => sidebar.setResume(p?.resume)).catch((e) => console.error(e));
 
 $('empty-add').addEventListener('click', addProject);
 

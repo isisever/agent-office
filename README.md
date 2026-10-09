@@ -55,6 +55,7 @@ Agent Office checks GitHub Releases at start and every few hours. A new version 
 | **Log in to an account** | **Log in** next to the account. A small terminal runs `claude auth login`; approve in the browser and it closes by itself. |
 | **See an account's usage** | The **5 h** and **Week** bars under the account: percentage used and reset time. They fill in once a project on that account has talked to Claude; hover for how old the value is. |
 | **See what an agent does** | Click the worker in the office. Esc closes the panel. |
+| **Pick up where you left off** | **Continue last session** at the bottom of the sidebar (on by default): when the app starts, each project continues its last Claude session (`claude --continue`) |
 | **Change the language** | **Language** at the bottom of the sidebar: Auto (system language), English or Türkçe. The labels here are the English ones. |
 | **Change the bots' color** | **Bot color** at the bottom of the sidebar (↺ resets it) |
 | **Hide the sidebar** | ≡ in the title bar |

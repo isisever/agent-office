@@ -62,7 +62,13 @@ function setProjectAccount(state, id, accountId) {
   return { ...state, projects: state.projects.map((p) => (p.id === id ? { ...p, accountId } : p)) };
 }
 
+// Claude Code'un oturum geçmişi klasörü: <hesap klasörü ya da ~/.claude>/projects/<yol, harf/rakam dışı '-'>
+// (denendi: /Users/a/.claude → -Users-a--claude). Burada .jsonl varsa `claude --continue` sürdürecek bir oturum bulur.
+const historyDir = (projectDir, configDir, home) =>
+  path.join(configDir || path.join(home, '.claude'), 'projects', String(projectDir).replace(/[^a-zA-Z0-9]/g, '-'));
+
 module.exports = {
+  historyDir,
   newId, projectName, normalizeState, findProject, findByDir,
   addProject, removeProject, setActive, setProjectAccount,
 };

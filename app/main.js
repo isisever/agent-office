@@ -364,8 +364,14 @@ function scanUsage() {
   if (changed) sendAccounts();
 }
 
-// Projenin claude'unu (yeniden) başlatır; boyut o projenin son pty:resize'ı.
-function startPty(id) {
+// Projede bu hesapla sürdürülecek bir Claude oturumu var mı (bkz. projects.js historyDir).
+function hasHistory(project, configDir) {
+  try { return fs.readdirSync(P.historyDir(project.dir, configDir, app.getPath('home'))).some((f) => f.endsWith('.jsonl')); } catch { return false; }
+}
+const RESUME_GRACE_MS = 8000; // --continue bu sürede hatayla biterse claude yeniden, düz başlar
+
+// Projenin claude'unu (yeniden) başlatır; boyut o projenin son pty:resize'ı. resume: son oturumdan devam (--continue).
+function startPty(id, { resume = false } = {}) {
   killPty(id);
   const project = P.findProject(state, id);
   if (!project || !win || !isLoaded) return broadcast();
@@ -377,7 +383,9 @@ function startPty(id) {
   // claude'un argümanları "$@" ile geçer: eklenti yolu ve status line ayarı (kota için, bkz. usage.js).
   const dir = pluginDir();
   const sl = usageStatusLine(project, configDir);
-  const args = [...(dir ? ['--plugin-dir', dir] : []), ...(sl ? ['--settings', sl.settings] : [])];
+  const isResume = resume && hasHistory(project, configDir);
+  const args = [...(dir ? ['--plugin-dir', dir] : []), ...(sl ? ['--settings', sl.settings] : []), ...(isResume ? ['--continue'] : [])];
+  const startedAt = Date.now();
   const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; exec claude "$@"';
   const env = { ...A.ptyEnv(process.env, configDir), AGENT_OFFICE_APP: '1' };
   delete env.AGENT_OFFICE_STATUSLINE;
@@ -400,6 +408,8 @@ function startPty(id) {
   t.onExit(({ exitCode }) => {
     if (terms.get(id) !== t) return; // bilerek öldürüldü (yeniden başlatma/silme): sessiz
     terms.delete(id);
+    // sürdürülecek oturum bulunamadı ya da açılamadı: kullanıcıya çıkış göstermeden düz başlat
+    if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) return startPty(id);
     send('pty:exit', id, exitCode);
     broadcast();
   });
@@ -407,8 +417,9 @@ function startPty(id) {
 }
 
 // Yüklemeden sonra çalışmayan her projenin claude'unu başlat (yeniden yüklemede çalışanlara dokunma).
+// Açılışta (ayar açıksa) her proje son oturumundan devam eder.
 function startMissing() {
-  for (const p of state.projects) if (!terms.has(p.id)) startPty(p.id);
+  for (const p of state.projects) if (!terms.has(p.id)) startPty(p.id, { resume: state.resume !== false });
 }
 
 let usagePoll = null;
@@ -628,6 +639,14 @@ function buildMenu() {
   ]));
 }
 
+// --- tercihler: resume = açılışta son oturumdan devam
+const prefs = () => ({ resume: state.resume !== false });
+ipcMain.handle('prefs:get', () => prefs());
+ipcMain.handle('prefs:set', (_e, p) => {
+  if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
+  return prefs();
+});
+
 // --- dil
 ipcMain.handle('language:get', () => languageInfo());
 ipcMain.handle('language:set', (_e, setting) => {
@@ -640,7 +659,7 @@ ipcMain.handle('language:set', (_e, setting) => {
 
 app.whenReady().then(() => {
   const raw = loadState();
-  state = { ...P.normalizeState(raw), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto' };
+  state = { ...P.normalizeState(raw), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false };
   buildMenu();
   setupUpdates();
   saveState();

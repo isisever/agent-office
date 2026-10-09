@@ -33,6 +33,8 @@ const S = {
     botColorTitle: 'Color of the bots',
     botColorReset: 'Default color',
     language: 'Language',
+    resume: 'Continue last session',
+    resumeTitle: 'When the app starts, each project continues its last Claude session (claude --continue)',
     languageTitle: 'Interface language (Auto follows the system)',
     auto: 'Auto',
     projects: 'PROJECTS',
@@ -95,6 +97,8 @@ const S = {
     botColorTitle: 'Botların rengi',
     botColorReset: 'Varsayılan renk',
     language: 'Dil',
+    resume: 'Son oturumdan devam et',
+    resumeTitle: 'Uygulama açılınca her proje son Claude oturumundan devam eder (claude --continue)',
     languageTitle: 'Arayüz dili (Otomatik sistem dilini izler)',
     auto: 'Otomatik',
     projects: 'PROJELER',
@@ -194,6 +198,10 @@ export function mountSidebar(el, on) {
   const langLabel = h('span', {});
   const langSelect = h('select', { class: 'sb-acct sb-lang', onchange: (e) => on.setLanguage?.(e.target.value) });
   const langRow = h('div', { class: 'sb-botcolor sb-langrow' }, langLabel, langSelect);
+  // açılışta son oturumdan devam (claude --continue)
+  const resumeLabel = h('span', {});
+  const resumeBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setResume?.(e.target.checked) });
+  const resumeRow = h('label', { class: 'sb-botcolor sb-langrow' }, resumeLabel, resumeBox);
   const projHead = h('span', {});
   const acctHead = h('span', {});
   const addProjectBtn = h('button', { class: 'sb-add', id: 'sb-add-project', onclick: () => on.addProject() });
@@ -207,6 +215,7 @@ export function mountSidebar(el, on) {
       h('div', { class: 'sb-head' }, acctHead),
       acctList,
     ),
+    resumeRow,
     langRow,
     botRow,
   );
@@ -221,6 +230,8 @@ export function mountSidebar(el, on) {
     botInput.title = t().botColorTitle;
     botReset.title = t().botColorReset;
     langLabel.textContent = t().language;
+    resumeLabel.textContent = t().resume;
+    resumeRow.title = t().resumeTitle;
     langSelect.title = t().languageTitle;
     langSelect.replaceChildren(
       h('option', { value: 'auto', selected: langSetting === 'auto' }, t().auto),
@@ -419,6 +430,8 @@ export function mountSidebar(el, on) {
       langSetting = ['en', 'tr'].includes(li.setting) ? li.setting : 'auto';
       langSelect.value = langSetting;
     },
+    /** Açılışta son oturumdan devam ayarı. */
+    setResume(on) { resumeBox.checked = on !== false; },
     /** Seçicide gösterilen bot rengi. */
     setBotColor(hex) { botInput.value = hex || '#3fb6a8'; },
     /** Proje listesi, etkin proje, çalışma durumu ve hesaplar. */

@@ -209,3 +209,14 @@ type Waiting = { kind: 'permission'; tool: string; since: number }
 - Office (`core.mjs` and the plugin viewer): with `isBossAsking` the boss's sign reads `NEEDS YOU` / `ONAY BEKLİYOR`, blinking; in a multi-project office it lists the projects asking.
 - Agent panel: a `Terminal ›` button next to the project (option `onOpenProject(name)`) activates that project and focuses its terminal.
 - Worker `result` is now kept up to 4000 characters (was 600).
+
+## Continue the last session (v2.7)
+
+```ts
+agentOffice.prefs.get(): Promise<{ resume: boolean }>
+agentOffice.prefs.set(p: { resume?: boolean }): Promise<{ resume: boolean }>
+```
+
+- Main keeps `resume` in `state.json` (default true). When the window loads, each project whose claude is not running starts with `--continue` if it has a session to continue: a `.jsonl` in `<account config dir or ~/.claude>/projects/<project dir with every non-alphanumeric character as '-'>` (`projects.js` `historyDir`). Restarts, account changes and new projects start fresh.
+- If a `--continue` start exits non-zero within 8 s, main starts it again without `--continue` and sends no `pty:exit`.
+- Sidebar: a "Continue last session" checkbox above the language picker.
