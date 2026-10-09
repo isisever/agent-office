@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..', '..')
 const { version } = JSON.parse(readFileSync(join(root, 'app', 'package.json'), 'utf8'))
-const sha = arch => createHash('sha256').update(readFileSync(join(root, 'app', 'release', `AgentOffice-${version}-${arch}.dmg`))).digest('hex')
+// dmg klasörü: ilk argüman (ör. app/release-signed), yoksa app/release
+const dir = process.argv[2] ? join(process.cwd(), process.argv[2]) : join(root, 'app', 'release')
+const sha = arch => createHash('sha256').update(readFileSync(join(dir, `AgentOffice-${version}-${arch}.dmg`))).digest('hex')
 
 const cask = `cask "agent-office" do
   arch arm: "arm64", intel: "x64"
@@ -43,9 +45,6 @@ const cask = `cask "agent-office" do
     Agent Office runs the Claude Code CLI; install it first if needed:
       https://code.claude.com
 
-    The app is not notarized by Apple yet. If macOS blocks the first launch, open
-    System Settings → Privacy & Security and click "Open Anyway", or run:
-      xattr -dr com.apple.quarantine "#{appdir}/Agent Office.app"
   EOS
 end
 `

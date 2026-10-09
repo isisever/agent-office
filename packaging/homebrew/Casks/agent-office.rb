@@ -1,9 +1,9 @@
 cask "agent-office" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.3.0"
-  sha256 arm:   "034562db1f0dc5b755a1c6ac12517e821c899c2481458d0df24d48fede033687",
-         intel: "76e7cceed156d5447e179e466ebb3922215e841a7a9105a9ced83e3e81e06d64"
+  version "0.3.1"
+  sha256 arm:   "079dd07d2538957b3c6c374b15834d0e489d61293b116ddee0575df281aa11d7",
+         intel: "db96a935f58bededda7a2018967bbdee51ca99059849c7b6b118c5b602e8f18f"
 
   url "https://github.com/isisever/agent-office/releases/download/v#{version}/AgentOffice-#{version}-#{arch}.dmg"
   name "Agent Office"
@@ -30,8 +30,5 @@ cask "agent-office" do
     Agent Office runs the Claude Code CLI; install it first if needed:
       https://code.claude.com
 
-    The app is not notarized by Apple yet. If macOS blocks the first launch, open
-    System Settings → Privacy & Security and click "Open Anyway", or run:
-      xattr -dr com.apple.quarantine "#{appdir}/Agent Office.app"
   EOS
 end

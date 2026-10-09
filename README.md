@@ -39,14 +39,6 @@ Get the `.dmg` for your Mac from [Releases](https://github.com/isisever/agent-of
 
 Open it and drag **Agent Office** to Applications.
 
-### First launch
-
-The app is not notarized by Apple yet, so macOS blocks it the first time. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. Or, from a terminal:
-
-```sh
-xattr -dr com.apple.quarantine "/Applications/Agent Office.app"
-```
-
 ## Using it
 
 | | |
@@ -131,7 +123,6 @@ node plugin/tests/viewer-smoke.mjs        # terminal viewer
 Issues and pull requests are welcome. Some good places to start:
 
 - English (and other) translations of the app interface
-- Developer ID signing and notarization in the release build
 - Linux and Windows builds
 
 The app's main process, UI and office renderer meet at the interfaces described in [`app/CONTRACT.md`](app/CONTRACT.md); please keep it up to date when you change them.
