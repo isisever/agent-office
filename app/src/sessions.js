@@ -105,14 +105,14 @@ function shellsOf(s, isLive, now, forget) {
 function readOffice(projects, now = Date.now(), root = rootDir()) {
   const list = projects == null ? null : (Array.isArray(projects) ? projects : [projects]).filter(p => p != null && p !== '')
   const only = list ? new Set(list.map(slugOf)) : null
-  const data = { workers: [], shells: [], delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' }
+  const data = { workers: [], shells: [], delivered: 0, isBossBusy: false, isBossAsking: false, projects: [], project: '', sessionId: '' }
   const forget = forgetMs(root)
 
   // proje tablosu: verilen sırayla, sonra görülenler
   const table = new Map()
   const entry = name => {
     const key = slugOf(name)
-    if (!table.has(key)) table.set(key, { name: String(name ?? ''), working: 0, delivered: 0, isBossBusy: false })
+    if (!table.has(key)) table.set(key, { name: String(name ?? ''), working: 0, delivered: 0, isBossBusy: false, waiting: null })
     return table.get(key)
   }
   for (const p of list ?? []) entry(p)
@@ -175,6 +175,12 @@ function readOffice(projects, now = Date.now(), root = rootDir()) {
     const busy = Boolean(s.stats?.isBossBusy)
     p.isBossBusy ||= busy
     data.isBossBusy ||= busy
+    // açık izin penceresi (sözleşme v2.6): projede en eskisi
+    const w = s.stats?.waiting
+    if (w && w.kind === 'permission' && Number.isFinite(w.since) && (!p.waiting || w.since < p.waiting.since)) {
+      p.waiting = { tool: typeof w.tool === 'string' ? w.tool : '', since: w.since }
+      data.isBossAsking = true
+    }
     if ((s.updatedAt ?? 0) > newest) {
       newest = s.updatedAt ?? 0
       data.project = s.project ?? ''

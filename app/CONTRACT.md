@@ -112,7 +112,7 @@ type Worker = {
   detail?: string                                     // the current tool's input in one line, ≤ 160 chars (Bash: command; Read/Edit/Write: file path; Grep/Glob: pattern [in path]; WebFetch: url; WebSearch: query; other: compact JSON)
   history?: { at: number; tool: string; detail: string }[]   // last 20 tool calls, oldest first
   toolCount?: number                                  // all tool calls so far
-  result?: string                                     // the agent's final answer, first 600 chars, once done
+  result?: string                                     // the agent's final answer, first 4000 chars (v2.6; 600 before), once done
 }
 ```
 
@@ -189,3 +189,23 @@ agentOffice.language.onChange(cb: (info: LanguageInfo) => void): () => void   //
 - Renderer: `renderer/i18n.js` holds the current language (`getLang`, `setLang`, `onLang`, `pick`, `locale`). Each module keeps its own `{ en, tr }` string table and re-renders on `onLang`; the window is not reloaded, terminals keep running.
 - Office: `core.mjs` `setLanguage('en' | 'tr')` switches the drawn words (boss, waiting/working, today/done, agent types), the uppercase rule (Turkish i→İ only in Turkish) and the default titles (`AGENT OFFICE` / `AGENT OFİS`; a theme's own `title` wins). Default is Turkish.
 - Sidebar: a Language picker (Auto, English, Türkçe) next to the bot colour.
+
+## Waiting on you (v2.6)
+
+When Claude needs the person, the app says so: a macOS notification, the Dock badge, a mark on the project's row and the boss's sign.
+
+The plugin adds to the session state file:
+
+```ts
+type Waiting = { kind: 'permission'; tool: string; since: number }
+// session file stats: { ..., waiting?: Waiting }  — set by classic.PermissionRequest (main session or a subagent),
+// removed when a call of that tool returns (allowed or denied), on a typed prompt and when the main turn completes
+```
+
+`readOffice` passes it on: each project gets `waiting: { tool, since } | null` (its oldest open dialog) and the data `isBossAsking: boolean`.
+
+- Main (`src/attention.js`, pure): a project needs the person when it has an open dialog (`'permission'`), or when its boss went from busy to idle while the person was not looking at it (`'done'`; looking = window focused and project active; it clears once looked at or busy again). A new dialog or a finished turn in a project not being looked at raises one notification (clicking it focuses the window and activates the project). The first read after start raises none. The Dock badge counts the projects that need the person. `projects:changed` `status[]` items gain `attention: 'permission' | 'done' | null`; the sidebar shows ✋ (blinking) or ● on the row.
+- Usage alerts: when an account's 5-hour or weekly window reaches 80% and again 95%, one notification each, per window and reset time; values already past a threshold at start are not announced.
+- Office (`core.mjs` and the plugin viewer): with `isBossAsking` the boss's sign reads `NEEDS YOU` / `ONAY BEKLİYOR`, blinking; in a multi-project office it lists the projects asking.
+- Agent panel: a `Terminal ›` button next to the project (option `onOpenProject(name)`) activates that project and focuses its terminal.
+- Worker `result` is now kept up to 4000 characters (was 600).

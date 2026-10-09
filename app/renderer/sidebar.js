@@ -47,6 +47,8 @@ const S = {
     claudeRunning: 'Claude running',
     claudeStopped: 'Claude stopped',
     bossBusy: 'Boss busy',
+    attnPermission: 'Claude is waiting for your approval in this project',
+    attnDone: 'Claude finished here and is waiting for you',
     removeFromList: 'Remove from list',
     noProjects: 'No projects yet',
     accountName: 'Account name',
@@ -107,6 +109,8 @@ const S = {
     claudeRunning: 'Claude çalışıyor',
     claudeStopped: 'Claude kapalı',
     bossBusy: 'Patron meşgul',
+    attnPermission: 'Claude bu projede onayını bekliyor',
+    attnDone: 'Claude burada işini bitirdi, seni bekliyor',
     removeFromList: 'Listeden kaldır',
     noProjects: 'Henüz proje yok',
     accountName: 'Hesap adı',
@@ -174,6 +178,7 @@ export function mountSidebar(el, on) {
   let accounts = [];
   let activeId = null;
   let status = new Map();
+  let attn = new Map(); // projectId → 'permission' | 'done' (main'in bildirim durumu)
   let stats = new Map();
   let projKey = '';
   let acctKey = '';
@@ -270,6 +275,9 @@ export function mountSidebar(el, on) {
       },
         h('span', { class: 'sb-dot' + (live ? ' live' : ''), title: live ? t().claudeRunning : t().claudeStopped }),
         h('span', { class: 'sb-name' }, p.name),
+        attn.get(p.id) === 'permission'
+          ? h('span', { class: 'sb-attn permission', title: t().attnPermission }, '✋')
+          : attn.get(p.id) === 'done' ? h('span', { class: 'sb-attn done', title: t().attnDone }, '●') : null,
         h('span', { class: 'sb-boss', hidden: !s?.isBossBusy, title: t().bossBusy }, '★'),
         h('button', {
           class: 'sb-x', title: t().removeFromList,
@@ -419,7 +427,8 @@ export function mountSidebar(el, on) {
       accounts = s.accounts || [];
       activeId = s.activeId;
       status = new Map((s.status || []).map((x) => [x.id, x.isRunning]));
-      const pk = JSON.stringify([projects, activeId, [...status], accounts.map((a) => [a.id, a.label, a.auth?.state])]);
+      attn = new Map((s.status || []).filter((x) => x.attention).map((x) => [x.id, x.attention]));
+      const pk = JSON.stringify([projects, activeId, [...status], [...attn], accounts.map((a) => [a.id, a.label, a.auth?.state])]);
       if (pk !== projKey) { projKey = pk; renderProjects(); }
       const ak = JSON.stringify(accounts);
       if (ak !== acctKey && !editing) { acctKey = ak; renderAccounts(); }

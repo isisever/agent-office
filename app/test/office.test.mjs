@@ -138,7 +138,7 @@ assert.equal(typeof readThemes(), 'object')
       { id: 'w1', type: 'general-purpose', spawnAt: NOW - 20000, tool: 'Bash' },
       { id: 'w3', type: 'Explore', spawnAt: NOW - 50000, doneAt: NOW - 40000, isOk: false },
     ],
-    stats: { delivered: 1, isBossBusy: false },
+    stats: { delivered: 1, isBossBusy: false, waiting: { kind: 'permission', tool: 'Bash', since: NOW - 5000 } },
   })
   // gamma dün: hem dosya hem kayıt dünden
   put('gamma-yday', { project: 'gamma', updatedAt: NOW - 20 * H, endedAt: NOW - 20 * H, workers: [], stats: { delivered: 4, isBossBusy: false, today: { date: '2026-10-08', ids: ['y1', 'y2'] } } }, NOW - 20 * H)
@@ -180,8 +180,10 @@ assert.equal(typeof readThemes(), 'object')
   assert.equal(all.workers.length, 5)
   assert.deepEqual(all.workers.map(w => w.project).sort(), ['alpha', 'alpha', 'alpha', 'beta', 'beta'])
   assert.deepEqual(Object.keys(byName(all)).sort(), ['alpha', 'beta'], 'dünkü/bayat projeler listede olmamalı')
-  assert.deepEqual(byName(all).alpha, { name: 'alpha', working: 1, delivered: 4, isBossBusy: true })
-  assert.deepEqual(byName(all).beta, { name: 'beta', working: 1, delivered: 1, isBossBusy: false })
+  assert.deepEqual(byName(all).alpha, { name: 'alpha', working: 1, delivered: 4, isBossBusy: true, waiting: null })
+  assert.deepEqual(byName(all).beta, { name: 'beta', working: 1, delivered: 1, isBossBusy: false, waiting: { tool: 'Bash', since: NOW - 5000 } })
+  assert.equal(all.isBossAsking, true, 'izin bekleyen bir oturum var')
+  assert.equal(readOffice(['alpha'], NOW, root).isBossAsking, false)
   assert.equal(all.project, 'alpha')
   assert.equal(all.sessionId, 'alpha-live')
   assert.equal(all.themesError, undefined, 'themes.json yoksa sessiz')
@@ -200,8 +202,8 @@ assert.equal(typeof readThemes(), 'object')
   assert.deepEqual(two.workers.map(w => w.id).sort(), ['w1', 'w3'])
   assert.ok(two.workers.every(w => w.project === 'beta'))
   assert.deepEqual(two.projects, [
-    { name: 'beta', working: 1, delivered: 1, isBossBusy: false },
-    { name: 'zeta', working: 0, delivered: 0, isBossBusy: false },
+    { name: 'beta', working: 1, delivered: 1, isBossBusy: false, waiting: { tool: 'Bash', since: NOW - 5000 } },
+    { name: 'zeta', working: 0, delivered: 0, isBossBusy: false, waiting: null },
   ])
   assert.deepEqual(two.shells.map(sh => sh.id), ['b1', 'b2'], 'süzgeç kabuklara da uygulanır')
   assert.deepEqual(readOffice(['alpha'], NOW, root).shells.map(sh => sh.id), ['a2', 'a1'])

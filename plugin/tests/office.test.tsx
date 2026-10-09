@@ -601,7 +601,7 @@ test('history keeps the last 20 calls oldest first and toolCount counts them all
   expect(two?.history).toEqual([{ at: expect.any(Number), tool: 'Read', detail: 'README.md' }])
 })
 
-test("a subagent's answer is stored as its result, cut to 600 chars; no answer leaves it out", async ($, on) => {
+test("a subagent's answer is stored as its result, cut to 4000 chars; no answer leaves it out", async ($, on) => {
   const { writes } = setUpDetails(on)
 
   await $.session.start(start)
@@ -610,14 +610,14 @@ test("a subagent's answer is stored as its result, cut to 600 chars; no answer l
   await spawnAgent($, 'Long report', 'general-purpose')
   await completeTurn($, 'answer', 'agent-1', '  Found 3 bugs.\nAll in core.ts.  ')
   await completeTurn($, 'error', 'agent-2')
-  await completeTurn($, 'answer', 'agent-3', 'z'.repeat(1000))
+  await completeTurn($, 'answer', 'agent-3', 'z'.repeat(5000))
 
   const [one, two, three] = stateOf(writes).workers
   expect(one?.result).toBe('Found 3 bugs.\nAll in core.ts.')
   expect(one?.isOk).toBe(true)
   expect(two?.result).toBeUndefined()
   expect(two?.isOk).toBe(false)
-  expect(three?.result?.length).toBe(600)
+  expect(three?.result?.length).toBe(4000)
 })
 
 test('tool calls are coalesced into one write per PUBLISH_MS and the last state is always written', async ($, on) => {
@@ -812,4 +812,30 @@ test('a finished shell leaves the state file once FORGET_MS has passed; running 
   expect(shellsOf(writes).map(s => s.id)).toEqual(['long-gone', 'just-done', 'still-running'])
   await clock.advance(TICK_MS)
   expect(shellsOf(writes).map(s => s.id)).toEqual(['just-done', 'still-running'])
+})
+
+test('a permission dialog marks the session waiting until its tool is answered, a prompt comes or the turn ends', async ($, on) => {
+  const { writes } = setUp(on, { HOME: '/home/tester' })
+  answerTurns(on)
+  on('tool.call', () => ({ result: 'ok' }) as never)
+  on('classic.PermissionRequest', () => ({}) as never)
+
+  await $.session.start(start)
+  await $.turn.start({ text: 'hello', turnId: 'turn-1' })
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } })
+  const waiting = stateOf(writes).stats.waiting
+  expect(waiting?.kind).toBe('permission')
+  expect(waiting?.tool).toBe('Bash')
+  expect(typeof waiting?.since).toBe('number')
+  // another tool finishing does not close Bash's dialog
+  await $.tool.call({ tool: 'Read', file_path: '/x' } as never)
+  expect(stateOf(writes).stats.waiting?.tool).toBe('Bash')
+  await $.tool.call({ tool: 'Bash', command: 'rm -rf build' } as never)
+  expect(stateOf(writes).stats.waiting).toBe(undefined)
+
+  await $.classic.PermissionRequest({ tool_name: 'Edit', tool_input: {} })
+  expect(stateOf(writes).stats.waiting?.tool).toBe('Edit')
+  await completeTurn($, 'aborted')
+  expect(stateOf(writes).stats.waiting).toBe(undefined)
+  expect(stateOf(writes).stats.isBossBusy).toBe(false)
 })

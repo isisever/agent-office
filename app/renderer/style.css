@@ -125,6 +125,10 @@ body.sidebar-collapsed #sidebar { display: none; }
 }
 .sb-dot.live { background: var(--accent); opacity: 1; box-shadow: 0 0 4px var(--accent); }
 .sb-boss { color: var(--accent); }
+/* seni bekleyen proje: onay (el, yanıp söner) ya da bitti (nokta) */
+.sb-attn { flex-shrink: 0; font-size: 11px; line-height: 1; cursor: help; }
+.sb-attn.permission { animation: sb-blink 1s steps(2, jump-none) infinite; }
+.sb-attn.done { color: #f2c14e; }
 .sb-meta {
   grid-column: 2 / -1;
   display: flex;
@@ -521,6 +525,19 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
   cursor: pointer;
 }
 .ap-close:hover { border-color: var(--status-bg); }
+.ap-go {
+  flex-shrink: 0;
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--status-bg);
+  color: var(--status-bg);
+  font: inherit;
+  font-size: 10px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.ap-go + .ap-close { margin-left: 0; }
+.ap-go:hover { background: var(--status-bg); color: var(--accent); }
 .ap-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 10px 10px; }
 .ap-body::-webkit-scrollbar { width: 6px; }
 .ap-body::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 3px; }

@@ -237,3 +237,55 @@ test('status line betiği: girdiyi dosyaya yazar, kullanıcının komutunu aynı
   assert.deepEqual(fs.readdirSync(dir).sort(), ['p.json', 's l.sh']);
   fs.rmSync(dir, { recursive: true });
 });
+
+const N = require('../src/attention.js');
+
+test('nextAttention: izin ve bitiş bildirimi yalnız değişince, bakılan projede hiç; işaretler', () => {
+  const projects = [{ id: 'a', name: 'alpha' }, { id: 'b', name: 'beta' }];
+  const off = (aBusy, bWait) => [
+    { name: 'alpha', isBossBusy: aBusy, waiting: null },
+    { name: 'beta', isBossBusy: true, waiting: bWait },
+  ];
+  // ilk okuma: olay yok, ama açık izin işaretlenir
+  let r = N.nextAttention(N.emptyAttention(), projects, off(true, { tool: 'Bash', since: 1 }), null);
+  assert.deepEqual(r.events, []);
+  assert.deepEqual([...r.attention], [['b', 'permission']]);
+  // aynı izin: olay yok; yeni izin: olay
+  r = N.nextAttention(r.state, projects, off(true, { tool: 'Bash', since: 1 }), null);
+  assert.deepEqual(r.events, []);
+  r = N.nextAttention(r.state, projects, off(true, { tool: 'Edit', since: 2 }), null);
+  assert.deepEqual(r.events, [{ kind: 'permission', id: 'b', tool: 'Edit' }]);
+  // alpha'nın turu bitti, bakılmıyor: 'done' olayı ve işaret; tekrar okunca olay yok, işaret kalır
+  r = N.nextAttention(r.state, projects, off(false, null), null);
+  assert.deepEqual(r.events, [{ kind: 'done', id: 'a' }]);
+  assert.deepEqual([...r.attention], [['a', 'done']]);
+  r = N.nextAttention(r.state, projects, off(false, null), null);
+  assert.deepEqual(r.events, []);
+  assert.deepEqual([...r.attention], [['a', 'done']]);
+  // alpha'ya bakılınca işaret düşer
+  r = N.nextAttention(r.state, projects, off(false, null), 'a');
+  assert.deepEqual([...r.attention], []);
+  // bakılan projede izin ya da bitiş bildirimi yok
+  r = N.nextAttention(r.state, projects, off(true, null), 'a');
+  r = N.nextAttention(r.state, projects, off(false, { tool: 'Bash', since: 3 }), 'b');
+  assert.deepEqual(r.events, [{ kind: 'done', id: 'a' }]);
+  assert.deepEqual([...r.attention], [['a', 'done'], ['b', 'permission']]);
+});
+
+test('usageAlerts: %80 ve %95 bir kez, sıfırlanınca yeniden; açılışta yalnız işaretler', () => {
+  const NOW = 1000;
+  const alerted = new Map();
+  const u = (pct, resetsAt = 5000) => ({ updatedAt: 1, fiveHour: { pct, resetsAt }, sevenDay: { pct: 10, resetsAt: 9000 } });
+  assert.deepEqual(N.usageAlerts('a', u(50), alerted, { now: NOW }), []);
+  assert.deepEqual(N.usageAlerts('a', u(81), alerted, { now: NOW }), [{ window: 'fiveHour', pct: 81, level: 80, resetsAt: 5000 }]);
+  assert.deepEqual(N.usageAlerts('a', u(85), alerted, { now: NOW }), []);
+  assert.deepEqual(N.usageAlerts('a', u(96), alerted, { now: NOW }).map((x) => x.level), [95]);
+  assert.deepEqual(N.usageAlerts('a', u(97), alerted, { now: NOW }), []);
+  // yeni pencere (başka sıfırlanma zamanı) yeniden uyarır; süresi geçmiş pencere uyarmaz
+  assert.deepEqual(N.usageAlerts('a', u(82, 8000), alerted, { now: NOW }).map((x) => x.level), [80]);
+  assert.deepEqual(N.usageAlerts('a', u(99, 500), alerted, { now: NOW }), []);
+  // seed: işaretler ama söylemez
+  const fresh = new Map();
+  assert.deepEqual(N.usageAlerts('b', u(90), fresh, { seed: true, now: NOW }), []);
+  assert.deepEqual(N.usageAlerts('b', u(91), fresh, { now: NOW }), []);
+});

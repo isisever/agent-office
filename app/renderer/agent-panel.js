@@ -1,5 +1,5 @@
 // Ajan ayrıntıları: ofiste tıklanan botun ne yaptığını sağda bir panelde gösterir.
-// mountAgentPanel(el, { onClose, onSelect, anchor }) → { show(id), update(data), hide(), shownId() }
+// mountAgentPanel(el, { onClose, onSelect, onOpenProject, anchor }) → { show(id), update(data), hide(), shownId() }
 // - update(OfficeData) her office:data'da çağrılır; panel açıksa canlı güncellenir.
 // - Eski eklenti verisinde prompt/detail/history/toolCount/result yoktur: panel yine çalışır.
 // - '@boss' (core.mjs BOSS_ID) müdürün özetini gösterir; oradaki ajan satırına tıklamak onSelect(id) çağırır.
@@ -73,6 +73,8 @@ const S = {
     agentTitle: 'Agent',
     project: 'Project',
     close: 'Close (Esc)',
+    toTerminal: 'Terminal ›',
+    toTerminalTitle: "Go to this project's terminal",
     ariaLabel: 'Agent details',
   },
   tr: {
@@ -134,6 +136,8 @@ const S = {
     agentTitle: 'Ajan',
     project: 'Proje',
     close: 'Kapat (Esc)',
+    toTerminal: 'Terminal ›',
+    toTerminalTitle: 'Bu projenin terminaline git',
     ariaLabel: 'Ajan ayrıntıları',
   },
 };
@@ -191,7 +195,7 @@ async function copyText(text) {
   }
 }
 
-export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
+export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, anchor } = {}) {
   let data = null;
   let id = null;
   let last = null; // ofisten ayrılınca son bilinen hâli
@@ -405,6 +409,7 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     const html = `<header class="ap-head">
         <span class="ap-title">${esc(view.title)}</span>
         ${view.project ? `<span class="ap-proj" title="${esc(t().project)}">${esc(view.project)}</span>` : ''}
+        ${view.project && onOpenProject ? `<button class="ap-go" data-go="${esc(view.project)}" title="${esc(t().toTerminalTitle)}">${esc(t().toTerminal)}</button>` : ''}
         <button class="ap-close" data-close title="${esc(t().close)}">×</button>
       </header>
       <div class="ap-body">${view.html}</div>`;
@@ -423,6 +428,12 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     const b = e.target.closest('button');
     if (!b || !el.contains(b)) return;
     if (b.hasAttribute('data-close')) return api.hide();
+    if (b.dataset.go) {
+      const name = b.dataset.go;
+      api.hide();
+      try { onOpenProject?.(name); } catch (err) { console.error(err); }
+      return;
+    }
     if (b.dataset.toggle) {
       const k = `${id}:${b.dataset.toggle}`;
       if (expanded.has(k)) expanded.delete(k);

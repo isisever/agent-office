@@ -123,6 +123,7 @@ const STRINGS = {
     boss: 'MÜDÜR',
     working: 'ÇALIŞIYOR',
     waiting: 'BEKLİYOR',
+    asking: 'ONAY BEKLİYOR',
     thinking: 'DÜŞÜNÜYOR',
     today: 'BUGÜN',
     delivered: n => `${n} TESLİM`,
@@ -145,6 +146,7 @@ const STRINGS = {
     boss: 'BOSS',
     working: 'WORKING',
     waiting: 'WAITING',
+    asking: 'NEEDS YOU',
     thinking: 'THINKING',
     today: 'TODAY',
     delivered: n => `${n} DONE`,
@@ -1202,7 +1204,11 @@ function renderFrame(now, data) {
     const top = p.y - (info.kind === 'desk' ? 18 : 14)
     tag([[shortType(w.type), C.white], [fit(tool, 8), C.yellow]], cx, top)
   }
-  tag([[T.boss, C.accent], [data.isBossBusy ? T.working : T.waiting, C.dim]], L.boss.seat[0], L.boss.by - 19)
+  // açık bir izin penceresi (sözleşme v2.6): tabela yanıp söner
+  const status = data.isBossAsking
+    ? [T.asking, Math.floor(now / 500) % 2 ? C.yellow : C.white]
+    : [data.isBossBusy ? T.working : T.waiting, C.dim]
+  tag([[T.boss, C.accent], status], L.boss.seat[0], L.boss.by - 19)
   if (poses.some(({ p }) => p.phase === 'hand')) bubbleCheck(L.boss.seat[0] + 14, L.boss.by - 36, lastOk)
 }
 
@@ -1247,7 +1253,7 @@ function recordDeliveries(day, seen) {
 
 function loadOffice(now) {
   if (cached.data && now - cached.at < 250) return cached.data
-  const data = { workers: [], delivered: 0, isBossBusy: false, project: '', sessionId: '', isDemo: false }
+  const data = { workers: [], delivered: 0, isBossBusy: false, isBossAsking: false, project: '', sessionId: '', isDemo: false }
   let files = []
   try {
     files = readdirSync(SESSIONS).filter(f => f.endsWith('.json'))
@@ -1279,6 +1285,7 @@ function loadOffice(now) {
     if (ONLY_PROJECT && slugOf(s.project) !== ONLY_PROJECT) continue
     data.workers.push(...(s.workers ?? []))
     data.isBossBusy ||= Boolean(s.stats?.isBossBusy)
+    data.isBossAsking ||= s.stats?.waiting?.kind === 'permission'
     if (s.updatedAt > newest) {
       newest = s.updatedAt
       data.project = s.project ?? ''

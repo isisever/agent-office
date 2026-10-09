@@ -2,6 +2,7 @@
 // Electron'da preload window.agentOffice'u verir ve bu dosya hiç yüklenmez.
 // ?empty → proje yok; ?themesError → başlıkta tema uyarısı; ?authError → üçüncü hesap 'error';
 // ?loginFail → sahte giriş 1 koduyla biter ve hesap 'out' kalır. ?lang=en|tr → dil ayarı (yoksa auto: tarayıcı dili).
+// ?asking → ikinci proje onay bekler (tabela, ✋), üçüncüsü bitti (●).
 // ?select=<işçi id | @boss | shell:<id>> → birkaç saniye sonra o bota/raf yuvasına tıklanır (ajan paneli denemesi;
 // ör. ?select=m-1, ?select=shell:sh-1). ?noShells → eski veri (shells alanı yok).
 const q = new URLSearchParams(location.search);
@@ -70,7 +71,7 @@ let activeId = projects[0]?.id ?? null;
 const snapshot = () => ({
   projects: projects.map((p) => ({ ...p })),
   activeId,
-  status: projects.map((p) => ({ id: p.id, isRunning: !!running.get(p.id) })),
+  status: projects.map((p, i) => ({ id: p.id, isRunning: !!running.get(p.id), attention: q.has('asking') ? [null, 'permission', 'done'][i] ?? null : null })),
 });
 const changed = () => setTimeout(() => ev.projects.emit(snapshot()));
 
@@ -274,11 +275,13 @@ setInterval(() => {
     working: workers.filter((w) => w.project === p.name && w.doneAt == null).length,
     delivered: i * 2 + 1,
     isBossBusy: i === 1,
+    waiting: q.has('asking') && i === 1 ? { tool: 'Bash', since: Date.now() - 8000 } : null,
   }));
   ev.office.emit({
     workers,
     delivered: per.reduce((n, p) => n + p.delivered, 0),
     isBossBusy: per.some((p) => p.isBossBusy),
+    isBossAsking: per.some((p) => p.waiting),
     projects: per,
     project: projects[0]?.name ?? '',
     sessionId: '',

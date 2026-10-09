@@ -91,7 +91,7 @@ let forgetMs = FORGET_MINUTES.default * 60_000
 const STALE_MS = 24 * 60 * 60_000 // another session's files untouched this long are dropped at session start
 // agent details (contract v2.2): limits of the Worker fields the app's panel shows
 const PROMPT_MAX = 600
-const RESULT_MAX = 600
+const RESULT_MAX = 4000
 const DETAIL_MAX = 160
 const HISTORY_MAX = 20
 // background shells (contract v2.3): running ones plus those finished within forgetMs, at most this many
@@ -294,6 +294,12 @@ async function endNotified($: EngineInterface, text: string) {
 async function setStats($: EngineInterface, change: (s: OfficeStats) => OfficeStats) {
   stats = await update($, statsAtom, change)
   await publish($)
+}
+
+// the permission dialog for `tool` (any tool when left out) was answered: the session no longer waits on the person
+async function clearWaiting($: EngineInterface, tool?: string) {
+  if (!stats.waiting || (tool !== undefined && stats.waiting.tool !== tool)) return
+  await setStats($, ({ waiting: _, ...rest }) => rest)
 }
 
 async function markDone($: EngineInterface, ids: Set<string>, isOk: boolean) {
@@ -701,11 +707,17 @@ export const register: Register = on => {
       )
       await publishSoon($)
     }
-    if (e.tool !== 'Bash' && e.tool !== 'Monitor' && e.tool !== 'TaskStop') return next(e)
+    if (e.tool !== 'Bash' && e.tool !== 'Monitor' && e.tool !== 'TaskStop') {
+      const answered = await next(e)
+      // allowed and run, or denied: its permission dialog is closed (a failure here must not rerun the tool)
+      await clearWaiting($, e.tool).catch(() => undefined)
+      return answered
+    }
     const startAt = Date.now()
     const done = await next(e)
     // the tool has run: a failure from here on must not reach .catch, which would run it again
     try {
+      await clearWaiting($, e.tool)
       if (e.tool === 'TaskStop') {
         // a stopped task: TaskStop's result names it (task_id), its input too (task_id, deprecated shell_id)
         const result = 'result' in done && !done.isError ? (done.result as Record<string, unknown> | undefined) : undefined
@@ -728,6 +740,7 @@ export const register: Register = on => {
   // session.append (same origin) sees both. Either ends the shell it names, the first one wins.
   on('prompt.submit', async ($, e, next) => {
     if (e.origin?.kind === 'task-notification') await endNotified($, e.text)
+    else await clearWaiting($)
 
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -753,6 +766,14 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // a permission dialog opens (main session or a subagent): the app tells the person (contract v2.6)
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const tool = typeof e.tool_name === 'string' ? e.tool_name : ''
+    await setStats($, s => ({ ...s, waiting: { kind: 'permission', tool, since: Date.now() } }))
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('turn.start', async ($, e, next) => {
     if (!stats.isBossBusy) await setStats($, s => ({ ...s, isBossBusy: true }))
 
@@ -760,7 +781,8 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) await setStats($, s => ({ ...s, isBossBusy: false }))
+    // the main turn is over: nothing is left waiting on a dialog
+    if (e.agentId === undefined) await setStats($, ({ waiting: _, ...s }) => ({ ...s, isBossBusy: false }))
     else {
       // the subagent's report (contract v2.2 `result`); "" when it gave none
       const answer = typeof e.answer === 'string' ? e.answer.trim() : ''

@@ -452,6 +452,13 @@ try {
     anchor: $('office'),
     onClose: () => { try { office?.setSelected?.(null); } catch {} },
     onSelect: (id) => { try { office?.setSelected?.(id); } catch {} },
+    // panelden terminale: o projeyi etkinleştir ve terminaline odaklan
+    onOpenProject: (name) => {
+      const p = projects.find((x) => x.name === name);
+      if (!p) return;
+      selectProject(p.id);
+      setTimeout(focusActive, 50);
+    },
   });
 } catch (e) {
   console.warn('Ajan paneli yüklenemedi:', e.message);

@@ -1,5 +1,5 @@
 // Agent Office kabuğu: pencere, projeler, hesaplar, her projeye bir claude pty'si ve ofis verisi.
-const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -8,6 +8,7 @@ const pty = require('node-pty');
 const P = require('./src/projects.js');
 const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
+const N = require('./src/attention.js');
 
 let win = null;
 let poll = null;
@@ -49,9 +50,50 @@ const send = (ch, ...args) => { if (win && !win.isDestroyed()) win.webContents.s
 const snapshot = () => ({
   projects: state.projects,
   activeId: state.activeId,
-  status: state.projects.map((p) => ({ id: p.id, isRunning: terms.has(p.id) })),
+  status: state.projects.map((p) => ({ id: p.id, isRunning: terms.has(p.id), attention: attention.get(p.id) || null })),
 });
 const broadcast = () => send('projects:changed', snapshot());
+
+// --- seni bekleyenler (bkz. src/attention.js): bildirim, Dock rozeti, proje satırındaki işaret
+let attnState = N.emptyAttention();
+let attention = new Map();    // projectId → 'permission' | 'done'
+let lastOffice = null;        // son readOffice().projects
+const alerted = new Map();    // kota eşikleri: "<hesap>:<pencere>:<sıfırlanma>" → yüzde
+const seenId = () => (win && !win.isDestroyed() && win.isFocused() ? state.activeId : null);
+function notify(title, body, projectId) {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title, body });
+  n.on('click', () => {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    if (projectId && P.findProject(state, projectId)) commit(P.setActive(state, projectId));
+  });
+  n.show();
+}
+function updateAttention() {
+  if (!lastOffice) return;
+  const r = N.nextAttention(attnState, state.projects, lastOffice, seenId());
+  attnState = r.state;
+  for (const ev of r.events) {
+    const p = P.findProject(state, ev.id);
+    if (!p) continue;
+    notify(p.name, ev.kind === 'permission' ? M().notifyPermission(ev.tool) : M().notifyDone, p.id);
+  }
+  const key = (m) => JSON.stringify([...m]);
+  if (key(r.attention) === key(attention)) return;
+  attention = r.attention;
+  try { app.dock?.setBadge(attention.size ? String(attention.size) : ''); } catch {}
+  broadcast();
+}
+function alertUsage(account, usage, seed = false) {
+  for (const a of N.usageAlerts(account.id, usage, alerted, { seed })) {
+    const when = a.resetsAt ? new Date(a.resetsAt).toLocaleString(uiLang() === 'tr' ? 'tr-TR' : 'en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    const label = account.id === A.DEFAULT_ID ? M().defaultAccount : account.label;
+    notify(label, M().notifyUsage(a.window, a.pct, when));
+  }
+}
 
 // Durumu değiştir, kaydet, renderer'a bildir.
 // Varsayılan hesabın adı ve bilinen giriş hataları o anki dilde gider.
@@ -76,6 +118,9 @@ const MSG = {
     updateFailed: 'Güncelleme denetlenemedi.',
     checkUpdates: 'Güncellemeleri denetle…',
     edit: 'Düzen', undo: 'Geri al', redo: 'Yinele', cut: 'Kes', copy: 'Kopyala', paste: 'Yapıştır', selectAll: 'Tümünü seç',
+    notifyPermission: (tool) => `Claude onay bekliyor${tool ? `: ${tool}` : ''}`,
+    notifyDone: 'Claude işini bitirdi, seni bekliyor.',
+    notifyUsage: (w, pct, when) => `${w === 'fiveHour' ? '5 saatlik' : 'Haftalık'} kotanın %${pct}'i kullanıldı${when ? ` · ${when} sıfırlanır` : ''}`,
     view: 'Görünüm', reload: 'Yeniden yükle', devTools: 'Geliştirici araçları', fullscreen: 'Tam ekran', window: 'Pencere',
   },
   en: {
@@ -87,6 +132,9 @@ const MSG = {
     updateFailed: 'Could not check for updates.',
     checkUpdates: 'Check for Updates…',
     edit: 'Edit', undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
+    notifyPermission: (tool) => `Claude needs your approval${tool ? `: ${tool}` : ''}`,
+    notifyDone: 'Claude finished and is waiting for you.',
+    notifyUsage: (w, pct, when) => `${pct}% of the ${w === 'fiveHour' ? '5-hour' : 'weekly'} limit used${when ? ` · resets ${when}` : ''}`,
     view: 'View', reload: 'Reload', devTools: 'Developer Tools', fullscreen: 'Full Screen', window: 'Window',
   },
 };
@@ -208,6 +256,7 @@ const checkAllAuth = (opts) => Promise.all(state.accounts.map((a) => checkAuth(a
 
 let lastFocusCheck = 0;
 function onFocus() {
+  updateAttention();
   if (Date.now() - lastFocusCheck < 60000) return;
   lastFocusCheck = Date.now();
   checkAllAuth();
@@ -288,7 +337,7 @@ const usageSeen = new Map(); // dosya → mtimeMs
 function loadUsageCache() {
   for (const a of state.accounts) {
     const u = U.usageFromCache(readJson(path.join(usageRoot(), a.id, U.LAST)));
-    if (u) usages.set(a.id, u);
+    if (u) { usages.set(a.id, u); alertUsage(a, u, true); }
   }
 }
 function scanUsage() {
@@ -307,6 +356,7 @@ function scanUsage() {
       const u = U.usageFromStatus(readJson(f), Math.round(mtime));
       if (!u || u.updatedAt <= (usages.get(a.id)?.updatedAt || 0)) continue;
       usages.set(a.id, u);
+      alertUsage(a, u);
       try { fs.writeFileSync(path.join(dir, U.LAST), JSON.stringify(u)); } catch {}
       changed = true;
     }
@@ -369,7 +419,12 @@ function startPolling() {
   poll = setInterval(() => {
     const s = office();
     if (!s || !win || win.isDestroyed()) return;
-    try { send('office:data', s.readOffice(state.projects.map((p) => p.name))); } catch (e) { console.error('readOffice:', e.message); }
+    try {
+      const d = s.readOffice(state.projects.map((p) => p.name));
+      send('office:data', d);
+      lastOffice = d.projects;
+      updateAttention();
+    } catch (e) { console.error('readOffice:', e.message); }
   }, 500);
 }
 
@@ -394,7 +449,7 @@ ipcMain.handle('projects:remove', (_e, id) => {
   if (p) try { fs.rmSync(path.join(usageRoot(), p.accountId, `${id}.json`), { force: true }); } catch {}
   commit(P.removeProject(state, id));
 });
-ipcMain.handle('projects:setActive', (_e, id) => { commit(P.setActive(state, id)); });
+ipcMain.handle('projects:setActive', (_e, id) => { commit(P.setActive(state, id)); updateAttention(); });
 ipcMain.handle('projects:setAccount', (_e, id, accountId) => {
   const p = P.findProject(state, id);
   if (!p || p.accountId === accountId) return;

@@ -14,12 +14,12 @@ export const FRAME_MS = 110
 // Ofisteki yazılar (eklentinin görüntüleyicisiyle aynı); uygulama setLanguage ile seçer, varsayılan Türkçe.
 const STRINGS = {
   tr: {
-    office: 'OFİS', boss: 'MÜDÜR', working: 'ÇALIŞIYOR', waiting: 'BEKLİYOR', thinking: 'DÜŞÜNÜYOR',
+    office: 'OFİS', boss: 'MÜDÜR', working: 'ÇALIŞIYOR', waiting: 'BEKLİYOR', asking: 'ONAY BEKLİYOR', thinking: 'DÜŞÜNÜYOR',
     today: 'BUGÜN', delivered: n => `${n} TESLİM`, demoProject: 'gösteri',
     types: { 'general-purpose': 'GENEL', Explore: 'KEŞİF', Plan: 'PLAN', 'claude-code-guide': 'REHBER' },
   },
   en: {
-    office: 'OFFICE', boss: 'BOSS', working: 'WORKING', waiting: 'WAITING', thinking: 'THINKING',
+    office: 'OFFICE', boss: 'BOSS', working: 'WORKING', waiting: 'WAITING', asking: 'NEEDS YOU', thinking: 'THINKING',
     today: 'TODAY', delivered: n => `${n} DONE`, demoProject: 'demo',
     types: { 'general-purpose': 'GENERAL', Explore: 'EXPLORE', Plan: 'PLAN', 'claude-code-guide': 'GUIDE' },
   },
@@ -999,7 +999,7 @@ function projectsOf(data) {
   if (Array.isArray(data.projects))
     for (const p of data.projects)
       if (p && p.name != null && p.name !== '')
-        add({ name: String(p.name), delivered: Number(p.delivered) || 0, working: Number(p.working) || 0, isBossBusy: Boolean(p.isBossBusy) })
+        add({ name: String(p.name), delivered: Number(p.delivered) || 0, working: Number(p.working) || 0, isBossBusy: Boolean(p.isBossBusy), waiting: p.waiting ?? null })
   for (const w of data.workers) if (w?.project) add({ name: String(w.project), delivered: 0, working: 0, isBossBusy: false })
   return out
 }
@@ -1613,10 +1613,15 @@ function renderFrame(now, data, focus = '', selected = null) {
     const tb = tag([[shortType(w.type), C.white], [fit(tool, 8), C.yellow]], cx, top, pr ? pr.color : C.ol)
     hits.push({ id: w.id, ...tb })
   }
-  const bossLines = [[T.boss, C.accent], [data.isBossBusy ? T.working : T.waiting, C.dim]]
-  if (isMulti && data.isBossBusy) {
-    // hangi projelerde çalıştığı: en çok iki ad, gerisi +n
-    const busy = projs.filter(p => p.isBossBusy)
+  // izin penceresi açıksa (sözleşme v2.6) tabela yanıp söner ve hangi projede olduğunu söyler
+  const isAsking = Boolean(data.isBossAsking)
+  const status = isAsking
+    ? [T.asking, Math.floor(now / 500) % 2 ? C.yellow : C.white]
+    : [data.isBossBusy ? T.working : T.waiting, C.dim]
+  const bossLines = [[T.boss, C.accent], status]
+  if (isMulti && (isAsking || data.isBossBusy)) {
+    // hangi projelerde onay beklediği ya da çalıştığı: en çok iki ad, gerisi +n
+    const busy = projs.filter(p => (isAsking ? p.waiting : p.isBossBusy))
     busy.slice(0, 2).forEach(p => bossLines.push([short.get(p.name), projColor(p.name)]))
     if (busy.length > 2) bossLines.push([`+${busy.length - 2}`, C.dim])
   }

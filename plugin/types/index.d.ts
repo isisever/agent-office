@@ -11,7 +11,7 @@ export type Worker = {
   detail?: string // the current tool's input in one line, ≤ 160 chars
   history?: ToolCall[] // the last 20 tool calls, oldest first
   toolCount?: number // all tool calls so far
-  result?: string // the agent's final answer, ≤ 600 chars, once done
+  result?: string // the agent's final answer, ≤ 4000 chars (600 before v2.6), once done
 }
 
 export type ToolCall = { at: number; tool: string; detail: string }
@@ -30,7 +30,9 @@ export type Shell = {
 }
 
 // today: ids delivered on that local day; outlives FORGET so the viewer's TODAY count never misses one
-export type OfficeStats = { delivered: number; isBossBusy: boolean; today?: { date: string; ids: string[] } }
+// waiting (contract v2.6): a permission dialog is open for `tool`, since `since`; gone once it is answered
+export type Waiting = { kind: 'permission'; tool: string; since: number }
+export type OfficeStats = { delivered: number; isBossBusy: boolean; today?: { date: string; ids: string[] }; waiting?: Waiting }
 
 // the last frame the viewer wrote: its number and the theme's colours (hex without #)
 export type OfficeFrame = { gen: number; accent: string; frameColor: string; title: string }
