@@ -1,11 +1,11 @@
-// Gerçek claude CLI'ı için xterm.js terminali; her proje kendi terminalini ve pty'sini kullanır.
-// Gelen pty verisini app.js yönlendirir (write/exit); yazma, boyut ve yeniden başlatma projeye özeldir.
+// xterm.js terminal for the real claude CLI; each project uses its own terminal and pty.
+// app.js routes incoming pty data (write/exit); input, resize and restart are per project.
 import { Terminal } from '../node_modules/@xterm/xterm/lib/xterm.mjs';
 import { FitAddon } from '../node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
 import { t } from './i18n.js';
 import { isMac, isModKey, keyOf } from './platform.js';
 
-// Metin locales/*.json'da (terminal.exited). Terminale yazılmış satır dil değişince yeniden yazılmaz.
+// Text lives in locales/*.json (terminal.exited). A line already written to the terminal is not rewritten on a language change.
 
 const xtermTheme = (t = {}) => ({
   background: t.statusBg || '#231815',
@@ -15,13 +15,13 @@ const xtermTheme = (t = {}) => ({
   selectionBackground: (t.accent || '#3fb6a8') + '66',
 });
 
-// Açık terminaller: menüdeki Yapıştır (⌘V) odaktaki terminale gider (pasteIntoFocused).
+// Open terminals: Paste (⌘V) in the menu goes to the focused terminal (pasteIntoFocused).
 const terminals = new Set();
-// ⌘V üç yoldan gelebilir (terminalde keydown, Chromium'un paste olayı, menü); aynı basış bir kez yapıştırılır.
+// ⌘V can arrive three ways (keydown in the terminal, Chromium's paste event, the menu); one press pastes once.
 let lastPaste = 0;
 const once = () => { const now = Date.now(); if (now - lastPaste < 400) return false; lastPaste = now; return true; };
 
-/** ⌘V: odak bir terminaldeyse panoyu ona yapıştırır ve true döner; değilse false (normal yapıştırma). */
+/** ⌘V: if focus is in a terminal, pastes the clipboard there and returns true; otherwise false (normal paste). */
 export async function pasteIntoFocused() {
   const t = [...terminals].find((x) => x.el.contains(document.activeElement));
   if (!t) return false;
@@ -29,7 +29,7 @@ export async function pasteIntoFocused() {
   return true;
 }
 
-// restartable: false → pty kapanınca "Enter ile yeniden başlat" yok (giriş terminalleri, `login:<hesap>`).
+// restartable: false → no "Enter ile yeniden başlat" when the pty exits (login terminals, `login:<account>`).
 /**
  * @param {HTMLElement} el
  * @param {{ projectId?: string, theme?: Record<string, string>, restartable?: boolean }} [opts]
@@ -51,11 +51,11 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
   term.open(el);
 
   let dead = false;
-  let needSize = false; // yeni pty ilk veriyi gönderince boyutu tekrar bildir
-  let quietExit = false; // hesap değişimi: eski pty'nin kapanış mesajı gösterilmez
+  let needSize = false; // report the size again when the new pty sends its first data
+  let quietExit = false; // account switch: the old pty's exit message is not shown
   const visible = () => el.getClientRects().length > 0 && el.clientWidth > 0 && el.clientHeight > 0;
   const resize = () => {
-    if (!visible()) return; // gizli terminal: görünür olunca boyutlanır
+    if (!visible()) return; // hidden terminal: resized once visible
     try { fit.fit(); } catch { return; }
     if (term.cols > 0 && term.rows > 0) pty.resize(projectId, term.cols, term.rows);
   };
@@ -69,8 +69,8 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     if (restartable && d === '\r') { dead = false; term.reset(); pty.restart(projectId); needSize = true; resize(); }
   });
 
-  // Panodaki içeriğe göre: görsel → Ctrl+V (Claude Code görseli panodan kendisi okur), Finder'dan
-  // kopyalanmış dosyalar → tırnaklı yollar, metin → xterm'in (bracketed) yapıştırması.
+  // Depending on clipboard content: image → Ctrl+V (Claude Code reads the image from the clipboard itself), files
+  // copied from Finder → quoted paths, text → xterm's (bracketed) paste.
   async function paste() {
     if (dead) return;
     let clip = null;
@@ -81,7 +81,7 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     term.focus();
   }
 
-  // Dosya sürükle-bırak: yolları (boşluk içerenleri tırnaklı) terminale yaz.
+  // File drag-and-drop: write the paths (quoting those with spaces) to the terminal.
   const quote = (p) => (/[\s'"\\$`!&;()<>|*?]/.test(p) ? `'${p.replace(/'/g, `'\\''`)}'` : p);
   let depth = 0;
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
@@ -98,11 +98,11 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     term.focus();
   });
 
-  // ⌘V terminaldeyken burada yakalanır: Chromium'un kendi yapıştırması görsel/dosya için boş metin gönderirdi.
-  // Linux: Ctrl+Shift+V yapıştırır (Ctrl+V claude'a gider: görseli panodan kendisi okur); Ctrl+Shift+C/X
-  // xterm'e verilmez (yoksa ^C gönderirdi), menüdeki Kopyala/Kes'e kalır.
+  // ⌘V in the terminal is caught here: Chromium's own paste would send empty text for images/files.
+  // Linux: Ctrl+Shift+V pastes (Ctrl+V goes to claude, which reads the image from the clipboard); Ctrl+Shift+C/X
+  // are not passed to xterm (it would send ^C) and are left to Copy/Cut in the menu.
   term.attachCustomKeyEventHandler((ev) => {
-    // macOS: ⌘V ve ⌘⇧V (eskisi gibi Shift serbest); Linux: Ctrl+Shift
+    // macOS: ⌘V and ⌘⇧V (Shift optional, as before); Linux: Ctrl+Shift
     const mod = isMac ? ev.metaKey && !ev.ctrlKey && !ev.altKey : isModKey(ev);
     if (ev.type !== 'keydown' || !mod) return true;
     const key = keyOf(ev);
@@ -122,14 +122,14 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
   terminals.add(self);
 
   return {
-    /** pty'den gelen veri (gizliyken de yazılır, geçmiş korunur). */
+    /** Data from the pty (written even while hidden, so history is kept). */
     write(d) {
       dead = false;
       quietExit = false;
       if (needSize) { needSize = false; resize(); }
       term.write(d);
     },
-    /** pty kapandı: Enter ile yeniden başlatılır (restartable değilse sessizce durur). */
+    /** pty exited: Enter restarts it (if not restartable, it stops quietly). */
     exit() {
       dead = true;
       if (!restartable || quietExit) { quietExit = false; return; }
@@ -138,7 +138,7 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     setTheme(t) { term.options.theme = xtermTheme(t); },
     focus() { term.focus(); },
     fit: resize,
-    /** Terminali temizler; restarting: pty main tarafından yeniden başlatılıyor. */
+    /** Clears the terminal; restarting: the pty is being restarted by main. */
     reset({ restarting = false } = {}) { dead = false; quietExit = restarting; term.reset(); needSize = true; resize(); },
     destroy() { terminals.delete(self); ro.disconnect(); term.dispose(); },
   };

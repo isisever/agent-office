@@ -8,8 +8,8 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <!-- Tek çerçeve: üstte başlık, solda projeler/hesaplar, ortada ofis, altta etkin projenin Claude Code terminali.
-         Tema renkleri --frame, --accent, --status-bg, --status-text CSS değişkenleriyle tüm çerçeveyi sarar. -->
+    <!-- Single frame: title bar on top, projects/accounts on the left, office in the middle, the active project's Claude Code terminal below.
+         Theme colors wrap the whole frame via the --frame, --accent, --status-bg, --status-text CSS variables. -->
     <header id="titlebar">
       <button id="toggle-sidebar">≡</button>
       <span id="title">AGENT OFFICE</span>
@@ -22,16 +22,16 @@
       <aside id="sidebar"></aside>
       <main id="app">
         <canvas id="office"></canvas>
-        <!-- Ajan ayrıntıları (agent-panel.js): ofiste tıklanan bot -->
+        <!-- Agent details (agent-panel.js): the bot clicked in the office -->
         <aside id="agent-panel" hidden></aside>
         <div id="divider"></div>
         <div id="terminal">
-          <!-- sekmeler (v3.0): şerit yalnız projede birden çok terminal varken; tek terminalde "+" köşede, üzerine gelince -->
+          <!-- tabs (v3.0): strip only when the project has more than one terminal; with one terminal, "+" in the corner on hover -->
           <div id="tabs" hidden></div>
           <button id="tab-add" hidden>+</button>
           <div id="terminals"></div>
           <div id="empty" hidden>
-            <!-- metinler app.js'te, seçili dilde -->
+            <!-- strings are set in app.js, in the selected language -->
             <p id="empty-title"></p>
             <button id="empty-add"></button>
             <p id="empty-note" class="dim"></p>

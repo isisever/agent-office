@@ -1,15 +1,15 @@
-// Her şeyi bağlar: kenar çubuğu (projeler, hesaplar), proje başına terminal(ler) (sekmeler, v3.0), ofis ve tema renkleri.
+// Wires everything together: sidebar (projects, accounts), per-project terminal(s) (tabs, v3.0), office and theme colors.
 import { mountTerminal, pasteIntoFocused } from './terminal.js';
 import { mountSidebar } from './sidebar.js';
 import { mountLogin } from './login.js';
 import { setLang, onLang, t } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac } from './platform.js';
 
-// Düz tarayıcıda (Electron dışında) düzeni görmek için sahte window.agentOffice.
+// Fake window.agentOffice to see the layout in a plain browser (outside Electron).
 if (!window.agentOffice) await import('./dev-mock.js');
 
 const api = window.agentOffice;
-// dil ilk çizimden önce: kenar çubuğu ve başlık doğru dille kurulsun
+// language before first render: sidebar and title are built in the right language
 let initialLang = null;
 try { initialLang = await api.language?.get(); } catch (e) { console.error(e); }
 if (initialLang) await setLang(initialLang.lang);
@@ -18,7 +18,7 @@ const root = document.documentElement;
 
 const DEFAULT_THEME = { frame: '#2b1d1a', accent: '#3fb6a8', statusBg: '#231815', statusText: '#f3ead8' };
 const isLoginId = (id) => typeof id === 'string' && id.startsWith('login:');
-const BUFFER_MAX = 256 * 1024; // terminali henüz olmayan projenin verisi
+const BUFFER_MAX = 256 * 1024; // data for a project that has no terminal yet
 
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -30,29 +30,29 @@ let activeId = null;
 let status = [];
 let accounts = [];
 let theme = DEFAULT_THEME;
-let focusName; // ofise son bildirilen proje
-const panes = new Map(); // pty kimliği (projectId ya da `<projectId>:<n>`) -> { el, hint, term }
-const pending = new Map(); // pty kimliği -> { data: string, exited: boolean }
-const activeTab = new Map(); // projectId -> görünen sekmenin numarası (1 = ana terminal; yalnız bu pencerede)
+let focusName; // project last reported to the office
+const panes = new Map(); // pty id (projectId or `<projectId>:<n>`) -> { el, hint, term }
+const pending = new Map(); // pty id -> { data: string, exited: boolean }
+const activeTab = new Map(); // projectId -> number of the visible tab (1 = main terminal; this window only)
 
-// ---- Sekmeler (sözleşme v3.0): ilk sekme ana terminal (pty kimliği projectId), ek sekme `<projectId>:<n>` ----
+// ---- Tabs (contract v3.0): first tab is the main terminal (pty id projectId), extra tabs `<projectId>:<n>` ----
 const MAIN_TAB = 1;
 const tabsOf = (p) => (Array.isArray(p?.tabs) ? p.tabs : []);
 const tabPtyId = (projectId, n) => (n === MAIN_TAB ? projectId : `${projectId}:${n}`);
 const ptyIdsOf = (p) => [p.id, ...tabsOf(p).map((x) => tabPtyId(p.id, x.n))];
-/** Projede görünen sekme; kapanmış sekme ana terminale düşer. */
+/** Visible tab in the project; a closed tab falls back to the main terminal. */
 function tabOf(p) {
   const n = activeTab.get(p.id);
   return tabsOf(p).some((x) => x.n === n) ? n : MAIN_TAB;
 }
 const activeProject = () => projects.find((p) => p.id === activeId) || null;
-/** Görünen terminalin pty kimliği. */
+/** pty id of the visible terminal. */
 const activePty = () => { const p = activeProject(); return p ? tabPtyId(p.id, tabOf(p)) : null; };
-// Giriş katmanı açıkken odak onun terminalinde kalır.
+// While the login overlay is open, focus stays on its terminal.
 const focusActive = () => (login?.isOpen() ? login.focus() : panes.get(activePty())?.term.focus());
-let login = null; // giriş katmanı (login.js)
+let login = null; // login overlay (login.js)
 
-// ---- Tema ----
+// ---- Theme ----
 function applyTheme(t) {
   theme = { ...DEFAULT_THEME, ...t };
   root.style.setProperty('--frame', theme.frame);
@@ -63,14 +63,14 @@ function applyTheme(t) {
   login?.setTheme(theme);
 }
 
-// ---- Başlık ----
+// ---- Title bar ----
 function setTitleProject() {
   const p = activeProject();
   $('project').textContent = p ? p.name : t('app.noProject');
   $('project').title = p ? p.dir : '';
 }
 
-let lastStats = null; // dil değişince yeniden yazmak için
+let lastStats = null; // to rewrite when the language changes
 function setStats(d) {
   lastStats = d;
   const list = d?.projects;
@@ -81,13 +81,13 @@ function setStats(d) {
   $('stats').textContent = t('app.stats', { working, delivered: d?.delivered ?? 0, busy });
   $('stats').title = t('app.statsTitle');
   const warn = $('warn');
-  // daha yeni biçimde oturum dosyası (sözleşme v2.8) tema uyarısından önce gelir
+  // a session file in a newer format (contract v2.8) takes precedence over the theme warning
   warn.textContent = d?.newerFormat ? t('app.formatWarn') : t('app.themeWarn');
   warn.hidden = !d?.themesError && !d?.newerFormat;
   warn.title = d?.newerFormat ? t('app.formatError') : d?.themesError ? t('app.themesError', { error: d.themesError }) : '';
 }
 
-// ---- Güncelleme: yeni sürüm indiğinde başlıkta düğme; tıklayınca uygulama yeniden başlar ----
+// ---- Update: button in the title bar once a new version is downloaded; clicking restarts the app ----
 let updateVersion = null;
 function showUpdate(version) {
   const b = $('update');
@@ -103,7 +103,7 @@ $('update').addEventListener('click', () => {
 api.update?.onReady(showUpdate);
 api.update?.state().then((s) => showUpdate(s?.ready)).catch(() => {});
 
-// ---- Terminaller: proje başına bir xterm, gizliler geçmişini korur ----
+// ---- Terminals: one xterm per project, hidden ones keep their history ----
 function hint(projectId, text) {
   const p = panes.get(projectId);
   if (!p) return;
@@ -153,7 +153,7 @@ function syncPanes() {
   for (const id of ids) if (!panes.has(id)) createPane(id);
 }
 
-let shownId; // görünür terminal; yalnız değişince odak/boyut
+let shownId; // visible terminal; focus/resize only when it changes
 function showActive() {
   const visible = activePty();
   for (const [id, p] of panes) p.el.hidden = id !== visible;
@@ -165,8 +165,8 @@ function showActive() {
   if (p) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
 }
 
-// Sekme şeridi yalnız projede birden çok sekme varken görünür; tek terminal eskisi gibi kalır
-// (o zaman "+" terminalin sağ üst köşesinde, üzerine gelince belirir).
+// The tab strip shows only when the project has more than one tab; a single terminal looks as before
+// (then "+" sits in the terminal's top-right corner and appears on hover).
 const baseName = (d) => String(d || '').replace(/\/+$/, '').split('/').pop() || '';
 function tabButton(p, tab, active, running) {
   const n = tab?.n ?? MAIN_TAB;
@@ -222,7 +222,7 @@ function selectTab(projectId, n) {
   render();
   focusActive();
 }
-// mode verilmezse main sorar (git deposunda menü: aynı klasör / yeni worktree).
+// without mode, main asks (in a git repo, a menu: same folder / new worktree).
 async function addTab(projectId, mode) {
   if (!projectId) return;
   try {
@@ -238,13 +238,13 @@ async function addTab(projectId, mode) {
 async function closeTab(projectId, n) {
   try {
     const r = await api.tabs?.close(projectId, n);
-    // git worktree'yi kaldırmadı: claude aynı sekmede son oturumundan yeniden başladı
+    // git did not remove the worktree: claude restarted in the same tab from its last session
     if (r?.restarted) panes.get(tabPtyId(projectId, n))?.term.reset({ restarting: true });
     applyProjects(await api.projects.list());
   } catch (e) { console.error(e); }
   focusActive();
 }
-/** ⇧⌘[ / ⇧⌘] (Linux: Ctrl+Shift+PageUp/PageDown): etkin projede önceki/sonraki sekme. */
+/** ⇧⌘[ / ⇧⌘] (Linux: Ctrl+Shift+PageUp/PageDown): previous/next tab in the active project. */
 function cycleTab(step) {
   const p = activeProject();
   if (!p || !tabsOf(p).length) return;
@@ -253,7 +253,7 @@ function cycleTab(step) {
   selectTab(p.id, ns[(i + step + ns.length) % ns.length]);
 }
 
-// `login:<hesap>` kimlikleri giriş katmanına gider; onlar için hiçbir zaman proje bölmesi kurulmaz.
+// `login:<account>` ids go to the login overlay; a project pane is never built for them.
 api.pty.onData((id, d) => {
   if (isLoginId(id)) return login?.write(id, d);
   const p = panes.get(id);
@@ -272,7 +272,7 @@ api.pty.onExit((id, code) => {
   pending.set(id, buf);
 });
 
-// ---- Durum ----
+// ---- State ----
 let office = null;
 let sidebar = null;
 
@@ -307,7 +307,7 @@ async function refreshAccounts() {
   try { setAccounts(await api.accounts.list()); } catch (e) { console.error(e); render(); }
 }
 
-// ---- Eylemler ----
+// ---- Actions ----
 async function addProject() {
   try {
     const p = await api.projects.add();
@@ -318,7 +318,7 @@ async function addProject() {
 function selectProject(id) {
   if (!id || !projects.some((p) => p.id === id)) return;
   if (id !== activeId) {
-    activeId = id; // hemen göster; onChange doğrular
+    activeId = id; // show immediately; onChange confirms
     render();
     api.projects.setActive(id).catch((e) => console.error(e));
   } else focusActive();
@@ -333,7 +333,7 @@ async function removeProject(p) {
 }
 
 async function setAccount(projectId, accountId) {
-  // yeni hesapla bütün sekmelerde yeni claude başlar
+  // a new claude starts in every tab with the new account
   const proj = projects.find((p) => p.id === projectId);
   for (const id of proj ? ptyIdsOf(proj) : [projectId]) panes.get(id)?.term.reset({ restarting: true });
   hint(projectId, '');
@@ -346,8 +346,8 @@ async function setAccount(projectId, accountId) {
   else focusActive();
 }
 
-// Yeni hesap eklenince giriş katmanı hemen açılır.
-// projectId verilirse (proje satırındaki "+ Yeni hesap…") yeni hesap hemen o projeye atanır.
+// Adding a new account opens the login overlay right away.
+// With projectId ("+ Yeni hesap…" in a project row), the new account is assigned to that project at once.
 async function addAccount(label, projectId) {
   let a = null;
   try { a = await api.accounts.add(label); } catch (e) { console.error(e); }
@@ -362,7 +362,7 @@ function openLogin(id, fallback) {
 }
 
 async function logoutAccount(a) {
-  if (a.id === 'default') return; // sistemdeki Claude Code girişi buradan kapatılmaz
+  if (a.id === 'default') return; // the system's Claude Code login cannot be signed out from here
   if (!confirm(t('app.logout', { label: a.label }))) return focusActive();
   try { await api.accounts.logout(a.id); } catch (e) { console.error(e); }
   await refreshAccounts();
@@ -390,7 +390,7 @@ async function removeAccount(a) {
   try { applyProjects(await api.projects.list()); } catch {}
 }
 
-// ---- Kenar çubuğu ----
+// ---- Sidebar ----
 sidebar = mountSidebar($('sidebar'), {
   select: selectProject,
   addProject,
@@ -419,7 +419,7 @@ $('toggle-sidebar').addEventListener('click', () => {
   setCollapsed(!document.body.classList.contains('sidebar-collapsed'));
   focusActive();
 });
-// bot rengi: kullanıcı seçimi, bu bilgisayarda saklanır
+// bot color: user's choice, stored on this computer
 function setBotColor(hex) {
   store.set('botColor', hex || '');
   office?.setBotColor?.(hex);
@@ -428,7 +428,7 @@ function setBotColor(hex) {
 
 setCollapsed(store.get('sidebarCollapsed') === '1');
 
-// ---- Dil: başlık, boş durum ve ipuçları; kenar çubuğu, ofis ve panel kendini yeniden çizer ----
+// ---- Language: title, empty state and hints; sidebar, office and panel redraw themselves ----
 function applyStaticText() {
   $('title').textContent = t('app.appTitle');
   $('empty-title').textContent = t('app.emptyTitle');
@@ -445,7 +445,7 @@ function applyStaticText() {
 async function applyLanguage(li) {
   if (!li) return;
   await setLang(li.lang);
-  // ofisin çizilen yazıları (core.mjs) yalnız İngilizce ve Türkçe bilir; başka dilde İngilizce
+  // the office's drawn text (core.mjs) knows only English and Turkish; other languages get English
   try { office?.setLanguage?.(li.lang === 'tr' ? 'tr' : 'en'); } catch (e) { console.error(e); }
   sidebar.setLanguage(li);
 }
@@ -456,15 +456,15 @@ api.prefs?.get().then((p) => sidebar.setResume(p?.resume)).catch((e) => console.
 $('empty-add').addEventListener('click', addProject);
 $('tab-add').addEventListener('click', () => addTab(activeId));
 
-// ⌘V (Linux'ta Ctrl+Shift+V; menüden): odaktaki terminale akıllı yapıştırma; terminal dışında (ör. hesap adı) normal yapıştırma.
+// ⌘V (Ctrl+Shift+V on Linux; from the menu): smart paste into the focused terminal; normal paste outside it (e.g. account name).
 api.clipboard.onPaste?.(async () => {
   if (!(await pasteIntoFocused())) api.clipboard.nativePaste();
 });
 
-// ⌘O / ⌘1…9 (Linux'ta Ctrl+Shift+O / Ctrl+Shift+1…9). Yakalanan tuş terminale (xterm) ulaşmaz.
+// ⌘O / ⌘1…9 (Ctrl+Shift+O / Ctrl+Shift+1…9 on Linux). A captured key does not reach the terminal (xterm).
 window.addEventListener('keydown', (e) => {
-  // sekmeler: macOS'ta ⇧⌘T yeni git worktree, ⇧⌘[ ve ⇧⌘] önceki/sonraki; Linux'ta Shift değiştiricinin
-  // parçası olduğu için önceki/sonraki Ctrl+Shift+PageUp/PageDown (worktree "+" menüsünden)
+  // tabs: on macOS ⇧⌘T new git worktree, ⇧⌘[ and ⇧⌘] previous/next; on Linux Shift is part of the
+  // modifier, so previous/next is Ctrl+Shift+PageUp/PageDown (worktree from the "+" menu)
   if (isMac && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
     if (e.code === 'KeyT') { e.preventDefault(); e.stopPropagation(); addTab(activeId, 'worktree'); return; }
     if (e.code === 'BracketLeft' || e.code === 'BracketRight') { e.preventDefault(); e.stopPropagation(); cycleTab(e.code === 'BracketLeft' ? -1 : 1); return; }
@@ -475,7 +475,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (!isModKey(e)) return;
   const key = keyOf(e);
-  // ⌘T / Ctrl+Shift+T: yeni sekme (git deposunda main aynı klasör mü worktree mi diye sorar)
+  // ⌘T / Ctrl+Shift+T: new tab (in a git repo, main asks: same folder or worktree)
   if (key === 't') { e.preventDefault(); e.stopPropagation(); addTab(activeId); return; }
   if (key === 'o') { e.preventDefault(); e.stopPropagation(); addProject(); return; }
   if (/^[1-9]$/.test(key)) {
@@ -489,7 +489,7 @@ document.addEventListener('mouseup', (e) => {
   focusActive();
 });
 
-// Sürüklenebilir ayraç: terminal yüksekliği.
+// Draggable splitter: terminal height.
 {
   const div = $('divider');
   const saved = Number(store.get('termHeight'));
@@ -513,12 +513,12 @@ document.addEventListener('mouseup', (e) => {
   });
 }
 
-// ---- Ajan ayrıntıları: ofiste bota tıklayınca sağdaki panel (agent-panel.js) ----
+// ---- Agent details: right-hand panel when a bot is clicked in the office (agent-panel.js) ----
 let agentPanel = null;
 function selectAgent(id) {
   if (!agentPanel) return;
   if (id) agentPanel.show(id);
-  else agentPanel.hide(); // onClose seçimi temizler
+  else agentPanel.hide(); // onClose clears the selection
   try { office?.setSelected?.(id || null); } catch (e) { console.error(e); }
 }
 try {
@@ -528,7 +528,7 @@ try {
     onClose: () => { try { office?.setSelected?.(null); } catch {} },
     onSelect: (id) => { try { office?.setSelected?.(id); } catch {} },
     loadToday: () => api.office.today?.() ?? Promise.resolve(null),
-    // panelden terminale: o projeyi etkinleştir ve terminaline odaklan
+    // from panel to terminal: activate that project and focus its terminal
     onOpenProject: (name) => {
       const p = projects.find((x) => x.name === name);
       if (!p) return;
@@ -540,7 +540,7 @@ try {
   console.warn('Ajan paneli yüklenemedi:', e.message);
 }
 
-// ---- Ofis: ayrı modül; yoksa yalnızca terminal çalışır ----
+// ---- Office: separate module; without it only the terminal runs ----
 try {
   const { mountOffice } = await import('./office-view.js');
   office = mountOffice(/** @type {HTMLCanvasElement} */ ($('office')), { onTheme: applyTheme, onSelect: (id) => selectAgent(id) });
@@ -567,5 +567,5 @@ setStats(null);
 try { setAccounts(await api.accounts.list()); } catch (e) { console.error(e); }
 try { applyProjects(await api.projects.list()); } catch (e) { console.error(e); render(); }
 
-// Terminal dışına bırakılan dosyalar pencereyi o dosyaya götürmesin.
+// Files dropped outside the terminal must not navigate the window to that file.
 for (const ev of ['dragover', 'drop']) document.addEventListener(ev, (e) => e.preventDefault());

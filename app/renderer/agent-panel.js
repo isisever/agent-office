@@ -1,11 +1,11 @@
-// Ajan ayrıntıları: ofiste tıklanan botun ne yaptığını sağda bir panelde gösterir.
+// Agent details: shows what the bot clicked in the office is doing, in a panel on the right.
 // mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToday, anchor }) → { show(id), update(data), hide(), shownId() }
-// - update(OfficeData) her office:data'da çağrılır; panel açıksa canlı güncellenir.
-// - Eski eklenti verisinde prompt/detail/history/toolCount/result yoktur: panel yine çalışır.
-// - '@boss' (core.mjs BOSS_ID) müdürün özetini gösterir; oradaki ajan satırına tıklamak onSelect(id) çağırır.
-// - anchor verilirse panel o öğenin (ofis tuvali) kutusunu kaplar.
-// - '@today' (core.mjs TODAY_ID, beyaz tahta) günün teslimlerini gösterir; veri loadToday() ile istenir (sözleşme v2.9).
-// - 'shell:<id>' sunucu odasındaki bir arka plan komutunu gösterir (OfficeData.shells; eski veride yoktur).
+// - update(OfficeData) is called on every office:data; if the panel is open it updates live.
+// - Old plugin data has no prompt/detail/history/toolCount/result: the panel still works.
+// - '@boss' (core.mjs BOSS_ID) shows the boss's summary; clicking an agent row there calls onSelect(id).
+// - with anchor, the panel covers that element's box (the office canvas).
+// - '@today' (core.mjs TODAY_ID, whiteboard) shows the day's deliveries; data is requested via loadToday() (contract v2.9).
+// - 'shell:<id>' shows a background command in the server room (OfficeData.shells; absent in old data).
 
 import { onLang, t, hasText, locale } from './i18n.js';
 
@@ -13,9 +13,9 @@ const BOSS_ID = '@boss';
 const TODAY_ID = '@today';
 const TODAY_REFRESH_MS = 3000;
 const SHELL = 'shell:';
-const CLAMP = 220; // bundan uzun görev/sonuç daraltılır
+const CLAMP = 220; // tasks/results longer than this are collapsed
 
-// Metinler locales/*.json'da ("panel" altında), her çizimde okunur: t('panel.anahtar', { değişken }).
+// Strings live in locales/*.json (under "panel"), read on every render: t('panel.key', { variable }).
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const str = (v) => (typeof v === 'string' ? v : v == null ? '' : String(v));
@@ -45,7 +45,7 @@ const clock = (at) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 };
 
-// saat:dakika, her dilde 24 saat (gün sonu listesi)
+// hour:minute, 24-hour in every language (end-of-day list)
 const hm = (at) => {
   const d = new Date(at);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -82,14 +82,14 @@ async function copyText(text) {
 export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToday, anchor } = {}) {
   let data = null;
   let id = null;
-  let last = null; // ofisten ayrılınca son bilinen hâli
+  let last = null; // last known state after it leaves the office
   let lastHtml = '';
   let tick = 0;
-  let today = null; // son loadToday() sonucu
+  let today = null; // last loadToday() result
   let todayAt = 0;
   let isTodayLoading = false;
   const expanded = new Set(); // `${id}:prompt` / `${id}:result`
-  const copies = new Map(); // data-copy anahtarı → metin
+  const copies = new Map(); // data-copy key → text
 
   el.classList.add('agent-panel');
   el.tabIndex = -1;
@@ -97,10 +97,10 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToda
   el.setAttribute('aria-label', t('panel.ariaLabel'));
   el.hidden = true;
 
-  // terminale odak çalan belge düzeyi mouseup'a gitmesin (metin seçilebilsin)
+  // keep the document-level mouseup that steals focus for the terminal from firing (so text can be selected)
   el.addEventListener('mouseup', (e) => e.stopPropagation());
 
-  // ofis tuvalinin kutusunu kapla
+  // cover the office canvas's box
   let ro = null;
   function place() {
     if (!anchor || el.hidden) return;
@@ -216,7 +216,7 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToda
       html += `<section class="ap-sec"><div class="ap-label">${t('panel.exitCode')}</div><div class="ap-text mono">${code}</div></section>`;
     }
     html += block('desc', t('panel.description'), s.description);
-    // başlatan: alt ajan (ofisteyse tıklanır) ya da ana oturum (müdür)
+    // launched by: a subagent (clickable if in the office) or the main session (boss)
     const agentId = str(s.agentId);
     let who;
     if (agentId) {
@@ -269,7 +269,7 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToda
     return { title: t('panel.boss'), project: '', html };
   }
 
-  // gün sonu özeti: bugünün teslimleri (en yenisi önce), proje başına sayı ve ajan süresi
+  // end-of-day summary: today's deliveries (newest first), count per project and agent time
   function todayHtml() {
     if (Date.now() - todayAt > TODAY_REFRESH_MS && !isTodayLoading && loadToday) {
       isTodayLoading = true;
@@ -385,7 +385,7 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToda
 
   function onKey(e) {
     if (e.key !== 'Escape' || el.hidden) return;
-    // terminaldeki Esc Claude'a gider (kesme); orada yakalanmaz
+    // Esc in the terminal goes to Claude (interrupt); not captured there
     const a = document.activeElement;
     if (a && a !== el && !el.contains(a) && a.closest?.('.term-host, .xterm')) return;
     e.preventDefault();
@@ -394,7 +394,7 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToda
   }
   window.addEventListener('keydown', onKey, true);
 
-  // dil değişince açık görünüm yeniden çizilir
+  // the open view is redrawn when the language changes
   const offLang = onLang(() => {
     el.setAttribute('aria-label', t('panel.ariaLabel'));
     lastHtml = '';

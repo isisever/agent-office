@@ -1,14 +1,14 @@
-// Yalnızca geliştirme: window.agentOffice yokken (index.html düz tarayıcıda açılınca) v2 API'sinin sahtesi.
-// Electron'da preload window.agentOffice'u verir ve bu dosya hiç yüklenmez.
-// ?empty → proje yok; ?themesError → başlıkta tema uyarısı; ?authError → üçüncü hesap 'error';
-// ?loginFail → sahte giriş 1 koduyla biter ve hesap 'out' kalır. ?lang=en|tr → dil ayarı (yoksa auto: tarayıcı dili).
-// ?langs=en,tr,de → dil seçicideki diller (tarayıcı klasörü listeleyemez; main locales/*.json'dan okur). Varsayılan en,tr.
-// ?platform=linux → Linux başlık çubuğu ve Ctrl+Shift kısayolları (platform.js).
-// ?asking → ikinci proje onay bekler (tabela, ✋), üçüncüsü bitti (●).
-// ?select=<işçi id | @boss | shell:<id>> → birkaç saniye sonra o bota/raf yuvasına tıklanır (ajan paneli denemesi;
-// ör. ?select=m-1, ?select=shell:sh-1). ?noShells → eski veri (shells alanı yok).
-// ?tabs → ilk projede üç sekme (ana, aynı klasör, git worktree) ve worktree sekmesi açık (sözleşme v3.0);
-// "+" sahte bir worktree'siz sekme ekler, ⇧⌘T worktree'li; × sorusuz kapatır.
+// Development only: a fake of the v2 API when window.agentOffice is missing (index.html opened in a plain browser).
+// In Electron the preload provides window.agentOffice and this file is never loaded.
+// ?empty → no projects; ?themesError → theme warning in the title bar; ?authError → third account 'error';
+// ?loginFail → fake login exits with code 1 and the account stays 'out'. ?lang=en|tr → language setting (else auto: browser language).
+// ?langs=en,tr,de → languages in the picker (a browser cannot list the folder; main reads locales/*.json). Default en,tr.
+// ?platform=linux → Linux title bar and Ctrl+Shift shortcuts (platform.js).
+// ?asking → second project awaits approval (sign, ✋), third is done (●).
+// ?select=<worker id | @boss | shell:<id>> → clicks that bot/rack slot after a few seconds (agent panel test;
+// e.g. ?select=m-1, ?select=shell:sh-1). ?noShells → old data (no shells field).
+// ?tabs → three tabs in the first project (main, same folder, git worktree) with the worktree tab open (contract v3.0);
+// "+" adds a fake tab without a worktree, ⇧⌘T one with a worktree; × closes without asking.
 const q = new URLSearchParams(location.search);
 const listeners = (set = new Set()) => ({ add: (cb) => (set.add(cb), () => set.delete(cb)), emit: (...a) => set.forEach((cb) => cb(...a)) });
 const ev = { projects: listeners(), data: listeners(), exit: listeners(), office: listeners(), accounts: listeners() };
@@ -25,7 +25,7 @@ if (q.has('authError')) {
   accounts.push({ id: 'kisisel', label: 'Kişisel', configDir: '/tmp/accounts/kisisel',
     auth: { state: 'error', error: 'claude bulunamadı: zsh: command not found: claude' } });
 }
-const realAuth = new Map(accounts.map((a) => [a.id, a.auth])); // 'checking' bittiğinde dönülecek durum
+const realAuth = new Map(accounts.map((a) => [a.id, a.auth])); // state to return to when 'checking' ends
 const accountsCopy = () => accounts.map((a) => ({ ...a, auth: { ...a.auth } }));
 const accountsChanged = () => setTimeout(() => ev.accounts.emit(accountsCopy()));
 function setAuth(id, auth) {
@@ -35,7 +35,7 @@ function setAuth(id, auth) {
   if (auth.state !== 'checking') realAuth.set(id, auth);
   accountsChanged();
 }
-/** Gerçekteki gibi: önce 'checking', biraz sonra asıl durum. */
+/** As in the real app: 'checking' first, the actual state a bit later. */
 function check(id, ms = 900) {
   const a = accounts.find((x) => x.id === id);
   if (!a) return;
@@ -44,7 +44,7 @@ function check(id, ms = 900) {
   accountsChanged();
   setTimeout(() => setAuth(id, real), ms);
 }
-const logins = new Set(); // çalışan sahte giriş pty'leri (hesap kimliği)
+const logins = new Set(); // running fake login ptys (account id)
 function fakeLogin(id) {
   if (logins.has(id)) return;
   logins.add(id);
@@ -62,7 +62,7 @@ function fakeLogin(id) {
     logins.delete(id);
     ev.exit.emit(pid, fail ? 1 : 0);
     if (!fail && a) realAuth.set(id, { state: 'in', email: `${a.label.toLocaleLowerCase('tr').replace(/ı/g, 'i').normalize('NFD').replace(/[^a-z0-9]+/g, '') || 'hesap'}@example.com`, method: 'claude.ai' });
-    check(id, 500); // main: giriş pty'si kapanınca durumu yeniler
+    check(id, 500); // main: refreshes the state when the login pty exits
   }, 150 + lines.length * 450);
 }
 const projects = q.has('empty') ? [] : [
@@ -108,7 +108,7 @@ if (q.has('tabs')) setTimeout(() => /** @type {HTMLElement | null} */ (document.
 const names = ['yeni-proje', 'web-sitesi', 'mobil-uygulama', 'raporlar'];
 
 const langCodes = (q.get('langs') || 'en,tr').split(',').map((c) => c.trim()).filter(Boolean);
-// adlar dosyaların "_name"inden, main'deki gibi
+// names come from the files' "_name", as in main
 const languages = await Promise.all(langCodes.map((code) => fetch(`../locales/${code}.json`).then((r) => r.json())
   .then((d) => ({ code, name: typeof d?._name === 'string' ? d._name : code })).catch(() => ({ code, name: code }))));
 const known = (v) => langCodes.includes(v);
@@ -196,7 +196,7 @@ window.agentOffice = {
   },
   pty: {
     write: (id, d) => {
-      if (id.startsWith('login:')) return; // sahte giriş girdi beklemez
+      if (id.startsWith('login:')) return; // fake login does not wait for input
       setTimeout(() => ev.data.emit(id, d === '\r' ? '\r\n> ' : d));
     },
     resize: () => {},
@@ -235,7 +235,7 @@ window.agentOffice = {
   pathForFile: () => '',
 };
 
-// ---- sahte ajanlar: ayrıntı paneli için prompt/detail/history/result; biri eski biçimde (alanlar yok) ----
+// ---- fake agents: prompt/detail/history/result for the details panel; one in the old format (no fields) ----
 const T0 = Date.now();
 const SCRIPT = {
   'm-1': [
@@ -259,7 +259,7 @@ const mockWorkers = () => {
   const p1 = projects[1]?.name ?? p0;
   const live = (id, startAgo) => {
     const steps = SCRIPT[id];
-    const n = Math.floor((now - (T0 - startAgo)) / 4000); // 4 sn'de bir yeni araç
+    const n = Math.floor((now - (T0 - startAgo)) / 4000); // a new tool every 4 s
     const history = [];
     for (let k = 0; k <= n; k++) {
       const [tool, detail] = steps[k % steps.length];
@@ -283,7 +283,7 @@ const mockWorkers = () => {
       prompt: 'Siparişlere kısmi iade desteği ekle ve testlerini yaz.',
       ...live('m-2', 25000),
     },
-    // eski eklenti: yalnız temel alanlar
+    // old plugin: basic fields only
     { id: 'm-3', type: 'Plan', project: p0, spawnAt: T0 - 15000, description: 'Geçiş planı', tool: 'Read' },
     {
       id: 'm-4', type: 'code-reviewer', project: p1, spawnAt: T0 - 60000, doneAt: T0 + 6000, isOk: true,
@@ -300,7 +300,7 @@ const mockWorkers = () => {
   ].filter((w) => w.doneAt == null || now < w.doneAt + 60000);
 };
 
-// ---- sahte arka plan komutları (sunucu odası): ikisi çalışıyor, biri bitti (0), biri başarısız ----
+// ---- fake background commands (server room): two running, one done (0), one failed ----
 const mockShells = () => {
   const p0 = projects[0]?.name ?? 'agent-office';
   const p1 = projects[1]?.name ?? p0;
@@ -313,7 +313,7 @@ const mockShells = () => {
 };
 
 if (q.has('select')) {
-  // gerçek tıklama yolu: core.mjs kutusundan tuval pikseline, oradan CSS pikseline
+  // real click path: from the core.mjs box to canvas pixels, then to CSS pixels
   const want = q.get('select');
   setTimeout(async () => {
     const { hitBoxes } = await import('../src/office/core.mjs');

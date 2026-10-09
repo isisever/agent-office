@@ -1,6 +1,6 @@
-// Sol kenar çubuğu: PROJELER (her satır bir proje) ve HESAPLAR.
-// Yapı yalnızca proje/hesap listesi değişince yeniden kurulur; ofis istatistikleri yerinde güncellenir
-// (açık <select> ya da yazılan ad 500 ms'lik veriyle bozulmasın). Dil değişince her şey yeniden çizilir.
+// Left sidebar: PROJECTS (one project per row) and ACCOUNTS.
+// The structure is rebuilt only when the project/account list changes; office stats update in place
+// (so an open <select> or a name being typed is not disrupted by 500 ms data). A language change redraws everything.
 import { hasText, locale, onLang, t } from './i18n.js';
 import { modLabel } from './platform.js';
 
@@ -18,7 +18,7 @@ function h(tag, props = {}, ...children) {
 }
 
 
-/** Projenin satır altı özeti: "2 çalışan · 5 teslim". */
+/** The project's subline summary: "2 çalışan · 5 teslim". */
 function statsText(s) {
   if (!s) return t('sidebar.idle');
   const parts = [];
@@ -27,11 +27,11 @@ function statsText(s) {
   return parts.length ? parts.join(' · ') : t('sidebar.idle');
 }
 
-/** Varsayılan hesabın adı seçili dilde (main 'Varsayılan' olarak saklar). */
+/** The default account's name in the selected language (main stores it as 'Varsayılan'). */
 const labelOf = (a) => (a.id === 'default' ? t('sidebar.defaultLabel') : a.label);
 
 const pad2 = (n) => String(n).padStart(2, '0');
-/** Sıfırlanma zamanı: 24 saat içindeyse "14:30", değilse "Pzt 09:00" / "Mon 09:00". */
+/** Reset time: "14:30" if within 24 hours, otherwise "Pzt 09:00" / "Mon 09:00". */
 function resetText(ms, now) {
   const d = new Date(ms);
   const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -52,25 +52,25 @@ export function mountSidebar(el, on) {
   let accounts = [];
   let activeId = null;
   let status = new Map();
-  let attn = new Map(); // projectId → 'permission' | 'done' (main'in bildirim durumu)
+  let attn = new Map(); // projectId → 'permission' | 'done' (main's notification state)
   let stats = new Map();
   let projKey = '';
   let acctKey = '';
-  let editing = null; // { id: string | null } — hesap adı düzenleniyor (null id = yeni hesap)
+  let editing = null; // { id: string | null } — account name being edited (null id = new account)
   let langSetting = 'auto';
   /** @type {{ code: string, name: string }[]} */
-  let languages = []; // locales/*.json (main'den, LanguageInfo.languages)
+  let languages = []; // locales/*.json (from main, LanguageInfo.languages)
 
-  // bot rengi: ofisteki botların gövde rengi (↺ = temanın varsayılanı)
+  // bot color: body color of the office bots (↺ = the theme's default)
   const botInput = h('input', { type: 'color', class: 'sb-color', oninput: (e) => on.setBotColor?.(e.target.value) });
   const botLabel = h('span', {});
   const botReset = h('button', { class: 'sb-x', onclick: () => on.setBotColor?.(null) }, '↺');
   const botRow = h('div', { class: 'sb-botcolor' }, botLabel, botInput, botReset);
-  // dil: Otomatik (sistem) ve locales/ klasöründeki diller; dil adları kendi dillerinde (dosyanın "_name"i)
+  // language: Automatic (system) and the languages in locales/; language names in their own language (the file's "_name")
   const langLabel = h('span', {});
   const langSelect = h('select', { class: 'sb-acct sb-lang', onchange: (e) => on.setLanguage?.(e.target.value) });
   const langRow = h('div', { class: 'sb-botcolor sb-langrow' }, langLabel, langSelect);
-  // açılışta son oturumdan devam (claude --continue)
+  // resume the last session on launch (claude --continue)
   const resumeLabel = h('span', {});
   const resumeBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setResume?.(e.target.checked) });
   const resumeRow = h('label', { class: 'sb-botcolor sb-langrow' }, resumeLabel, resumeBox);
@@ -92,7 +92,7 @@ export function mountSidebar(el, on) {
     botRow,
   );
 
-  /** Kalıcı öğelerin metinleri (başlıklar, düğmeler, alt satırlar). */
+  /** Text of the persistent elements (headings, buttons, sublines). */
   function renderChrome() {
     projHead.textContent = t('sidebar.projects');
     acctHead.textContent = t('sidebar.accounts');
@@ -115,7 +115,7 @@ export function mountSidebar(el, on) {
   }
   renderChrome();
 
-  // Projenin hesabı: açıkça "Hesap" etiketli açılır liste; son seçenek yeni hesap açıp bu projeye atar.
+  // The project's account: a dropdown explicitly labeled "Hesap"; the last option creates a new account and assigns it here.
   const NEW_ACCOUNT = '__new__';
   function accountSelect(p) {
     const sel = h('select', {
@@ -137,7 +137,7 @@ export function mountSidebar(el, on) {
       h('span', { class: 'sb-acct-label' }, t('sidebar.account')), sel);
   }
 
-  /** Hesabında giriş yoksa proje satırında uyarı; tıklayınca giriş katmanı açılır. */
+  /** Warning in the project row if its account is not logged in; clicking opens the login overlay. */
   function loginBadge(p) {
     const a = accounts.find((x) => x.id === p.accountId);
     if (a?.auth?.state !== 'out') return null;
@@ -194,7 +194,7 @@ export function mountSidebar(el, on) {
     return input;
   }
 
-  /** Hesabın giriş satırı: e-posta + yöntem ya da durum, yanında Giriş yap / Çıkış yap. */
+  /** The account's login row: email + method or state, with Giriş yap / Çıkış yap next to it. */
   function authRow(a, isDefault) {
     const auth = a.auth;
     if (!auth?.state) return null;
@@ -220,7 +220,7 @@ export function mountSidebar(el, on) {
     }
   }
 
-  /** Hesabın plan kotası: 5 saatlik ve haftalık kullanım, sıfırlanma zamanı (son açık oturumdan). */
+  /** The account's plan quota: 5-hour and weekly usage, reset time (from the last open session). */
   function usageRows(a) {
     const u = a.usage;
     if (!u || a.auth?.state !== 'in') return null;
@@ -286,11 +286,11 @@ export function mountSidebar(el, on) {
       }, t('sidebar.addAccount'))));
   }
 
-  // sıfırlanma zamanları ve "x dk önce" kendiliğinden eskir: dakikada bir yeniden çiz
+  // reset times and "x dk önce" go stale on their own: redraw once a minute
   setInterval(() => { if (!editing && accounts.some((a) => a.usage)) renderAccounts(); }, 60000);
 
-  // dil değişti: her şey yeniden çizilir; hesap adı düzenleniyorsa hesaplar düzenleme bitince çizilir
-  // (yazılan ad kaybolmasın; nameInput bitince renderAccounts çağırır)
+  // language changed: everything is redrawn; if an account name is being edited, accounts are drawn when editing ends
+  // (so the typed name is not lost; nameInput calls renderAccounts when done)
   onLang(() => {
     renderChrome();
     renderProjects();
@@ -298,18 +298,18 @@ export function mountSidebar(el, on) {
   });
 
   return {
-    /** Dil ayarı, etkin dil ve diller: { setting: 'auto' | kod, lang, languages: [{ code, name }] }. */
+    /** Language setting, active language and languages: { setting: 'auto' | code, lang, languages: [{ code, name }] }. */
     setLanguage(li) {
       if (!li) return;
       if (Array.isArray(li.languages)) languages = li.languages;
       langSetting = languages.some((l) => l.code === li.setting) ? li.setting : 'auto';
       renderLanguages();
     },
-    /** Açılışta son oturumdan devam ayarı. */
+    /** Setting to resume the last session on launch. */
     setResume(on) { resumeBox.checked = on !== false; },
-    /** Seçicide gösterilen bot rengi. */
+    /** Bot color shown in the picker. */
     setBotColor(hex) { botInput.value = hex || '#3fb6a8'; },
-    /** Proje listesi, etkin proje, çalışma durumu ve hesaplar. */
+    /** Project list, active project, working state and accounts. */
     setState(s) {
       projects = s.projects || [];
       accounts = s.accounts || [];
@@ -321,7 +321,7 @@ export function mountSidebar(el, on) {
       const ak = JSON.stringify(accounts);
       if (ak !== acctKey && !editing) { acctKey = ak; renderAccounts(); }
     },
-    /** OfficeData.projects: proje adına göre çalışan / teslim / patron. */
+    /** OfficeData.projects: working / delivered / boss by project name. */
     setStats(list) {
       stats = new Map((list || []).map((s) => [s.name, s]));
       for (const li of projList.querySelectorAll('.sb-proj')) {

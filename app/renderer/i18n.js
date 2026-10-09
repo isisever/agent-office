@@ -1,15 +1,15 @@
-// Arayüz dili: app/locales/<kod>.json dosyalarından biri ('en', 'tr', ...). Ayar ('auto' ya da bir kod) main'de
-// state.json'da durur; 'auto' sistem dilidir. Dil listesi main'den gelir (LanguageInfo.languages).
-// Metinler: t('sidebar.working', { n: 2 }) → "2 working" (biçimlendirici ../src/i18n.mjs, main ile ortak).
-// Dosyada olmayan anahtar İngilizceye düşer. Dil değişince dosya yüklenir, sonra onLang abonelerine haber verilir;
-// modüller kendini yeniden çizer (pencere yeniden yüklenmez).
+// UI language: one of the app/locales/<code>.json files ('en', 'tr', ...). The setting ('auto' or a code) lives in
+// main's state.json; 'auto' is the system language. The language list comes from main (LanguageInfo.languages).
+// Strings: t('sidebar.working', { n: 2 }) → "2 working" (formatter ../src/i18n.mjs, shared with main).
+// A key missing from the file falls back to English. On a language change the file is loaded, then onLang
+// subscribers are notified; modules redraw themselves (the window is not reloaded).
 import { translator } from '../src/i18n.mjs';
 
 const FALLBACK = 'en';
 const CODE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 /** @type {Map<string, Promise<any>>} */
 const files = new Map();
-/** locales/<kod>.json; okunamazsa {} (her anahtar İngilizceye düşer). @param {string} code */
+/** locales/<code>.json; {} if unreadable (every key falls back to English). @param {string} code */
 function load(code) {
   if (!files.has(code)) {
     files.set(code, fetch(new URL(`../locales/${code}.json`, import.meta.url))
@@ -26,12 +26,12 @@ let seq = 0;
 const subs = new Set();
 
 export const getLang = () => lang;
-/** Dili değiştirir (dosyası yüklenince). @param {string} l */
+/** Changes the language (once its file has loaded). @param {string} l */
 export async function setLang(l) {
   const next = typeof l === 'string' && CODE.test(l) ? l : FALLBACK;
   const my = ++seq;
   const dict = next === FALLBACK ? base : await load(next);
-  if (my !== seq) return; // arada başka bir dil istendi
+  if (my !== seq) return; // another language was requested in the meantime
   document.documentElement.lang = next;
   if (next === lang) return;
   lang = next;
@@ -39,9 +39,9 @@ export async function setLang(l) {
   for (const f of subs) { try { f(lang); } catch (e) { console.error('dil değişimi:', e); } }
 }
 export const onLang = (f) => { subs.add(f); return () => subs.delete(f); };
-/** O anki dilde metin. @param {string} key @param {Record<string, unknown>} [vars] */
+/** Text in the current language. @param {string} key @param {Record<string, unknown>} [vars] */
 export const t = (key, vars) => tr(key, vars);
-/** Anahtar o anki dilde (ya da İngilizcede) var mı. @param {string} key */
+/** Whether the key exists in the current language (or in English). @param {string} key */
 export const hasText = (key) => tr.has(key);
-/** Tarih/saat biçimleri için yerel ayar (dil kodu). */
+/** Locale for date/time formats (language code). */
 export const locale = () => lang;

@@ -1,12 +1,12 @@
-// Hesap girişi katmanı: uygulamanın üstünde ortalanmış panel, `login:<hesapId>` pty'sine bağlı xterm
-// (main orada `claude auth login` çalıştırır). pty kapanınca hesap 'in' olursa kendiliğinden kapanır.
+// Account login overlay: a panel centered over the app, with an xterm attached to the `login:<accountId>` pty
+// (main runs `claude auth login` there). Closes itself if the account is 'in' when the pty exits.
 import { mountTerminal } from './terminal.js';
 import { onLang, t } from './i18n.js';
 
-// Metinler locales/*.json'da ("login" altında), her kullanımda okunur: t('login.anahtar').
+// Strings live in locales/*.json (under "login"), read on every use: t('login.key').
 
-const CLOSE_AFTER = 1500; // başarıdan sonra kapanma gecikmesi
-const AUTH_WAIT = 6000; // kapanıştan sonra main'in giriş denetimini bekleme süresi
+const CLOSE_AFTER = 1500; // close delay after success
+const AUTH_WAIT = 6000; // how long to wait for main's login check after exit
 
 function h(tag, cls, text) {
   const el = document.createElement(tag);
@@ -19,7 +19,7 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
   let accounts = [];
   let cur = null; // { id, ptyId, root, title, label, x, hint, status, statusText, retry, term, exited, code, updated, timers }
 
-  // text: metni üreten işlev (dil değişince yeniden çağrılır)
+  // text: function that produces the text (called again when the language changes)
   function setStatus(text, kind = '') {
     if (!cur) return;
     cur.statusText = text;
@@ -32,7 +32,7 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
     c.timers = [];
   }
 
-  /** pty kapandıktan sonra hesabın durumuna bak: 'in' → kapan, aksi halde "Tekrar dene". */
+  /** After the pty exits, check the account's state: 'in' → close, otherwise "Tekrar dene". */
   function evaluate(force = false) {
     const c = cur;
     if (!c || !c.exited || c.closing || c.code == null) return;
@@ -47,7 +47,7 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
       c.timers.push(setTimeout(() => { if (cur === c) close(); }, CLOSE_AFTER));
       return;
     }
-    if (!force && (!c.updated || auth?.state === 'checking')) return; // main'in denetimini bekle
+    if (!force && (!c.updated || auth?.state === 'checking')) return; // wait for main's check
     clearTimers(c);
     const why = () => (auth?.state === 'error' && auth.error ? ` · ${auth.error}` : t('login.notLoggedIn'));
     setStatus(() => done() + why(), 'err');
@@ -61,7 +61,7 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
     Object.assign(c, { exited: false, code: null, updated: false, closing: false });
     c.retry.hidden = true;
     setStatus(() => t('login.starting'));
-    c.term.reset(); // ilk veriyle boyut yeniden bildirilir
+    c.term.reset(); // size is reported again with the first data
     requestAnimationFrame(() => { c.term.fit(); c.term.focus(); });
     window.agentOffice.accounts.login(c.id).then(
       () => { if (cur === c && !c.exited) setStatus(() => t('login.inProgress')); },
@@ -119,7 +119,7 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
     if (!c) return;
     cur = null;
     clearTimers(c);
-    // Yarıda kapatılan giriş: pty'yi durdur (Ctrl+C), sonraki "Giriş yap" temiz başlasın.
+    // Login closed midway: stop the pty (Ctrl+C) so the next "Giriş yap" starts clean.
     if (!c.exited) { try { window.agentOffice.pty.write(c.ptyId, '\x03'); } catch {} }
     c.term.destroy();
     c.root.remove();
@@ -133,7 +133,7 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
     close();
   }, true);
 
-  // dil değişince açık katmanın metinleri yenilenir
+  // the open overlay's strings are refreshed when the language changes
   onLang(() => {
     if (!cur) return;
     cur.x.title = t('login.close');
@@ -148,7 +148,7 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
     close,
     isOpen: () => !!cur,
     focus() { cur?.term.focus(); },
-    /** pty verisi: yalnızca açık katmanın kimliğine gider, diğerleri atılır. */
+    /** pty data: only the open overlay's id gets through, the rest is dropped. */
     write(ptyId, d) { if (cur?.ptyId === ptyId) cur.term.write(d); },
     exit(ptyId, code) {
       const c = cur;
@@ -165,7 +165,7 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
       accounts = list || [];
       if (!cur) return;
       const a = accounts.find((x) => x.id === cur.id);
-      if (!a) return close(); // hesap kaldırıldı
+      if (!a) return close(); // account was removed
       setLabel(a.label);
       if (cur.exited) { cur.updated = true; evaluate(); }
     },

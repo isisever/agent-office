@@ -1,5 +1,5 @@
 {
-  // Renderer'ın tip denetimi (çıktı yok): npx -p typescript tsc -p app/renderer
+  // Type check for the renderer (no output): npx -p typescript tsc -p app/renderer
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,

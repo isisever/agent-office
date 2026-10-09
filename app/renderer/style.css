@@ -1,4 +1,4 @@
-/* Tek çerçeve: başlık + kenar çubuğu + ofis + terminal aynı tema renkleriyle sarılır. */
+/* Single frame: title bar + sidebar + office + terminal are wrapped in the same theme colors. */
 :root {
   --frame: #2b1d1a;
   --accent: #3fb6a8;
@@ -7,8 +7,8 @@
   --term-h: 260px;
   --pad: 8px;
   --sidebar-w: 236px;
-  --ok: #8cc26a;   /* giriş yapıldı */
-  --err: #e5615a;  /* giriş hatası */
+  --ok: #8cc26a;   /* logged in */
+  --err: #e5615a;  /* login error */
   color-scheme: dark;
 }
 
@@ -36,12 +36,12 @@ button { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 0 12px 0 84px; /* trafik ışıklarına yer */
+  padding: 0 12px 0 84px; /* room for traffic lights */
   background: var(--frame);
   white-space: nowrap;
   min-width: 0;
 }
-/* Linux: pencerenin kendi çerçevesi ve başlığı var; trafik ışığı boşluğu ve sürükleme alanı gerekmez */
+/* Linux: the window has its own frame and title; no traffic-light gap or drag region needed */
 .platform-linux #titlebar { padding-left: 12px; -webkit-app-region: no-drag; }
 #title { color: var(--accent); font-weight: bold; letter-spacing: 2px; }
 #project {
@@ -79,7 +79,7 @@ button { font: inherit; color: inherit; }
   padding: 0 var(--pad) var(--pad);
 }
 
-/* ---- Kenar çubuğu ---- */
+/* ---- Sidebar ---- */
 #sidebar {
   flex: 0 0 var(--sidebar-w);
   min-width: 0;
@@ -127,7 +127,7 @@ body.sidebar-collapsed #sidebar { display: none; }
 }
 .sb-dot.live { background: var(--accent); opacity: 1; box-shadow: 0 0 4px var(--accent); }
 .sb-boss { color: var(--accent); }
-/* seni bekleyen proje: onay (el, yanıp söner) ya da bitti (nokta) */
+/* project waiting on you: approval (hand, blinking) or done (dot) */
 .sb-attn { flex-shrink: 0; font-size: 11px; line-height: 1; cursor: help; }
 .sb-attn.permission { animation: sb-blink 1s steps(2, jump-none) infinite; }
 .sb-attn.done { color: #f2c14e; }
@@ -211,7 +211,7 @@ body.sidebar-collapsed #sidebar { display: none; }
 .sb-acc-top .sb-name { flex: 1; }
 .sb-x:disabled { cursor: default; opacity: .2 !important; color: inherit; }
 
-/* Hesabın giriş durumu: kare piksel nokta + satır altı (e-posta / durum / düğme). */
+/* Account login state: square pixel dot + subline (email / state / button). */
 .sb-adot {
   flex: 0 0 6px;
   width: 6px; height: 6px;
@@ -247,7 +247,7 @@ body.sidebar-collapsed #sidebar { display: none; }
 .auth-checking .sb-auth-text { color: var(--accent); opacity: .9; }
 .auth-error .sb-auth-text { color: var(--err); opacity: 1; cursor: help; }
 
-/* Hesabın plan kotası: etiket, piksel çubuk, yüzde, sıfırlanma zamanı. */
+/* Account plan quota: label, pixel bar, percentage, reset time. */
 .sb-usages { display: flex; flex-direction: column; gap: 2px; padding-left: 12px; font-size: 9px; cursor: help; }
 .sb-usages.stale { opacity: .55; }
 .sb-usage { display: flex; align-items: center; gap: 5px; line-height: 1.2; }
@@ -273,7 +273,7 @@ body.sidebar-collapsed #sidebar { display: none; }
 .sb-btn.primary { color: var(--status-bg); background: var(--accent); font-weight: bold; }
 .sb-btn:hover { color: var(--status-bg); background: var(--accent); filter: brightness(1.15); }
 
-/* Proje satırı: hesabında giriş yok. */
+/* Project row: its account is not logged in. */
 .sb-warn {
   flex: 0 0 auto;
   font-size: 10px;
@@ -301,7 +301,7 @@ body.sidebar-collapsed #sidebar { display: none; }
   user-select: text;
 }
 
-/* ---- Ofis + terminal ---- */
+/* ---- Office + terminal ---- */
 #app {
   flex: 1 1 auto;
   min-width: 0;
@@ -346,7 +346,7 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
 }
 #terminals { flex: 1; min-width: 0; min-height: 0; display: flex; }
 
-/* ---- Sekmeler (v3.0): projede birden çok terminal varken üstte ince bir şerit ---- */
+/* ---- Tabs (v3.0): a thin strip on top when the project has more than one terminal ---- */
 #tabs {
   flex: 0 0 auto;
   display: flex;
@@ -406,7 +406,7 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
 .tab-x:hover { opacity: 1; color: var(--accent); }
 .tab-new { flex: 0 0 auto; margin-top: 3px; padding: 0 8px; opacity: .7; font-size: 15px; }
 .tab-new:hover { opacity: 1; color: var(--accent); }
-/* tek terminalde "+" görünmez; terminalin üzerine gelince sağ üstte belirir (görünüm eskisi gibi kalır) */
+/* with one terminal "+" is hidden; it appears top-right on terminal hover (the look stays as before) */
 #tab-add {
   position: absolute;
   top: 4px;
@@ -423,7 +423,7 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
 #terminal:hover #tab-add, #tab-add:focus-visible { opacity: .55; }
 #tab-add:hover { opacity: 1 !important; color: var(--status-bg); background: var(--accent); }
 
-/* Proje başına bir bölme; yalnızca etkin olan görünür, gizliler geçmişini korur. */
+/* One pane per project; only the active one is visible, hidden ones keep their history. */
 .pane {
   flex: 1;
   min-width: 0;
@@ -477,11 +477,11 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
 }
 #empty-add:hover { background: var(--accent); color: var(--status-bg); }
 
-/* Ofis modülü yoksa terminal tüm alanı alır. */
+/* Without the office module the terminal takes the whole area. */
 body.no-office #office, body.no-office #divider { display: none; }
 body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px solid var(--accent); }
 
-/* ---- Hesap girişi katmanı (login.js) ---- */
+/* ---- Account login overlay (login.js) ---- */
 .login-overlay {
   position: fixed;
   inset: 0;
@@ -552,13 +552,13 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
   cursor: pointer;
 }
 .lo-retry:hover { filter: brightness(1.15); }
-/* ---- Ajan ayrıntıları paneli (agent-panel.js): ofisin sağında, piksel ofis görünümünde ---- */
+/* ---- Agent details panel (agent-panel.js): right of the office, in the pixel office look ---- */
 #app { position: relative; }
 .agent-panel {
   position: absolute;
   top: 2px;
   right: 2px;
-  bottom: calc(max(120px, min(var(--term-h), 45%)) + 9px); /* JS anchor yoksa yedek */
+  bottom: calc(max(120px, min(var(--term-h), 45%)) + 9px); /* fallback without a JS anchor */
   z-index: 5;
   width: min(360px, 46%);
   min-width: 240px;
@@ -688,7 +688,7 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
 .ap-hist li:first-child { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .ap-when { opacity: .55; font-size: 10px; white-space: nowrap; }
 .ap-projs li { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
-/* gün sonu özeti: saat, ✓/✗, ajan ve görev, süre */
+/* end-of-day summary: time, ✓/✗, agent and task, duration */
 .ap-day { list-style: none; margin: 0; padding: 0; }
 .ap-day li { display: grid; grid-template-columns: auto auto 1fr; column-gap: 6px; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--status-text) 10%, transparent); }
 .ap-day li > .ap-dim:last-child { grid-column: 3; font-size: 10px; }
@@ -719,7 +719,7 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
 .ap-empty { opacity: .55; padding: 4px 0; }
 .ap-shell-proj { display: block; margin: 6px 0 2px; }
 
-/* ---- Bot rengi (sidebar.js) ---- */
+/* ---- Bot color (sidebar.js) ---- */
 .sb-botcolor {
   display: flex;
   align-items: center;
@@ -746,7 +746,7 @@ label.sb-langrow { cursor: pointer; }
 .sb-check { accent-color: var(--accent); margin: 0; cursor: pointer; }
 .sb-lang { flex: 0 0 auto; }
 
-/* ---- Güncelleme düğmesi (başlık) ---- */
+/* ---- Update button (title bar) ---- */
 #update {
   font: inherit;
   font-size: 11px;

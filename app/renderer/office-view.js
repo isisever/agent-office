@@ -1,4 +1,4 @@
-// Ofis görünümü: core.mjs karelerini <canvas>'a keskin (en yakın komşu) ölçekle çizer.
+// Office view: draws core.mjs frames to a <canvas> with crisp (nearest-neighbor) scaling.
 import { FRAME_MS, hitTest, render, setGeometry, setThemes as coreSetThemes, themeInfo, setBotColor as coreSetBotColor, setLanguage as coreSetLanguage } from '../src/office/core.mjs'
 
 const EMPTY = { workers: [], delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' }
@@ -22,7 +22,7 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
   let dead = false
   let selected = null
 
-  // tuvalin arka tamponu CSS kutusu × devicePixelRatio
+  // the canvas back buffer is the CSS box × devicePixelRatio
   function resize() {
     const r = canvas.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
@@ -36,9 +36,9 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
 
   function draw() {
     if (dead || !geo) return
-    // çekirdek modül durumu paylaşımlı: geometriyi her karede yeniden ver
+    // the core module's state is shared: pass the geometry again every frame
     setGeometry(canvas.width, canvas.height)
-    // odak verilmişse tema ondan, masaları vurgulu; yoksa en yeni oturumun projesi
+    // if a focus is given, the theme comes from it and its desks are highlighted; otherwise the newest session's project
     const { fb, LW, LH, S } = render(Date.now(), data, { focus: focus ?? '', selected })
     if (!image || image.width !== LW || image.height !== LH) {
       off.width = LW
@@ -46,7 +46,7 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
       image = offCtx.createImageData(LW, LH)
       pixels = new Uint32Array(image.data.buffer)
     }
-    // 0xRRGGBB → küçük endian RGBA (0xAABBGGRR)
+    // 0xRRGGBB → little-endian RGBA (0xAABBGGRR)
     for (let i = 0; i < fb.length; i++) {
       const c = fb[i]
       pixels[i] = 0xff000000 | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff)
@@ -73,8 +73,8 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     }
   }
 
-  // ---- seçim: tıklama → hitTest → onSelect; bot üstünde el imleci ----
-  // CSS pikseli → tuval arka tampon pikseli (drawImage uzayı; devicePixelRatio ve CSS boyutu dahil)
+  // ---- selection: click → hitTest → onSelect; hand cursor over a bot ----
+  // CSS pixel → canvas back-buffer pixel (drawImage space; includes devicePixelRatio and CSS size)
   function pick(e) {
     const r = canvas.getBoundingClientRect()
     if (!r.width || !r.height || !geo) return null
@@ -118,7 +118,7 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     setData(d) {
       data = d && typeof d === 'object' ? { ...EMPTY, ...d } : EMPTY
     },
-    // tema bu projeden gelir ve masaları vurgulanır; null = en yeni oturumun projesi
+    // the theme comes from this project and its desks are highlighted; null = the newest session's project
     setFocus(projectName) {
       focus = projectName ? String(projectName) : null
       draw()
@@ -127,7 +127,7 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
       coreSetThemes(t ?? {})
       draw()
     },
-    // seçili botun üstüne işaret (masada, yolda, müdürde, pistte); null = yok
+    // marker above the selected bot (at a desk, walking, at the boss, on the floor); null = none
     setSelected(id) {
       const next = id == null || id === '' ? null : String(id)
       if (next === selected) return
@@ -137,12 +137,12 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     theme() {
       return lastTheme
     },
-    // bot rengi '#rrggbb' (null = temanın rengi)
+    // bot color '#rrggbb' (null = the theme's color)
     setBotColor(hex) {
       coreSetBotColor(hex)
       draw()
     },
-    // ofisteki yazıların dili ('en' | 'tr'); başlık da dile bağlı (themeInfo().title)
+    // language of the office's text ('en' | 'tr'); the title depends on it too (themeInfo().title)
     setLanguage(lang) {
       coreSetLanguage(lang)
       draw()

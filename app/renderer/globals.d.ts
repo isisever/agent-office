@@ -1,4 +1,4 @@
-// Renderer'ın genel tipleri: preload'un köprüsü (bkz. CONTRACT.md). Ayrıntılı tipler sonra eklenebilir.
+// Renderer globals: the preload bridge (see CONTRACT.md). Detailed types can be added later.
 interface Window {
   agentOffice: any
 }
