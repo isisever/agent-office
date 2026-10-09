@@ -16,9 +16,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # the tests need no packages; the type-check only typescript and Node's types (found from app/ upwards)
+      # the tests need no packages; the type-check needs typescript and the types of Node and the app's
+      # modules (found from app/ upwards). --ignore-scripts: no Electron download, no native builds
       - name: Install the type-checker
-        run: npm install --no-save --no-package-lock typescript@5.6.3 @types/node@22
+        run: npm install --no-save --no-package-lock --ignore-scripts typescript@5.6.3 @types/node@22 electron@44.7.0 node-pty@1.1.0 electron-updater@6.8.9
       - name: Type-check the main process
         run: npx tsc -p app
       - name: Main process tests
