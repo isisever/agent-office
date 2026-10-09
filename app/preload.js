@@ -9,6 +9,7 @@ const listen = (ch) => (cb) => {
 };
 
 contextBridge.exposeInMainWorld('agentOffice', {
+  platform: process.platform,                           // 'darwin' | 'linux': başlık çubuğu ve kısayollar buna göre
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     add: () => ipcRenderer.invoke('projects:add'),
@@ -37,7 +38,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
   clipboard: {
     hasImage: () => ipcRenderer.invoke('clipboard:hasImage'),
     read: () => ipcRenderer.invoke('clipboard:read'),   // { hasImage, text, files }
-    onPaste: listen('edit:paste'),                      // menüdeki Yapıştır (⌘V)
+    onPaste: listen('edit:paste'),                      // menüdeki Yapıştır (⌘V; Linux'ta Ctrl+Shift+V)
     nativePaste: () => ipcRenderer.send('edit:nativePaste'), // terminal dışı: normal yapıştırma
   },
   pathForFile: (file) => webUtils.getPathForFile(file),

@@ -1,0 +1,50 @@
+name: release-linux
+
+# macOS sürümü elle yayımlanır (README → Releasing); yayımlanan her sürüme Linux paketleri burada eklenir:
+# AppImage, .deb ve AppImage'ın kendini güncellemesi için latest-linux.yml.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (ör. v0.5.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check the version matches the tag
+        run: |
+          v=$(node -p "require('./app/package.json').version")
+          [ "v$v" = "$TAG" ] || [ "$v" = "$TAG" ] || { echo "app/package.json $v, tag $TAG"; exit 1; }
+      # npm ci değil: kilit dosyası macOS'ta üretildi (bkz. test.yml → linux-build)
+      - name: Install app dependencies (builds node-pty for Electron)
+        working-directory: app
+        run: npm install --no-audit --no-fund
+      - name: Build AppImage and deb
+        working-directory: app
+        run: npm run dist:linux
+      - name: Check the packages
+        working-directory: app
+        run: |
+          ls -l release
+          test -f release/latest-linux.yml
+          dpkg-deb -c release/*.deb | grep -q 'node-pty/build/Release/pty.node'
+      - name: Upload to the release
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" release/*.AppImage release/*.deb release/latest-linux.yml --clobber

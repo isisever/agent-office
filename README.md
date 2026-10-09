@@ -4,7 +4,7 @@
 
 ![Agent Office: the boss at work, subagents at their desks](plugin/docs/office.png)
 
-Agent Office is a macOS app (and a Claude Code plugin that powers it). It wraps the real `claude` CLI: nothing is re-implemented, your settings, MCP servers and permissions work as usual.
+Agent Office is a macOS and Linux app (and a Claude Code plugin that powers it). It wraps the real `claude` CLI: nothing is re-implemented, your settings, MCP servers and permissions work as usual.
 
 ## Features
 
@@ -12,15 +12,15 @@ Agent Office is a macOS app (and a Claude Code plugin that powers it). It wraps 
 - **One boss over every project.** All projects' agents share the office. Desks carry a colored project tag, the whiteboard counts today's deliveries per project, and the boss's sign shows which projects keep it busy.
 - **See what an agent is doing.** Click any worker to open a live panel: its task, the command or file it is on right now (`Bash: npm test`, `Edit: src/app.ts`), its last 20 tool calls and, once done, its result. Click the boss for a summary of every project.
 - **Several Claude accounts.** Add accounts in the sidebar, log in with one click, and pick which account each project uses. Each account has its own Claude Code config folder, so logins never mix.
-- **Knows when Claude needs you.** A project waiting for your approval, or one that just finished while you were looking elsewhere, raises a macOS notification, shows on the Dock badge and gets a mark on its row; the boss's sign says NEEDS YOU. Click the notification to jump there.
+- **Knows when Claude needs you.** A project waiting for your approval, or one that just finished while you were looking elsewhere, raises a desktop notification, shows on the Dock badge (macOS) and gets a mark on its row; the boss's sign says NEEDS YOU. Click the notification to jump there.
 - **Plan usage per account.** Under each account, the 5-hour and weekly usage of its Claude plan (Pro/Max) and when each one resets, taken from that account's last Claude session, with a notification at 80% and 95%.
-- **Local only.** No server, no telemetry. Everything stays on your Mac.
+- **Local only.** No server, no telemetry. Everything stays on your computer.
 
 > The app and the plugin speak English and Turkish. The app follows your system language; pick one with **Language** at the bottom of the sidebar. Other translations are welcome (see [Contributing](#contributing)).
 
 ## Install
 
-Requirements: macOS 12 or newer, and [Claude Code](https://code.claude.com) installed and on your `PATH`.
+Requirements: macOS 12 or newer, or 64-bit Linux (x64) with a desktop, and [Claude Code](https://code.claude.com) installed and on your `PATH` (your login shell's `PATH`: the app starts `claude` through `$SHELL -l -i`, by default zsh on macOS and bash on Linux).
 
 ### Homebrew
 
@@ -41,16 +41,27 @@ Get the `.dmg` for your Mac from [Releases](https://github.com/isisever/agent-of
 
 Open it and drag **Agent Office** to Applications.
 
+### Linux
+
+Get the Linux package from [Releases](https://github.com/isisever/agent-office/releases/latest) (x64):
+
+| Package | File | |
+| --- | --- | --- |
+| AppImage (any distribution) | `AgentOffice-<version>-x86_64.AppImage` | `chmod +x` it and run it; it updates itself |
+| Debian, Ubuntu | `AgentOffice-<version>-amd64.deb` | `sudo apt install ./AgentOffice-<version>-amd64.deb`; update by installing the next `.deb` |
+
+On Linux the window has the normal title bar, and the shortcuts use **Ctrl+Shift** instead of ⌘ (Ctrl+V, Ctrl+O and the like go to Claude Code in the terminal): **Ctrl+Shift+V** pastes, **Ctrl+Shift+C** copies, **Ctrl+Shift+O** adds a project, **Ctrl+Shift+1 … 9** switches. Pasting files copied in a file manager works best with `wl-clipboard` (Wayland) or `xclip` (X11) installed. If the AppImage does not start on Ubuntu 24.04 or newer (a sandbox error), use the `.deb`, which installs the AppArmor profile Electron needs.
+
 ### Updates
 
-Agent Office checks GitHub Releases at start and every few hours. A new version downloads in the background; then **⬆ … ready · restart** appears in the title bar (or it installs when you quit). You can also check from the app menu: **Check for Updates…**.
+Agent Office checks GitHub Releases at start and every few hours (on Linux only the AppImage does; the `.deb` is updated by installing the new one). A new version downloads in the background; then **⬆ … ready · restart** appears in the title bar (or it installs when you quit). You can also check from the app menu: **Check for Updates…**.
 
 ## Using it
 
 | | |
 | --- | --- |
-| **Add a project** | **+ Add project** in the sidebar, or ⌘O |
-| **Switch projects** | Click a project, or ⌘1 … ⌘9 |
+| **Add a project** | **+ Add project** in the sidebar, or ⌘O (Linux: Ctrl+Shift+O) |
+| **Switch projects** | Click a project, or ⌘1 … ⌘9 (Linux: Ctrl+Shift+1 … 9) |
 | **Choose a project's account** | The **Account ▾** picker on the project's row. Its last entry, **+ New account…**, creates an account for that project. |
 | **Log in to an account** | **Log in** next to the account. A small terminal runs `claude auth login`; approve in the browser and it closes by itself. |
 | **See an account's usage** | The **5 h** and **Week** bars under the account: percentage used and reset time. They fill in once a project on that account has talked to Claude; hover for how old the value is. |
@@ -86,7 +97,7 @@ All data stays on your machine:
 | Where | What |
 | --- | --- |
 | `~/.claude/agent-office/sessions/` | Per session: the agents, the first 600 characters of each agent's task and 4000 of its result, and a one-line summary of its last 20 tool calls (commands, file paths, search patterns, URLs). Removed automatically a day after the session ends. |
-| `~/Library/Application Support/Agent Office/` | Your project list, the config folders of the accounts you added (each one holds that account's Claude Code login) and, under `usage/`, each project's latest Claude Code status line input (model, context and plan usage), used for the usage bars. |
+| `~/Library/Application Support/Agent Office/` (Linux: `~/.config/Agent Office/`) | Your project list, the config folders of the accounts you added (each one holds that account's Claude Code login) and, under `usage/`, each project's latest Claude Code status line input (model, context and plan usage), used for the usage bars. |
 
 Nothing is sent anywhere by Agent Office. Claude Code itself talks to Anthropic as usual.
 
@@ -109,7 +120,10 @@ cd agent-office/app
 npm install
 npm start            # run the app from source
 npm run dist         # build release/*.dmg and *.zip for arm64 and x64
+npm run dist:linux   # on Linux: build release/*.AppImage and *.deb for x64
 ```
+
+On Linux, `npm install` compiles node-pty from source (it has no prebuilt Linux binary), so it needs `python3`, `make` and a C++ compiler (`sudo apt install build-essential python3` on Debian/Ubuntu). Build the Linux packages on Linux: a macOS build would carry the macOS node-pty.
 
 Tests:
 
@@ -126,7 +140,7 @@ node plugin/tests/viewer-smoke.mjs        # terminal viewer
 
 1. Bump `version` in `app/package.json` (and `plugin/.claude-plugin/plugin.json`).
 2. `cd app && npm run dist:release` — signs with the maintainer's Developer ID and notarizes with Apple. It needs that certificate in the keychain and a notarytool profile stored once with `xcrun notarytool store-credentials agent-office --apple-id <apple id> --team-id <team id>` (override the names with `CSC_NAME` and `APPLE_KEYCHAIN_PROFILE`). Without them, `npm run dist` builds an ad-hoc-signed copy for local use.
-3. `gh release create v<version> app/release/AgentOffice-<version>-* app/release/latest-mac.yml` (the zips, blockmaps and `latest-mac.yml` are what the in-app updater downloads)
+3. `gh release create v<version> app/release/AgentOffice-<version>-* app/release/latest-mac.yml` (the zips, blockmaps and `latest-mac.yml` are what the in-app updater downloads). Publishing the release starts the `release-linux` workflow, which builds the AppImage and `.deb` on Linux and adds them, with `latest-linux.yml`, to the same release (run it by hand from the Actions tab with the tag if needed).
 4. `node packaging/homebrew/update-cask.mjs` and copy `packaging/homebrew/Casks/agent-office.rb` to the [tap](https://github.com/isisever/homebrew-tap).
 
 ## Contributing
@@ -134,7 +148,7 @@ node plugin/tests/viewer-smoke.mjs        # terminal viewer
 Issues and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) explains the layout, the tests and the conventions. Some good places to start:
 
 - More translations of the app interface (strings live in a `{ en, tr }` table at the top of each renderer module)
-- Linux and Windows builds
+- Windows builds, and Linux arm64
 
 The app's main process, UI and office renderer meet at the interfaces described in [`app/CONTRACT.md`](app/CONTRACT.md); please keep it up to date when you change them.
 

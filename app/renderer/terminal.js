@@ -3,6 +3,7 @@
 import { Terminal } from '../node_modules/@xterm/xterm/lib/xterm.mjs';
 import { FitAddon } from '../node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
 import { pick } from './i18n.js';
+import { isMac, isModKey, keyOf } from './platform.js';
 
 // Metinler (bkz. i18n.js). Terminale yazılmış satır dil değişince yeniden yazılmaz.
 const S = {
@@ -102,8 +103,15 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
   });
 
   // ⌘V terminaldeyken burada yakalanır: Chromium'un kendi yapıştırması görsel/dosya için boş metin gönderirdi.
+  // Linux: Ctrl+Shift+V yapıştırır (Ctrl+V claude'a gider: görseli panodan kendisi okur); Ctrl+Shift+C/X
+  // xterm'e verilmez (yoksa ^C gönderirdi), menüdeki Kopyala/Kes'e kalır.
   term.attachCustomKeyEventHandler((ev) => {
-    if (ev.type !== 'keydown' || !ev.metaKey || ev.ctrlKey || ev.altKey || ev.key.toLowerCase() !== 'v') return true;
+    // macOS: ⌘V ve ⌘⇧V (eskisi gibi Shift serbest); Linux: Ctrl+Shift
+    const mod = isMac ? ev.metaKey && !ev.ctrlKey && !ev.altKey : isModKey(ev);
+    if (ev.type !== 'keydown' || !mod) return true;
+    const key = keyOf(ev);
+    if (!isMac && (key === 'c' || key === 'x')) return false;
+    if (key !== 'v') return true;
     ev.preventDefault();
     if (once()) paste();
     return false;

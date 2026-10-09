@@ -41,6 +41,8 @@ button { font: inherit; color: inherit; }
   white-space: nowrap;
   min-width: 0;
 }
+/* Linux: pencerenin kendi çerçevesi ve başlığı var; trafik ışığı boşluğu ve sürükleme alanı gerekmez */
+.platform-linux #titlebar { padding-left: 12px; -webkit-app-region: no-drag; }
 #title { color: var(--accent); font-weight: bold; letter-spacing: 2px; }
 #project {
   opacity: .85;

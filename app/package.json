@@ -1,6 +1,7 @@
 {
   "name": "agent-office",
   "productName": "Agent Office",
+  "desktopName": "agent-office.desktop",
   "version": "0.5.0",
   "description": "Claude Code in a pixel office: the real claude CLI in a terminal per project, under one live office where the boss oversees every project",
   "main": "main.js",
@@ -9,9 +10,11 @@
     "sync-core": "node scripts/sync-core.mjs",
     "prestart": "node scripts/sync-core.mjs",
     "start": "electron .",
-    "postinstall": "electron-builder install-app-deps && chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper || true",
+    "postinstall": "electron-builder install-app-deps && node scripts/postinstall.mjs",
     "predist": "node scripts/sync-core.mjs",
     "dist": "electron-builder --mac && rm -rf release/mac release/mac-arm64 release/builder-debug.yml",
+    "predist:linux": "node scripts/sync-core.mjs",
+    "dist:linux": "electron-builder --linux --publish never && rm -rf release/linux-unpacked release/builder-debug.yml",
     "icon": "node scripts/make-icon.mjs",
     "predist:release": "node scripts/sync-core.mjs",
     "dist:release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-agent-office} electron-builder --mac -c.mac.identity=\"${CSC_NAME:-Savas Isisever (GLTH2M74NT)}\" && rm -rf release/mac release/mac-arm64 release/mac-universal release/builder-debug.yml"
@@ -44,6 +47,7 @@
       "!**/*.map",
       "!node_modules/node-pty/{src,scripts,deps,third_party,typings}/**",
       "!node_modules/node-pty/prebuilds/win32-*/**",
+      "!node_modules/node-pty/build/Release/obj.target/**",
       "!node_modules/node-addon-api/**"
     ],
     "asarUnpack": [
@@ -79,6 +83,39 @@
     },
     "dmg": {
       "title": "Agent Office"
+    },
+    "linux": {
+      "category": "Development",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "executableName": "agent-office",
+      "synopsis": "Claude Code in a pixel office",
+      "maintainer": "Savas Isisever <isisever@users.noreply.github.com>",
+      "artifactName": "AgentOffice-${version}-${arch}.${ext}",
+      "files": [
+        "!node_modules/node-pty/prebuilds/darwin-*/**"
+      ],
+      "syncDesktopName": true
+    },
+    "deb": {
+      "packageCategory": "devel",
+      "recommends": [
+        "libappindicator3-1",
+        "wl-clipboard | xclip"
+      ]
     },
     "extraResources": [
       {
