@@ -16,6 +16,19 @@ export type Worker = {
 
 export type ToolCall = { at: number; tool: string; detail: string }
 
+// a background shell command (contract v2.3): Bash with run_in_background (or moved to the background
+// by Ctrl+B or its timeout) and Monitor's command; the server room draws one rack slot each
+export type Shell = {
+  id: string // the engine's background task id (Bash backgroundTaskId, Monitor taskId), else the tool_use_id
+  command: string // one line, ≤ 160 chars (same rule as Worker.detail)
+  description?: string // the tool call's description, if any
+  agentId?: string // set when a subagent started it
+  startAt: number
+  endAt?: number // when it finished (or was killed); omitted while running
+  exitCode?: number
+  status?: 'running' | 'completed' | 'failed' | 'killed'
+}
+
 // today: ids delivered on that local day; outlives FORGET so the viewer's TODAY count never misses one
 export type OfficeStats = { delivered: number; isBossBusy: boolean; today?: { date: string; ids: string[] } }
 
@@ -26,6 +39,7 @@ declare module 'claude-code' {
   interface PluginState {
     'agent-office': {
       workers: Worker[]
+      shells: Shell[]
       stats: OfficeStats
       inboxSeen: number
       isOpen: boolean
