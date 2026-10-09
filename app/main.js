@@ -704,9 +704,32 @@ ipcMain.handle('office:today', () => {
   const s = office();
   return s ? s.readToday(state.projects.map((p) => p.name), undefined, undefined, sessionAliases()) : { date: '', deliveries: [], untracked: 0 };
 });
+// --- themes (contract v3.1): the gallery (repo themes/*.json, Resources/themes when packaged) under the user's
+// ~/.claude/agent-office/themes.json. Gallery themes lose their `match` (src/themes.mjs): they apply only when picked.
+/** @typedef {{ galleryThemes(files: unknown[]): Record<string, any>, mergeThemes(gallery: Record<string, any>, user: unknown): Record<string, any>, normalizeThemeSetting(v: unknown): string }} ThemesLib */
+/** @type {ThemesLib | null} */
+let TH = null; // loaded at startup, like src/i18n.mjs
+async function loadThemesLib() {
+  try { TH = await import('./src/themes.mjs'); } catch {}
+}
+/** @type {unknown[] | null} */
+let galleryFiles = null; // read once: the gallery ships with the app and does not change while it runs
+function readGalleryFiles() {
+  if (galleryFiles) return galleryFiles;
+  const dir = app.isPackaged ? path.join(process.resourcesPath, 'themes') : path.join(__dirname, '..', 'themes');
+  galleryFiles = [];
+  try {
+    for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.json')).sort()) {
+      try { galleryFiles.push(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))); } catch {}
+    }
+  } catch {}
+  return galleryFiles;
+}
 ipcMain.handle('office:themes', () => {
   const s = office();
-  try { return s ? s.readThemes() : {}; } catch { return {}; }
+  let user = {};
+  try { user = s ? s.readThemes() : {}; } catch {}
+  try { return TH ? TH.mergeThemes(TH.galleryThemes(readGalleryFiles()), user) : user; } catch { return user; }
 });
 
 // On Linux under npm start the window icon is the repo's build/icon.png; when packaged it comes from the .desktop file.
@@ -836,11 +859,13 @@ function buildMenu() {
   ]));
 }
 
-// --- preferences: resume = continue from the last session at startup
-const prefs = () => ({ resume: state.resume !== false });
+// --- preferences: resume = continue from the last session at startup; theme = 'auto' or a theme name (v3.1)
+const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
+const prefs = () => ({ resume: state.resume !== false, theme: themeSetting(state.theme) });
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
+  if (p && typeof p.theme === 'string' && themeSetting(p.theme) !== prefs().theme) commit({ ...state, theme: themeSetting(p.theme) });
   return prefs();
 });
 
@@ -856,8 +881,9 @@ ipcMain.handle('language:set', (_e, setting) => {
 
 app.whenReady().then(async () => {
   await loadI18n();
+  await loadThemesLib();
   const raw = loadState();
-  state = { ...P.normalizeState(raw), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false };
+  state = { ...P.normalizeState(raw), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, theme: themeSetting(raw.theme) };
   app.setAboutPanelOptions({ applicationName: app.getName(), applicationVersion: app.getVersion() });
   buildMenu();
   setupUpdates();

@@ -73,6 +73,7 @@ Homebrew keeps showing the version it installed, because the app updates itself:
 | **See what got done today** | Click the whiteboard: every delivery of the day with its project, duration, tool count and whether it succeeded |
 | **Today's summary in the terminal** | `/office stats` (Turkish: `/office istatistik`) in any project's Claude: today's deliveries, agent time, working agents and background shells as text |
 | **Change the language** | **Language** at the bottom of the sidebar: Auto (system language), English or Türkçe. The labels here are the English ones. |
+| **Change the office theme** | **Theme** at the bottom of the sidebar: **Auto (per project)** gives each project its own colors (or the theme from your `themes.json` whose `match` fits it); classic, forest or one of the eight [gallery themes](plugin/README.md#theme-gallery) colors the whole office and the window frame. Hover an entry for its description. Your **Bot color** still wins over a theme's bots. |
 | **Change the bots' color** | **Bot color** at the bottom of the sidebar (↺ resets it) |
 | **Hide the sidebar** | ≡ in the title bar |
 

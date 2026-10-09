@@ -70,6 +70,13 @@ export function mountSidebar(el, on) {
   const langLabel = h('span', {});
   const langSelect = h('select', { class: 'sb-acct sb-lang', onchange: (e) => on.setLanguage?.(e.target.value) });
   const langRow = h('div', { class: 'sb-botcolor sb-langrow' }, langLabel, langSelect);
+  // theme (v3.1): Auto (per project) or one theme for the whole office; each option's tooltip is its description
+  let themeSetting = 'auto';
+  /** @type {{ name: string, description: string, isBuiltin: boolean }[]} */
+  let themeChoices = [];
+  const themeLabel = h('span', {});
+  const themeSelect = h('select', { class: 'sb-acct sb-lang sb-theme', onchange: (e) => on.setTheme?.(e.target.value) });
+  const themeRow = h('div', { class: 'sb-botcolor sb-langrow' }, themeLabel, themeSelect);
   // resume the last session on launch (claude --continue)
   const resumeLabel = h('span', {});
   const resumeBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setResume?.(e.target.checked) });
@@ -89,6 +96,7 @@ export function mountSidebar(el, on) {
     ),
     resumeRow,
     langRow,
+    themeRow,
     botRow,
   );
 
@@ -105,7 +113,26 @@ export function mountSidebar(el, on) {
     resumeLabel.textContent = t('sidebar.resume');
     resumeRow.title = t('sidebar.resumeTitle');
     langSelect.title = t('sidebar.languageTitle');
+    themeLabel.textContent = t('sidebar.theme');
     renderLanguages();
+    renderThemes();
+  }
+  /** Tooltip of a theme option: the theme's description; the built-ins' come from the locale files. */
+  function themeDesc(c) {
+    if (c.description) return c.description;
+    if (!c.isBuiltin) return '';
+    return t(c.name === 'forest' ? 'sidebar.themeForestTitle' : 'sidebar.themeClassicTitle');
+  }
+  function renderThemes() {
+    const known = themeChoices.some((c) => c.name === themeSetting);
+    const cur = known ? themeSetting : 'auto';
+    themeSelect.replaceChildren(
+      h('option', { value: 'auto', selected: cur === 'auto', title: t('sidebar.themeAutoTitle') }, t('sidebar.themeAuto')),
+      ...themeChoices.map((c) => h('option', { value: c.name, selected: cur === c.name, title: themeDesc(c) }, c.name)),
+    );
+    // the closed picker shows the chosen theme's description
+    const chosen = themeChoices.find((c) => c.name === cur);
+    themeSelect.title = chosen ? themeDesc(chosen) || chosen.name : t('sidebar.themeAutoTitle');
   }
   function renderLanguages() {
     langSelect.replaceChildren(
@@ -304,6 +331,12 @@ export function mountSidebar(el, on) {
       if (Array.isArray(li.languages)) languages = li.languages;
       langSetting = languages.some((l) => l.code === li.setting) ? li.setting : 'auto';
       renderLanguages();
+    },
+    /** Theme picker: options after Auto (src/themes.mjs themeChoices) and the setting ('auto' | name). */
+    setThemes(choices, setting) {
+      if (Array.isArray(choices)) themeChoices = choices;
+      if (typeof setting === 'string') themeSetting = setting;
+      renderThemes();
     },
     /** Setting to resume the last session on launch. */
     setResume(on) { resumeBox.checked = on !== false; },
