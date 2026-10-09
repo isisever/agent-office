@@ -1,5 +1,5 @@
 // Ofis görünümü: core.mjs karelerini <canvas>'a keskin (en yakın komşu) ölçekle çizer.
-import { FRAME_MS, hitTest, render, setGeometry, setThemes as coreSetThemes, themeInfo, setBotColor as coreSetBotColor } from '../src/office/core.mjs'
+import { FRAME_MS, hitTest, render, setGeometry, setThemes as coreSetThemes, themeInfo, setBotColor as coreSetBotColor, setLanguage as coreSetLanguage } from '../src/office/core.mjs'
 
 const EMPTY = { workers: [], delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' }
 
@@ -136,6 +136,11 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     // bot rengi '#rrggbb' (null = temanın rengi)
     setBotColor(hex) {
       coreSetBotColor(hex)
+      draw()
+    },
+    // ofisteki yazıların dili ('en' | 'tr'); başlık da dile bağlı (themeInfo().title)
+    setLanguage(lang) {
+      coreSetLanguage(lang)
       draw()
     },
     destroy() {

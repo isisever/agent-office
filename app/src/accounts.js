@@ -121,7 +121,7 @@ const shortError = (msg) => {
 // `auth status --json` nesnesi → AccountAuth (bkz. CONTRACT.md).
 function authFromStatus(obj) {
   if (!obj || typeof obj !== 'object' || typeof obj.loggedIn !== 'boolean') {
-    return { state: 'error', error: 'giriş durumu okunamadı' };
+    return { state: 'error', errorKey: 'unreadable' };
   }
   if (!obj.loggedIn) return { state: 'out' };
   const auth = { state: 'in' };
@@ -134,11 +134,22 @@ function authFromStatus(obj) {
 function authFromRun(err, stdout, stderr) {
   const obj = lastJsonObject(stdout);
   if (obj && typeof obj.loggedIn === 'boolean') return authFromStatus(obj);
-  if (err && (err.killed || err.signal) && !err.code) return { state: 'error', error: 'zaman aşımı' };
-  if (err && err.code === 127) return { state: 'error', error: 'claude bulunamadı' };
-  if (err && err.code === 'ENOENT') return { state: 'error', error: 'kabuk bulunamadı' };
+  if (err && (err.killed || err.signal) && !err.code) return { state: 'error', errorKey: 'timeout' };
+  if (err && err.code === 127) return { state: 'error', errorKey: 'noClaude' };
+  if (err && err.code === 'ENOENT') return { state: 'error', errorKey: 'noShell' };
   if (err) return { state: 'error', error: shortError(stderr || err.message) };
-  return { state: 'error', error: 'giriş durumu okunamadı' };
+  return { state: 'error', errorKey: 'unreadable' };
+}
+
+// Bilinen hatalar anahtarla saklanır, renderer'a o anki dilde gider (dil sonradan değişebilir).
+const AUTH_ERRORS = {
+  tr: { unreadable: 'giriş durumu okunamadı', timeout: 'zaman aşımı', noClaude: 'claude bulunamadı', noShell: 'kabuk bulunamadı' },
+  en: { unreadable: 'could not read the login status', timeout: 'timed out', noClaude: 'claude not found', noShell: 'shell not found' },
+};
+function localizeAuth(auth, lang) {
+  if (!auth?.errorKey) return auth;
+  const { errorKey, ...rest } = auth;
+  return { ...rest, error: (AUTH_ERRORS[lang] || AUTH_ERRORS.en)[errorKey] || errorKey };
 }
 
 // Giriş kabuğu (`$SHELL -l -i -c`) ile çalışan claude komutu; hesap klasörü rc'lerden sonra yeniden verilir.
@@ -159,5 +170,5 @@ const loginAccountId = (ptyId) =>
 
 module.exports = {
   DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, removeAccount, accountOf, ptyEnv,
-  lastJsonObject, authFromStatus, authFromRun, claudeCommand, withAuth, loginPtyId, loginAccountId,
+  lastJsonObject, authFromStatus, authFromRun, localizeAuth, claudeCommand, withAuth, loginPtyId, loginAccountId,
 };

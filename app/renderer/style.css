@@ -637,6 +637,8 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
 .sb-color::-webkit-color-swatch-wrapper { padding: 1px; }
 .sb-color::-webkit-color-swatch { border: 0; border-radius: 2px; }
 .sb-botcolor .sb-x { opacity: .7; }
+.sb-langrow { padding-bottom: 0; }
+.sb-lang { flex: 0 0 auto; }
 
 /* ---- Güncelleme düğmesi (başlık) ---- */
 #update {

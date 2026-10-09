@@ -6,10 +6,138 @@
 // - anchor verilirse panel o öğenin (ofis tuvali) kutusunu kaplar.
 // - 'shell:<id>' sunucu odasındaki bir arka plan komutunu gösterir (OfficeData.shells; eski veride yoktur).
 
+import { onLang, pick, locale } from './i18n.js';
+
 const BOSS_ID = '@boss';
 const SHELL = 'shell:';
 const CLAMP = 220; // bundan uzun görev/sonuç daraltılır
-const TYPE_NAMES = { 'general-purpose': 'Genel', Explore: 'Keşif', Plan: 'Plan', 'claude-code-guide': 'Rehber' };
+
+// Metinler (bkz. i18n.js): pick(S).anahtar, her çizimde okunur.
+const S = {
+  en: {
+    types: { 'general-purpose': 'General', Explore: 'Explore', Plan: 'Plan', 'claude-code-guide': 'Guide' },
+    agent: 'agent',
+    sec: (n) => `${n}s`,
+    minSec: (m, s) => `${m}m ${s}s`,
+    hourMin: (h, m) => `${h}h ${m}m`,
+    now: 'just now',
+    secAgo: (n) => `${n}s ago`,
+    minAgo: (n) => `${n}m ago`,
+    hourAgo: (n) => `${n}h ago`,
+    dayAgo: (n) => (n === 1 ? '1 day ago' : `${n} days ago`),
+    working: 'working',
+    killed: 'stopped ✗',
+    failed: 'failed ✗',
+    done: 'done ✓',
+    copyTip: 'Copy to clipboard',
+    copy: 'copy',
+    copied: 'copied ✓',
+    copyFailed: 'copy failed',
+    collapse: 'collapse ▴',
+    expand: 'more ▾',
+    took: (d) => `took ${d}`,
+    agentLeft: 'The agent left the office',
+    description: 'Description',
+    task: 'Task',
+    nowLabel: 'Now',
+    thinkingDots: 'thinking…',
+    thinking: 'thinking',
+    toolCalls: (n) => (n === 1 ? '1 tool call' : `${n} tool calls`),
+    lastN: (n) => ` · last ${n}`,
+    history: 'History',
+    result: 'Result',
+    resultError: 'Result (error)',
+    noDetails: 'No details — update the plugin',
+    commandLeft: 'The command left the office',
+    command: 'Command',
+    exitCode: 'Exit code',
+    showAgent: 'Show the agent',
+    agentGone: (id) => `agent ${id} · left the office`,
+    showBoss: 'Show the boss',
+    boss: 'Boss',
+    mainSession: 'main session',
+    startedBy: 'Started by',
+    started: 'Started',
+    bgCommand: 'Background command',
+    bgCommands: 'Background commands',
+    nRunning: (n) => `${n} running`,
+    noBgCommands: 'No background commands running.',
+    waiting: 'waiting',
+    todayDelivered: (n) => `${n} delivered today`,
+    projects: 'Projects',
+    bossOnProject: 'the boss is working on this project',
+    projStats: (w, d) => `${w} working · ${d} delivered`,
+    workingAgents: 'Working agents',
+    showDetails: 'Show details',
+    noWorkers: 'No agents working right now.',
+    agentTitle: 'Agent',
+    project: 'Project',
+    close: 'Close (Esc)',
+    ariaLabel: 'Agent details',
+  },
+  tr: {
+    types: { 'general-purpose': 'Genel', Explore: 'Keşif', Plan: 'Plan', 'claude-code-guide': 'Rehber' },
+    agent: 'ajan',
+    sec: (n) => `${n} sn`,
+    minSec: (m, s) => `${m} dk ${s} sn`,
+    hourMin: (h, m) => `${h} sa ${m} dk`,
+    now: 'şimdi',
+    secAgo: (n) => `${n} sn önce`,
+    minAgo: (n) => `${n} dk önce`,
+    hourAgo: (n) => `${n} sa önce`,
+    dayAgo: (n) => `${n} gün önce`,
+    working: 'çalışıyor',
+    killed: 'durduruldu ✗',
+    failed: 'başarısız ✗',
+    done: 'bitti ✓',
+    copyTip: 'Panoya kopyala',
+    copy: 'kopyala',
+    copied: 'kopyalandı ✓',
+    copyFailed: 'kopyalanamadı',
+    collapse: 'daralt ▴',
+    expand: 'devamı ▾',
+    took: (d) => `${d} sürdü`,
+    agentLeft: 'Ajan ofisten ayrıldı',
+    description: 'Açıklama',
+    task: 'Görev',
+    nowLabel: 'Şu an',
+    thinkingDots: 'düşünüyor…',
+    thinking: 'düşünüyor',
+    toolCalls: (n) => `${n} araç çağrısı`,
+    lastN: (n) => ` · son ${n}`,
+    history: 'Geçmiş',
+    result: 'Sonuç',
+    resultError: 'Sonuç (hata)',
+    noDetails: 'Ayrıntı yok — eklentiyi güncelle',
+    commandLeft: 'Komut ofisten ayrıldı',
+    command: 'Komut',
+    exitCode: 'Çıkış kodu',
+    showAgent: 'Ajanı göster',
+    agentGone: (id) => `ajan ${id} · ofisten ayrıldı`,
+    showBoss: 'Müdürü göster',
+    boss: 'Müdür',
+    mainSession: 'ana oturum',
+    startedBy: 'Başlatan',
+    started: 'Başladı',
+    bgCommand: 'Arka plan komutu',
+    bgCommands: 'Arka plan komutları',
+    nRunning: (n) => `${n} çalışıyor`,
+    noBgCommands: 'Çalışan arka plan komutu yok.',
+    waiting: 'bekliyor',
+    todayDelivered: (n) => `bugün ${n} teslim`,
+    projects: 'Projeler',
+    bossOnProject: 'müdür bu projede çalışıyor',
+    projStats: (w, d) => `${w} çalışıyor · ${d} teslim`,
+    workingAgents: 'Çalışan ajanlar',
+    showDetails: 'Ayrıntıları göster',
+    noWorkers: 'Şu an çalışan ajan yok.',
+    agentTitle: 'Ajan',
+    project: 'Proje',
+    close: 'Kapat (Esc)',
+    ariaLabel: 'Ajan ayrıntıları',
+  },
+};
+const t = () => pick(S);
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const str = (v) => (typeof v === 'string' ? v : v == null ? '' : String(v));
@@ -18,31 +146,31 @@ const shortTool = (t) => str(t).replace(/^mcp__(.*?)__/, '$1:');
 
 function span(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s} sn`;
+  if (s < 60) return t().sec(s);
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} dk ${String(s % 60).padStart(2, '0')} sn`;
+  if (m < 60) return t().minSec(m, String(s % 60).padStart(2, '0'));
   const h = Math.floor(m / 60);
-  return `${h} sa ${String(m % 60).padStart(2, '0')} dk`;
+  return t().hourMin(h, String(m % 60).padStart(2, '0'));
 }
 function ago(at, now) {
   const s = Math.max(0, Math.floor((now - at) / 1000));
-  if (s < 5) return 'şimdi';
-  if (s < 60) return `${s} sn önce`;
+  if (s < 5) return t().now;
+  if (s < 60) return t().secAgo(s);
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} dk önce`;
+  if (m < 60) return t().minAgo(m);
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} sa önce`;
-  return `${Math.floor(h / 24)} gün önce`;
+  if (h < 24) return t().hourAgo(h);
+  return t().dayAgo(Math.floor(h / 24));
 }
 const clock = (at) => {
   const d = new Date(at);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 };
 
 function typeLabel(type) {
-  const t = str(type) || 'ajan';
-  const tr = TYPE_NAMES[t];
-  return tr && tr !== t ? `${tr} · ${t}` : t;
+  const raw = str(type) || t().agent;
+  const name = t().types[raw];
+  return name && name !== raw ? `${name} · ${raw}` : raw;
 }
 
 async function copyText(text) {
@@ -75,7 +203,7 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
   el.classList.add('agent-panel');
   el.tabIndex = -1;
   el.setAttribute('role', 'dialog');
-  el.setAttribute('aria-label', 'Ajan ayrıntıları');
+  el.setAttribute('aria-label', t().ariaLabel);
   el.hidden = true;
 
   // terminale odak çalan belge düzeyi mouseup'a gitmesin (metin seçilebilsin)
@@ -108,11 +236,11 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
 
   const shellDone = (s) => num(s.endAt) != null || (s.status != null && s.status !== 'running');
   function shellState(s) {
-    if (!shellDone(s)) return { cls: 'busy', txt: 'çalışıyor' };
-    if (s.status === 'killed') return { cls: 'bad', txt: 'durduruldu ✗' };
+    if (!shellDone(s)) return { cls: 'busy', txt: t().working };
+    if (s.status === 'killed') return { cls: 'bad', txt: t().killed };
     const code = num(s.exitCode);
-    if (s.status === 'failed' || (code != null && code !== 0)) return { cls: 'bad', txt: 'başarısız ✗' };
-    return { cls: 'ok', txt: 'bitti ✓' };
+    if (s.status === 'failed' || (code != null && code !== 0)) return { cls: 'bad', txt: t().failed };
+    return { cls: 'ok', txt: t().done };
   }
 
   function block(key, label, text, { copy = false, clamp = false, mono = false } = {}) {
@@ -123,9 +251,9 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     const tools = [];
     if (copy) {
       copies.set(key, body);
-      tools.push(`<button class="ap-mini" data-copy="${esc(key)}" title="Panoya kopyala">kopyala</button>`);
+      tools.push(`<button class="ap-mini" data-copy="${esc(key)}" title="${esc(t().copyTip)}">${esc(t().copy)}</button>`);
     }
-    if (long) tools.push(`<button class="ap-mini" data-toggle="${esc(key)}">${open ? 'daralt ▴' : 'devamı ▾'}</button>`);
+    if (long) tools.push(`<button class="ap-mini" data-toggle="${esc(key)}">${open ? t().collapse : t().expand}</button>`);
     return `<section class="ap-sec">
       <div class="ap-label">${esc(label)}<span class="ap-tools">${tools.join('')}</span></div>
       <div class="ap-text${mono ? ' mono' : ''}${long && !open ? ' clamped' : ''}">${esc(body)}</div>
@@ -138,9 +266,9 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     const failed = done && w.isOk === false;
     const spawnAt = num(w.spawnAt);
     const statusCls = failed ? 'bad' : done ? 'ok' : 'busy';
-    const statusTxt = failed ? 'başarısız ✗' : done ? 'bitti ✓' : 'çalışıyor';
+    const statusTxt = failed ? t().failed : done ? t().done : t().working;
     const elapsed = spawnAt == null ? '' : done
-      ? `${span(w.doneAt - spawnAt)} sürdü · <time data-ago="${w.doneAt}"></time>`
+      ? `${t().took(span(w.doneAt - spawnAt))} · <time data-ago="${w.doneAt}"></time>`
       : `<time data-since="${spawnAt}"></time>`;
     const history = Array.isArray(w.history)
       ? w.history.filter((h) => h && typeof h === 'object' && (h.tool || h.detail)).slice(-20).reverse()
@@ -149,23 +277,23 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     const hasDetails = 'prompt' in w || 'detail' in w || 'history' in w || 'toolCount' in w || 'result' in w;
 
     let html = `<div class="ap-status ${statusCls}"><span class="ap-dot"></span>${statusTxt}<span class="ap-dim">${elapsed}</span></div>`;
-    if (isGone) html += `<div class="ap-note">Ajan ofisten ayrıldı</div>`;
-    html += block('desc', 'Açıklama', w.description);
-    html += block('prompt', 'Görev', w.prompt, { copy: true, clamp: true });
+    if (isGone) html += `<div class="ap-note">${t().agentLeft}</div>`;
+    html += block('desc', t().description, w.description);
+    html += block('prompt', t().task, w.prompt, { copy: true, clamp: true });
     if (!done) {
       const tool = str(w.tool);
       const detail = str(w.detail);
       if (detail) copies.set('detail', detail);
       html += `<section class="ap-sec">
-        <div class="ap-label">Şu an${detail ? `<span class="ap-tools"><button class="ap-mini" data-copy="detail" title="Panoya kopyala">kopyala</button></span>` : ''}</div>
-        <div class="ap-now"><span class="ap-tool">${tool ? esc(shortTool(tool)) : 'düşünüyor…'}</span>${detail ? `<span class="ap-detail mono" title="${esc(detail)}">${esc(detail)}</span>` : ''}</div>
+        <div class="ap-label">${t().nowLabel}${detail ? `<span class="ap-tools"><button class="ap-mini" data-copy="detail" title="${esc(t().copyTip)}">${esc(t().copy)}</button></span>` : ''}</div>
+        <div class="ap-now"><span class="ap-tool">${tool ? esc(shortTool(tool)) : t().thinkingDots}</span>${detail ? `<span class="ap-detail mono" title="${esc(detail)}">${esc(detail)}</span>` : ''}</div>
       </section>`;
     }
     if (history.length || toolCount != null) {
-      const count = toolCount != null ? `${toolCount} araç çağrısı` : `${history.length} araç çağrısı`;
-      const more = toolCount != null && toolCount > history.length ? ` · son ${history.length}` : '';
+      const count = t().toolCalls(toolCount != null ? toolCount : history.length);
+      const more = toolCount != null && toolCount > history.length ? t().lastN(history.length) : '';
       html += `<section class="ap-sec ap-hist-sec">
-        <div class="ap-label">Geçmiş<span class="ap-dim">${count}${more}</span></div>
+        <div class="ap-label">${t().history}<span class="ap-dim">${count}${more}</span></div>
         <ol class="ap-hist">${history.map((h) => {
           const at = num(h.at);
           const det = str(h.detail);
@@ -177,8 +305,8 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
         }).join('')}</ol>
       </section>`;
     }
-    if (done) html += block('result', failed ? 'Sonuç (hata)' : 'Sonuç', w.result, { copy: true, clamp: true });
-    if (!hasDetails) html += `<div class="ap-note">Ayrıntı yok — eklentiyi güncelle</div>`;
+    if (done) html += block('result', failed ? t().resultError : t().result, w.result, { copy: true, clamp: true });
+    if (!hasDetails) html += `<div class="ap-note">${t().noDetails}</div>`;
     return { title: typeLabel(w.type), project: str(w.project), html, now };
   }
 
@@ -187,38 +315,38 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     const startAt = num(s.startAt);
     const endAt = num(s.endAt);
     const elapsed = startAt == null ? '' : endAt != null
-      ? `${span(endAt - startAt)} sürdü · <time data-ago="${endAt}"></time>`
+      ? `${t().took(span(endAt - startAt))} · <time data-ago="${endAt}"></time>`
       : shellDone(s) ? '' : `<time data-since="${startAt}"></time>`;
     let html = `<div class="ap-status ${st.cls}"><span class="ap-dot"></span>${st.txt}<span class="ap-dim">${elapsed}</span></div>`;
-    if (isGone) html += `<div class="ap-note">Komut ofisten ayrıldı</div>`;
-    html += block('command', 'Komut', s.command, { copy: true, mono: true });
+    if (isGone) html += `<div class="ap-note">${t().commandLeft}</div>`;
+    html += block('command', t().command, s.command, { copy: true, mono: true });
     const code = num(s.exitCode);
     if (code != null) {
-      html += `<section class="ap-sec"><div class="ap-label">Çıkış kodu</div><div class="ap-text mono">${code}</div></section>`;
+      html += `<section class="ap-sec"><div class="ap-label">${t().exitCode}</div><div class="ap-text mono">${code}</div></section>`;
     }
-    html += block('desc', 'Açıklama', s.description);
+    html += block('desc', t().description, s.description);
     // başlatan: alt ajan (ofisteyse tıklanır) ya da ana oturum (müdür)
     const agentId = str(s.agentId);
     let who;
     if (agentId) {
       const w = find(agentId);
       who = w
-        ? `<button class="ap-agent" data-pick="${esc(w.id)}" title="Ajanı göster"><span class="ap-tool">${esc(typeLabel(w.type))}</span><span class="ap-detail">${esc(str(w.description))}</span></button>`
-        : `<div class="ap-text"><span class="ap-dim">ajan ${esc(agentId)} · ofisten ayrıldı</span></div>`;
+        ? `<button class="ap-agent" data-pick="${esc(w.id)}" title="${esc(t().showAgent)}"><span class="ap-tool">${esc(typeLabel(w.type))}</span><span class="ap-detail">${esc(str(w.description))}</span></button>`
+        : `<div class="ap-text"><span class="ap-dim">${esc(t().agentGone(agentId))}</span></div>`;
     } else {
-      who = `<button class="ap-agent" data-pick="${BOSS_ID}" title="Müdürü göster"><span class="ap-tool">Müdür</span><span class="ap-detail">ana oturum</span></button>`;
+      who = `<button class="ap-agent" data-pick="${BOSS_ID}" title="${esc(t().showBoss)}"><span class="ap-tool">${t().boss}</span><span class="ap-detail">${t().mainSession}</span></button>`;
     }
-    html += `<section class="ap-sec"><div class="ap-label">Başlatan</div>${who}</section>`;
+    html += `<section class="ap-sec"><div class="ap-label">${t().startedBy}</div>${who}</section>`;
     if (startAt != null) {
-      html += `<section class="ap-sec"><div class="ap-label">Başladı</div><div class="ap-text">${esc(clock(startAt))}${endAt != null ? ` → ${esc(clock(endAt))}` : ''}</div></section>`;
+      html += `<section class="ap-sec"><div class="ap-label">${t().started}</div><div class="ap-text">${esc(clock(startAt))}${endAt != null ? ` → ${esc(clock(endAt))}` : ''}</div></section>`;
     }
-    return { title: 'Arka plan komutu', project: str(s.project), html };
+    return { title: t().bgCommand, project: str(s.project), html };
   }
 
   function bossShells(d) {
     const running = (Array.isArray(d.shells) ? d.shells : []).filter((s) => s && s.id != null && !shellDone(s));
-    let html = `<section class="ap-sec"><div class="ap-label">Arka plan komutları<span class="ap-dim">${running.length} çalışıyor</span></div>`;
-    if (!running.length) return html + `<div class="ap-empty">Çalışan arka plan komutu yok.</div></section>`;
+    let html = `<section class="ap-sec"><div class="ap-label">${t().bgCommands}<span class="ap-dim">${t().nRunning(running.length)}</span></div>`;
+    if (!running.length) return html + `<div class="ap-empty">${t().noBgCommands}</div></section>`;
     const groups = new Map();
     for (const s of running) {
       const k = str(s.project);
@@ -236,18 +364,18 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     const d = data || {};
     const workers = (Array.isArray(d.workers) ? d.workers : []).filter((w) => w && num(w.doneAt) == null);
     const projects = Array.isArray(d.projects) ? d.projects : [];
-    let html = `<div class="ap-status ${d.isBossBusy ? 'busy' : 'ok'}"><span class="ap-dot"></span>${d.isBossBusy ? 'çalışıyor' : 'bekliyor'}<span class="ap-dim">bugün ${num(d.delivered) ?? 0} teslim</span></div>`;
+    let html = `<div class="ap-status ${d.isBossBusy ? 'busy' : 'ok'}"><span class="ap-dot"></span>${d.isBossBusy ? t().working : t().waiting}<span class="ap-dim">${t().todayDelivered(num(d.delivered) ?? 0)}</span></div>`;
     if (projects.length) {
-      html += `<section class="ap-sec"><div class="ap-label">Projeler</div><ul class="ap-projs">${projects.map((p) =>
-        `<li><span class="ap-dot ${p.isBossBusy ? 'on' : ''}" title="${p.isBossBusy ? 'müdür bu projede çalışıyor' : ''}"></span><span class="ap-pname">${esc(p.name)}</span><span class="ap-dim">${num(p.working) ?? 0} çalışıyor · ${num(p.delivered) ?? 0} teslim</span></li>`).join('')}</ul></section>`;
+      html += `<section class="ap-sec"><div class="ap-label">${t().projects}</div><ul class="ap-projs">${projects.map((p) =>
+        `<li><span class="ap-dot ${p.isBossBusy ? 'on' : ''}" title="${p.isBossBusy ? esc(t().bossOnProject) : ''}"></span><span class="ap-pname">${esc(p.name)}</span><span class="ap-dim">${t().projStats(num(p.working) ?? 0, num(p.delivered) ?? 0)}</span></li>`).join('')}</ul></section>`;
     }
-    html += `<section class="ap-sec"><div class="ap-label">Çalışan ajanlar<span class="ap-dim">${workers.length}</span></div>`;
+    html += `<section class="ap-sec"><div class="ap-label">${t().workingAgents}<span class="ap-dim">${workers.length}</span></div>`;
     html += workers.length
-      ? `<ul class="ap-agents">${workers.map((w) => `<li><button class="ap-agent" data-pick="${esc(w.id)}" title="Ayrıntıları göster"><span class="ap-tool">${esc(shortTool(w.tool) || 'düşünüyor')}</span><span class="ap-detail">${esc(str(w.description) || typeLabel(w.type))}</span>${w.project ? `<span class="ap-dim">${esc(w.project)}</span>` : ''}</button></li>`).join('')}</ul>`
-      : `<div class="ap-empty">Şu an çalışan ajan yok.</div>`;
+      ? `<ul class="ap-agents">${workers.map((w) => `<li><button class="ap-agent" data-pick="${esc(w.id)}" title="${esc(t().showDetails)}"><span class="ap-tool">${esc(shortTool(w.tool) || t().thinking)}</span><span class="ap-detail">${esc(str(w.description) || typeLabel(w.type))}</span>${w.project ? `<span class="ap-dim">${esc(w.project)}</span>` : ''}</button></li>`).join('')}</ul>`
+      : `<div class="ap-empty">${t().noWorkers}</div>`;
     html += '</section>';
     html += bossShells(d);
-    return { title: 'Müdür', project: '', html };
+    return { title: t().boss, project: '', html };
   }
 
   function fillTimes() {
@@ -266,18 +394,18 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
       if (s) last = s;
       view = last && SHELL + last.id === id
         ? shellHtml(last, !s)
-        : { title: 'Arka plan komutu', project: '', html: '<div class="ap-note">Komut ofisten ayrıldı</div>' };
+        : { title: t().bgCommand, project: '', html: `<div class="ap-note">${t().commandLeft}</div>` };
     } else {
       const w = find(id);
       if (w) last = w;
       view = last && last.id === id
         ? workerHtml(last, !w)
-        : { title: 'Ajan', project: '', html: '<div class="ap-note">Ajan ofisten ayrıldı</div>' };
+        : { title: t().agentTitle, project: '', html: `<div class="ap-note">${t().agentLeft}</div>` };
     }
     const html = `<header class="ap-head">
         <span class="ap-title">${esc(view.title)}</span>
-        ${view.project ? `<span class="ap-proj" title="Proje">${esc(view.project)}</span>` : ''}
-        <button class="ap-close" data-close title="Kapat (Esc)">×</button>
+        ${view.project ? `<span class="ap-proj" title="${esc(t().project)}">${esc(view.project)}</span>` : ''}
+        <button class="ap-close" data-close title="${esc(t().close)}">×</button>
       </header>
       <div class="ap-body">${view.html}</div>`;
     if (html !== lastHtml) {
@@ -305,9 +433,9 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
       const text = copies.get(b.dataset.copy);
       if (text == null) return;
       const ok = await copyText(text);
-      b.textContent = ok ? 'kopyalandı ✓' : 'kopyalanamadı';
+      b.textContent = ok ? t().copied : t().copyFailed;
       b.classList.add('done');
-      setTimeout(() => { b.textContent = 'kopyala'; b.classList.remove('done'); }, 1200);
+      setTimeout(() => { b.textContent = t().copy; b.classList.remove('done'); }, 1200);
       return;
     }
     if (b.dataset.pick) {
@@ -327,6 +455,13 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     api.hide();
   }
   window.addEventListener('keydown', onKey, true);
+
+  // dil değişince açık görünüm yeniden çizilir
+  const offLang = onLang(() => {
+    el.setAttribute('aria-label', t().ariaLabel);
+    lastHtml = '';
+    render();
+  });
 
   const api = {
     show(wid) {
@@ -368,6 +503,7 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     destroy() {
       api.hide();
       window.removeEventListener('keydown', onKey, true);
+      offLang();
       ro?.disconnect();
     },
   };

@@ -15,7 +15,7 @@ Agent Office is a macOS app (and a Claude Code plugin that powers it). It wraps 
 - **Plan usage per account.** Under each account, the 5-hour and weekly usage of its Claude plan (Pro/Max) and when each one resets, taken from that account's last Claude session.
 - **Local only.** No server, no telemetry. Everything stays on your Mac.
 
-> The app's interface is currently in Turkish. The plugin's terminal view speaks English and Turkish. Translations are welcome (see [Contributing](#contributing)).
+> The app and the plugin speak English and Turkish. The app follows your system language; pick one with **Language** at the bottom of the sidebar. Other translations are welcome (see [Contributing](#contributing)).
 
 ## Install
 
@@ -54,6 +54,7 @@ Agent Office checks GitHub Releases at start and every few hours. A new version 
 | **Log in to an account** | **Giriş yap** next to the account. A small terminal runs `claude auth login`; approve in the browser and it closes by itself. |
 | **See an account's usage** | The **5 sa** and **Hafta** bars under the account: percentage used and reset time. They fill in once a project on that account has talked to Claude; hover for how old the value is. |
 | **See what an agent does** | Click the worker in the office. Esc closes the panel. |
+| **Change the language** | **Language** at the bottom of the sidebar: Auto (system language), English or Türkçe |
 | **Change the bots' color** | **Bot rengi** at the bottom of the sidebar (↺ resets it) |
 | **Hide the sidebar** | ≡ in the title bar |
 
@@ -129,7 +130,7 @@ node plugin/tests/viewer-smoke.mjs        # terminal viewer
 
 Issues and pull requests are welcome. Some good places to start:
 
-- English (and other) translations of the app interface
+- More translations of the app interface (strings live in a `{ en, tr }` table at the top of each renderer module)
 - Linux and Windows builds
 
 The app's main process, UI and office renderer meet at the interfaces described in [`app/CONTRACT.md`](app/CONTRACT.md); please keep it up to date when you change them.

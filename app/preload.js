@@ -46,6 +46,11 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onReady: listen('update:ready'),                    // indirilen sürüm numarası
     install: () => ipcRenderer.send('update:install'),
   },
+  language: {
+    get: () => ipcRenderer.invoke('language:get'),                 // { setting: 'auto'|'en'|'tr', lang: 'en'|'tr' }
+    set: (setting) => ipcRenderer.invoke('language:set', setting),
+    onChange: listen('language:changed'),                           // { setting, lang }
+  },
   office: {
     onData: listen('office:data'),
     themes: () => ipcRenderer.invoke('office:themes'),

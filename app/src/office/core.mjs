@@ -9,6 +9,27 @@ const SIT = 4
 const PARTY_MS = 10 * 60 * 1000 // pistte kalma süresi
 const RECALL_MS = 4000 // yeni iş bu kadar tazeyse pistten biri çağrılır
 export const FRAME_MS = 110
+
+// ---------- dil ----------
+// Ofisteki yazılar (eklentinin görüntüleyicisiyle aynı); uygulama setLanguage ile seçer, varsayılan Türkçe.
+const STRINGS = {
+  tr: {
+    office: 'OFİS', boss: 'MÜDÜR', working: 'ÇALIŞIYOR', waiting: 'BEKLİYOR', thinking: 'DÜŞÜNÜYOR',
+    today: 'BUGÜN', delivered: n => `${n} TESLİM`, demoProject: 'gösteri',
+    types: { 'general-purpose': 'GENEL', Explore: 'KEŞİF', Plan: 'PLAN', 'claude-code-guide': 'REHBER' },
+  },
+  en: {
+    office: 'OFFICE', boss: 'BOSS', working: 'WORKING', waiting: 'WAITING', thinking: 'THINKING',
+    today: 'TODAY', delivered: n => `${n} DONE`, demoProject: 'demo',
+    types: { 'general-purpose': 'GENERAL', Explore: 'EXPLORE', Plan: 'PLAN', 'claude-code-guide': 'GUIDE' },
+  },
+}
+let LANG = 'tr'
+let T = STRINGS.tr
+export function setLanguage(lang) {
+  LANG = lang === 'en' ? 'en' : 'tr'
+  T = STRINGS[LANG]
+}
 const DESIGN_W = 330
 const DESIGN_H = 200
 
@@ -51,11 +72,10 @@ const C = {
 //   { "acme": { "match": "acme", "title": "ACME OFİS", "sign": "ACME", "colors": { "accent": "#ff8800" } } }
 const BASE = { ...C }
 const THEMES = {
-  classic: { title: 'AGENT OFİS', sign: 'AGENT', colors: {} },
+  classic: { sign: 'AGENT', colors: {} },
   // örnek yerleşik tema: adında "forest" geçen projeler yeşil ofiste çalışır
   forest: {
     match: 'forest',
-    title: 'FOREST OFİS',
     sign: 'FOREST',
     colors: {
       frame: 0x0f2318, ol: 0x1b3a2a, wallTop: 0x2e6b4a, wallTopHi: 0x3f8a60,
@@ -115,7 +135,6 @@ function projectTheme(project) {
   const hue = strHash(String(project).toLowerCase()) % 360
   const label = String(project).replace(/[-_.]+/g, ' ').trim().split(' ')[0] || 'AGENT'
   return {
-    title: `${normalize(label)} OFİS`,
     sign: label,
     colors: {
       frame: hsl(hue, 0.35, 0.1), ol: hsl(hue, 0.3, 0.16), wallTop: hsl(hue, 0.35, 0.32), wallTopHi: hsl(hue, 0.35, 0.4),
@@ -180,8 +199,10 @@ const MARKS = {
   Ö: ['O', '#.#', null], İ: ['I', '.#.', null],
 }
 
+// büyük harfe çevirir: Türkçede i→İ, ı→I; İngilizcede düz toUpperCase (eklentiyle aynı)
 function normalize(str) {
-  return String(str).replace(/i/g, 'İ').replace(/ı/g, 'I').toLocaleUpperCase('tr-TR')
+  if (LANG === 'tr') return String(str).replace(/i/g, 'İ').replace(/ı/g, 'I').toLocaleUpperCase('tr-TR')
+  return String(str).toUpperCase()
 }
 
 function textWidth(str) {
@@ -928,8 +949,8 @@ function sign(x, y, label) {
 function whiteboard(x, y, w, data) {
   box(x, y, w, 15, C.boardFrame)
   rect(x + 1, y + 1, w - 2, 13, C.board)
-  text('BUGÜN', x + 3, y + 3, C.marker)
-  text(`${data.delivered} TESLİM`, x + 3, y + 9 - 1 + 1, C.accent)
+  text(T.today, x + 3, y + 3, C.marker)
+  text(T.delivered(data.delivered), x + 3, y + 9 - 1 + 1, C.accent)
   for (let i = 0; i < 6; i++) {
     const h = 2 + (hash(i + 99) % 7)
     rect(x + w - 16 + i * 2, y + 13 - h, 1, h, C.marker)
@@ -986,7 +1007,7 @@ function projectsOf(data) {
 // çok projeli tahta: solda bugünün toplamı, sonra her proje bir sütun (ad + bugün teslim);
 // müdür o projede çalışıyorsa sayının yanında yanıp sönen nokta. Sığmayanlar "+n". Genişliği döner.
 function projectBoard(x, y, maxW, projs, short, data, now) {
-  const headW = Math.max(textWidth('BUGÜN'), textWidth(String(data.delivered))) + 6
+  const headW = Math.max(textWidth(T.today), textWidth(String(data.delivered))) + 6
   const colW = 28
   let n = Math.min(projs.length, Math.floor((maxW - headW - 2) / colW))
   let more = projs.length - n
@@ -998,7 +1019,7 @@ function projectBoard(x, y, maxW, projs, short, data, now) {
   const w = headW + n * colW + moreW + 2
   box(x, y, w, 15, C.boardFrame)
   rect(x + 1, y + 1, w - 2, 13, C.board)
-  text('BUGÜN', x + 3, y + 3, C.marker)
+  text(T.today, x + 3, y + 3, C.marker)
   text(String(data.delivered), x + 3, y + 9, C.accent)
   const blink = Math.floor(now / 500) % 2
   for (let i = 0; i < n; i++) {
@@ -1096,7 +1117,7 @@ function bossDesk(now, isBusy, stack, lastOk) {
   box(cx - 26, by, 52, 9, C.deskFront)
   for (let i = cx - 22; i < cx + 24; i += 12) rect(i, by + 2, 1, 6, C.wainscotDark)
   box(cx - 10, by + 2, 20, 5, C.gold)
-  text('MÜDÜR', cx - 9, by + 2, C.deskLeg)
+  text(T.boss, cx - 9, by + 2, C.deskLeg)
   // büyük monitör
   box(cx + 6, by - 19, 16, 11, C.lid)
   rect(cx + 7, by - 18, 14, 8, isBusy ? 0x1b2a38 : C.lidDark)
@@ -1405,10 +1426,8 @@ function drawBackground() {
 }
 
 // ---------- kare ----------
-const TYPE_NAMES = { 'general-purpose': 'GENEL', Explore: 'KEŞİF', Plan: 'PLAN', 'claude-code-guide': 'REHBER' }
-
 function shortType(type) {
-  return fit(TYPE_NAMES[type] ?? String(type).split(':').pop(), 8)
+  return fit(T.types[type] ?? String(type).split(':').pop(), 8)
 }
 
 // focus: odaktaki proje adı; tema ondan seçilir, çok projede masaları vurgulanır
@@ -1586,7 +1605,7 @@ function renderFrame(now, data, focus = '', selected = null) {
   for (const { w, slot, p } of poses) {
     if (p.phase !== 'work') continue
     const info = seatInfo(slot)
-    const tool = w.tool ? String(w.tool).replace(/^mcp__.*__/, '') : 'DÜŞÜNÜYOR'
+    const tool = w.tool ? String(w.tool).replace(/^mcp__.*__/, '') : T.thinking
     const cx = info.kind === 'desk' ? L.desks[slot].cx : p.x
     const top = p.y - (info.kind === 'desk' ? 18 : 14)
     const pr = projOf(w.project)
@@ -1594,7 +1613,7 @@ function renderFrame(now, data, focus = '', selected = null) {
     const tb = tag([[shortType(w.type), C.white], [fit(tool, 8), C.yellow]], cx, top, pr ? pr.color : C.ol)
     hits.push({ id: w.id, ...tb })
   }
-  const bossLines = [['MÜDÜR', C.accent], [data.isBossBusy ? 'ÇALIŞIYOR' : 'BEKLİYOR', C.dim]]
+  const bossLines = [[T.boss, C.accent], [data.isBossBusy ? T.working : T.waiting, C.dim]]
   if (isMulti && data.isBossBusy) {
     // hangi projelerde çalıştığı: en çok iki ad, gerisi +n
     const busy = projs.filter(p => p.isBossBusy)
@@ -1630,7 +1649,7 @@ function demoOffice(now) {
       tool: DEMO_TOOLS[Math.floor((now - spawnAt) / 3000 + (h >>> 5)) % DEMO_TOOLS.length],
     })
   }
-  return { workers, delivered: 14 + done, isBossBusy: true, project: 'gösteri', sessionId: '', isDemo: true }
+  return { workers, delivered: 14 + done, isBossBusy: true, project: T.demoProject, sessionId: '', isDemo: true }
 }
 
 // ekran pikselleri → ölçek ve mantıksal tuval
@@ -1699,7 +1718,7 @@ const hex = c => '#' + (c >>> 0 & 0xffffff).toString(16).padStart(6, '0')
 export function themeInfo() {
   return {
     name: themeName || 'classic',
-    title: THEME.title ?? 'AGENT OFİS',
+    title: THEME.title ?? `${normalize(THEME.sign)} ${T.office}`,
     frame: hex(C.frame),
     accent: hex(C.accent),
     statusBg: hex(C.statusBg),

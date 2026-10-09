@@ -2,6 +2,13 @@
 // Gelen pty verisini app.js yönlendirir (write/exit); yazma, boyut ve yeniden başlatma projeye özeldir.
 import { Terminal } from '../node_modules/@xterm/xterm/lib/xterm.mjs';
 import { FitAddon } from '../node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
+import { pick } from './i18n.js';
+
+// Metinler (bkz. i18n.js). Terminale yazılmış satır dil değişince yeniden yazılmaz.
+const S = {
+  en: { exited: '— Claude exited — press Enter to restart —' },
+  tr: { exited: '— Claude kapandı — yeniden başlatmak için Enter —' },
+};
 
 const xtermTheme = (t = {}) => ({
   background: t.statusBg || '#231815',
@@ -118,7 +125,7 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     exit() {
       dead = true;
       if (!restartable || quietExit) { quietExit = false; return; }
-      term.write('\r\n\x1b[2m— Claude kapandı — yeniden başlatmak için Enter —\x1b[0m\r\n');
+      term.write(`\r\n\x1b[2m${pick(S).exited}\x1b[0m\r\n`);
     },
     setTheme(t) { term.options.theme = xtermTheme(t); },
     focus() { term.focus(); },

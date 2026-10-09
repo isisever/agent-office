@@ -54,7 +54,9 @@ const snapshot = () => ({
 const broadcast = () => send('projects:changed', snapshot());
 
 // Durumu değiştir, kaydet, renderer'a bildir.
-const accountList = () => A.withAuth(state.accounts, (id) => auths.get(id), (id) => usages.get(id));
+// Varsayılan hesabın adı ve bilinen giriş hataları o anki dilde gider.
+const accountList = () => A.withAuth(state.accounts, (id) => A.localizeAuth(auths.get(id), uiLang()), (id) => usages.get(id))
+  .map((a) => (a.id === A.DEFAULT_ID ? { ...a, label: M().defaultAccount } : a));
 const sendAccounts = () => send('accounts:changed', accountList());
 function commit(next, { accounts = false } = {}) {
   state = next;
@@ -62,6 +64,42 @@ function commit(next, { accounts = false } = {}) {
   broadcast();
   if (accounts) sendAccounts();
 }
+
+// --- dil: ayar 'auto' | 'en' | 'tr' (state.json), 'auto' sistem dilidir
+const MSG = {
+  tr: {
+    defaultAccount: 'Varsayılan',
+    pickFolder: 'Proje klasörünü seç', pickButton: 'Ekle',
+    updatesOnlyInstalled: 'Güncelleme denetimi yalnızca kurulu uygulamada çalışır.',
+    upToDate: (v) => `Agent Office güncel (${v}).`,
+    downloading: (v) => `Yeni sürüm ${v} indiriliyor; hazır olunca başlıkta "Yeniden başlat" düğmesi çıkar.`,
+    updateFailed: 'Güncelleme denetlenemedi.',
+    checkUpdates: 'Güncellemeleri denetle…',
+    edit: 'Düzen', undo: 'Geri al', redo: 'Yinele', cut: 'Kes', copy: 'Kopyala', paste: 'Yapıştır', selectAll: 'Tümünü seç',
+    view: 'Görünüm', reload: 'Yeniden yükle', devTools: 'Geliştirici araçları', fullscreen: 'Tam ekran', window: 'Pencere',
+  },
+  en: {
+    defaultAccount: 'Default',
+    pickFolder: 'Choose the project folder', pickButton: 'Add',
+    updatesOnlyInstalled: 'Checking for updates only works in the installed app.',
+    upToDate: (v) => `Agent Office is up to date (${v}).`,
+    downloading: (v) => `Downloading version ${v}; a "Restart" button appears in the title bar when it is ready.`,
+    updateFailed: 'Could not check for updates.',
+    checkUpdates: 'Check for Updates…',
+    edit: 'Edit', undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
+    view: 'View', reload: 'Reload', devTools: 'Developer Tools', fullscreen: 'Full Screen', window: 'Window',
+  },
+};
+const LANG_SETTINGS = ['auto', 'en', 'tr'];
+const langSetting = () => (LANG_SETTINGS.includes(state?.language) ? state.language : 'auto');
+function systemLang() {
+  let l = '';
+  try { l = app.getPreferredSystemLanguages()[0] || app.getLocale(); } catch {}
+  return /^tr/i.test(l) ? 'tr' : 'en';
+}
+const uiLang = () => (langSetting() === 'auto' ? systemLang() : langSetting());
+const M = () => MSG[uiLang()];
+const languageInfo = () => ({ setting: langSetting(), lang: uiLang() });
 
 const isDir = (d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } };
 
@@ -75,8 +113,8 @@ function argProject() {
 
 async function pickFolder() {
   const r = await dialog.showOpenDialog(win, {
-    title: 'Proje klasörünü seç',
-    buttonLabel: 'Ekle',
+    title: M().pickFolder,
+    buttonLabel: M().pickButton,
     properties: ['openDirectory', 'createDirectory'],
     defaultPath: P.findProject(state, state.activeId)?.dir,
   });
@@ -505,15 +543,15 @@ function setupUpdates() {
 }
 // menüden elle denetim: sonuç kısa bir pencereyle söylenir
 async function checkUpdatesNow() {
-  if (!updater) return dialog.showMessageBox(win, { message: 'Güncelleme denetimi yalnızca kurulu uygulamada çalışır.' });
+  if (!updater) return dialog.showMessageBox(win, { message: M().updatesOnlyInstalled });
   if (updateReady) return send('update:ready', updateReady);
   try {
     const r = await updater.checkForUpdates();
     const latest = r?.updateInfo?.version;
-    if (!latest || latest === app.getVersion()) dialog.showMessageBox(win, { message: `Agent Office güncel (${app.getVersion()}).` });
-    else dialog.showMessageBox(win, { message: `Yeni sürüm ${latest} indiriliyor; hazır olunca başlıkta "Yeniden başlat" düğmesi çıkar.` });
+    if (!latest || latest === app.getVersion()) dialog.showMessageBox(win, { message: M().upToDate(app.getVersion()) });
+    else dialog.showMessageBox(win, { message: M().downloading(latest) });
   } catch (e) {
-    dialog.showMessageBox(win, { type: 'warning', message: 'Güncelleme denetlenemedi.', detail: String(e?.message || e) });
+    dialog.showMessageBox(win, { type: 'warning', message: M().updateFailed, detail: String(e?.message || e) });
   }
 }
 ipcMain.handle('update:state', () => ({ version: app.getVersion(), ready: updateReady }));
@@ -521,23 +559,35 @@ ipcMain.on('update:install', () => { if (updateReady && updater) { killAll(); up
 
 function buildMenu() {
   const name = app.getName();
+  const m = M();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: name, submenu: [{ role: 'about' }, { label: 'Güncellemeleri denetle…', click: () => checkUpdatesNow() }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
-    { label: 'Düzen', submenu: [
-      { role: 'undo', label: 'Geri al' }, { role: 'redo', label: 'Yinele' }, { type: 'separator' },
-      { role: 'cut', label: 'Kes' }, { role: 'copy', label: 'Kopyala' },
-      { label: 'Yapıştır', accelerator: 'CmdOrCtrl+V', click: () => send('edit:paste') },
-      { role: 'selectAll', label: 'Tümünü seç' },
+    { label: name, submenu: [{ role: 'about' }, { label: m.checkUpdates, click: () => checkUpdatesNow() }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: m.edit, submenu: [
+      { role: 'undo', label: m.undo }, { role: 'redo', label: m.redo }, { type: 'separator' },
+      { role: 'cut', label: m.cut }, { role: 'copy', label: m.copy },
+      { label: m.paste, accelerator: 'CmdOrCtrl+V', click: () => send('edit:paste') },
+      { role: 'selectAll', label: m.selectAll },
     ] },
-    { label: 'Görünüm', submenu: [{ role: 'reload', label: 'Yeniden yükle' }, { role: 'toggleDevTools', label: 'Geliştirici araçları' }, { type: 'separator' }, { role: 'togglefullscreen', label: 'Tam ekran' }] },
-    { role: 'windowMenu', label: 'Pencere' },
+    { label: m.view, submenu: [{ role: 'reload', label: m.reload }, { role: 'toggleDevTools', label: m.devTools }, { type: 'separator' }, { role: 'togglefullscreen', label: m.fullscreen }] },
+    { role: 'windowMenu', label: m.window },
   ]));
 }
 
+// --- dil
+ipcMain.handle('language:get', () => languageInfo());
+ipcMain.handle('language:set', (_e, setting) => {
+  if (!LANG_SETTINGS.includes(setting) || setting === langSetting()) return languageInfo();
+  commit({ ...state, language: setting }, { accounts: true });
+  buildMenu();
+  send('language:changed', languageInfo());
+  return languageInfo();
+});
+
 app.whenReady().then(() => {
+  const raw = loadState();
+  state = { ...P.normalizeState(raw), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto' };
   buildMenu();
   setupUpdates();
-  state = P.normalizeState(loadState());
   saveState();
   loadUsageCache();
   lastFocusCheck = Date.now();

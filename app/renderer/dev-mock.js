@@ -1,7 +1,7 @@
 // Yalnızca geliştirme: window.agentOffice yokken (index.html düz tarayıcıda açılınca) v2 API'sinin sahtesi.
 // Electron'da preload window.agentOffice'u verir ve bu dosya hiç yüklenmez.
 // ?empty → proje yok; ?themesError → başlıkta tema uyarısı; ?authError → üçüncü hesap 'error';
-// ?loginFail → sahte giriş 1 koduyla biter ve hesap 'out' kalır.
+// ?loginFail → sahte giriş 1 koduyla biter ve hesap 'out' kalır. ?lang=en|tr → dil ayarı (yoksa auto: tarayıcı dili).
 // ?select=<işçi id | @boss | shell:<id>> → birkaç saniye sonra o bota/raf yuvasına tıklanır (ajan paneli denemesi;
 // ör. ?select=m-1, ?select=shell:sh-1). ?noShells → eski veri (shells alanı yok).
 const q = new URLSearchParams(location.search);
@@ -88,6 +88,10 @@ for (const p of projects) if (!running.get(p.id)) setTimeout(() => ev.exit.emit(
 
 const names = ['yeni-proje', 'web-sitesi', 'mobil-uygulama', 'raporlar'];
 
+let langSetting = ['en', 'tr'].includes(q.get('lang')) ? q.get('lang') : 'auto';
+const langInfo = () => ({ setting: langSetting, lang: langSetting === 'auto' ? (/^tr/i.test(navigator.language) ? 'tr' : 'en') : langSetting });
+const langEv = listeners();
+
 window.agentOffice = {
   projects: {
     list: async () => snapshot(),
@@ -153,6 +157,11 @@ window.agentOffice = {
     onData: ev.data.add,
     onExit: ev.exit.add,
     restart: (id) => boot(id),
+  },
+  language: {
+    get: async () => langInfo(),
+    set: async (v) => { langSetting = ['en', 'tr'].includes(v) ? v : 'auto'; setTimeout(() => langEv.emit(langInfo())); },
+    onChange: langEv.add,
   },
   office: {
     onData: ev.office.add,

@@ -1,6 +1,40 @@
 // Hesap girişi katmanı: uygulamanın üstünde ortalanmış panel, `login:<hesapId>` pty'sine bağlı xterm
 // (main orada `claude auth login` çalıştırır). pty kapanınca hesap 'in' olursa kendiliğinden kapanır.
 import { mountTerminal } from './terminal.js';
+import { onLang, pick } from './i18n.js';
+
+// Metinler (bkz. i18n.js): pick(S).anahtar, her kullanımda okunur.
+const S = {
+  en: {
+    done: 'Done',
+    exitCode: (c) => `Exit code ${c}`,
+    loggedIn: 'logged in',
+    notLoggedIn: ' · not logged in',
+    starting: 'Starting login…',
+    inProgress: 'Logging in…',
+    failedToStart: (m) => `Could not start: ${m}`,
+    close: 'Close (Esc)',
+    hint: 'If a browser opens, approve there; if the terminal asks something, answer here.',
+    retry: 'Try again',
+    title: (label) => `Log in to ${label}`,
+    checking: 'checking login…',
+  },
+  tr: {
+    done: 'Tamamlandı',
+    exitCode: (c) => `Çıkış kodu ${c}`,
+    loggedIn: 'giriş yapıldı',
+    notLoggedIn: ' · giriş yapılmadı',
+    starting: 'Giriş başlatılıyor…',
+    inProgress: 'Giriş sürüyor…',
+    failedToStart: (m) => `Başlatılamadı: ${m}`,
+    close: 'Kapat (Esc)',
+    hint: 'Tarayıcı açılırsa orada onayla; terminal soru sorarsa burada yanıtla.',
+    retry: 'Tekrar dene',
+    title: (label) => `${label} hesabına giriş`,
+    checking: 'giriş denetleniyor…',
+  },
+};
+const t = () => pick(S);
 
 const CLOSE_AFTER = 1500; // başarıdan sonra kapanma gecikmesi
 const AUTH_WAIT = 6000; // kapanıştan sonra main'in giriş denetimini bekleme süresi
@@ -14,16 +48,18 @@ function h(tag, cls, text) {
 
 export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} } = {}) {
   let accounts = [];
-  let cur = null; // { id, ptyId, root, title, status, retry, term, exited, code, updated, timers }
+  let cur = null; // { id, ptyId, root, title, label, x, hint, status, statusText, retry, term, exited, code, updated, timers }
 
+  // text: metni üreten işlev (dil değişince yeniden çağrılır)
   function setStatus(text, kind = '') {
     if (!cur) return;
-    cur.status.textContent = text || '';
+    cur.statusText = text;
+    cur.status.textContent = (text && text()) || '';
     cur.status.className = 'lo-status' + (kind ? ' ' + kind : '');
   }
 
   function clearTimers(c) {
-    for (const t of c.timers) clearTimeout(t);
+    for (const id of c.timers) clearTimeout(id);
     c.timers = [];
   }
 
@@ -32,19 +68,20 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
     const c = cur;
     if (!c || !c.exited || c.closing || c.code == null) return;
     const auth = accounts.find((a) => a.id === c.id)?.auth;
-    const done = c.code === 0 ? 'Tamamlandı' : `Çıkış kodu ${c.code}`;
+    const code = c.code;
+    const done = () => (code === 0 ? t().done : t().exitCode(code));
     if (auth?.state === 'in') {
       c.closing = true;
       clearTimers(c);
       c.retry.hidden = true;
-      setStatus(`${done} · ${auth.email || 'giriş yapıldı'}`, 'ok');
+      setStatus(() => `${done()} · ${auth.email || t().loggedIn}`, 'ok');
       c.timers.push(setTimeout(() => { if (cur === c) close(); }, CLOSE_AFTER));
       return;
     }
     if (!force && (!c.updated || auth?.state === 'checking')) return; // main'in denetimini bekle
     clearTimers(c);
-    const why = auth?.state === 'error' && auth.error ? ` · ${auth.error}` : ' · giriş yapılmadı';
-    setStatus(done + why, 'err');
+    const why = () => (auth?.state === 'error' && auth.error ? ` · ${auth.error}` : t().notLoggedIn);
+    setStatus(() => done() + why(), 'err');
     c.retry.hidden = false;
   }
 
@@ -54,15 +91,15 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
     clearTimers(c);
     Object.assign(c, { exited: false, code: null, updated: false, closing: false });
     c.retry.hidden = true;
-    setStatus('Giriş başlatılıyor…');
+    setStatus(() => t().starting);
     c.term.reset(); // ilk veriyle boyut yeniden bildirilir
     requestAnimationFrame(() => { c.term.fit(); c.term.focus(); });
     window.agentOffice.accounts.login(c.id).then(
-      () => { if (cur === c && !c.exited) setStatus('Giriş sürüyor…'); },
+      () => { if (cur === c && !c.exited) setStatus(() => t().inProgress); },
       (e) => {
         if (cur !== c) return;
         c.exited = true;
-        setStatus(`Başlatılamadı: ${e?.message || e}`, 'err');
+        setStatus(() => t().failedToStart(e?.message || e), 'err');
         c.retry.hidden = false;
       },
     );
@@ -80,14 +117,14 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
     const head = h('div', 'lo-head');
     const title = h('span', 'lo-title');
     const x = h('button', 'lo-x', '×');
-    x.title = 'Kapat (Esc)';
+    x.title = t().close;
     x.addEventListener('click', () => close());
     head.append(title, x);
-    const hintEl = h('p', 'lo-hint', 'Tarayıcı açılırsa orada onayla; terminal soru sorarsa burada yanıtla.');
+    const hintEl = h('p', 'lo-hint', t().hint);
     const host = h('div', 'term-host lo-term');
     const foot = h('div', 'lo-foot');
     const status = h('span', 'lo-status');
-    const retry = h('button', 'lo-retry', 'Tekrar dene');
+    const retry = h('button', 'lo-retry', t().retry);
     retry.hidden = true;
     retry.addEventListener('click', () => start());
     foot.append(status, retry);
@@ -97,13 +134,15 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
 
     const ptyId = `login:${account.id}`;
     const term = mountTerminal(host, { projectId: ptyId, theme: getTheme(), restartable: false });
-    cur = { id: account.id, ptyId, root, title, status, retry, term, timers: [] };
+    cur = { id: account.id, ptyId, root, title, x, hint: hintEl, status, retry, term, timers: [] };
     setLabel(account.label);
     start();
   }
 
   function setLabel(label) {
-    if (cur) cur.title.textContent = `${label} hesabına giriş`;
+    if (!cur) return;
+    cur.label = label;
+    cur.title.textContent = t().title(label);
   }
 
   function close() {
@@ -125,6 +164,16 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
     close();
   }, true);
 
+  // dil değişince açık katmanın metinleri yenilenir
+  onLang(() => {
+    if (!cur) return;
+    cur.x.title = t().close;
+    cur.hint.textContent = t().hint;
+    cur.retry.textContent = t().retry;
+    cur.title.textContent = t().title(cur.label);
+    cur.status.textContent = (cur.statusText && cur.statusText()) || '';
+  });
+
   return {
     open,
     close,
@@ -138,7 +187,8 @@ export function mountLogin(parent, { getTheme = () => ({}), onClose = () => {} }
       c.term.exit();
       c.exited = true;
       c.code = Number.isFinite(code) ? code : 0;
-      setStatus(c.code === 0 ? 'Tamamlandı · giriş denetleniyor…' : `Çıkış kodu ${c.code} · giriş denetleniyor…`);
+      const n = c.code;
+      setStatus(() => `${n === 0 ? t().done : t().exitCode(n)} · ${t().checking}`);
       c.timers.push(setTimeout(() => evaluate(true), AUTH_WAIT));
       evaluate();
     },

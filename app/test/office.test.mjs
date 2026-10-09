@@ -67,6 +67,18 @@ assert.notDeepEqual(firstPixels.classic, firstPixels.forest)
 assert.equal(infos.classic.title, 'AGENT OFİS')
 assert.equal(infos.forest.title, 'FOREST OFİS')
 
+// dil: başlık, yazılar ve büyük harf kuralı İngilizceye geçer, Türkçeye döner
+{
+  const { setLanguage } = await import('../src/office/core.mjs')
+  setTheme('classic')
+  setLanguage('en')
+  const en = render(NOW, demoOffice(NOW)).fb.slice()
+  assert.equal(themeInfo().title, 'AGENT OFFICE')
+  setLanguage('tr')
+  assert.notDeepEqual(render(NOW, demoOffice(NOW)).fb, en)
+  assert.equal(themeInfo().title, 'AGENT OFİS')
+}
+
 // boş veriyle (henüz veri gelmemiş) çizim
 setTheme('')
 const empty = render(NOW, { workers: [], delivered: 0, isBossBusy: false, project: '', sessionId: '' })

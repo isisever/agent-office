@@ -147,9 +147,11 @@ test('authFromRun: çıkış kodu sıfır değilse de JSON geçerli; zaman aşı
   assert.deepEqual(A.authFromRun(code1, 'noise\n{"loggedIn": false}\n', ''), { state: 'out' });
   assert.deepEqual(A.authFromRun(null, '{"loggedIn": true, "email": "e@x"}', ''), { state: 'in', email: 'e@x' });
   const timeout = Object.assign(new Error('x'), { killed: true, signal: 'SIGKILL', code: null });
-  assert.deepEqual(A.authFromRun(timeout, '', ''), { state: 'error', error: 'zaman aşımı' });
-  assert.deepEqual(A.authFromRun(Object.assign(new Error('x'), { code: 127 }), '', 'zsh: command not found: claude'),
-    { state: 'error', error: 'claude bulunamadı' });
+  assert.deepEqual(A.authFromRun(timeout, '', ''), { state: 'error', errorKey: 'timeout' });
+  assert.deepEqual(A.localizeAuth(A.authFromRun(timeout, '', ''), 'tr'), { state: 'error', error: 'zaman aşımı' });
+  assert.deepEqual(A.localizeAuth(A.authFromRun(Object.assign(new Error('x'), { code: 127 }), '', 'zsh: command not found: claude'), 'en'),
+    { state: 'error', error: 'claude not found' });
+  assert.deepEqual(A.localizeAuth({ state: 'in', email: 'e' }, 'en'), { state: 'in', email: 'e' });
   assert.deepEqual(A.authFromRun(code1, '', 'warn\nboom: bad thing\n'), { state: 'error', error: 'boom: bad thing' });
   assert.equal(A.authFromRun(code1, '', 'x'.repeat(500)).error.length, 118);
   assert.equal(A.authFromRun(null, 'hello', '').state, 'error');

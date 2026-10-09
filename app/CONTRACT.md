@@ -173,3 +173,19 @@ type AccountUsage = { updatedAt: number; fiveHour?: UsageWindow; sevenDay?: Usag
 - Main starts each project's claude with `--settings '{"statusLine":…}'` running `userData/usage/statusline.sh <userData/usage/<accountId>/<projectId>.json>` (written at start, `src/usage.js` `SCRIPT`). The script stores its stdin there and, when the user has a command status line of their own (first `statusLine` found in the project's `.claude/settings.local.json`, `.claude/settings.json`, then the account's `settings.json`), runs it with the same input via `AGENT_OFFICE_STATUSLINE`, so the terminal shows the user's status line as before. Its `padding` is carried over.
 - Main scans those files every 3 s; the newest one with `rate_limits` becomes the account's usage, is kept in `usage/<accountId>/last.json` (loaded at start) and sent with `accounts:changed`. A project's file is removed from other accounts' folders when its pty starts, and when the project is removed; an account's folder goes with the account.
 - UI: under a logged-in account, one line per window: label (`5 sa`, `Hafta`), a bar (accent; yellow from 70%, red from 90%), the percentage and the reset time (`14:30` within 24 h, else `Pzt 09:00`; `sıfırlandı` once passed, shown as 0%). The tooltip says how old the value is; values older than 30 minutes are dimmed. Redrawn every minute.
+
+## Language (v2.5)
+
+The app speaks English and Turkish.
+
+```ts
+type LanguageInfo = { setting: 'auto' | 'en' | 'tr'; lang: 'en' | 'tr' }   // 'auto' → system language (tr* → 'tr', else 'en')
+agentOffice.language.get(): Promise<LanguageInfo>
+agentOffice.language.set(setting: 'auto' | 'en' | 'tr'): Promise<LanguageInfo>
+agentOffice.language.onChange(cb: (info: LanguageInfo) => void): () => void   // 'language:changed'
+```
+
+- Main keeps the setting as `language` in `state.json`, builds the menu and dialogs in that language, and sends the default account's label (`Default` / `Varsayılan`) and known auth errors (`errorKey` from `src/accounts.js`, localized by `localizeAuth`) in it; it re-sends `accounts:changed` on a change.
+- Renderer: `renderer/i18n.js` holds the current language (`getLang`, `setLang`, `onLang`, `pick`, `locale`). Each module keeps its own `{ en, tr }` string table and re-renders on `onLang`; the window is not reloaded, terminals keep running.
+- Office: `core.mjs` `setLanguage('en' | 'tr')` switches the drawn words (boss, waiting/working, today/done, agent types), the uppercase rule (Turkish i→İ only in Turkish) and the default titles (`AGENT OFFICE` / `AGENT OFİS`; a theme's own `title` wins). Default is Turkish.
+- Sidebar: a Language picker (Auto, English, Türkçe) next to the bot colour.

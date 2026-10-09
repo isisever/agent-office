@@ -1,7 +1,7 @@
 {
   "name": "agent-office",
   "displayName": "Agent Office",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "8-bit pixel-art office for Claude Code: subagents walk in as bots, work at desks and deliver to the boss",
   "author": {
     "name": "isisever",

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
@@ -11,10 +11,10 @@
     <!-- Tek çerçeve: üstte başlık, solda projeler/hesaplar, ortada ofis, altta etkin projenin Claude Code terminali.
          Tema renkleri --frame, --accent, --status-bg, --status-text CSS değişkenleriyle tüm çerçeveyi sarar. -->
     <header id="titlebar">
-      <button id="toggle-sidebar" title="Projeleri gizle">≡</button>
-      <span id="title">AGENT OFİS</span>
+      <button id="toggle-sidebar">≡</button>
+      <span id="title">AGENT OFFICE</span>
       <span id="project"></span>
-      <span id="warn" hidden>⚠ tema</span>
+      <span id="warn" hidden></span>
       <button id="update" hidden></button>
       <span id="stats"></span>
     </header>
@@ -28,9 +28,10 @@
         <div id="terminal">
           <div id="terminals"></div>
           <div id="empty" hidden>
-            <p>Henüz proje yok.</p>
-            <button id="empty-add" title="Proje ekle (⌘O)">+ Proje ekle</button>
-            <p class="dim">Bir klasör seç; Claude orada başlar.</p>
+            <!-- metinler app.js'te, seçili dilde -->
+            <p id="empty-title"></p>
+            <button id="empty-add"></button>
+            <p id="empty-note" class="dim"></p>
           </div>
         </div>
       </main>
