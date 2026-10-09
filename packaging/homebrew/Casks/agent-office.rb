@@ -1,9 +1,9 @@
 cask "agent-office" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.5.0"
-  sha256 arm:   "871ec8384b2ecf220267556c3f881e2fb23495fb514293eebd8d9f9da1c3a71c",
-         intel: "bc7f5f14a6c60fa933d6f93e3cf0a4743951324b25c102100db52bb85f148934"
+  version "0.6.0"
+  sha256 arm:   "15327562c5f82df86b2e273abca2a60cf220ebf5dfa18a479335df119fac9205",
+         intel: "20714c4972fa45051c0e00fbae0c2597434aeb072cb01a1a7ec7d5374a5e890c"
 
   url "https://github.com/isisever/agent-office/releases/download/v#{version}/AgentOffice-#{version}-#{arch}.dmg"
   name "Agent Office"
