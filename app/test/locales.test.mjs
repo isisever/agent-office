@@ -1,9 +1,9 @@
-// Dil dosyaları: node --test app/test/locales.test.mjs
-// - app/locales/*.json: her dosyada "_name"; İngilizceyle aynı anahtarlar ve anahtar başına aynı yer tutucular
-//   ({n}, {label}...). Çoğul grubu ({ "one": ..., "other": ... }) tek anahtar sayılır: dil kendi kategorilerini
-//   kullanır ya da düz bir metin verir.
-// - Koddaki her anahtar (t('…'), T('…'), hasText('…'), t.has('…') çağrılarındaki dizgiler) en.json'da var;
-//   en.json'daki her anahtar kodda kullanılıyor. `sidebar.days.${n}` gibi bir şablon, o önekle başlayan anahtarları kapsar.
+// Language files: node --test app/test/locales.test.mjs
+// - app/locales/*.json: "_name" in every file; the same keys as English and the same placeholders per key
+//   ({n}, {label}...). A plural group ({ "one": ..., "other": ... }) counts as one key: the language uses its own
+//   categories or gives a plain string.
+// - Every key in the code (the strings in t('…'), T('…'), hasText('…'), t.has('…') calls) exists in en.json;
+//   every key in en.json is used in the code. A template like `sidebar.days.${n}` covers keys starting with that prefix.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -17,14 +17,14 @@ const files = readdirSync(DIR).filter((f) => f.endsWith('.json')).sort()
 const locales = Object.fromEntries(files.map((f) => [f.slice(0, -5), JSON.parse(readFileSync(join(DIR, f), 'utf8'))]))
 const en = locales.en
 
-/** Düz anahtar listesi: { 'sidebar.working': '{n} working', 'panel.tools': { one, other }, ... } ("_" ile başlayanlar hariç). */
+/** Flat key list: { 'sidebar.working': '{n} working', 'panel.tools': { one, other }, ... } (excluding those starting with "_"). */
 function flatten(obj, prefix = '', out = {}) {
   for (const [k, v] of Object.entries(obj)) {
     if (!prefix && k.startsWith('_')) continue
     const key = prefix ? `${prefix}.${k}` : k
     if (typeof v === 'string' || isPluralGroup(v)) out[key] = v
     else if (v && typeof v === 'object' && !Array.isArray(v)) flatten(v, key, out)
-    else out[key] = v // yanlış tür: aşağıda yakalanır
+    else out[key] = v // wrong type: caught below
   }
   return out
 }
@@ -54,7 +54,7 @@ for (const code of Object.keys(locales).filter((c) => c !== 'en')) {
   })
 }
 
-// koddaki anahtarlar: çevirme çağrılarının ilk argümanındaki dizgiler (üçlü ifade içindekiler dahil)
+// keys in the code: strings in the first argument of translation calls (including inside ternaries)
 const NAMESPACES = Object.keys(en).filter((k) => !k.startsWith('_'))
 const SOURCES = ['main.js', 'preload.js', ...readdirSync(join(APP, 'src')).filter((f) => /\.(m?js)$/.test(f)).map((f) => `src/${f}`),
   ...readdirSync(join(APP, 'renderer')).filter((f) => f.endsWith('.js')).map((f) => `renderer/${f}`)]
@@ -62,10 +62,10 @@ const CALL = /\b(?:t|T|hasText|has)\(([^()]*)/g
 const LITERAL = /(['"`])([A-Za-z][\w.-]*?)(\1|\$\{)/g
 
 function usedKeys() {
-  const exact = new Map() // anahtar → dosya
+  const exact = new Map() // key → file
   const prefixes = new Map()
   for (const rel of SOURCES) {
-    // yorum satırları (örnek anahtarlar içerebilir) atlanır
+    // comment lines (which may contain example keys) are skipped
     const src = readFileSync(join(APP, rel), 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
     for (const call of src.matchAll(CALL)) {
       for (const m of call[1].matchAll(LITERAL)) {

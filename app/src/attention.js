@@ -1,19 +1,19 @@
-// Seni bekleyen projeler ve kota eşikleri: saf işlevler (Electron yok; node --test ile sınanır).
+// Projects waiting for you and quota thresholds: pure functions (no Electron; tested with node --test).
 //
-// Bir proje iki türlü bekler (sözleşme v2.6):
-// - 'permission': oturumunda açık bir izin penceresi var (eklentinin stats.waiting'i).
-// - 'done': müdür çalışıyordu, turu bitti ve kullanıcı o projeye henüz bakmadı.
-// Bakmak = pencere odakta ve proje etkin. Bakılan projede bildirim çıkmaz, 'done' düşer.
+// A project waits in two ways (contract v2.6):
+// - 'permission': its session has an open permission prompt (the plugin's stats.waiting).
+// - 'done': the manager was working, its turn ended and the user hasn't looked at that project yet.
+// Looking = the window is focused and the project is active. A looked-at project gets no notification, and 'done' clears.
 //
-// Sekmeler (sözleşme v3.0): bir projenin bütün sekmeleri (aynı klasör ya da git worktree) o projedir.
-// Aynı klasördeki sekmelerin oturumları zaten proje adını taşır; worktree oturumları klasör adını
-// (`<depo>-wt-<n>`) taşır ve aliases { oturum adı: proje adı } ile projesine katılır: biri meşgulse proje
-// meşgul, açık onay pencerelerinin en eskisi projenin onayıdır. readOffice aynı eşlemeyle zaten birleştirir;
-// burada yine birleştirilir ki eşlemesiz okunan veri de doğru sayılsın.
+// Tabs (contract v3.0): all of a project's tabs (same folder or git worktree) are that project.
+// Sessions of tabs in the same folder already carry the project name; worktree sessions carry the folder name
+// (`<repo>-wt-<n>`) and join their project via aliases { session name: project name }: if one is busy the project
+// is busy, and the oldest open approval prompt is the project's approval. readOffice already merges with the same map;
+// it is merged here too so that data read without the map is also counted correctly.
 
 /**
- * prev: { busy: Map<id, boolean>, waits: Map<id, string>, done: Set<id> } (ilk çağrıda boş)
- * projects: state.projects; office: readOffice(...).projects (ada göre); seenId: bakılan proje ya da null
+  * prev: { busy: Map<id, boolean>, waits: Map<id, string>, done: Set<id> } (empty on the first call)
+  * projects: state.projects; office: readOffice(...).projects (by name); seenId: the looked-at project or null
  * → { state, attention: Map<id, 'permission' | 'done'>, events: [{ kind, id, tool? }] }
  */
 function nextAttention(prev, projects, office, seenId, aliases = null) {
@@ -29,7 +29,7 @@ function nextAttention(prev, projects, office, seenId, aliases = null) {
     const wasBusy = prev.busy.get(proj.id);
     const prevWait = prev.waits.get(proj.id);
     let done = prev.done.has(proj.id) && !busy && !isSeen;
-    // ilk okuma (önceki durum yok) bildirim üretmez
+    // the first read (no previous state) produces no notifications
     if (wait && prevWait !== undefined && wait !== prevWait && !isSeen) events.push({ kind: 'permission', id: proj.id, tool: p.waiting.tool });
     if (wasBusy && !busy && !wait && !isSeen) {
       done = true;
@@ -46,7 +46,7 @@ function nextAttention(prev, projects, office, seenId, aliases = null) {
   return { state, attention, events };
 }
 
-/** office (readOffice().projects) → Map<proje adı, girdi>; eşlenen adların girdileri projesininkiyle birleşir. */
+/** office (readOffice().projects) → Map<project name, entry>; entries of aliased names merge into their project's. */
 function mergeAliases(office, aliases) {
   const byName = new Map();
   for (const p of office || []) {
@@ -67,14 +67,14 @@ function mergeAliases(office, aliases) {
 
 const emptyAttention = () => ({ busy: new Map(), waits: new Map(), done: new Set() });
 
-// Kota uyarısı eşikleri (yüzde); en yükseği bir kez söylenir.
+// Quota warning thresholds (percent); the highest one is announced once.
 const LEVELS = [95, 80];
 const WINDOWS = ['fiveHour', 'sevenDay'];
 const levelOf = (pct) => LEVELS.find((l) => pct >= l) || 0;
 
 /**
- * usage: AccountUsage; alerted: Map<"<account>:<window>:<resetsAt>", level> (yerinde güncellenir)
- * seed: true ise yalnızca işaretler (açılışta eski değerler için uyarı yok)
+  * usage: AccountUsage; alerted: Map<"<account>:<window>:<resetsAt>", level> (updated in place)
+  * seed: if true, only marks (no warnings for old values at startup)
  * → [{ window, pct, level, resetsAt }]
  */
 function usageAlerts(accountId, usage, alerted, { seed = false, now = Date.now() } = {}) {

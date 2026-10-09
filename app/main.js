@@ -1,4 +1,4 @@
-// Agent Office kabuğu: pencere, projeler, hesaplar, her projeye bir (sekmelerle birkaç) claude pty'si ve ofis verisi.
+// Agent Office shell: window, projects, accounts, one claude pty per project (several with tabs), and office data.
 const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, shell: eShell } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
@@ -16,16 +16,16 @@ const IS_MAC = OS.isMac();
 let win = null;
 let poll = null;
 let state = null;            // { projects, accounts, activeId }
-let isLoaded = false;        // renderer yüklendi mi: pty'ler ancak o zaman başlar (erken çıktı kaybolmasın)
-const terms = new Map();     // pty kimliği → pty: ana sekme projectId, ek sekme `<projectId>:<n>` (bkz. projects.js tabPtyId)
-const logins = new Map();    // 'login:<accountId>' → `claude auth login` pty'si (projects:changed'e girmez)
-const sizes = new Map();     // pty kimliği → { cols, rows } (son pty:resize)
-const auths = new Map();     // accountId → AccountAuth (yalnız bellekte)
-const usages = new Map();    // accountId → AccountUsage (usage/<accountId>/last.json'da da durur)
+let isLoaded = false;        // renderer loaded?: ptys start only then (so early output isn't lost)
+const terms = new Map();     // pty id → pty: main tab projectId, extra tab `<projectId>:<n>` (see projects.js tabPtyId)
+const logins = new Map();    // 'login:<accountId>' → `claude auth login` pty (not part of projects:changed)
+const sizes = new Map();     // pty id → { cols, rows } (last pty:resize)
+const auths = new Map();     // accountId → AccountAuth (in memory only)
+const usages = new Map();    // accountId → AccountUsage (also kept in usage/<accountId>/last.json)
 const ptyOf = (id) => terms.get(id) || logins.get(id);
 let lastSize = { cols: 100, rows: 16 };
 
-// sessions.js yüklenemezse ofis boş veriyle devam eder.
+// If sessions.js fails to load, the office carries on with empty data.
 let sessions = null;
 function office() {
   if (!sessions) {
@@ -40,7 +40,7 @@ const usageRoot = () => path.join(app.getPath('userData'), 'usage');
 function loadState() {
   try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')); } catch { return {}; }
 }
-// Bilinmeyen anahtarlar korunur; eski `lastProject` göçten sonra atılır.
+// Unknown keys are kept; the old `lastProject` is dropped after migration.
 function saveState() {
   try {
     const { lastProject, ...rest } = loadState();
@@ -60,11 +60,11 @@ const snapshot = () => ({
 });
 const broadcast = () => send('projects:changed', snapshot());
 
-// --- seni bekleyenler (bkz. src/attention.js): bildirim, Dock rozeti, proje satırındaki işaret
+// --- waiting for you (see src/attention.js): notification, Dock badge, marker on the project row
 let attnState = N.emptyAttention();
 let attention = new Map();    // projectId → 'permission' | 'done'
-let lastOffice = null;        // son readOffice().projects
-const alerted = new Map();    // kota eşikleri: "<hesap>:<pencere>:<sıfırlanma>" → yüzde
+let lastOffice = null;        // last readOffice().projects
+const alerted = new Map();    // quota thresholds: "<account>:<window>:<reset>" → percent
 const seenId = () => (win && !win.isDestroyed() && win.isFocused() ? state.activeId : null);
 function notify(title, body, projectId) {
   if (!Notification.isSupported()) return;
@@ -90,7 +90,7 @@ function updateAttention() {
   const key = (m) => JSON.stringify([...m]);
   if (key(r.attention) === key(attention)) return;
   attention = r.attention;
-  // macOS: Dock rozeti; Linux: destekleyen masaüstlerinde (Unity başlatıcısı) uygulama sayacı
+  // macOS: Dock badge; Linux: app counter on desktops that support it (Unity launcher)
   try {
     if (app.dock) app.dock.setBadge(attention.size ? String(attention.size) : '');
     else app.setBadgeCount(attention.size);
@@ -105,8 +105,8 @@ function alertUsage(account, usage, seed = false) {
   }
 }
 
-// Durumu değiştir, kaydet, renderer'a bildir.
-// Varsayılan hesabın adı ve bilinen giriş hataları o anki dilde gider.
+// Change the state, save it, notify the renderer.
+// The default account's name and known login errors are sent in the current language.
 const accountList = () => A.withAuth(state.accounts, (id) => A.localizeAuth(auths.get(id), T), (id) => usages.get(id))
   .map((a) => (a.id === A.DEFAULT_ID ? { ...a, label: T('main.defaultAccount') } : a));
 const sendAccounts = () => send('accounts:changed', accountList());
@@ -117,8 +117,8 @@ function commit(next, { accounts = false } = {}) {
   if (accounts) sendAccounts();
 }
 
-// --- dil: ayar 'auto' ya da locales/<kod>.json'u olan bir kod (state.json); 'auto' sistem dilidir.
-// Metinler locales/*.json'da; T('main.anahtar', { değişken }) o anki dilde (biçimlendirici src/i18n.mjs, açılışta yüklenir).
+// --- language: the setting is 'auto' or a code that has a locales/<code>.json (state.json); 'auto' is the system language.
+// Strings live in locales/*.json; T('main.key', { var }) gives the current language (formatter src/i18n.mjs, loaded at startup).
 const LOCALES = L.loadLocales();
 const LANGUAGES = L.languagesOf(LOCALES);
 const LANG_SETTINGS = ['auto', ...LANGUAGES.map((l) => l.code)];
@@ -169,8 +169,8 @@ async function pickFolder() {
   return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
 }
 
-// node-pty 1.1 önceden derlenmiş spawn-helper bazen çalıştırılabilir bit'i olmadan gelir (yalnız macOS;
-// Linux'ta node-pty kaynaktan derlenir, spawn-helper yok).
+// The node-pty 1.1 prebuilt spawn-helper sometimes ships without the executable bit (macOS only;
+// on Linux node-pty is built from source and has no spawn-helper).
 function fixSpawnHelper() {
   if (!IS_MAC) return;
   const dir = path.join(path.dirname(require.resolve('node-pty/package.json')), 'prebuilds', `darwin-${process.arch}`);
@@ -178,9 +178,9 @@ function fixSpawnHelper() {
   try { fs.chmodSync(helper, 0o755); } catch {}
 }
 
-// Eklenti: geliştirmede deponun plugin/ klasörü, paketlenmiş uygulamada Resources/plugin. userData'ya
-// kopyalanır: claude eklenti klasörüne tip dosyaları üretir, imzalı .app paketinin içine yazmamalı.
-// Açılışta bir kez kopyalanır: çalışan claude'lar aynı klasörü paylaşır, sonraki pty'ler onu silmemeli.
+// Plugin: the repo's plugin/ folder in development, Resources/plugin in the packaged app. It is copied to
+// userData: claude generates type files in the plugin folder and must not write inside the signed .app bundle.
+// Copied once at startup: running claudes share the same folder, later ptys must not delete it.
 let plugin;
 function pluginDir() {
   if (plugin !== undefined) return plugin;
@@ -206,7 +206,7 @@ function killPty(id) {
 }
 function killAll() { for (const id of [...terms.keys(), ...logins.keys()]) killPty(id); }
 
-// --- hesap girişi
+// --- account login
 const shell = () => OS.defaultShell();
 const accountById = (id) => state.accounts.find((a) => a.id === id) || null;
 function accountEnv(account) {
@@ -214,7 +214,7 @@ function accountEnv(account) {
   return A.ptyEnv(process.env, account.configDir);
 }
 
-// Etkileşimsiz claude komutu, projelerin pty'si gibi giriş kabuğundan (PATH ve rc dosyaları geçerli).
+// Non-interactive claude command, run from the login shell like the projects' ptys (PATH and rc files apply).
 function runClaude(account, args, timeout) {
   return new Promise((resolve) => {
     let child;
@@ -225,12 +225,12 @@ function runClaude(account, args, timeout) {
     } catch (err) {
       return resolve({ err, stdout: '', stderr: '' });
     }
-    // stdin kapanır: rc dosyaları ya da claude girdi beklerse askıda kalmasın (zaman aşımı da var)
+    // stdin is closed: so it doesn't hang if rc files or claude wait for input (there is a timeout too)
     try { child.stdin?.end(); } catch {}
   });
 }
 
-// Hesap başına tek denetim; sürerken yeni istek gelirse bittiğinde bir kez daha çalışır.
+// One check per account; if a new request arrives while it runs, it runs once more when it finishes.
 const checking = new Map();  // accountId → Promise
 const again = new Set();
 function checkAuth(id, { showChecking = false } = {}) {
@@ -264,8 +264,8 @@ function onFocus() {
   checkAllAuth();
 }
 
-// `claude auth login` pty'si: proje pty'leriyle aynı kanal, id 'login:<accountId>'. Hesap başına bir tane;
-// yeniden açılırsa önceki (kapatılmış pencereden kalan) sessizce öldürülür, çıkışı yeni pencereye karışmaz.
+// `claude auth login` pty: same channel as the project ptys, id 'login:<accountId>'. One per account;
+// if reopened, the previous one (left from a closed window) is killed silently so its exit doesn't mix into the new window.
 function startLogin(accountId) {
   const id = A.loginPtyId(accountId);
   const account = accountById(accountId);
@@ -289,17 +289,17 @@ function startLogin(accountId) {
   logins.set(id, t);
   t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
   t.onExit(({ exitCode }) => {
-    if (logins.get(id) !== t) return; // bilerek öldürüldü: sessiz
+    if (logins.get(id) !== t) return; // killed on purpose: silent
     logins.delete(id);
     send('pty:exit', id, exitCode);
     checkAuth(accountId, { showChecking: true });
   });
 }
 
-// --- hesap kotası (bkz. src/usage.js)
+// --- account quota (see src/usage.js)
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return undefined; } };
 
-// Betik açılışta userData/usage'a yazılır (imzalı .app paketinin içinden çalıştırılmaz).
+// The script is written to userData/usage at startup (it is not run from inside the signed .app bundle).
 let usageScript;
 function ensureUsageScript() {
   if (usageScript !== undefined) return usageScript;
@@ -315,10 +315,10 @@ function ensureUsageScript() {
   return usageScript;
 }
 
-// Sekmenin kota dosyasının adı: ana sekme `<projectId>`, ek sekme `<projectId>-<n>` (.json).
+// Name of the tab's quota file: main tab `<projectId>`, extra tab `<projectId>-<n>` (.json).
 const usageKey = (ptyId) => String(ptyId).replace(':', '-');
-// Projenin --settings'i ve kullanıcının kendi status line komutu (sekmenin klasöründen). Sekmenin önceki
-// hesaplardaki dosyaları silinir: hesabı değişen proje eski hesabın kotasını yazmaya devam etmiş gibi görünmesin.
+// The project's --settings and the user's own status line command (from the tab's folder). The tab's files under
+// previous accounts are deleted: a project whose account changed must not look like it still writes the old account's quota.
 function usageStatusLine(project, configDir, dir = project.dir, key = project.id) {
   const script = ensureUsageScript();
   if (!script) return null;
@@ -336,8 +336,8 @@ function usageStatusLine(project, configDir, dir = project.dir, key = project.id
   return { settings: U.statusLineSettings(script, path.join(accDir, `${key}.json`), user), userCommand: user?.command };
 }
 
-// Hesap klasörlerindeki proje dosyalarından en yenisi; değişen hesap last.json'a yazılır ve gönderilir.
-const usageSeen = new Map(); // dosya → mtimeMs
+// The newest of the project files in the account folders; a changed account is written to last.json and sent.
+const usageSeen = new Map(); // file → mtimeMs
 function loadUsageCache() {
   for (const a of state.accounts) {
     const u = U.usageFromCache(readJson(path.join(usageRoot(), a.id, U.LAST)));
@@ -368,16 +368,16 @@ function scanUsage() {
   if (changed) sendAccounts();
 }
 
-// Klasörde bu hesapla sürdürülecek bir Claude oturumu var mı (bkz. projects.js historyDir).
+// Is there a Claude session in the folder to resume with this account (see projects.js historyDir).
 function hasHistory(dir, configDir) {
   try { return fs.readdirSync(P.historyDir(dir, configDir, app.getPath('home'))).some((f) => f.endsWith('.jsonl')); } catch { return false; }
 }
-const RESUME_GRACE_MS = 8000; // --continue bu sürede hatayla biterse claude yeniden, düz başlar
+const RESUME_GRACE_MS = 8000; // if --continue ends with an error within this time, claude restarts fresh
 
-// Bir sekmenin claude'unu (yeniden) başlatır; id ana sekmede projectId, ek sekmede `<projectId>:<n>`.
-// Boyut o sekmenin son pty:resize'ı. resume: son oturumdan devam (--continue). Sekme kendi klasöründe
-// (worktree) aynı hesap, eklenti ve status line kurallarıyla başlar. Aynı klasördeki ek sekme --continue
-// almaz: ana sekmenin sürdürdüğü oturumu ikinci bir claude açmasın.
+// (Re)starts a tab's claude; the id is projectId for the main tab, `<projectId>:<n>` for an extra tab.
+// The size is that tab's last pty:resize. resume: continue the last session (--continue). The tab starts in its own
+// folder (worktree) with the same account, plugin and status line rules. An extra tab in the same folder gets no
+// --continue: so a second claude doesn't open the session the main tab is resuming.
 function startPty(id, { resume = false } = {}) {
   killPty(id);
   const r = P.resolvePty(state, id);
@@ -386,9 +386,9 @@ function startPty(id, { resume = false } = {}) {
   const { configDir } = A.accountOf(state, project);
   if (configDir) try { fs.mkdirSync(configDir, { recursive: true }); } catch {}
   const { cols, rows } = sizes.get(id) || lastSize;
-  // eklenti yolu $1 olarak geçer: boşluklu yollar (Application Support) tırnak derdi çıkarmaz.
-  // Hesap klasörü rc dosyalarından sonra yeniden verilir (bkz. accounts.js ptyEnv).
-  // claude'un argümanları "$@" ile geçer: eklenti yolu ve status line ayarı (kota için, bkz. usage.js).
+  // the plugin path is passed as $1: paths with spaces (Application Support) cause no quoting trouble.
+  // The account folder is set again after the rc files (see accounts.js ptyEnv).
+  // claude's arguments are passed via "$@": the plugin path and the status line setting (for the quota, see usage.js).
   const dir = pluginDir();
   const sl = usageStatusLine(project, configDir, cwd, usageKey(id));
   const isResume = resume && (!tab || Boolean(tab.worktree)) && hasHistory(cwd, configDir);
@@ -414,9 +414,9 @@ function startPty(id, { resume = false } = {}) {
   terms.set(id, t);
   t.onData((d) => { if (terms.get(id) === t) send('pty:data', id, d); });
   t.onExit(({ exitCode }) => {
-    if (terms.get(id) !== t) return; // bilerek öldürüldü (yeniden başlatma/silme): sessiz
+    if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
     terms.delete(id);
-    // sürdürülecek oturum bulunamadı ya da açılamadı: kullanıcıya çıkış göstermeden düz başlat
+    // the session to resume was not found or could not be opened: start fresh without showing the exit to the user
     if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) return startPty(id);
     send('pty:exit', id, exitCode);
     broadcast();
@@ -424,19 +424,19 @@ function startPty(id, { resume = false } = {}) {
   broadcast();
 }
 
-// Yüklemeden sonra çalışmayan her projenin claude'unu başlat (yeniden yüklemede çalışanlara dokunma).
-// Açılışta (ayar açıksa) her proje son oturumundan devam eder.
+// After loading, start the claude of every project that isn't running (on reload, leave running ones alone).
+// At startup (if the setting is on) every project continues from its last session.
 function startMissing() {
   for (const p of state.projects) {
     for (const id of P.ptyIdsOf(p)) if (!terms.has(id)) startPty(id, { resume: state.resume !== false });
   }
 }
-// Projenin bütün sekmelerini yeniden başlatır (hesap değişimi).
+// Restarts all of the project's tabs (account change).
 const restartProject = (projectId) => {
   const p = P.findProject(state, projectId);
   if (p) for (const id of P.ptyIdsOf(p)) startPty(id);
 };
-// Worktree oturumlarının adı → proje adı (bkz. projects.js sessionAliases): ofis ve bildirimler projeye sayar.
+// Worktree session names → project name (see projects.js sessionAliases): the office and notifications count them toward the project.
 const sessionAliases = () => P.sessionAliases(state.projects);
 
 let usagePoll = null;
@@ -448,7 +448,7 @@ function startPolling() {
   poll = setInterval(() => {
     const s = office();
     if (!s || !win || win.isDestroyed()) return;
-    // pencere odakta değilken saniyede iki yerine iki saniyede bir oku (pil); bildirimler yine gelir
+    // while the window is unfocused, read every two seconds instead of twice a second (battery); notifications still come
     if (!win.isFocused() && tick++ % 4 !== 0) return;
     try {
       const d = s.readOffice(state.projects.map((p) => p.name), undefined, undefined, sessionAliases());
@@ -459,7 +459,7 @@ function startPolling() {
   }, 500);
 }
 
-// Listede olan klasör yalnızca etkinleşir (claude'u kapalıysa başlar).
+// A folder already in the list is only activated (its claude starts if it is stopped).
 function addDir(dir) {
   const r = P.addProject(state, dir);
   commit(r.state);
@@ -467,13 +467,13 @@ function addDir(dir) {
   return r.project;
 }
 
-// --- projeler
+// --- projects
 ipcMain.handle('projects:list', () => snapshot());
 ipcMain.handle('projects:add', async () => {
   const dir = await pickFolder();
   return dir ? addDir(dir) : null;
 });
-// Proje kaldırılınca bütün sekmeleri kapanır; worktree klasörlerine dokunulmaz (proje klasörü gibi).
+// Removing a project closes all its tabs; worktree folders are left untouched (like the project folder).
 ipcMain.handle('projects:remove', (_e, id) => {
   const p = P.findProject(state, id);
   for (const pid of p ? P.ptyIdsOf(p) : [id]) {
@@ -493,7 +493,7 @@ ipcMain.handle('projects:setAccount', (_e, id, accountId) => {
   restartProject(id);
 });
 
-// --- hesaplar
+// --- accounts
 ipcMain.handle('accounts:list', () => accountList());
 ipcMain.handle('accounts:add', (_e, label) => {
   const r = A.addAccount(state, label, { id: crypto.randomBytes(6).toString('hex'), root: accountsRoot() });
@@ -503,7 +503,7 @@ ipcMain.handle('accounts:add', (_e, label) => {
   return A.withAuth([r.account], (id) => auths.get(id))[0];
 });
 ipcMain.handle('accounts:rename', (_e, id, label) => { commit(A.renameAccount(state, id, label), { accounts: true }); });
-// Klasör silinmez: içindeki giriş ve geçmiş, yanlışlıkla silinen hesapta kaybolmasın.
+// The folder is not deleted: its login and history are not lost if an account is deleted by mistake.
 ipcMain.handle('accounts:remove', (_e, id) => {
   const r = A.removeAccount(state, id);
   if (r.state === state) return;
@@ -522,7 +522,7 @@ ipcMain.handle('accounts:refreshAuth', async (_e, id) => {
 ipcMain.handle('accounts:login', (_e, id) => { startLogin(id); });
 ipcMain.handle('accounts:logout', async (_e, id) => {
   const account = accountById(id);
-  // varsayılan hesap kullanıcının normal Claude Code girişi: uygulama oradan çıkış yaptırmaz
+  // the default account is the user's normal Claude Code login: the app does not log out of it
   if (!account || !account.configDir) return;
   auths.set(id, { state: 'checking' });
   sendAccounts();
@@ -531,8 +531,8 @@ ipcMain.handle('accounts:logout', async (_e, id) => {
   await checkAuth(id);
 });
 
-// --- sekmeler (sözleşme v3.0): projede birkaç claude; ilk sekme ana terminaldir, kapanmaz
-// git, uygulamanın ortamıyla (/usr/bin/git Finder'dan açılışta da PATH'te); hiçbir zaman parola sormaz.
+// --- tabs (contract v3.0): several claudes per project; the first tab is the main terminal and cannot be closed
+// git runs with the app's environment (/usr/bin/git is on PATH even when launched from Finder); it never asks for a password.
 function git(args) {
   return new Promise((resolve) => {
     execFile('git', args, {
@@ -540,21 +540,21 @@ function git(args) {
     }, (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '').trim() || (err ? err.message : '') }));
   });
 }
-// Klasör bir git deposundaysa deponun kökü (git'in verdiği gerçek yol), değilse null.
+// If the folder is inside a git repo, the repo root (the real path git reports), otherwise null.
 async function gitTop(dir) {
   if (!isDir(dir)) return null;
   const r = await git(['-C', dir, 'rev-parse', '--show-toplevel']);
   return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
 }
 
-// "+" menüsü: aynı klasör ya da yeni worktree (yalnız git deposunda sorulur). Seçilmezse null.
+// "+" menu: same folder or new worktree (asked only in a git repo). null if nothing is chosen.
 function pickTabMode() {
   return new Promise((resolve) => {
     const menu = Menu.buildFromTemplate([
       { label: T('main.tabSame'), click: () => resolve('same') },
       { label: T('main.tabWorktree'), click: () => resolve('worktree') },
     ]);
-    // menü kapanınca tıklama birazdan gelir; gelmezse vazgeçilmiştir
+    // the click arrives shortly after the menu closes; if it doesn't, the user cancelled
     menu.popup({ window: win, callback: () => setTimeout(() => resolve(null), 300) });
   });
 }
@@ -565,8 +565,8 @@ function openTab(projectId, tab) {
   return tab;
 }
 
-// Deponun yanına `<depo>-wt-<n>` klasörü, `agent-office/<n>` dalıyla (HEAD'den) worktree açar.
-// Numara, klasörü ya da dalı zaten olan numaraları atlar.
+// Creates a worktree in a `<repo>-wt-<n>` folder next to the repo, on branch `agent-office/<n>` (from HEAD).
+// The number skips numbers whose folder or branch already exists.
 async function addWorktreeTab(project) {
   const repo = await gitTop(project.dir);
   if (!repo) { await dialog.showMessageBox(win, { type: 'info', message: T('main.notGit') }); return null; }
@@ -579,12 +579,12 @@ async function addWorktreeTab(project) {
   if (!r.ok) { await dialog.showMessageBox(win, { type: 'warning', message: T('main.worktreeFailed'), detail: r.stderr }); return null; }
   let real = project.dir;
   try { real = fs.realpathSync(project.dir); } catch {}
-  // menü/git beklenirken proje kaldırılmış olabilir
+  // the project may have been removed while waiting for the menu/git
   if (!P.findProject(state, project.id)) return null;
   return openTab(project.id, { n, dir: P.worktreeDir(repo, root, real), worktree: { root, repo, branch } });
 }
 
-// Sekmeyi durumdan çıkarır (pty, boyut ve kota dosyasıyla).
+// Removes the tab from the state (along with its pty, size and quota file).
 function dropTab(project, n) {
   const id = P.tabPtyId(project.id, n);
   killPty(id);
@@ -593,7 +593,7 @@ function dropTab(project, n) {
   commit(P.removeTab(state, project.id, n));
 }
 
-// mode: 'same' | 'worktree'; verilmezse git deposunda menü sorar, değilse aynı klasör. → Tab | null
+// mode: 'same' | 'worktree'; if not given, a git repo asks via the menu, otherwise the same folder. → Tab | null
 ipcMain.handle('tabs:add', async (_e, projectId, mode) => {
   const p = P.findProject(state, projectId);
   if (!p || !win) return null;
@@ -604,8 +604,8 @@ ipcMain.handle('tabs:add', async (_e, projectId, mode) => {
   if (m === 'same' && now) return openTab(now.id, { n: P.nextTabNumber(now) });
   return null;
 });
-// Kapatmayı sorar. Worktree sekmesinde worktree kaldırılsın mı da sorulur; git reddederse (değişiklik var)
-// sekme kalır ve claude'u son oturumundan devam eder. → { closed, restarted? }
+// Asks before closing. A worktree tab also asks whether to remove the worktree; if git refuses (there are changes)
+// the tab stays and its claude continues from its last session. → { closed, restarted? }
 ipcMain.handle('tabs:close', async (_e, projectId, n) => {
   const p = P.findProject(state, projectId);
   const tab = P.tabsOf(p).find((t) => t.n === n);
@@ -627,7 +627,7 @@ ipcMain.handle('tabs:close', async (_e, projectId, n) => {
   if (r.response === 2) return { closed: false };
   if (r.response === 1) { dropTab(p, n); return { closed: true }; }
   const id = P.tabPtyId(p.id, n);
-  killPty(id); // claude klasörde yazarken silinmesin
+  killPty(id); // so it isn't deleted while claude is writing in the folder
   const g = await git(['-C', w.repo, 'worktree', 'remove', w.root]);
   if (g.ok) { dropTab(p, n); return { closed: true }; }
   await dialog.showMessageBox(win, { type: 'warning', message: T('main.worktreeKept'), detail: T('main.worktreeKeptDetail', { error: g.stderr }) });
@@ -635,12 +635,12 @@ ipcMain.handle('tabs:close', async (_e, projectId, n) => {
   return { closed: false, restarted: true };
 });
 
-// --- pty (her mesaj bir sekmenin pty kimliği — projectId ya da `<projectId>:<n>` — ya da 'login:<accountId>' taşır)
+// --- pty (each message carries a tab's pty id — projectId or `<projectId>:<n>` — or 'login:<accountId>')
 
 ipcMain.on('pty:write', (_e, id, d) => ptyOf(id)?.write(d));
 ipcMain.on('pty:resize', (_e, id, cols, rows) => {
   if (!(cols > 0 && rows > 0)) return;
-  // giriş penceresinin boyutu projelerin varsayılan boyutunu değiştirmesin
+  // the login window's size must not change the projects' default size
   if (A.loginAccountId(id) === null) lastSize = { cols, rows };
   sizes.set(id, { cols, rows });
   try { ptyOf(id)?.resize(cols, rows); } catch {}
@@ -652,11 +652,11 @@ ipcMain.on('pty:restart', (_e, id) => {
   startLogin(acc);
 });
 
-// Finder'da kopyalanan dosyalar: tek dosya public.file-url, birden çoksa NSFilenamesPboardType (plist).
-// Electron 44 pano API'si: has() ve readText() Promise döner, availableFormats/readImage yok.
-// Finder'da kopyalanan dosyaları görmez; onları macOS'un kendi panosu (osascript, furl) verir.
+// Files copied in Finder: one file is public.file-url, several are NSFilenamesPboardType (plist).
+// Electron 44 clipboard API: has() and readText() return Promises, there is no availableFormats/readImage.
+// It doesn't see files copied in Finder; macOS's own clipboard (osascript, furl) provides them.
 function macClipboardFiles() {
-  // önce panoda gerçekten dosya (furl) var mı bakılır: yoksa macOS düz metni de yola çevirir
+  // first check whether the clipboard really holds a file (furl): otherwise macOS turns plain text into a path too
   const script = 'repeat with c in (clipboard info)\n if item 1 of c is «class furl» then return POSIX path of (the clipboard as «class furl»)\nend repeat\nreturn ""';
   return new Promise((resolve) => {
     execFile('/usr/bin/osascript', ['-e', script], { timeout: 3000 }, (err, stdout) => {
@@ -665,8 +665,8 @@ function macClipboardFiles() {
     });
   });
 }
-// Linux: dosya yöneticileri dosyaları text/uri-list (ya da x-special/gnome-copied-files) olarak koyar.
-// Önce Electron'un panosu, olmazsa wl-paste (Wayland) / xclip (X11); ikisi de yoksa dosya yok sayılır.
+// Linux: file managers put files as text/uri-list (or x-special/gnome-copied-files).
+// Electron's clipboard first, else wl-paste (Wayland) / xclip (X11); if neither exists, there are no files.
 async function linuxClipboardFiles() {
   try {
     for (const item of await clipboard.read()) {
@@ -707,7 +707,7 @@ ipcMain.handle('office:themes', () => {
   try { return s ? s.readThemes() : {}; } catch { return {}; }
 });
 
-// Linux'ta npm start'ta pencere ikonu deponun build/icon.png'si; paketlenmişte .desktop dosyasından gelir.
+// On Linux under npm start the window icon is the repo's build/icon.png; when packaged it comes from the .desktop file.
 function devIcon() {
   const icon = path.join(__dirname, 'build', 'icon.png');
   return !app.isPackaged && fs.existsSync(icon) ? { icon } : {};
@@ -718,7 +718,7 @@ async function createWindow() {
     width: 1400, height: 950,
     minWidth: 900, minHeight: 640,
     backgroundColor: '#2b1d1a',
-    // macOS: başlık çubuğu sayfanın içinde, trafik ışıkları üstünde; Linux: pencere yöneticisinin normal çerçevesi
+    // macOS: title bar inside the page, traffic lights above it; Linux: the window manager's normal frame
     ...(IS_MAC ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 10 } } : devIcon()),
     title: 'Agent Office',
     show: false,
@@ -729,7 +729,7 @@ async function createWindow() {
       sandbox: true,
     },
   });
-  // Pencere yalnızca kendi sayfasını gösterir: yeni pencere ve başka adrese gitme yok; web bağlantıları tarayıcıda açılır.
+  // The window shows only its own page: no new windows, no navigating elsewhere; web links open in the browser.
   const openOutside = (url) => { if (/^https?:\/\//i.test(url)) eShell.openExternal(url).catch(() => {}); };
   win.webContents.setWindowOpenHandler(({ url }) => { openOutside(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (e, url) => { if (url !== win.webContents.getURL()) { e.preventDefault(); openOutside(url); } });
@@ -738,7 +738,7 @@ async function createWindow() {
   win.on('focus', onFocus);
   win.on('closed', () => { killAll(); clearInterval(poll); clearInterval(usagePoll); isLoaded = false; win = null; });
 
-  // Komut satırındaki klasör eklenir/etkinleşir; hiç proje yoksa klasör sorulur.
+  // The folder from the command line is added/activated; if there are no projects, ask for a folder.
   const arg = argProject();
   if (arg) commit(P.addProject(state, arg).state);
   if (!state.projects.length) {
@@ -746,21 +746,21 @@ async function createWindow() {
     if (dir) commit(P.addProject(state, dir).state);
   }
 
-  // pty, renderer boyutunu ve dinleyicilerini kurmadan önce başlarsa çıktı kaybolur; yüklemeyi bekle.
+  // If the pty starts before the renderer sets up its size and listeners, output is lost; wait for the load.
   win.webContents.on('did-finish-load', () => { isLoaded = true; startMissing(); });
   await win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   startPolling();
 }
 
 fixSpawnHelper();
-// Uygulama menüsü: Yapıştır (⌘V) renderer'a gider; odak terminaldeyse panodaki görsel/dosya/metin
-// Claude Code'a uygun biçimde verilir, değilse normal yapıştırma yapılır.
-// ---- Güncelleme: GitHub Releases'tan (electron-updater). Yeni sürüm arka planda iner; başlıktaki düğme
-// ya da uygulamadan çıkış onu kurar. Yalnız paketlenmiş (imzalı) uygulamada çalışır. Linux'ta yalnız AppImage
-// kendini günceller (latest-linux.yml); .deb kurulumu paket yöneticisinin işi, güncelleyici kapalı.
+// App menu: Paste (⌘V) goes to the renderer; if focus is in the terminal, the clipboard image/file/text
+// is passed to Claude Code in a suitable form, otherwise a normal paste happens.
+// ---- Updates: from GitHub Releases (electron-updater). A new version downloads in the background; the title bar
+// button or quitting the app installs it. Runs only in the packaged (signed) app. On Linux only the AppImage
+// updates itself (latest-linux.yml); a .deb install is the package manager's job, the updater is off.
 const linuxNoUpdates = () => !IS_MAC && !process.env.APPIMAGE;
 let updater = null;
-let updateReady = null; // indirilmiş sürüm
+let updateReady = null; // downloaded version
 const UPDATE_EVERY_MS = 4 * 60 * 60 * 1000;
 function setupUpdates() {
   if (!app.isPackaged || linuxNoUpdates()) return;
@@ -773,7 +773,7 @@ function setupUpdates() {
   setTimeout(check, 10000);
   setInterval(check, UPDATE_EVERY_MS);
 }
-// menüden elle denetim: sonuç kısa bir pencereyle söylenir
+// manual check from the menu: the result is shown in a short dialog
 async function checkUpdatesNow() {
   if (!updater) return dialog.showMessageBox(win, { message: app.isPackaged && linuxNoUpdates() ? T('main.updatesManual') : T('main.updatesOnlyInstalled') });
   if (updateReady) return send('update:ready', updateReady);
@@ -791,8 +791,8 @@ ipcMain.on('update:install', () => { if (updateReady && updater) { killAll(); up
 
 function buildMenu() {
   const name = app.getName();
-  // Linux: gizle/göster rolleri yok; kes/kopyala/yapıştır Ctrl+Shift ile (Ctrl+C/V terminalde claude'a gider,
-  // metin kutularında Chromium'un kendi Ctrl+C/V'si çalışır).
+  // Linux: no hide/show roles; cut/copy/paste use Ctrl+Shift (Ctrl+C/V in the terminal go to claude,
+  // Chromium's own Ctrl+C/V works in text boxes).
   const keys = OS.shortcuts();
   const hideRoles = IS_MAC ? [{ role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }] : [];
   /** @param {any} item @param {string | null} accelerator */
@@ -810,7 +810,7 @@ function buildMenu() {
   ]));
 }
 
-// --- tercihler: resume = açılışta son oturumdan devam
+// --- preferences: resume = continue from the last session at startup
 const prefs = () => ({ resume: state.resume !== false });
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
@@ -818,7 +818,7 @@ ipcMain.handle('prefs:set', (_e, p) => {
   return prefs();
 });
 
-// --- dil
+// --- language
 ipcMain.handle('language:get', () => languageInfo());
 ipcMain.handle('language:set', (_e, setting) => {
   if (!LANG_SETTINGS.includes(setting) || setting === langSetting()) return languageInfo();
@@ -838,7 +838,7 @@ app.whenReady().then(async () => {
   loadUsageCache();
   lastFocusCheck = Date.now();
   checkAllAuth();
-  // paketlenmiş uygulamada ikon .icns'ten gelir; npm start'ta Dock'a elle ver (Linux'ta app.dock yok)
+  // in the packaged app the icon comes from the .icns; under npm start set it on the Dock by hand (Linux has no app.dock)
   if (!app.isPackaged) try { app.dock?.setIcon(path.join(__dirname, 'build', 'icon.png')); } catch {}
   return createWindow();
 });

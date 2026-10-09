@@ -1,4 +1,4 @@
-// Main'in saf durum mantığı: node --test test/main.test.cjs
+// Main's pure state logic: node --test test/main.test.cjs
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const P = require('../src/projects.js');
@@ -6,7 +6,7 @@ const A = require('../src/accounts.js');
 const L = require('../src/locales.js');
 
 const LOCALES = L.loadLocales();
-/** main'deki gibi bir dilin çevirmeni (src/i18n.mjs) */
+/** a language's translator, as in main (src/i18n.mjs) */
 const tFor = async (lang) => (await import('../src/i18n.mjs')).translator(LOCALES[lang], LOCALES.en, lang);
 
 let n = 0;
@@ -254,26 +254,26 @@ test('nextAttention: izin ve bitiş bildirimi yalnız değişince, bakılan proj
     { name: 'alpha', isBossBusy: aBusy, waiting: null },
     { name: 'beta', isBossBusy: true, waiting: bWait },
   ];
-  // ilk okuma: olay yok, ama açık izin işaretlenir
+  // first read: no event, but the open permission is marked
   let r = N.nextAttention(N.emptyAttention(), projects, off(true, { tool: 'Bash', since: 1 }), null);
   assert.deepEqual(r.events, []);
   assert.deepEqual([...r.attention], [['b', 'permission']]);
-  // aynı izin: olay yok; yeni izin: olay
+  // same permission: no event; new permission: event
   r = N.nextAttention(r.state, projects, off(true, { tool: 'Bash', since: 1 }), null);
   assert.deepEqual(r.events, []);
   r = N.nextAttention(r.state, projects, off(true, { tool: 'Edit', since: 2 }), null);
   assert.deepEqual(r.events, [{ kind: 'permission', id: 'b', tool: 'Edit' }]);
-  // alpha'nın turu bitti, bakılmıyor: 'done' olayı ve işaret; tekrar okunca olay yok, işaret kalır
+  // alpha's turn ended, not being looked at: 'done' event and marker; reading again gives no event, the marker stays
   r = N.nextAttention(r.state, projects, off(false, null), null);
   assert.deepEqual(r.events, [{ kind: 'done', id: 'a' }]);
   assert.deepEqual([...r.attention], [['a', 'done']]);
   r = N.nextAttention(r.state, projects, off(false, null), null);
   assert.deepEqual(r.events, []);
   assert.deepEqual([...r.attention], [['a', 'done']]);
-  // alpha'ya bakılınca işaret düşer
+  // looking at alpha clears the marker
   r = N.nextAttention(r.state, projects, off(false, null), 'a');
   assert.deepEqual([...r.attention], []);
-  // bakılan projede izin ya da bitiş bildirimi yok
+  // no permission or done notification for the looked-at project
   r = N.nextAttention(r.state, projects, off(true, null), 'a');
   r = N.nextAttention(r.state, projects, off(false, { tool: 'Bash', since: 3 }), 'b');
   assert.deepEqual(r.events, [{ kind: 'done', id: 'a' }]);
@@ -289,10 +289,10 @@ test('usageAlerts: %80 ve %95 bir kez, sıfırlanınca yeniden; açılışta yal
   assert.deepEqual(N.usageAlerts('a', u(85), alerted, { now: NOW }), []);
   assert.deepEqual(N.usageAlerts('a', u(96), alerted, { now: NOW }).map((x) => x.level), [95]);
   assert.deepEqual(N.usageAlerts('a', u(97), alerted, { now: NOW }), []);
-  // yeni pencere (başka sıfırlanma zamanı) yeniden uyarır; süresi geçmiş pencere uyarmaz
+  // a new window (different reset time) warns again; an expired window doesn't warn
   assert.deepEqual(N.usageAlerts('a', u(82, 8000), alerted, { now: NOW }).map((x) => x.level), [80]);
   assert.deepEqual(N.usageAlerts('a', u(99, 500), alerted, { now: NOW }), []);
-  // seed: işaretler ama söylemez
+  // seed: marks but doesn't announce
   const fresh = new Map();
   assert.deepEqual(N.usageAlerts('b', u(90), fresh, { seed: true, now: NOW }), []);
   assert.deepEqual(N.usageAlerts('b', u(91), fresh, { now: NOW }), []);
@@ -330,7 +330,7 @@ test('platform: kısayollar macOS ⌘ (rol kısayolları), Linux Ctrl+Shift', ()
   assert.deepEqual(OS.shortcuts('linux'), { paste: 'Ctrl+Shift+V', copy: 'Ctrl+Shift+C', cut: 'Ctrl+Shift+X' });
 });
 
-// ---- sekmeler ve worktree'ler (sözleşme v3.0)
+// ---- tabs and worktrees (contract v3.0)
 const path = require('path');
 
 test('normalize: eski dosyada tabs yok; bozuk, yinelenen ve ana (1) sekme atılır, worktree eksikse düz sekme', () => {
@@ -380,7 +380,7 @@ test('sekme ekle / kaldır / çöz: ana sekme kaldırılamaz, son sekme gidince 
   assert.deepEqual(P.findProject(s, 'a').tabs.map((t) => t.n), [3]);
   s = P.removeTab(s, 'a', 3);
   assert.equal('tabs' in P.findProject(s, 'a'), false);
-  // hesap değişimi ve normalize sekmeleri korur
+  // account change and normalize keep the tabs
   s = P.addTab(s, 'a', { n: 2 });
   assert.deepEqual(P.setProjectAccount({ ...s, accounts: [...s.accounts, { id: 'w', label: 'w', configDir: '/w' }] }, 'a', 'w').projects[0].tabs, [{ n: 2 }]);
   assert.deepEqual(P.normalizeState(JSON.parse(JSON.stringify(s))).projects[0].tabs, [{ n: 2 }]);
@@ -420,10 +420,10 @@ test('nextAttention: worktree oturumu (eşlenen ad) projesinin onayı ve bitişi
   r = N.nextAttention(r.state, projects, office(true, null), null, aliases);
   r = N.nextAttention(r.state, projects, office(false, null), null, aliases);
   assert.deepEqual(r.events, [{ kind: 'done', id: 'a' }]);
-  // eşleme yoksa worktree girdisi hiçbir projeye sayılmaz
+  // without a map the worktree entry counts toward no project
   const plain = N.nextAttention(N.emptyAttention(), projects, office(true, { tool: 'Bash', since: 5 }), null);
   assert.equal(plain.attention.size, 0);
-  // birleştirme: en eski onay, meşgul VEYA
+  // merging: oldest approval, busy OR
   const m = N.mergeAliases([
     { name: 'shop', working: 1, delivered: 2, isBossBusy: false, waiting: { tool: 'Edit', since: 9 } },
     { name: 'shop-wt-2', working: 2, delivered: 1, isBossBusy: true, waiting: { tool: 'Bash', since: 3 } },
@@ -451,7 +451,7 @@ test('diller: locales/*.json bulunur, adları kendi dilinde; sistem dili dosyas�
   assert.equal(en('no.such.key'), 'no.such.key');
   assert.equal(en.has('main.cancel'), true);
   assert.equal(en.has('main'), false);
-  // eksik anahtar İngilizceye düşer
+  // a missing key falls back to English
   const { translator } = await import('../src/i18n.mjs');
   const de = translator({ main: { cancel: 'Abbrechen' } }, LOCALES.en, 'de');
   assert.equal(de('main.cancel'), 'Abbrechen');
