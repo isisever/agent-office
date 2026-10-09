@@ -3,6 +3,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const P = require('../src/projects.js');
 const A = require('../src/accounts.js');
+const L = require('../src/locales.js');
+
+const LOCALES = L.loadLocales();
+/** main'deki gibi bir dilin çevirmeni (src/i18n.mjs) */
+const tFor = async (lang) => (await import('../src/i18n.mjs')).translator(LOCALES[lang], LOCALES.en, lang);
 
 let n = 0;
 const id = () => `p${++n}`;
@@ -142,16 +147,19 @@ test('authFromStatus: girişli, girişsiz, bozuk', () => {
   assert.equal(A.authFromStatus(null).state, 'error');
 });
 
-test('authFromRun: çıkış kodu sıfır değilse de JSON geçerli; zaman aşımı, claude yok, stderr', () => {
+test('authFromRun: çıkış kodu sıfır değilse de JSON geçerli; zaman aşımı, claude yok, stderr', async () => {
+  const tr = await tFor('tr');
+  const en = await tFor('en');
   const code1 = Object.assign(new Error('Command failed'), { code: 1 });
   assert.deepEqual(A.authFromRun(code1, 'noise\n{"loggedIn": false}\n', ''), { state: 'out' });
   assert.deepEqual(A.authFromRun(null, '{"loggedIn": true, "email": "e@x"}', ''), { state: 'in', email: 'e@x' });
   const timeout = Object.assign(new Error('x'), { killed: true, signal: 'SIGKILL', code: null });
   assert.deepEqual(A.authFromRun(timeout, '', ''), { state: 'error', errorKey: 'timeout' });
-  assert.deepEqual(A.localizeAuth(A.authFromRun(timeout, '', ''), 'tr'), { state: 'error', error: 'zaman aşımı' });
-  assert.deepEqual(A.localizeAuth(A.authFromRun(Object.assign(new Error('x'), { code: 127 }), '', 'zsh: command not found: claude'), 'en'),
+  assert.deepEqual(A.localizeAuth(A.authFromRun(timeout, '', ''), tr), { state: 'error', error: 'zaman aşımı' });
+  assert.deepEqual(A.localizeAuth(A.authFromRun(Object.assign(new Error('x'), { code: 127 }), '', 'zsh: command not found: claude'), en),
     { state: 'error', error: 'claude not found' });
-  assert.deepEqual(A.localizeAuth({ state: 'in', email: 'e' }, 'en'), { state: 'in', email: 'e' });
+  assert.deepEqual(A.localizeAuth({ state: 'in', email: 'e' }, en), { state: 'in', email: 'e' });
+  assert.deepEqual(A.localizeAuth({ state: 'error', errorKey: 'yeni' }, tr), { state: 'error', error: 'yeni' });
   assert.deepEqual(A.authFromRun(code1, '', 'warn\nboom: bad thing\n'), { state: 'error', error: 'boom: bad thing' });
   assert.equal(A.authFromRun(code1, '', 'x'.repeat(500)).error.length, 118);
   assert.equal(A.authFromRun(null, 'hello', '').state, 'error');
@@ -421,4 +429,31 @@ test('nextAttention: worktree oturumu (eşlenen ad) projesinin onayı ve bitişi
     { name: 'shop-wt-2', working: 2, delivered: 1, isBossBusy: true, waiting: { tool: 'Bash', since: 3 } },
   ], aliases);
   assert.deepEqual(m.get('shop'), { name: 'shop', working: 3, delivered: 3, isBossBusy: true, waiting: { tool: 'Bash', since: 3 } });
+});
+
+test('diller: locales/*.json bulunur, adları kendi dilinde; sistem dili dosyası olan koda çözülür', async () => {
+  const langs = L.languagesOf(LOCALES);
+  assert.deepEqual(langs.filter((l) => l.code === 'en' || l.code === 'tr'), [{ code: 'en', name: 'English' }, { code: 'tr', name: 'Türkçe' }]);
+  assert.deepEqual(langs.map((l) => l.code), [...langs.map((l) => l.code)].sort());
+  const codes = ['en', 'pt-BR', 'tr'];
+  assert.equal(L.resolveLang('tr-TR', codes), 'tr');
+  assert.equal(L.resolveLang('TR', codes), 'tr');
+  assert.equal(L.resolveLang('pt_BR', codes), 'pt-BR');
+  assert.equal(L.resolveLang('de-DE', codes), 'en');
+  assert.equal(L.resolveLang('', codes), 'en');
+  assert.equal(L.resolveLang(undefined, codes), 'en');
+  const tr = await tFor('tr');
+  const en = await tFor('en');
+  assert.equal(tr('main.upToDate', { version: '1.2.3' }), 'Agent Office güncel (1.2.3).');
+  assert.equal(en('panel.toolCalls', { n: 1 }), '1 tool call');
+  assert.equal(en('panel.toolCalls', { n: 3 }), '3 tool calls');
+  assert.equal(tr('panel.toolCalls', { n: 1 }), '1 araç çağrısı');
+  assert.equal(en('no.such.key'), 'no.such.key');
+  assert.equal(en.has('main.cancel'), true);
+  assert.equal(en.has('main'), false);
+  // eksik anahtar İngilizceye düşer
+  const { translator } = await import('../src/i18n.mjs');
+  const de = translator({ main: { cancel: 'Abbrechen' } }, LOCALES.en, 'de');
+  assert.equal(de('main.cancel'), 'Abbrechen');
+  assert.equal(de('main.edit'), 'Edit');
 });

@@ -16,6 +16,7 @@ Thanks for helping. Issues and pull requests are welcome, small ones especially.
 ```sh
 cd app && npm install && npm start      # the app from source
 node --test app/test/main.test.cjs       # main process logic
+node --test app/test/locales.test.mjs    # locale files: same keys and placeholders, every key used in code exists
 node app/test/office.test.mjs            # office renderer and session reading
 node app/test/visual.test.mjs            # office pictures; UPDATE_SNAPSHOTS=1 to accept a deliberate change
 claude plugin test plugin                # plugin hooks (Claude Code 2.1.295 or newer)
@@ -32,11 +33,19 @@ CI runs all of this on every push and pull request.
 
 ## Conventions
 
-- **Translations**: every user-visible string sits in a `{ en, tr }` table at the top of its module (`S` in the renderer modules, `MSG` in `main.js`, `STRINGS` in the office renderer) and is read with `pick(S)` at render time. A new language is a new key in each table plus an option in the sidebar's language picker.
+- **Strings**: every user-visible string of the app is in `app/locales/en.json` and `app/locales/tr.json`, read with `t('namespace.key', { var })` (renderer: `renderer/i18n.js`; main: `T(...)` in `main.js`). Add a new string to every locale file; `app/test/locales.test.mjs` fails otherwise. The words drawn in the office (`STRINGS` in `plugin/viewer/core.mjs`) and the plugin's hook messages are separate and stay in their files.
 - **Comments** in the existing code are mostly Turkish. English comments are welcome in new code.
 - **No new runtime dependencies** without a good reason; the plugin has none at all.
 - **Platforms**: macOS and Linux. Keep differences behind small `process.platform` checks: pure helpers in `app/src/platform.js` (default shell, Linux clipboard files, menu shortcuts), and in the renderer `renderer/platform.js` (`platform-darwin` / `platform-linux` class on `<html>`, ⌘ vs Ctrl+Shift shortcuts). macOS behaviour must not change when you touch Linux code, and the other way round.
 - Keep `app/CONTRACT.md` and the READMEs in step with what you change.
+
+## Adding a translation
+
+1. Copy `app/locales/en.json` to `app/locales/<code>.json` (a language code: `de`, `fr`, `pt-BR`) and translate the values. Set `"_name"` to the language's name in that language (`"Deutsch"`): that is what the sidebar's language picker shows. Nothing else needs registering: the picker and the "Auto" (system language) setting list the files in `app/locales/`.
+2. Keep the keys and the `{placeholders}` as they are; you can move a placeholder within the sentence. Plurals are objects with CLDR categories (`"one"`, `"few"`, `"many"`, `"other"`, ...; `"other"` is required) chosen by `{n}` with `Intl.PluralRules` for your language, e.g. `{ "one": "1 tool call", "other": "{n} tool calls" }`; if your language does not change the word, a plain string is fine.
+3. Run `node --test app/test/locales.test.mjs` (same keys and placeholders as `en.json`). To see it, open the renderer in a browser with the fake backend: `/renderer/index.html?lang=<code>&langs=en,tr,<code>`.
+
+A missing key falls back to English. The office's drawn words (boss, waiting, today...) come in English and Turkish only (`STRINGS` in `plugin/viewer/core.mjs`); with any other language the office uses English.
 
 ## Adding a theme to the gallery
 

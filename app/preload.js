@@ -56,9 +56,9 @@ contextBridge.exposeInMainWorld('agentOffice', {
     set: (p) => ipcRenderer.invoke('prefs:set', p),
   },
   language: {
-    get: () => ipcRenderer.invoke('language:get'),                 // { setting: 'auto'|'en'|'tr', lang: 'en'|'tr' }
+    get: () => ipcRenderer.invoke('language:get'),                 // { setting: 'auto'|kod, lang: kod, languages: [{ code, name }] } (locales/*.json)
     set: (setting) => ipcRenderer.invoke('language:set', setting),
-    onChange: listen('language:changed'),                           // { setting, lang }
+    onChange: listen('language:changed'),                           // { setting, lang, languages }
   },
   office: {
     onData: listen('office:data'),

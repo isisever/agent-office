@@ -10,6 +10,7 @@ const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
 const N = require('./src/attention.js');
 const OS = require('./src/platform.js');
+const L = require('./src/locales.js');
 const IS_MAC = OS.isMac();
 
 let win = null;
@@ -84,7 +85,7 @@ function updateAttention() {
   for (const ev of r.events) {
     const p = P.findProject(state, ev.id);
     if (!p) continue;
-    notify(p.name, ev.kind === 'permission' ? M().notifyPermission(ev.tool) : M().notifyDone, p.id);
+    notify(p.name, ev.kind === 'permission' ? (ev.tool ? T('main.notifyPermissionTool', { tool: ev.tool }) : T('main.notifyPermission')) : T('main.notifyDone'), p.id);
   }
   const key = (m) => JSON.stringify([...m]);
   if (key(r.attention) === key(attention)) return;
@@ -98,16 +99,16 @@ function updateAttention() {
 }
 function alertUsage(account, usage, seed = false) {
   for (const a of N.usageAlerts(account.id, usage, alerted, { seed })) {
-    const when = a.resetsAt ? new Date(a.resetsAt).toLocaleString(uiLang() === 'tr' ? 'tr-TR' : 'en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
-    const label = account.id === A.DEFAULT_ID ? M().defaultAccount : account.label;
-    notify(label, M().notifyUsage(a.window, a.pct, when));
+    const when = a.resetsAt ? new Date(a.resetsAt).toLocaleString(uiLang(), { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    const label = account.id === A.DEFAULT_ID ? T('main.defaultAccount') : account.label;
+    notify(label, T(a.window === 'fiveHour' ? 'main.usageFiveHour' : 'main.usageWeek', { pct: a.pct }) + (when ? T('main.usageResets', { when }) : ''));
   }
 }
 
 // Durumu değiştir, kaydet, renderer'a bildir.
 // Varsayılan hesabın adı ve bilinen giriş hataları o anki dilde gider.
-const accountList = () => A.withAuth(state.accounts, (id) => A.localizeAuth(auths.get(id), uiLang()), (id) => usages.get(id))
-  .map((a) => (a.id === A.DEFAULT_ID ? { ...a, label: M().defaultAccount } : a));
+const accountList = () => A.withAuth(state.accounts, (id) => A.localizeAuth(auths.get(id), T), (id) => usages.get(id))
+  .map((a) => (a.id === A.DEFAULT_ID ? { ...a, label: T('main.defaultAccount') } : a));
 const sendAccounts = () => send('accounts:changed', accountList());
 function commit(next, { accounts = false } = {}) {
   state = next;
@@ -116,69 +117,37 @@ function commit(next, { accounts = false } = {}) {
   if (accounts) sendAccounts();
 }
 
-// --- dil: ayar 'auto' | 'en' | 'tr' (state.json), 'auto' sistem dilidir
-const MSG = {
-  tr: {
-    defaultAccount: 'Varsayılan',
-    pickFolder: 'Proje klasörünü seç', pickButton: 'Ekle',
-    updatesOnlyInstalled: 'Güncelleme denetimi yalnızca kurulu uygulamada çalışır.',
-    updatesManual: 'Bu kurulum kendini güncellemez: yeni .deb paketini GitHub Releases sayfasından kurun (AppImage kendini günceller).',
-    upToDate: (v) => `Agent Office güncel (${v}).`,
-    downloading: (v) => `Yeni sürüm ${v} indiriliyor; hazır olunca başlıkta "Yeniden başlat" düğmesi çıkar.`,
-    updateFailed: 'Güncelleme denetlenemedi.',
-    checkUpdates: 'Güncellemeleri denetle…',
-    edit: 'Düzen', undo: 'Geri al', redo: 'Yinele', cut: 'Kes', copy: 'Kopyala', paste: 'Yapıştır', selectAll: 'Tümünü seç',
-    notifyPermission: (tool) => `Claude onay bekliyor${tool ? `: ${tool}` : ''}`,
-    notifyDone: 'Claude işini bitirdi, seni bekliyor.',
-    notifyUsage: (w, pct, when) => `${w === 'fiveHour' ? '5 saatlik' : 'Haftalık'} kotanın %${pct}'i kullanıldı${when ? ` · ${when} sıfırlanır` : ''}`,
-    view: 'Görünüm', reload: 'Yeniden yükle', devTools: 'Geliştirici araçları', fullscreen: 'Tam ekran', window: 'Pencere',
-    tabSame: 'Yeni terminal (aynı klasör)', tabWorktree: 'Yeni terminal, yeni git worktree\'de',
-    notGit: 'Bu proje bir git deposu değil; worktree açılamaz.',
-    worktreeFailed: 'Git worktree oluşturulamadı.',
-    cancel: 'Vazgeç', closeTab: 'Sekmeyi kapat',
-    closeTabConfirm: 'Bu sekme kapatılsın mı?', closeTabDetail: 'İçindeki Claude oturumu kapanır (sonra /resume ile devam edebilirsin).',
-    closeWorktreeConfirm: (branch) => `Sekme kapatılsın mı? Worktree (${branch}) de kaldırılsın mı?`,
-    closeWorktreeDetail: (root) => `${root}\n\nKaldırmak "git worktree remove" çalıştırır (zorlamadan): değişiklik varsa git reddeder ve hiçbir şey silinmez. Dal yerinde kalır.`,
-    removeWorktree: 'Kapat ve worktree\'yi kaldır', keepWorktree: 'Kapat, klasör kalsın',
-    worktreeKept: 'Git worktree\'yi kaldırmadı; sekme açık kaldı.',
-    worktreeKeptDetail: (err) => `${err}\n\nDeğişiklikleri commit'le ya da geri al ve sekmeyi yeniden kapat; ya da "Kapat, klasör kalsın"ı seç.`,
-  },
-  en: {
-    defaultAccount: 'Default',
-    pickFolder: 'Choose the project folder', pickButton: 'Add',
-    updatesOnlyInstalled: 'Checking for updates only works in the installed app.',
-    updatesManual: 'This install does not update itself: install the new .deb from GitHub Releases (the AppImage updates itself).',
-    upToDate: (v) => `Agent Office is up to date (${v}).`,
-    downloading: (v) => `Downloading version ${v}; a "Restart" button appears in the title bar when it is ready.`,
-    updateFailed: 'Could not check for updates.',
-    checkUpdates: 'Check for Updates…',
-    edit: 'Edit', undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
-    notifyPermission: (tool) => `Claude needs your approval${tool ? `: ${tool}` : ''}`,
-    notifyDone: 'Claude finished and is waiting for you.',
-    notifyUsage: (w, pct, when) => `${pct}% of the ${w === 'fiveHour' ? '5-hour' : 'weekly'} limit used${when ? ` · resets ${when}` : ''}`,
-    view: 'View', reload: 'Reload', devTools: 'Developer Tools', fullscreen: 'Full Screen', window: 'Window',
-    tabSame: 'New terminal (same folder)', tabWorktree: 'New terminal in a new git worktree',
-    notGit: 'This project is not a git repository; a worktree cannot be created.',
-    worktreeFailed: 'Could not create the git worktree.',
-    cancel: 'Cancel', closeTab: 'Close Tab',
-    closeTabConfirm: 'Close this tab?', closeTabDetail: 'Its Claude session ends (continue later with /resume).',
-    closeWorktreeConfirm: (branch) => `Close this tab? Remove its worktree (${branch}) too?`,
-    closeWorktreeDetail: (root) => `${root}\n\nRemoving runs "git worktree remove" (never forced): if there are changes git refuses and nothing is deleted. The branch is kept.`,
-    removeWorktree: 'Close and Remove Worktree', keepWorktree: 'Close, Keep Folder',
-    worktreeKept: 'Git did not remove the worktree; the tab stays open.',
-    worktreeKeptDetail: (err) => `${err}\n\nCommit or discard the changes and close the tab again, or choose "Close, Keep Folder".`,
-  },
-};
-const LANG_SETTINGS = ['auto', 'en', 'tr'];
+// --- dil: ayar 'auto' ya da locales/<kod>.json'u olan bir kod (state.json); 'auto' sistem dilidir.
+// Metinler locales/*.json'da; T('main.anahtar', { değişken }) o anki dilde (biçimlendirici src/i18n.mjs, açılışta yüklenir).
+const LOCALES = L.loadLocales();
+const LANGUAGES = L.languagesOf(LOCALES);
+const LANG_SETTINGS = ['auto', ...LANGUAGES.map((l) => l.code)];
 const langSetting = () => (LANG_SETTINGS.includes(state?.language) ? state.language : 'auto');
 function systemLang() {
   let l = '';
   try { l = app.getPreferredSystemLanguages()[0] || app.getLocale(); } catch {}
-  return /^tr/i.test(l) ? 'tr' : 'en';
+  return L.resolveLang(l, Object.keys(LOCALES));
 }
 const uiLang = () => (langSetting() === 'auto' ? systemLang() : langSetting());
-const M = () => MSG[uiLang()];
-const languageInfo = () => ({ setting: langSetting(), lang: uiLang() });
+/** @typedef {(key: string, vars?: Record<string, unknown>) => string} Translate */
+/** @type {((lang: string) => Translate) | null} */
+let makeTranslator = null;
+async function loadI18n() {
+  const { translator } = await import('./src/i18n.mjs');
+  makeTranslator = (lang) => translator(LOCALES[lang], LOCALES[L.FALLBACK], lang);
+}
+/** @type {Map<string, Translate>} */
+const translators = new Map();
+/** @param {string} key @param {Record<string, unknown>} [vars] */
+function T(key, vars) {
+  if (!makeTranslator) return key;
+  const lang = uiLang();
+  let tr = translators.get(lang);
+  if (!tr) translators.set(lang, (tr = makeTranslator(lang)));
+  return tr(key, vars);
+}
+T.has = (key) => T(key) !== key;
+const languageInfo = () => ({ setting: langSetting(), lang: uiLang(), languages: LANGUAGES });
 
 const isDir = (d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } };
 
@@ -192,8 +161,8 @@ function argProject() {
 
 async function pickFolder() {
   const r = await dialog.showOpenDialog(win, {
-    title: M().pickFolder,
-    buttonLabel: M().pickButton,
+    title: T('main.pickFolder'),
+    buttonLabel: T('main.pickButton'),
     properties: ['openDirectory', 'createDirectory'],
     defaultPath: P.findProject(state, state.activeId)?.dir,
   });
@@ -582,8 +551,8 @@ async function gitTop(dir) {
 function pickTabMode() {
   return new Promise((resolve) => {
     const menu = Menu.buildFromTemplate([
-      { label: M().tabSame, click: () => resolve('same') },
-      { label: M().tabWorktree, click: () => resolve('worktree') },
+      { label: T('main.tabSame'), click: () => resolve('same') },
+      { label: T('main.tabWorktree'), click: () => resolve('worktree') },
     ]);
     // menü kapanınca tıklama birazdan gelir; gelmezse vazgeçilmiştir
     menu.popup({ window: win, callback: () => setTimeout(() => resolve(null), 300) });
@@ -600,14 +569,14 @@ function openTab(projectId, tab) {
 // Numara, klasörü ya da dalı zaten olan numaraları atlar.
 async function addWorktreeTab(project) {
   const repo = await gitTop(project.dir);
-  if (!repo) { await dialog.showMessageBox(win, { type: 'info', message: M().notGit }); return null; }
+  if (!repo) { await dialog.showMessageBox(win, { type: 'info', message: T('main.notGit') }); return null; }
   const list = await git(['-C', repo, 'branch', '--list', 'agent-office/*', '--format=%(refname:short)']);
   const branches = new Set(list.stdout.split('\n').map((b) => b.trim()).filter(Boolean));
   const n = P.nextTabNumber(project, (k) => fs.existsSync(P.worktreeRoot(repo, k)) || branches.has(P.worktreeBranch(k)));
   const root = P.worktreeRoot(repo, n);
   const branch = P.worktreeBranch(n);
   const r = await git(['-C', repo, 'worktree', 'add', '-b', branch, root]);
-  if (!r.ok) { await dialog.showMessageBox(win, { type: 'warning', message: M().worktreeFailed, detail: r.stderr }); return null; }
+  if (!r.ok) { await dialog.showMessageBox(win, { type: 'warning', message: T('main.worktreeFailed'), detail: r.stderr }); return null; }
   let real = project.dir;
   try { real = fs.realpathSync(project.dir); } catch {}
   // menü/git beklenirken proje kaldırılmış olabilir
@@ -643,8 +612,8 @@ ipcMain.handle('tabs:close', async (_e, projectId, n) => {
   if (!p || !tab || !win) return { closed: false };
   if (!tab.worktree) {
     const r = await dialog.showMessageBox(win, {
-      type: 'question', buttons: [M().closeTab, M().cancel], defaultId: 0, cancelId: 1,
-      message: M().closeTabConfirm, detail: M().closeTabDetail,
+      type: 'question', buttons: [T('main.closeTab'), T('main.cancel')], defaultId: 0, cancelId: 1,
+      message: T('main.closeTabConfirm'), detail: T('main.closeTabDetail'),
     });
     if (r.response !== 0) return { closed: false };
     dropTab(p, n);
@@ -652,8 +621,8 @@ ipcMain.handle('tabs:close', async (_e, projectId, n) => {
   }
   const w = tab.worktree;
   const r = await dialog.showMessageBox(win, {
-    type: 'question', buttons: [M().removeWorktree, M().keepWorktree, M().cancel], defaultId: 0, cancelId: 2,
-    message: M().closeWorktreeConfirm(w.branch), detail: M().closeWorktreeDetail(w.root),
+    type: 'question', buttons: [T('main.removeWorktree'), T('main.keepWorktree'), T('main.cancel')], defaultId: 0, cancelId: 2,
+    message: T('main.closeWorktreeConfirm', { branch: w.branch }), detail: T('main.closeWorktreeDetail', { root: w.root }),
   });
   if (r.response === 2) return { closed: false };
   if (r.response === 1) { dropTab(p, n); return { closed: true }; }
@@ -661,7 +630,7 @@ ipcMain.handle('tabs:close', async (_e, projectId, n) => {
   killPty(id); // claude klasörde yazarken silinmesin
   const g = await git(['-C', w.repo, 'worktree', 'remove', w.root]);
   if (g.ok) { dropTab(p, n); return { closed: true }; }
-  await dialog.showMessageBox(win, { type: 'warning', message: M().worktreeKept, detail: M().worktreeKeptDetail(g.stderr) });
+  await dialog.showMessageBox(win, { type: 'warning', message: T('main.worktreeKept'), detail: T('main.worktreeKeptDetail', { error: g.stderr }) });
   startPty(id, { resume: true });
   return { closed: false, restarted: true };
 });
@@ -806,15 +775,15 @@ function setupUpdates() {
 }
 // menüden elle denetim: sonuç kısa bir pencereyle söylenir
 async function checkUpdatesNow() {
-  if (!updater) return dialog.showMessageBox(win, { message: app.isPackaged && linuxNoUpdates() ? M().updatesManual : M().updatesOnlyInstalled });
+  if (!updater) return dialog.showMessageBox(win, { message: app.isPackaged && linuxNoUpdates() ? T('main.updatesManual') : T('main.updatesOnlyInstalled') });
   if (updateReady) return send('update:ready', updateReady);
   try {
     const r = await updater.checkForUpdates();
     const latest = r?.updateInfo?.version;
-    if (!latest || latest === app.getVersion()) dialog.showMessageBox(win, { message: M().upToDate(app.getVersion()) });
-    else dialog.showMessageBox(win, { message: M().downloading(latest) });
+    if (!latest || latest === app.getVersion()) dialog.showMessageBox(win, { message: T('main.upToDate', { version: app.getVersion() }) });
+    else dialog.showMessageBox(win, { message: T('main.downloading', { version: latest }) });
   } catch (e) {
-    dialog.showMessageBox(win, { type: 'warning', message: M().updateFailed, detail: String(e?.message || e) });
+    dialog.showMessageBox(win, { type: 'warning', message: T('main.updateFailed'), detail: String(e?.message || e) });
   }
 }
 ipcMain.handle('update:state', () => ({ version: app.getVersion(), ready: updateReady }));
@@ -822,7 +791,6 @@ ipcMain.on('update:install', () => { if (updateReady && updater) { killAll(); up
 
 function buildMenu() {
   const name = app.getName();
-  const m = M();
   // Linux: gizle/göster rolleri yok; kes/kopyala/yapıştır Ctrl+Shift ile (Ctrl+C/V terminalde claude'a gider,
   // metin kutularında Chromium'un kendi Ctrl+C/V'si çalışır).
   const keys = OS.shortcuts();
@@ -830,15 +798,15 @@ function buildMenu() {
   /** @param {any} item @param {string | null} accelerator */
   const withKey = (item, accelerator) => (accelerator ? { ...item, accelerator } : item);
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: name, submenu: [{ role: 'about' }, { label: m.checkUpdates, click: () => checkUpdatesNow() }, { type: 'separator' }, ...hideRoles, { role: 'quit' }] },
-    { label: m.edit, submenu: [
-      { role: 'undo', label: m.undo }, { role: 'redo', label: m.redo }, { type: 'separator' },
-      withKey({ role: 'cut', label: m.cut }, keys.cut), withKey({ role: 'copy', label: m.copy }, keys.copy),
-      { label: m.paste, accelerator: keys.paste, click: () => send('edit:paste') },
-      { role: 'selectAll', label: m.selectAll },
+    { label: name, submenu: [{ role: 'about' }, { label: T('main.checkUpdates'), click: () => checkUpdatesNow() }, { type: 'separator' }, ...hideRoles, { role: 'quit' }] },
+    { label: T('main.edit'), submenu: [
+      { role: 'undo', label: T('main.undo') }, { role: 'redo', label: T('main.redo') }, { type: 'separator' },
+      withKey({ role: 'cut', label: T('main.cut') }, keys.cut), withKey({ role: 'copy', label: T('main.copy') }, keys.copy),
+      { label: T('main.paste'), accelerator: keys.paste, click: () => send('edit:paste') },
+      { role: 'selectAll', label: T('main.selectAll') },
     ] },
-    { label: m.view, submenu: [{ role: 'reload', label: m.reload }, { role: 'toggleDevTools', label: m.devTools }, { type: 'separator' }, { role: 'togglefullscreen', label: m.fullscreen }] },
-    { role: 'windowMenu', label: m.window },
+    { label: T('main.view'), submenu: [{ role: 'reload', label: T('main.reload') }, { role: 'toggleDevTools', label: T('main.devTools') }, { type: 'separator' }, { role: 'togglefullscreen', label: T('main.fullscreen') }] },
+    { role: 'windowMenu', label: T('main.window') },
   ]));
 }
 
@@ -860,7 +828,8 @@ ipcMain.handle('language:set', (_e, setting) => {
   return languageInfo();
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await loadI18n();
   const raw = loadState();
   state = { ...P.normalizeState(raw), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false };
   buildMenu();

@@ -2,6 +2,7 @@
 // Electron'da preload window.agentOffice'u verir ve bu dosya hiç yüklenmez.
 // ?empty → proje yok; ?themesError → başlıkta tema uyarısı; ?authError → üçüncü hesap 'error';
 // ?loginFail → sahte giriş 1 koduyla biter ve hesap 'out' kalır. ?lang=en|tr → dil ayarı (yoksa auto: tarayıcı dili).
+// ?langs=en,tr,de → dil seçicideki diller (tarayıcı klasörü listeleyemez; main locales/*.json'dan okur). Varsayılan en,tr.
 // ?platform=linux → Linux başlık çubuğu ve Ctrl+Shift kısayolları (platform.js).
 // ?asking → ikinci proje onay bekler (tabela, ✋), üçüncüsü bitti (●).
 // ?select=<işçi id | @boss | shell:<id>> → birkaç saniye sonra o bota/raf yuvasına tıklanır (ajan paneli denemesi;
@@ -106,8 +107,14 @@ if (q.has('tabs')) setTimeout(() => /** @type {HTMLElement | null} */ (document.
 
 const names = ['yeni-proje', 'web-sitesi', 'mobil-uygulama', 'raporlar'];
 
-let langSetting = ['en', 'tr'].includes(q.get('lang')) ? q.get('lang') : 'auto';
-const langInfo = () => ({ setting: langSetting, lang: langSetting === 'auto' ? (/^tr/i.test(navigator.language) ? 'tr' : 'en') : langSetting });
+const langCodes = (q.get('langs') || 'en,tr').split(',').map((c) => c.trim()).filter(Boolean);
+// adlar dosyaların "_name"inden, main'deki gibi
+const languages = await Promise.all(langCodes.map((code) => fetch(`../locales/${code}.json`).then((r) => r.json())
+  .then((d) => ({ code, name: typeof d?._name === 'string' ? d._name : code })).catch(() => ({ code, name: code }))));
+const known = (v) => langCodes.includes(v);
+let langSetting = known(q.get('lang')) ? q.get('lang') : 'auto';
+const systemLang = () => { const l = navigator.language.toLowerCase(); return langCodes.find((c) => c.toLowerCase() === l) || langCodes.find((c) => c.toLowerCase() === l.split('-')[0]) || 'en'; };
+const langInfo = () => ({ setting: langSetting, lang: langSetting === 'auto' ? systemLang() : langSetting, languages });
 const langEv = listeners();
 
 window.agentOffice = {
@@ -203,7 +210,7 @@ window.agentOffice = {
   },
   language: {
     get: async () => langInfo(),
-    set: async (v) => { langSetting = ['en', 'tr'].includes(v) ? v : 'auto'; setTimeout(() => langEv.emit(langInfo())); },
+    set: async (v) => { langSetting = known(v) ? v : 'auto'; setTimeout(() => langEv.emit(langInfo())); },
     onChange: langEv.add,
   },
   office: {
