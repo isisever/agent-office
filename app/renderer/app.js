@@ -459,6 +459,7 @@ try {
     anchor: $('office'),
     onClose: () => { try { office?.setSelected?.(null); } catch {} },
     onSelect: (id) => { try { office?.setSelected?.(id); } catch {} },
+    loadToday: () => api.office.today?.() ?? Promise.resolve(null),
     // panelden terminale: o projeyi etkinleştir ve terminaline odaklan
     onOpenProject: (name) => {
       const p = projects.find((x) => x.name === name);

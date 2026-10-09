@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
+import type { OfficeStats } from '../types'
 
 type Harness = Parameters<TestBody>[1]
 type RunResult = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: boolean; isStderrTruncated: boolean }
@@ -213,6 +214,10 @@ test('failed and killed agents are delivered as failures, completed ones as succ
   expect(outcome).toEqual({ 'agent-1': true, 'agent-2': false, 'agent-3': false })
   expect(state.stats.delivered).toBe(3)
   expect([...state.stats.today.ids].sort()).toEqual(['agent-1', 'agent-2', 'agent-3'])
+  // the day's log keeps each delivery after its worker leaves (contract v2.9)
+  const log = state.stats.today.log as { id: string; type: string; description: string; isOk: boolean; toolCount: number; spawnAt: number; doneAt: number }[]
+  expect(log.map(d => [d.id, d.description, d.isOk]).sort()).toEqual([['agent-1', 'one', true], ['agent-2', 'two', false], ['agent-3', 'three', false]])
+  expect(log.every(d => d.type === 'Explore' && d.toolCount === 0 && d.doneAt >= d.spawnAt)).toBe(true)
 })
 
 test('session start removes sessions ended before today and stale ones, never this one, a live one or one ended today', async ($, on) => {
@@ -378,7 +383,8 @@ type State = {
     toolCount?: number
     result?: string
   }[]
-  stats: { delivered: number; isBossBusy: boolean }
+  stats: OfficeStats
+  format?: number
 }
 const stateOf = (writes: { path: string; text: string }[]): State => lastState(writes)
 const spawnAgent = ($: Engine, description: string, subagentType: string) =>
@@ -837,6 +843,6 @@ test('a permission dialog marks the session waiting until its tool is answered, 
   expect(stateOf(writes).stats.waiting?.tool).toBe('Edit')
   await completeTurn($, 'aborted')
   expect(stateOf(writes).stats.waiting).toBe(undefined)
-  expect((stateOf(writes) as unknown as { format: number }).format).toBe(2)
+  expect(stateOf(writes).format).toBe(2)
   expect(stateOf(writes).stats.isBossBusy).toBe(false)
 })

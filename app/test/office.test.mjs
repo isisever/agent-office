@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url)
   const copy = new URL('../src/office/core.mjs', import.meta.url)
   assert.ok(readFileSync(copy).equals(readFileSync(source)), 'app/src/office/core.mjs, plugin/viewer/core.mjs ile aynı değil: node app/scripts/sync-core.mjs çalıştırın')
 }
-const { readOffice, readThemes } = require('../src/sessions.js')
+const { readOffice, readThemes, readToday } = require('../src/sessions.js')
 
 const OUT = process.env.SNAP_DIR ?? join(tmpdir(), 'agent-office-snapshots')
 const NOW = Number(process.env.NOW ?? new Date(2026, 9, 9, 11, 0, 0).getTime())
@@ -543,6 +543,37 @@ const shellShots = []
   path = join(OUT, 'shells-overflow.png')
   writePng(path, crowd)
   shellShots.push(path)
+}
+
+// gün sonu özeti (sözleşme v2.9): günlükteki teslimler projesiyle, en yenisi önce; günlüğü olmayanlar sayılır
+{
+  const root = mkdtempSync(join(tmpdir(), 'ao-today-'))
+  const dir = join(root, 'sessions')
+  mkdirSync(dir)
+  const day = (() => { const d = new Date(NOW); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })()
+  const M = 60 * 1000
+  const put = (name, obj, mtime = NOW) => {
+    const f = join(dir, `${name}.json`)
+    writeFileSync(f, JSON.stringify(obj))
+    utimesSync(f, mtime / 1000, mtime / 1000)
+  }
+  put('a', { format: 2, project: 'alpha', updatedAt: NOW, stats: { today: { date: day, ids: ['w1', 'w2'], log: [
+    { id: 'w1', type: 'Explore', description: 'bul', spawnAt: NOW - 30 * M, doneAt: NOW - 20 * M, isOk: true, toolCount: 5 },
+    { id: 'w2', type: 'Plan', description: 'planla', spawnAt: NOW - 10 * M, doneAt: NOW - 5 * M, isOk: false, toolCount: 2 },
+  ] } } })
+  // eski eklenti: yalnız kimlikler
+  put('b', { project: 'beta', updatedAt: NOW, stats: { today: { date: day, ids: ['x1', 'x2', 'x3'] } } })
+  // dünün günlüğü ve daha yeni biçim sayılmaz
+  put('c', { format: 2, project: 'alpha', updatedAt: NOW, stats: { today: { date: '2000-01-01', ids: ['y'], log: [{ id: 'y', doneAt: NOW }] } } })
+  put('d', { format: 3, project: 'alpha', updatedAt: NOW, stats: { today: { date: day, ids: ['z'], log: [{ id: 'z', doneAt: NOW }] } } })
+  const all = readToday(null, NOW, root)
+  assert.equal(all.date, day)
+  assert.deepEqual(all.deliveries.map(d => [d.id, d.project, d.isOk, d.toolCount]), [['w2', 'alpha', false, 2], ['w1', 'alpha', true, 5]])
+  assert.equal(all.deliveries[1].spawnAt, NOW - 30 * M)
+  assert.equal(all.untracked, 3)
+  assert.deepEqual(readToday(['beta'], NOW, root), { date: day, deliveries: [], untracked: 3 })
+  assert.deepEqual(readToday(null, NOW, join(root, 'yok')), { date: day, deliveries: [], untracked: 0 })
+  rmSync(root, { recursive: true })
 }
 
 console.log('ok', shellShots)

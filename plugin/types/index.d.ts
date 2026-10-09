@@ -32,7 +32,9 @@ export type Shell = {
 // today: ids delivered on that local day; outlives FORGET so the viewer's TODAY count never misses one
 // waiting (contract v2.6): a permission dialog is open for `tool`, since `since`; gone once it is answered
 export type Waiting = { kind: 'permission'; tool: string; since: number }
-export type OfficeStats = { delivered: number; isBossBusy: boolean; today?: { date: string; ids: string[] }; waiting?: Waiting }
+// one delivery of the day (contract v2.9): what the end-of-day summary lists
+export type Delivery = { id: string; type: string; description: string; spawnAt: number; doneAt: number; isOk: boolean; toolCount: number }
+export type OfficeStats = { delivered: number; isBossBusy: boolean; today?: { date: string; ids: string[]; log?: Delivery[] }; waiting?: Waiting }
 
 // the last frame the viewer wrote: its number and the theme's colours (hex without #)
 export type OfficeFrame = { gen: number; accent: string; frameColor: string; title: string }

@@ -560,6 +560,8 @@ function assignSlots(workers, now) {
 // ---------- seçim ----------
 // son karede çizilen botlar (çizim sırasıyla) ve etiketleri: { id, x, y, w, h } mantıksal piksel
 export const BOSS_ID = '@boss'
+// beyaz tahta: tıklanınca günün teslimleri (sözleşme v2.9)
+export const TODAY_ID = '@today'
 const HIT_SLACK = 3
 let hits = []
 let canvasW = DESIGN_W * 4
@@ -1513,9 +1515,11 @@ function renderFrame(now, data, focus = '', selected = null) {
     const room = L.loungeDoorX - 14 - x
     const bw = projectBoard(x, hallFaceTop + 2, room, projs, short, data, now)
     if (bw + 17 <= room) clock(x + bw + 5, hallFaceTop + 3, now)
+    hits.push({ id: TODAY_ID, x, y: hallFaceTop + 2, w: bw, h: 15 })
   } else {
     clock(108, hallFaceTop + 3, now)
     whiteboard(40, hallFaceTop + 2, 58, data)
+    hits.push({ id: TODAY_ID, x: 40, y: hallFaceTop + 2, w: 58, h: 15 })
   }
   catBasket(B + 6, 66, now)
   counter(loungeX0 + 6, 28, Math.min(46, loungeX1 - loungeX0 - 44), now, isBusy)

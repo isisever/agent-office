@@ -58,5 +58,6 @@ contextBridge.exposeInMainWorld('agentOffice', {
   office: {
     onData: listen('office:data'),
     themes: () => ipcRenderer.invoke('office:themes'),
+    today: () => ipcRenderer.invoke('office:today'),     // günün teslimleri (sözleşme v2.9)
   },
 });

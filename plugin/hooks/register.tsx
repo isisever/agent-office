@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { OfficeFrame, OfficeStats, Shell, Worker } from '../types'
+import type { Delivery, OfficeFrame, OfficeStats, Shell, Worker } from '../types'
 
 // Claude Code side of Agent Office: writes agent arrivals, tools, deliveries and background shells to
 // ~/.claude/agent-office/sessions/<session>.json. The office itself is drawn by the
@@ -92,6 +92,8 @@ const STALE_MS = 24 * 60 * 60_000 // another session's files untouched this long
 // agent details (contract v2.2): limits of the Worker fields the app's panel shows
 const PROMPT_MAX = 600
 const RESULT_MAX = 4000
+const DESCRIPTION_MAX = 200
+const LOG_MAX = 300 // deliveries kept per session per day
 const DETAIL_MAX = 160
 const HISTORY_MAX = 20
 // background shells (contract v2.3): running ones plus those finished within forgetMs, at most this many
@@ -311,9 +313,25 @@ async function markDone($: EngineInterface, ids: Set<string>, isOk: boolean) {
   if (fresh.length === 0) return
   await setWorkers($, list => list.map(w => (ids.has(w.id) && w.doneAt === undefined ? { ...w, doneAt: now, isOk } : w)))
   const date = dayKey(now)
+  // the day's log outlives the workers (they leave after FORGET_MS): the app's end-of-day summary reads it
+  const logged: Delivery[] = fresh.map(w => ({
+    id: w.id,
+    type: w.type,
+    description: clip(w.description ?? '', DESCRIPTION_MAX),
+    spawnAt: w.spawnAt,
+    doneAt: now,
+    isOk,
+    toolCount: w.toolCount ?? 0,
+  }))
   await setStats($, s => {
-    const ids = s.today?.date === date ? s.today.ids : []
-    return { ...s, delivered: s.delivered + fresh.length, today: { date, ids: [...ids, ...fresh.map(w => w.id)] } }
+    const isToday = s.today?.date === date
+    const ids = isToday ? s.today!.ids : []
+    const log = isToday ? (s.today!.log ?? []) : []
+    return {
+      ...s,
+      delivered: s.delivered + fresh.length,
+      today: { date, ids: [...ids, ...fresh.map(w => w.id)], log: [...log, ...logged].slice(-LOG_MAX) },
+    }
   })
 }
 

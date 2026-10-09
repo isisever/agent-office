@@ -1,14 +1,17 @@
 // Ajan ayrıntıları: ofiste tıklanan botun ne yaptığını sağda bir panelde gösterir.
-// mountAgentPanel(el, { onClose, onSelect, onOpenProject, anchor }) → { show(id), update(data), hide(), shownId() }
+// mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToday, anchor }) → { show(id), update(data), hide(), shownId() }
 // - update(OfficeData) her office:data'da çağrılır; panel açıksa canlı güncellenir.
 // - Eski eklenti verisinde prompt/detail/history/toolCount/result yoktur: panel yine çalışır.
 // - '@boss' (core.mjs BOSS_ID) müdürün özetini gösterir; oradaki ajan satırına tıklamak onSelect(id) çağırır.
 // - anchor verilirse panel o öğenin (ofis tuvali) kutusunu kaplar.
+// - '@today' (core.mjs TODAY_ID, beyaz tahta) günün teslimlerini gösterir; veri loadToday() ile istenir (sözleşme v2.9).
 // - 'shell:<id>' sunucu odasındaki bir arka plan komutunu gösterir (OfficeData.shells; eski veride yoktur).
 
 import { onLang, pick, locale } from './i18n.js';
 
 const BOSS_ID = '@boss';
+const TODAY_ID = '@today';
+const TODAY_REFRESH_MS = 3000;
 const SHELL = 'shell:';
 const CLAMP = 220; // bundan uzun görev/sonuç daraltılır
 
@@ -55,6 +58,14 @@ const S = {
     agentGone: (id) => `agent ${id} · left the office`,
     showBoss: 'Show the boss',
     boss: 'Boss',
+    todayTitle: 'Today',
+    todaySummary: (n, ok) => `${n} delivered${n - ok ? ` · ${n - ok} failed` : ''}`,
+    agentTime: (s) => `${s} of agent time`,
+    deliveries: 'Deliveries',
+    noDeliveries: 'No deliveries yet today.',
+    untracked: (n) => `${n} more without details (written by an older plugin)`,
+    tools: (n) => `${n} tool${n === 1 ? '' : 's'}`,
+    todayProj: (n, s) => `${n} · ${s}`,
     mainSession: 'main session',
     startedBy: 'Started by',
     started: 'Started',
@@ -118,6 +129,14 @@ const S = {
     agentGone: (id) => `ajan ${id} · ofisten ayrıldı`,
     showBoss: 'Müdürü göster',
     boss: 'Müdür',
+    todayTitle: 'Bugün',
+    todaySummary: (n, ok) => `${n} teslim${n - ok ? ` · ${n - ok} başarısız` : ''}`,
+    agentTime: (s) => `${s} ajan süresi`,
+    deliveries: 'Teslimler',
+    noDeliveries: 'Bugün henüz teslim yok.',
+    untracked: (n) => `${n} teslimin ayrıntısı yok (eski eklenti yazmış)`,
+    tools: (n) => `${n} araç`,
+    todayProj: (n, s) => `${n} · ${s}`,
     mainSession: 'ana oturum',
     startedBy: 'Başlatan',
     started: 'Başladı',
@@ -171,6 +190,12 @@ const clock = (at) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 };
 
+// saat:dakika, her dilde 24 saat (gün sonu listesi)
+const hm = (at) => {
+  const d = new Date(at);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+};
+
 function typeLabel(type) {
   const raw = str(type) || t().agent;
   const name = t().types[raw];
@@ -197,14 +222,17 @@ async function copyText(text) {
 
 /**
  * @param {HTMLElement} el
- * @param {{ onClose?: () => void, onSelect?: (id: string) => void, onOpenProject?: (name: string) => void, anchor?: HTMLElement }} [opts]
+ * @param {{ onClose?: () => void, onSelect?: (id: string) => void, onOpenProject?: (name: string) => void, loadToday?: () => Promise<any>, anchor?: HTMLElement }} [opts]
  */
-export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, anchor } = {}) {
+export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToday, anchor } = {}) {
   let data = null;
   let id = null;
   let last = null; // ofisten ayrılınca son bilinen hâli
   let lastHtml = '';
   let tick = 0;
+  let today = null; // son loadToday() sonucu
+  let todayAt = 0;
+  let isTodayLoading = false;
   const expanded = new Set(); // `${id}:prompt` / `${id}:result`
   const copies = new Map(); // data-copy anahtarı → metin
 
@@ -386,6 +414,45 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, anchor }
     return { title: t().boss, project: '', html };
   }
 
+  // gün sonu özeti: bugünün teslimleri (en yenisi önce), proje başına sayı ve ajan süresi
+  function todayHtml() {
+    if (Date.now() - todayAt > TODAY_REFRESH_MS && !isTodayLoading && loadToday) {
+      isTodayLoading = true;
+      loadToday()
+        .then((d) => { today = d; })
+        .catch((e) => console.error(e))
+        .finally(() => { isTodayLoading = false; todayAt = Date.now(); render(); });
+    }
+    const list = Array.isArray(today?.deliveries) ? today.deliveries : [];
+    const dur = (d) => Math.max(0, (num(d.doneAt) ?? 0) - (num(d.spawnAt) ?? num(d.doneAt) ?? 0));
+    const ok = list.filter((d) => d.isOk !== false).length;
+    const total = list.reduce((n, d) => n + dur(d), 0);
+    let html = `<div class="ap-status ok"><span class="ap-dot"></span>${esc(t().todaySummary(list.length, ok))}${list.length ? `<span class="ap-dim">${esc(t().agentTime(span(total)))}</span>` : ''}</div>`;
+    const per = new Map();
+    for (const d of list) {
+      const k = str(d.project);
+      const p = per.get(k) || { n: 0, ms: 0 };
+      p.n++;
+      p.ms += dur(d);
+      per.set(k, p);
+    }
+    if (per.size > 1) {
+      html += `<section class="ap-sec"><div class="ap-label">${t().projects}</div><ul class="ap-projs">${[...per].sort((a, b) => b[1].n - a[1].n).map(([name, p]) =>
+        `<li><span class="ap-pname">${esc(name || '?')}</span><span class="ap-dim">${esc(t().todayProj(p.n, span(p.ms)))}</span></li>`).join('')}</ul></section>`;
+    }
+    html += `<section class="ap-sec"><div class="ap-label">${t().deliveries}<span class="ap-dim">${list.length}</span></div>`;
+    html += list.length
+      ? `<ul class="ap-day">${list.map((d) => `<li class="${d.isOk === false ? 'bad' : ''}">
+          <span class="ap-when ap-dim">${esc(hm(d.doneAt))}</span>
+          <span class="ap-mark">${d.isOk === false ? '✗' : '✓'}</span>
+          <span class="ap-what"><span class="ap-tool">${esc(typeLabel(d.type))}</span> ${esc(str(d.description))}</span>
+          <span class="ap-dim">${esc(span(dur(d)))}${num(d.toolCount) ? ` · ${esc(t().tools(d.toolCount))}` : ''}${per.size > 1 && d.project ? ` · ${esc(d.project)}` : ''}</span>
+        </li>`).join('')}</ul>`
+      : `<div class="ap-empty">${t().noDeliveries}</div>`;
+    if (num(today?.untracked)) html += `<div class="ap-note">${esc(t().untracked(today.untracked))}</div>`;
+    return { title: t().todayTitle, project: '', html: html + '</section>' };
+  }
+
   function fillTimes() {
     const now = Date.now();
     for (const t of /** @type {NodeListOf<HTMLElement>} */ (el.querySelectorAll('time[data-ago]'))) t.textContent = ago(Number(t.dataset.ago), now);
@@ -397,6 +464,7 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, anchor }
     copies.clear();
     let view;
     if (id === BOSS_ID) view = bossHtml();
+    else if (id === TODAY_ID) view = todayHtml();
     else if (id.startsWith(SHELL)) {
       const s = findShell(id.slice(SHELL.length));
       if (s) last = s;

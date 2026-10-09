@@ -227,3 +227,13 @@ agentOffice.prefs.set(p: { resume?: boolean }): Promise<{ resume: boolean }>
 - `app/src/office/core.mjs` is a byte-identical copy, so the renderer can load it from inside the asar (`../plugin` is outside it). Edit the plugin file, then run `node app/scripts/sync-core.mjs`; `npm start`, `npm run dist` and `npm run dist:release` run it first (`prestart`, `predist`, `predist:release`). `app/test/office.test.mjs` fails when the two differ.
 - Additions for the viewer: `setPartyMinutes(minutes)` (how long a bot dances; default 10, the viewer uses `forgetMinutes - 0.5`) and `themeColors()` (the current palette as `0xrrggbb` numbers). The auto theme's wall sign is the full project folder name (`my-app` → `MY-APP`).
 - Session file format: the plugin stamps each session file with `format: 2` (`FORMAT` in `register.tsx`); fields are only ever added within a format. `readOffice` skips a file whose `format` is above its own (`sessions.js` `FORMAT`) and sets `newerFormat` on the data; the title bar then shows "⚠ update" / "⚠ güncelle" instead of reading it wrong. Files without `format` are read as format 2. The terminal viewer also passes live sessions' `shells` to the core now, so its server room shows them.
+
+## End-of-day summary (v2.9)
+
+Clicking the whiteboard opens the day's deliveries in the agent panel.
+
+- Plugin: each delivery is also appended to the session file's `stats.today.log` (types: `Delivery = { id, type, description (≤ 200 chars), spawnAt, doneAt, isOk, toolCount }`, at most 300 per session and day). Unlike `workers`, the log outlives FORGET_MS, so the day's list stays complete.
+- `sessions.js` `readToday(projects, now, root)` → `{ date, deliveries: (Delivery & { project, sessionId })[], untracked }`: today's logs from the session files changed today, newest first, filtered to the app's projects; `untracked` counts deliveries of today with no log entry (older plugin). Files of a newer `format` are skipped.
+- Bridge: `agentOffice.office.today(): Promise<…>` (`office:today`).
+- Office: the whiteboard records the hit box `@today` (`core.mjs` `TODAY_ID`), the board's own size in single- and multi-project offices; bots stay on top of it.
+- Panel: `mountAgentPanel(el, { …, loadToday })`; `@today` shows the totals (delivered, failed, agent time), per-project counts and time when there are several projects, then each delivery (time, ✓/✗, type, description, duration, tool count, project). It reloads at most every 3 s while open.

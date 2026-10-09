@@ -209,4 +209,49 @@ function readOffice(projects, now = Date.now(), root = rootDir()) {
   return data
 }
 
-module.exports = { readOffice, readThemes, themesError, dayKey, forgetMs, LIVE_MS, FORMAT }
+// ---------- gün sonu özeti (sözleşme v2.9) ----------
+// Bugünün teslimleri: her oturumun stats.today.log'u (işçi ofisten ayrılsa da kalır), projesiyle, en yenisi önce.
+// projects verilirse yalnız onlar. untracked: günlüğü olmayan (eski eklenti) teslim sayısı.
+function readToday(projects, now = Date.now(), root = rootDir()) {
+  const only = projects == null ? null : new Set(projects.map(slugOf))
+  const day = dayKey(now)
+  const midnight = new Date(now).setHours(0, 0, 0, 0)
+  const sessions = join(root, 'sessions')
+  const out = { date: day, deliveries: [], untracked: 0 }
+  let files = []
+  try {
+    files = readdirSync(sessions).filter(f => f.endsWith('.json'))
+  } catch {
+    return out
+  }
+  for (const f of files) {
+    let s
+    try {
+      if (statSync(join(sessions, f)).mtimeMs < midnight) continue
+      s = JSON.parse(readFileSync(join(sessions, f), 'utf8'))
+    } catch {
+      continue
+    }
+    if (!s || typeof s !== 'object' || s.stats?.today?.date !== day) continue
+    if (Number.isFinite(s.format) && s.format > FORMAT) continue
+    if (only && !only.has(slugOf(s.project))) continue
+    const project = String(s.project ?? '')
+    const ids = Array.isArray(s.stats.today.ids) ? s.stats.today.ids : []
+    const log = Array.isArray(s.stats.today.log) ? s.stats.today.log : []
+    const sessionId = f.replace(/\.json$/, '')
+    for (const d of log) {
+      if (!d || typeof d !== 'object' || !Number.isFinite(d.doneAt)) continue
+      out.deliveries.push({
+        id: String(d.id ?? ''), sessionId, project,
+        type: String(d.type ?? ''), description: String(d.description ?? ''),
+        spawnAt: Number.isFinite(d.spawnAt) ? d.spawnAt : d.doneAt, doneAt: d.doneAt,
+        isOk: d.isOk !== false, toolCount: Number.isFinite(d.toolCount) ? d.toolCount : 0,
+      })
+    }
+    out.untracked += Math.max(0, new Set(ids).size - log.length)
+  }
+  out.deliveries.sort((a, b) => b.doneAt - a.doneAt)
+  return out
+}
+
+module.exports = { readOffice, readToday, readThemes, themesError, dayKey, forgetMs, LIVE_MS, FORMAT }

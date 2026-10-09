@@ -551,6 +551,10 @@ ipcMain.handle('clipboard:read', async () => {
 });
 ipcMain.on('edit:nativePaste', (e) => e.sender.paste());
 ipcMain.handle('clipboard:hasImage', () => clipboardHasImage());
+ipcMain.handle('office:today', () => {
+  const s = office();
+  return s ? s.readToday(state.projects.map((p) => p.name)) : { date: '', deliveries: [], untracked: 0 };
+});
 ipcMain.handle('office:themes', () => {
   const s = office();
   try { return s ? s.readThemes() : {}; } catch { return {}; }

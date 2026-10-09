@@ -170,6 +170,20 @@ window.agentOffice = {
     onChange: langEv.add,
   },
   office: {
+    today: async () => {
+      const now = Date.now();
+      const row = (min, project, type, description, durMin, tools, isOk = true) =>
+        ({ id: `d${min}`, project, type, description, spawnAt: now - (min + durMin) * 60e3, doneAt: now - min * 60e3, isOk, toolCount: tools });
+      return {
+        date: '', untracked: q.has('untracked') ? 2 : 0,
+        deliveries: [
+          row(3, projects[0]?.name ?? 'agent-office', 'Explore', 'Ofis tuvalinde tıklama noktalarını bul', 2, 14),
+          row(25, projects[1]?.name ?? 'shop-api', 'general-purpose', 'Kısmi iade uç noktasını ekle', 18, 41),
+          row(70, projects[1]?.name ?? 'shop-api', 'code-reviewer', 'İade akışını gözden geçir', 6, 9, false),
+          row(130, projects[0]?.name ?? 'agent-office', 'Plan', 'Kota uyarılarını planla', 4, 6),
+        ],
+      };
+    },
     onData: ev.office.add,
     themes: async () => ({}),
   },
