@@ -2,7 +2,7 @@
   "name": "agent-office",
   "productName": "Agent Office",
   "desktopName": "agent-office.desktop",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Claude Code in a pixel office: the real claude CLI in a terminal per project, under one live office where the boss oversees every project",
   "main": "main.js",
   "type": "commonjs",
