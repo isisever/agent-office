@@ -16,6 +16,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # eslint.config.mjs: ESLint's own recommended rules, no packages in the repo
+      - name: Lint
+        run: npx -y eslint@9 .
       # the tests need no packages; the type-check needs typescript and the types of Node and the app's
       # modules (found from app/ upwards). --ignore-scripts: no Electron download, no native builds
       - name: Install the type-checker

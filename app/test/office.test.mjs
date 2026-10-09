@@ -409,8 +409,7 @@ const selectShots = []
   const g = setGeometry(1333, 707)
   const ox = Math.floor((1333 - g.LW * g.S) / 2)
   const oy = Math.floor((707 - g.LH * g.S) / 2)
-  let frame
-  for (let t = NOW - 70000; t <= NOW; t += 110) frame = render(t, demoOffice(t))
+  for (let t = NOW - 70000; t <= NOW; t += 110) render(t, demoOffice(t))
   const toPx = b => [ox + (b.x + b.w / 2) * g.S, oy + (b.y + b.h / 2) * g.S]
   const boxes = hitBoxes()
   // üstünde sonra çizilmiş başka kutu olmayanlar (en üstteki kazanır)
