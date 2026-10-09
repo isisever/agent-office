@@ -9,7 +9,8 @@
     "start": "electron .",
     "postinstall": "electron-builder install-app-deps && chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper || true",
     "dist": "electron-builder --mac && rm -rf release/mac release/mac-arm64 release/builder-debug.yml",
-    "icon": "node scripts/make-icon.mjs"
+    "icon": "node scripts/make-icon.mjs",
+    "dist:release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-agent-office} electron-builder --mac -c.mac.identity=\"${CSC_NAME:-Savas Isisever (GLTH2M74NT)}\" && rm -rf release/mac release/mac-arm64 release/builder-debug.yml"
   },
   "author": "Savas Isisever",
   "license": "MIT",

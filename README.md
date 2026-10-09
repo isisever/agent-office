@@ -122,7 +122,7 @@ node plugin/tests/viewer-smoke.mjs        # terminal viewer
 ### Releasing
 
 1. Bump `version` in `app/package.json` (and `plugin/.claude-plugin/plugin.json`).
-2. `cd app && npm run dist`
+2. `cd app && npm run dist:release` — signs with the maintainer's Developer ID and notarizes with Apple. It needs that certificate in the keychain and a notarytool profile stored once with `xcrun notarytool store-credentials agent-office --apple-id <apple id> --team-id <team id>` (override the names with `CSC_NAME` and `APPLE_KEYCHAIN_PROFILE`). Without them, `npm run dist` builds an ad-hoc-signed copy for local use.
 3. `gh release create v<version> app/release/AgentOffice-<version>-*.dmg app/release/AgentOffice-<version>-*.zip`
 4. `node packaging/homebrew/update-cask.mjs` and copy `packaging/homebrew/Casks/agent-office.rb` to the [tap](https://github.com/isisever/homebrew-tap).
 
