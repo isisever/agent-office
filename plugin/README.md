@@ -81,6 +81,8 @@ Background shells running: 1 · npm run dev (api)
 
 It reads the session files in `~/.claude/agent-office/sessions/` (each one's daily delivery log); deliveries made by a plugin version older than the log are counted but not listed.
 
+Inside the [Agent Office app](../README.md) the app window is already the office, so there `/office` only gives this summary: `/office stats` or plain `/office`. `/office band` or a split is not available there; the command says so and points to `/office stats`.
+
 ### Band mode
 
 ![The office band, drawn above the Claude Code prompt](docs/band.png)
@@ -233,7 +235,7 @@ Yerel kopyadan denemek için: `claude --plugin-dir /yol/agent-office/plugin`
 | --- | --- |
 | `/office` | macOS'ta Ghostty, (uzaktan kontrolü açık) kitty ya da WezTerm: ofisi Claude terminalinin yanında bölme olarak açar. Diğer terminallerde `/office şerit`'e düşer. |
 | `/office şerit` (ya da `/office band`) | Ofisi Claude Code içinde, prompt'un hemen üstündeki şeritte açar/kapatır. |
-| `/office istatistik` (ya da `/office stats`) | Görünüm açmadan bugünün özetini metin olarak verir: tüm oturumlardaki teslimler (sayı, başarısız, toplam agent süresi, proje başına, son teslimler: tip, açıklama, süre), şu an çalışan agent'lar ve çalışan arka plan komutları. |
+| `/office istatistik` (ya da `/office stats`) | Görünüm açmadan bugünün özetini metin olarak verir: tüm oturumlardaki teslimler (sayı, başarısız, toplam agent süresi, proje başına, son teslimler: tip, açıklama, süre), şu an çalışan agent'lar ve çalışan arka plan komutları. [Agent Office uygulamasının](../README.md) içinde ofis zaten uygulama penceresindedir: orada `/office` yalnız bu özeti verir (`/office istatistik` ya da yalnız `/office`); şerit ve bölme açılmaz. |
 | Yaz + `Enter` (tam pencere ofis) | Görev satırındaki görevi Claude'a gönderir. |
 | `Ctrl-C` (tam pencere ofis) | Ofisi kapatır. |
 

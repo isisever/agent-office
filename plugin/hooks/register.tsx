@@ -9,6 +9,7 @@ import type { Delivery, OfficeFrame, OfficeStats, Shell, Worker } from '../types
 // `/office`: full-window office in a split next to Claude (Ghostty on macOS, kitty with remote control,
 //   WezTerm; anywhere else it falls back to the band).
 // `/office band` (`/office şerit`): viewer --frames renders PNG frames shown in the band above the prompt (AbovePrompt).
+// Inside the Agent Office app (AGENT_OFFICE_APP) the app window is the office: `/office` gives today's summary only.
 
 const workersAtom = atom({ plugin: 'agent-office', key: 'workers' } as const, [] as Worker[])
 const shellsAtom = atom({ plugin: 'agent-office', key: 'shells' } as const, [] as Shell[])
@@ -29,6 +30,10 @@ const STRINGS = {
   en: {
     description: 'Opens the Agent office full-window in a split next to Claude (Ghostty on macOS, kitty, WezTerm); `/office band`: a small band above the prompt; `/office stats`: today in text',
     argumentHint: '[band|stats]',
+    // inside the Agent Office app the app window is the office: /office only gives today's summary
+    appDescription: "Today's summary of Agent Office in text: deliveries, agent time, working agents and background shells",
+    appArgumentHint: '[stats]',
+    inApp: "The office is already shown in the Agent Office window. Run /office stats for today's summary.",
     title: 'AGENT OFFICE',
     status: (working: number, delivered: number, isBossBusy: boolean) =>
       `${working} working · ${delivered} delivered${isBossBusy ? ' · boss busy' : ''}`,
@@ -62,6 +67,9 @@ const STRINGS = {
   tr: {
     description: "Agent ofisini pencerede tam boy bölme olarak açar, Claude birkaç satırda kalır (macOS'ta Ghostty, kitty, WezTerm); `/office şerit`: prompt'un üstünde küçük şerit; `/office istatistik`: bugünün özeti",
     argumentHint: '[şerit|istatistik]',
+    appDescription: "Agent Ofis'in bugünkü özeti metin olarak: teslimler, agent süresi, çalışan agent'lar ve arka plan komutları",
+    appArgumentHint: '[istatistik]',
+    inApp: "Ofis zaten Agent Ofis penceresinde görünüyor. Bugünün özeti için /office istatistik.",
     title: 'AGENT OFİS',
     status: (working: number, delivered: number, isBossBusy: boolean) =>
       `${working} çalışıyor · ${delivered} teslim${isBossBusy ? ' · müdür çalışıyor' : ''}`,
@@ -164,6 +172,7 @@ let termProgram = ''
 let kittyListenOn = ''
 let kittyWindowId = ''
 let weztermPane = ''
+let isInApp = false // AGENT_OFFICE_APP: the session runs inside the Agent Office app
 
 async function publish($: EngineInterface, endedAt?: number) {
   if (!stateFile) return
@@ -767,8 +776,13 @@ export const register: Register = on => {
     kittyListenOn = (await $.env.get('KITTY_LISTEN_ON')) ?? ''
     kittyWindowId = (await $.env.get('KITTY_WINDOW_ID')) ?? ''
     weztermPane = (await $.env.get('WEZTERM_PANE')) ?? ''
-    // inside the Agent Office app the app itself is the office: no /office command
-    if (!(await $.env.get('AGENT_OFFICE_APP'))) await $.command.register({ name: 'office', description: t.description, argumentHint: t.argumentHint })
+    // inside the Agent Office app the app itself is the office: /office only gives today's summary
+    isInApp = Boolean(await $.env.get('AGENT_OFFICE_APP'))
+    await $.command.register(
+      isInApp
+        ? { name: 'office', description: t.appDescription, argumentHint: t.appArgumentHint }
+        : { name: 'office', description: t.description, argumentHint: t.argumentHint },
+    )
     const id = await $.session.id()
     project = (await $.session.root()).split('/').pop() ?? ''
     const root = `${home}/.claude/agent-office`
@@ -805,6 +819,8 @@ export const register: Register = on => {
   on('command.run', { command: 'office' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase().replace(/\u0307/g, '')
     if (STATS_ARGS.has(arg)) return { text: await statsText($) }
+    // the app window already shows the office: never a split, a band or a viewer here
+    if (isInApp) return { text: arg ? t.inApp : await statsText($) }
     const isBandAsked = BAND_ARGS.has(arg)
     // the band is open: plain /office closes it too, so the fallback toggles like /office band
     const splitter = isBandAsked || isOpen ? undefined : await findSplitter($)
