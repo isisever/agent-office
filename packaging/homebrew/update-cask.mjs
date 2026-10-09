@@ -30,6 +30,7 @@ const cask = `cask "agent-office" do
     strategy :github_latest
   end
 
+  auto_updates true
   depends_on macos: :monterey
 
   app "Agent Office.app"

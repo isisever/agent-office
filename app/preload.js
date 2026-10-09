@@ -41,6 +41,11 @@ contextBridge.exposeInMainWorld('agentOffice', {
     nativePaste: () => ipcRenderer.send('edit:nativePaste'), // terminal dışı: normal yapıştırma
   },
   pathForFile: (file) => webUtils.getPathForFile(file),
+  update: {
+    state: () => ipcRenderer.invoke('update:state'),   // { version, ready }
+    onReady: listen('update:ready'),                    // indirilen sürüm numarası
+    install: () => ipcRenderer.send('update:install'),
+  },
   office: {
     onData: listen('office:data'),
     themes: () => ipcRenderer.invoke('office:themes'),

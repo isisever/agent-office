@@ -625,3 +625,17 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
 .sb-color::-webkit-color-swatch-wrapper { padding: 1px; }
 .sb-color::-webkit-color-swatch { border: 0; border-radius: 2px; }
 .sb-botcolor .sb-x { opacity: .7; }
+
+/* ---- Güncelleme düğmesi (başlık) ---- */
+#update {
+  font: inherit;
+  font-size: 11px;
+  color: var(--status-bg);
+  background: var(--accent);
+  border: 0;
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+#update:hover { filter: brightness(1.15); }

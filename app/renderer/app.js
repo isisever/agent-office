@@ -65,6 +65,20 @@ function setStats(d) {
   warn.title = d?.themesError ? `themes.json okunamadı: ${d.themesError}` : '';
 }
 
+// ---- Güncelleme: yeni sürüm indiğinde başlıkta düğme; tıklayınca uygulama yeniden başlar ----
+function showUpdate(version) {
+  const b = $('update');
+  if (!version) return;
+  b.hidden = false;
+  b.textContent = `⬆ ${version} hazır · yeniden başlat`;
+  b.title = 'Yeni sürüm indirildi. Yeniden başlatınca açık Claude oturumları kapanır (sonra /resume ile devam edebilirsin).';
+}
+$('update').addEventListener('click', () => {
+  if (confirm('Agent Office yeniden başlatılıp güncellensin mi? Açık Claude oturumları kapanır.')) api.update?.install();
+});
+api.update?.onReady(showUpdate);
+api.update?.state().then((s) => showUpdate(s?.ready)).catch(() => {});
+
 // ---- Terminaller: proje başına bir xterm, gizliler geçmişini korur ----
 function hint(projectId, text) {
   const p = panes.get(projectId);

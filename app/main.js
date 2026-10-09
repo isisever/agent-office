@@ -403,10 +403,42 @@ async function createWindow() {
 fixSpawnHelper();
 // Uygulama menüsü: Yapıştır (⌘V) renderer'a gider; odak terminaldeyse panodaki görsel/dosya/metin
 // Claude Code'a uygun biçimde verilir, değilse normal yapıştırma yapılır.
+// ---- Güncelleme: GitHub Releases'tan (electron-updater). Yeni sürüm arka planda iner; başlıktaki düğme
+// ya da uygulamadan çıkış onu kurar. Yalnız paketlenmiş (imzalı) uygulamada çalışır.
+let updater = null;
+let updateReady = null; // indirilmiş sürüm
+const UPDATE_EVERY_MS = 4 * 60 * 60 * 1000;
+function setupUpdates() {
+  if (!app.isPackaged) return;
+  try { ({ autoUpdater: updater } = require('electron-updater')); } catch (e) { console.error('electron-updater yok:', e.message); return; }
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = true;
+  updater.on('update-downloaded', (info) => { updateReady = info.version; send('update:ready', info.version); });
+  updater.on('error', (e) => console.error('güncelleme:', e?.message || e));
+  const check = () => updater.checkForUpdates().catch((e) => console.error('güncelleme denetimi:', e?.message || e));
+  setTimeout(check, 10000);
+  setInterval(check, UPDATE_EVERY_MS);
+}
+// menüden elle denetim: sonuç kısa bir pencereyle söylenir
+async function checkUpdatesNow() {
+  if (!updater) return dialog.showMessageBox(win, { message: 'Güncelleme denetimi yalnızca kurulu uygulamada çalışır.' });
+  if (updateReady) return send('update:ready', updateReady);
+  try {
+    const r = await updater.checkForUpdates();
+    const latest = r?.updateInfo?.version;
+    if (!latest || latest === app.getVersion()) dialog.showMessageBox(win, { message: `Agent Office güncel (${app.getVersion()}).` });
+    else dialog.showMessageBox(win, { message: `Yeni sürüm ${latest} indiriliyor; hazır olunca başlıkta "Yeniden başlat" düğmesi çıkar.` });
+  } catch (e) {
+    dialog.showMessageBox(win, { type: 'warning', message: 'Güncelleme denetlenemedi.', detail: String(e?.message || e) });
+  }
+}
+ipcMain.handle('update:state', () => ({ version: app.getVersion(), ready: updateReady }));
+ipcMain.on('update:install', () => { if (updateReady && updater) { killAll(); updater.quitAndInstall(); } });
+
 function buildMenu() {
   const name = app.getName();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: name, submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: name, submenu: [{ role: 'about' }, { label: 'Güncellemeleri denetle…', click: () => checkUpdatesNow() }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'Düzen', submenu: [
       { role: 'undo', label: 'Geri al' }, { role: 'redo', label: 'Yinele' }, { type: 'separator' },
       { role: 'cut', label: 'Kes' }, { role: 'copy', label: 'Kopyala' },
@@ -420,6 +452,7 @@ function buildMenu() {
 
 app.whenReady().then(() => {
   buildMenu();
+  setupUpdates();
   state = P.normalizeState(loadState());
   saveState();
   lastFocusCheck = Date.now();

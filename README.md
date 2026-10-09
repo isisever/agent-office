@@ -26,7 +26,7 @@ Requirements: macOS 12 or newer, and [Claude Code](https://code.claude.com) inst
 brew install --cask isisever/tap/agent-office
 ```
 
-Update with `brew upgrade --cask agent-office`; remove everything, including app data, with `brew uninstall --zap --cask agent-office`.
+The app updates itself; remove everything, including app data, with `brew uninstall --zap --cask agent-office`.
 
 ### Download
 
@@ -38,6 +38,10 @@ Get the `.dmg` for your Mac from [Releases](https://github.com/isisever/agent-of
 | Intel | `AgentOffice-<version>-x64.dmg` |
 
 Open it and drag **Agent Office** to Applications.
+
+### Updates
+
+Agent Office checks GitHub Releases at start and every few hours. A new version downloads in the background; then **⬆ … hazır · yeniden başlat** appears in the title bar (or it installs when you quit). You can also check from the app menu: **Güncellemeleri denetle…**.
 
 ## Using it
 
@@ -116,7 +120,7 @@ node plugin/tests/viewer-smoke.mjs        # terminal viewer
 
 1. Bump `version` in `app/package.json` (and `plugin/.claude-plugin/plugin.json`).
 2. `cd app && npm run dist:release` — signs with the maintainer's Developer ID and notarizes with Apple. It needs that certificate in the keychain and a notarytool profile stored once with `xcrun notarytool store-credentials agent-office --apple-id <apple id> --team-id <team id>` (override the names with `CSC_NAME` and `APPLE_KEYCHAIN_PROFILE`). Without them, `npm run dist` builds an ad-hoc-signed copy for local use.
-3. `gh release create v<version> app/release/AgentOffice-<version>-*.dmg app/release/AgentOffice-<version>-*.zip`
+3. `gh release create v<version> app/release/AgentOffice-<version>-* app/release/latest-mac.yml` (the zips, blockmaps and `latest-mac.yml` are what the in-app updater downloads)
 4. `node packaging/homebrew/update-cask.mjs` and copy `packaging/homebrew/Casks/agent-office.rb` to the [tap](https://github.com/isisever/homebrew-tap).
 
 ## Contributing
