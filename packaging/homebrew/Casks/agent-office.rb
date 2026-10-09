@@ -1,9 +1,9 @@
 cask "agent-office" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.4.0"
-  sha256 arm:   "c4f59fc69b65fb6da9260cf0669628d7f9bff995f47b5c53a412d38b722c0b37",
-         intel: "6d12d89ea65af810e479dd415156a9ba39992b303c27e64ebaf25d8780a0dbd8"
+  version "0.4.1"
+  sha256 arm:   "d9339940184a6720fd7a235ca45306c4f8e36ea794e87d9e26488653581ccf68",
+         intel: "2042a5a99a351188f7bdf4f4cae27f1b582a30648fc7c35ba70fc0483f791524"
 
   url "https://github.com/isisever/agent-office/releases/download/v#{version}/AgentOffice-#{version}-#{arch}.dmg"
   name "Agent Office"
@@ -15,6 +15,7 @@ cask "agent-office" do
     strategy :github_latest
   end
 
+  auto_updates true
   depends_on macos: :monterey
 
   app "Agent Office.app"
