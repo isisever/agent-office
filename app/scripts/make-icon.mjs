@@ -12,7 +12,7 @@ const out = join(root, 'build')
 const C = {
   wall: 0x3a2533, wallLo: 0x2e1d29, trim: 0x5a3846,
   ol: 0x1d1310, body: 0x3fb6a8, bodyHi: 0x6fd6c9, shade: 0x2b8a7f, eye: 0x1a1a1a,
-  tie: 0x2a3a6a, tieKnot: 0x1d2a50, stache: 0x3b2418, collar: 0xf4efe6,
+  tie: 0x2a3a6a, tieKnot: 0x1d2a50, stache: 0x6b3423, stacheDk: 0x3b1a10,
   desk: 0x9a6a44, deskHi: 0xb8875c, deskLo: 0x7a5034, deskDark: 0x5e3c27,
   plate: 0xd9b25a, plateLo: 0xa8843a,
   paper: 0xf3ead8, paperLo: 0xcfc3a8, mug: 0xf3ead8, coffee: 0x5a3a28,
@@ -47,15 +47,12 @@ rect(10, 9, 12, 1, C.bodyHi)
 rect(9, 20, 14, 2, C.shade)
 rect(12, 12, 1, 2, C.eye)
 rect(19, 12, 1, 2, C.eye)
-// pala bıyık (uçları sarkık), altında beyaz yaka ve kravat
-rect(12, 15, 8, 1, C.stache)
-rect(11, 16, 2, 1, C.stache)
-rect(19, 16, 2, 1, C.stache)
-rect(13, 17, 2, 1, C.collar)
-rect(17, 17, 2, 1, C.collar)
-px(14, 18, C.collar)
-px(17, 18, C.collar)
-rect(15, 18, 2, 1, C.tieKnot)
+// kalın pala bıyık: burnun altından iki yana dolgun yarımlar, dışta aşağı inip uçlarda yukarı kıvrılır
+for (const [x, y, c] of [
+  [14, 14, 'stache'], [12, 15, 'stache'], [13, 15, 'stache'], [14, 15, 'stache'], [15, 15, 'stache'],
+  [10, 16, 'stacheDk'], [11, 16, 'stacheDk'], [12, 16, 'stacheDk'], [13, 16, 'stacheDk'], [14, 16, 'stacheDk'], [15, 16, 'stacheDk'],
+  [11, 15, 'stache'], [10, 15, 'stache'], [9, 14, 'stache'], [9, 13, 'stacheDk'], [15, 14, 'stache'],
+]) { px(x, y, C[c]); px(31 - x, y, C[c]) }   // sol yarım; sağ yarım aynası (merkez 15.5)
 rect(15, 19, 2, 2, C.tie)
 
 // masa
