@@ -55,10 +55,12 @@ agentOffice.pty.restart(projectId: string): void
 agentOffice.office.onData(cb: (data: OfficeData) => void): () => void
 agentOffice.office.themes(): Promise<Record<string, ThemeSpec>>
 agentOffice.clipboard.hasImage(): Promise<boolean>
+agentOffice.clipboard.read(): Promise<{ hasImage: boolean, text: string, files: string[] }>  // files: copied in Finder (osascript) or, on Linux, a file manager (text/uri-list via Electron, wl-paste or xclip)
+agentOffice.platform: 'darwin' | 'linux'                               // process.platform; renderer/platform.js sets <html class="platform-…"> and picks the shortcuts
 agentOffice.pathForFile(file: File): string
 ```
 
-The sidebar's add button adds projects; ⌘O = add project.
+The sidebar's add button adds projects; ⌘O = add project, ⌘1…9 = switch, ⌘V = paste into the focused terminal. On Linux the same keys are Ctrl+Shift+O, Ctrl+Shift+1…9 and Ctrl+Shift+V (Ctrl+Shift+C / X copy and cut from the menu), because plain Ctrl+… keys belong to Claude Code in the terminal. Linux windows use the system title bar (no traffic-light inset), and the in-app updater runs only in the AppImage.
 
 ## `src/sessions.js` (main)
 
@@ -192,7 +194,7 @@ agentOffice.language.onChange(cb: (info: LanguageInfo) => void): () => void   //
 
 ## Waiting on you (v2.6)
 
-When Claude needs the person, the app says so: a macOS notification, the Dock badge, a mark on the project's row and the boss's sign.
+When Claude needs the person, the app says so: a desktop notification, the Dock badge (on Linux `app.setBadgeCount`, where the desktop supports it), a mark on the project's row and the boss's sign.
 
 The plugin adds to the session state file:
 

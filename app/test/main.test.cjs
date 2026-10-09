@@ -294,3 +294,30 @@ test('historyDir: Claude Code oturum klasörü, harf/rakam dışı karakterler "
   assert.equal(P.historyDir('/Users/a/Documents/my.app', null, '/Users/a'), '/Users/a/.claude/projects/-Users-a-Documents-my-app');
   assert.equal(P.historyDir('/Users/a/.claude/x_y', '/acc', '/Users/a'), '/acc/projects/-Users-a--claude-x-y');
 });
+
+const OS = require('../src/platform.js');
+
+test('platform: kabuk $SHELL, yoksa macOS zsh, Linux bash', () => {
+  assert.equal(OS.defaultShell({ SHELL: '/usr/bin/fish' }, 'linux'), '/usr/bin/fish');
+  assert.equal(OS.defaultShell({}, 'darwin'), '/bin/zsh');
+  assert.equal(OS.defaultShell({}, 'linux'), '/bin/bash');
+  assert.equal(OS.isMac('darwin'), true);
+  assert.equal(OS.isMac('linux'), false);
+});
+
+test('platform: Linux panosundaki dosyalar (uri-list, gnome-copied-files)', () => {
+  assert.deepEqual(OS.filesFromUriList('copy\nfile:///home/a/b%20c.png\nfile:///tmp/x'), ['/home/a/b c.png', '/tmp/x']);
+  assert.deepEqual(OS.filesFromUriList('# yorum\r\nfile://localhost/etc/hosts\r\nhttps://example.com/a\r\nfile://other-host/x\r\n'), ['/etc/hosts']);
+  assert.deepEqual(OS.filesFromUriList(''), []);
+  assert.deepEqual(OS.filesFromUriList('düz metin /home/a'), []);
+});
+
+test('platform: pano komutları Wayland\'de önce wl-paste, X11\'de önce xclip', () => {
+  assert.equal(OS.linuxClipboardCommands({ WAYLAND_DISPLAY: 'wayland-0' })[0].cmd, 'wl-paste');
+  assert.equal(OS.linuxClipboardCommands({})[0].cmd, 'xclip');
+});
+
+test('platform: kısayollar macOS ⌘ (rol kısayolları), Linux Ctrl+Shift', () => {
+  assert.deepEqual(OS.shortcuts('darwin'), { paste: 'CmdOrCtrl+V', copy: null, cut: null });
+  assert.deepEqual(OS.shortcuts('linux'), { paste: 'Ctrl+Shift+V', copy: 'Ctrl+Shift+C', cut: 'Ctrl+Shift+X' });
+});

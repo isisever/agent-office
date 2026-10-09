@@ -19,7 +19,7 @@ const shared = names(`
   console setTimeout clearTimeout setInterval clearInterval queueMicrotask structuredClone
   URL URLSearchParams TextEncoder TextDecoder AbortController performance fetch
 `)
-const node = { ...shared, ...names('process Buffer setImmediate clearImmediate global') }
+const node = { ...shared, ...names('process Buffer Blob setImmediate clearImmediate global') }
 const commonjs = names('require module exports __dirname __filename')
 const browser = {
   ...shared,

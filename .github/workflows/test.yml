@@ -52,3 +52,35 @@ jobs:
         run: claude plugin test plugin
       - name: Terminal viewer smoke test
         run: node --test plugin/tests/viewer-smoke.mjs
+
+  # Linux paketleri (AppImage ve .deb, x64). node-pty'nin Linux için hazır derlemesi yok: npm install onu
+  # kaynaktan derler (python3, make, g++ ubuntu-latest'te var). npm ci değil: kilit dosyası macOS'ta üretildi,
+  # Linux'a özgü isteğe bağlı paketleri içermiyor ("Missing: ... from lock file").
+  linux-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install app dependencies (builds node-pty for Electron)
+        working-directory: app
+        run: npm install --no-audit --no-fund
+      - name: Build AppImage and deb
+        working-directory: app
+        run: npm run dist:linux
+      - name: Check the packages
+        working-directory: app
+        run: |
+          ls -l release
+          test -f release/latest-linux.yml
+          # node-pty Linux için derlenmiş olmalı (yoksa uygulama terminal açamaz)
+          dpkg-deb -c release/*.deb | grep -q 'node-pty/build/Release/pty.node'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-office-linux
+          path: |
+            app/release/*.AppImage
+            app/release/*.deb
+            app/release/latest-linux.yml
+          if-no-files-found: error

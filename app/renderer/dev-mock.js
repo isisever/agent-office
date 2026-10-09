@@ -2,6 +2,7 @@
 // Electron'da preload window.agentOffice'u verir ve bu dosya hiç yüklenmez.
 // ?empty → proje yok; ?themesError → başlıkta tema uyarısı; ?authError → üçüncü hesap 'error';
 // ?loginFail → sahte giriş 1 koduyla biter ve hesap 'out' kalır. ?lang=en|tr → dil ayarı (yoksa auto: tarayıcı dili).
+// ?platform=linux → Linux başlık çubuğu ve Ctrl+Shift kısayolları (platform.js).
 // ?asking → ikinci proje onay bekler (tabela, ✋), üçüncüsü bitti (●).
 // ?select=<işçi id | @boss | shell:<id>> → birkaç saniye sonra o bota/raf yuvasına tıklanır (ajan paneli denemesi;
 // ör. ?select=m-1, ?select=shell:sh-1). ?noShells → eski veri (shells alanı yok).
@@ -95,6 +96,7 @@ const langInfo = () => ({ setting: langSetting, lang: langSetting === 'auto' ? (
 const langEv = listeners();
 
 window.agentOffice = {
+  platform: q.get('platform') || 'darwin',
   projects: {
     list: async () => snapshot(),
     add: async () => {

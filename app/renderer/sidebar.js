@@ -2,6 +2,7 @@
 // Yapı yalnızca proje/hesap listesi değişince yeniden kurulur; ofis istatistikleri yerinde güncellenir
 // (açık <select> ya da yazılan ad 500 ms'lik veriyle bozulmasın). Dil değişince her şey yeniden çizilir.
 import { getLang, locale, onLang, pick } from './i18n.js';
+import { modLabel } from './platform.js';
 
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -39,7 +40,7 @@ const S = {
     auto: 'Auto',
     projects: 'PROJECTS',
     addProject: '+ Add project',
-    addProjectTitle: 'Add project (⌘O)',
+    addProjectTitle: `Add project (${modLabel}O)`,
     accounts: 'ACCOUNTS',
     account: 'Account',
     accountTitle: 'Claude account used in this project (changing it restarts Claude)',
@@ -103,7 +104,7 @@ const S = {
     auto: 'Otomatik',
     projects: 'PROJELER',
     addProject: '+ Proje ekle',
-    addProjectTitle: 'Proje ekle (⌘O)',
+    addProjectTitle: `Proje ekle (${modLabel}O)`,
     accounts: 'HESAPLAR',
     account: 'Hesap',
     accountTitle: 'Bu projede kullanılacak Claude hesabı (değiştirince Claude yeniden başlar)',
@@ -281,7 +282,7 @@ export function mountSidebar(el, on) {
       return h('li', {
         class: 'sb-proj' + (p.id === activeId ? ' active' : ''),
         'data-id': p.id,
-        title: p.dir + (i < 9 ? `\n⌘${i + 1}` : ''),
+        title: p.dir + (i < 9 ? `\n${modLabel}${i + 1}` : ''),
         onclick: () => on.select(p.id),
       },
         h('span', { class: 'sb-dot' + (live ? ' live' : ''), title: live ? t().claudeRunning : t().claudeStopped }),

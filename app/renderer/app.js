@@ -3,6 +3,7 @@ import { mountTerminal, pasteIntoFocused } from './terminal.js';
 import { mountSidebar } from './sidebar.js';
 import { mountLogin } from './login.js';
 import { setLang, onLang, pick } from './i18n.js';
+import { modLabel, isModKey, keyOf } from './platform.js';
 
 // Düz tarayıcıda (Electron dışında) düzeni görmek için sahte window.agentOffice.
 if (!window.agentOffice) await import('./dev-mock.js');
@@ -40,7 +41,7 @@ const S = {
     hideSidebar: 'Hide projects',
     emptyTitle: 'No projects yet.',
     emptyAdd: '+ Add project',
-    emptyAddTitle: 'Add project (⌘O)',
+    emptyAddTitle: `Add project (${modLabel}O)`,
     emptyNote: 'Pick a folder; Claude starts there.',
   },
   tr: {
@@ -66,7 +67,7 @@ const S = {
     hideSidebar: 'Projeleri gizle',
     emptyTitle: 'Henüz proje yok.',
     emptyAdd: '+ Proje ekle',
-    emptyAddTitle: 'Proje ekle (⌘O)',
+    emptyAddTitle: `Proje ekle (${modLabel}O)`,
     emptyNote: 'Bir klasör seç; Claude orada başlar.',
   },
 };
@@ -402,17 +403,19 @@ api.prefs?.get().then((p) => sidebar.setResume(p?.resume)).catch((e) => console.
 
 $('empty-add').addEventListener('click', addProject);
 
-// ⌘V (menüden): odaktaki terminale akıllı yapıştırma; terminal dışında (ör. hesap adı) normal yapıştırma.
+// ⌘V (Linux'ta Ctrl+Shift+V; menüden): odaktaki terminale akıllı yapıştırma; terminal dışında (ör. hesap adı) normal yapıştırma.
 api.clipboard.onPaste?.(async () => {
   if (!(await pasteIntoFocused())) api.clipboard.nativePaste();
 });
 
+// ⌘O / ⌘1…9 (Linux'ta Ctrl+Shift+O / Ctrl+Shift+1…9). Yakalanan tuş terminale (xterm) ulaşmaz.
 window.addEventListener('keydown', (e) => {
-  if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;
-  if (e.key.toLowerCase() === 'o') { e.preventDefault(); addProject(); return; }
-  if (/^[1-9]$/.test(e.key)) {
-    const p = projects[Number(e.key) - 1];
-    if (p) { e.preventDefault(); selectProject(p.id); }
+  if (!isModKey(e)) return;
+  const key = keyOf(e);
+  if (key === 'o') { e.preventDefault(); e.stopPropagation(); addProject(); return; }
+  if (/^[1-9]$/.test(key)) {
+    const p = projects[Number(key) - 1];
+    if (p) { e.preventDefault(); e.stopPropagation(); selectProject(p.id); }
   }
 }, true);
 

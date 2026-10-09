@@ -9,6 +9,8 @@ const P = require('./src/projects.js');
 const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
 const N = require('./src/attention.js');
+const OS = require('./src/platform.js');
+const IS_MAC = OS.isMac();
 
 let win = null;
 let poll = null;
@@ -84,7 +86,11 @@ function updateAttention() {
   const key = (m) => JSON.stringify([...m]);
   if (key(r.attention) === key(attention)) return;
   attention = r.attention;
-  try { app.dock?.setBadge(attention.size ? String(attention.size) : ''); } catch {}
+  // macOS: Dock rozeti; Linux: destekleyen masaüstlerinde (Unity başlatıcısı) uygulama sayacı
+  try {
+    if (app.dock) app.dock.setBadge(attention.size ? String(attention.size) : '');
+    else app.setBadgeCount(attention.size);
+  } catch {}
   broadcast();
 }
 function alertUsage(account, usage, seed = false) {
@@ -113,6 +119,7 @@ const MSG = {
     defaultAccount: 'Varsayılan',
     pickFolder: 'Proje klasörünü seç', pickButton: 'Ekle',
     updatesOnlyInstalled: 'Güncelleme denetimi yalnızca kurulu uygulamada çalışır.',
+    updatesManual: 'Bu kurulum kendini güncellemez: yeni .deb paketini GitHub Releases sayfasından kurun (AppImage kendini günceller).',
     upToDate: (v) => `Agent Office güncel (${v}).`,
     downloading: (v) => `Yeni sürüm ${v} indiriliyor; hazır olunca başlıkta "Yeniden başlat" düğmesi çıkar.`,
     updateFailed: 'Güncelleme denetlenemedi.',
@@ -127,6 +134,7 @@ const MSG = {
     defaultAccount: 'Default',
     pickFolder: 'Choose the project folder', pickButton: 'Add',
     updatesOnlyInstalled: 'Checking for updates only works in the installed app.',
+    updatesManual: 'This install does not update itself: install the new .deb from GitHub Releases (the AppImage updates itself).',
     upToDate: (v) => `Agent Office is up to date (${v}).`,
     downloading: (v) => `Downloading version ${v}; a "Restart" button appears in the title bar when it is ready.`,
     updateFailed: 'Could not check for updates.',
@@ -169,8 +177,10 @@ async function pickFolder() {
   return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
 }
 
-// node-pty 1.1 önceden derlenmiş spawn-helper bazen çalıştırılabilir bit'i olmadan gelir.
+// node-pty 1.1 önceden derlenmiş spawn-helper bazen çalıştırılabilir bit'i olmadan gelir (yalnız macOS;
+// Linux'ta node-pty kaynaktan derlenir, spawn-helper yok).
 function fixSpawnHelper() {
+  if (!IS_MAC) return;
   const dir = path.join(path.dirname(require.resolve('node-pty/package.json')), 'prebuilds', `darwin-${process.arch}`);
   const helper = path.join(dir, 'spawn-helper').replace('app.asar', 'app.asar.unpacked');
   try { fs.chmodSync(helper, 0o755); } catch {}
@@ -205,7 +215,7 @@ function killPty(id) {
 function killAll() { for (const id of [...terms.keys(), ...logins.keys()]) killPty(id); }
 
 // --- hesap girişi
-const shell = () => process.env.SHELL || '/bin/zsh';
+const shell = () => OS.defaultShell();
 const accountById = (id) => state.accounts.find((a) => a.id === id) || null;
 function accountEnv(account) {
   if (account.configDir) try { fs.mkdirSync(account.configDir, { recursive: true }); } catch {}
@@ -530,7 +540,7 @@ ipcMain.on('pty:restart', (_e, id) => {
 // Finder'da kopyalanan dosyalar: tek dosya public.file-url, birden çoksa NSFilenamesPboardType (plist).
 // Electron 44 pano API'si: has() ve readText() Promise döner, availableFormats/readImage yok.
 // Finder'da kopyalanan dosyaları görmez; onları macOS'un kendi panosu (osascript, furl) verir.
-function clipboardFiles() {
+function macClipboardFiles() {
   // önce panoda gerçekten dosya (furl) var mı bakılır: yoksa macOS düz metni de yola çevirir
   const script = 'repeat with c in (clipboard info)\n if item 1 of c is «class furl» then return POSIX path of (the clipboard as «class furl»)\nend repeat\nreturn ""';
   return new Promise((resolve) => {
@@ -540,6 +550,28 @@ function clipboardFiles() {
     });
   });
 }
+// Linux: dosya yöneticileri dosyaları text/uri-list (ya da x-special/gnome-copied-files) olarak koyar.
+// Önce Electron'un panosu, olmazsa wl-paste (Wayland) / xclip (X11); ikisi de yoksa dosya yok sayılır.
+async function linuxClipboardFiles() {
+  try {
+    for (const item of await clipboard.read()) {
+      const type = ['x-special/gnome-copied-files', 'text/uri-list'].find((t) => item.types.includes(t));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      const files = OS.filesFromUriList(blob instanceof Blob ? await blob.text() : '');
+      if (files.length) return files;
+    }
+  } catch {}
+  for (const { cmd, args } of OS.linuxClipboardCommands()) {
+    const out = await new Promise((resolve) => {
+      execFile(cmd, args, { timeout: 2000 }, (err, stdout) => resolve(err ? '' : String(stdout || '')));
+    });
+    const files = OS.filesFromUriList(out);
+    if (files.length) return files;
+  }
+  return [];
+}
+const clipboardFiles = () => (IS_MAC ? macClipboardFiles() : linuxClipboardFiles());
 const IMAGE_TYPES = ['image/png', 'image/tiff', 'image/jpeg', 'image/gif', 'image/heic'];
 async function clipboardHasImage() {
   for (const t of IMAGE_TYPES) if (await clipboard.has(t)) return true;
@@ -560,13 +592,19 @@ ipcMain.handle('office:themes', () => {
   try { return s ? s.readThemes() : {}; } catch { return {}; }
 });
 
+// Linux'ta npm start'ta pencere ikonu deponun build/icon.png'si; paketlenmişte .desktop dosyasından gelir.
+function devIcon() {
+  const icon = path.join(__dirname, 'build', 'icon.png');
+  return !app.isPackaged && fs.existsSync(icon) ? { icon } : {};
+}
+
 async function createWindow() {
   win = new BrowserWindow({
     width: 1400, height: 950,
     minWidth: 900, minHeight: 640,
     backgroundColor: '#2b1d1a',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 12, y: 10 },
+    // macOS: başlık çubuğu sayfanın içinde, trafik ışıkları üstünde; Linux: pencere yöneticisinin normal çerçevesi
+    ...(IS_MAC ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 10 } } : devIcon()),
     title: 'Agent Office',
     show: false,
     webPreferences: {
@@ -603,12 +641,14 @@ fixSpawnHelper();
 // Uygulama menüsü: Yapıştır (⌘V) renderer'a gider; odak terminaldeyse panodaki görsel/dosya/metin
 // Claude Code'a uygun biçimde verilir, değilse normal yapıştırma yapılır.
 // ---- Güncelleme: GitHub Releases'tan (electron-updater). Yeni sürüm arka planda iner; başlıktaki düğme
-// ya da uygulamadan çıkış onu kurar. Yalnız paketlenmiş (imzalı) uygulamada çalışır.
+// ya da uygulamadan çıkış onu kurar. Yalnız paketlenmiş (imzalı) uygulamada çalışır. Linux'ta yalnız AppImage
+// kendini günceller (latest-linux.yml); .deb kurulumu paket yöneticisinin işi, güncelleyici kapalı.
+const linuxNoUpdates = () => !IS_MAC && !process.env.APPIMAGE;
 let updater = null;
 let updateReady = null; // indirilmiş sürüm
 const UPDATE_EVERY_MS = 4 * 60 * 60 * 1000;
 function setupUpdates() {
-  if (!app.isPackaged) return;
+  if (!app.isPackaged || linuxNoUpdates()) return;
   try { ({ autoUpdater: updater } = require('electron-updater')); } catch (e) { console.error('electron-updater yok:', e.message); return; }
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = true;
@@ -620,7 +660,7 @@ function setupUpdates() {
 }
 // menüden elle denetim: sonuç kısa bir pencereyle söylenir
 async function checkUpdatesNow() {
-  if (!updater) return dialog.showMessageBox(win, { message: M().updatesOnlyInstalled });
+  if (!updater) return dialog.showMessageBox(win, { message: app.isPackaged && linuxNoUpdates() ? M().updatesManual : M().updatesOnlyInstalled });
   if (updateReady) return send('update:ready', updateReady);
   try {
     const r = await updater.checkForUpdates();
@@ -637,12 +677,18 @@ ipcMain.on('update:install', () => { if (updateReady && updater) { killAll(); up
 function buildMenu() {
   const name = app.getName();
   const m = M();
+  // Linux: gizle/göster rolleri yok; kes/kopyala/yapıştır Ctrl+Shift ile (Ctrl+C/V terminalde claude'a gider,
+  // metin kutularında Chromium'un kendi Ctrl+C/V'si çalışır).
+  const keys = OS.shortcuts();
+  const hideRoles = IS_MAC ? [{ role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }] : [];
+  /** @param {any} item @param {string | null} accelerator */
+  const withKey = (item, accelerator) => (accelerator ? { ...item, accelerator } : item);
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: name, submenu: [{ role: 'about' }, { label: m.checkUpdates, click: () => checkUpdatesNow() }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: name, submenu: [{ role: 'about' }, { label: m.checkUpdates, click: () => checkUpdatesNow() }, { type: 'separator' }, ...hideRoles, { role: 'quit' }] },
     { label: m.edit, submenu: [
       { role: 'undo', label: m.undo }, { role: 'redo', label: m.redo }, { type: 'separator' },
-      { role: 'cut', label: m.cut }, { role: 'copy', label: m.copy },
-      { label: m.paste, accelerator: 'CmdOrCtrl+V', click: () => send('edit:paste') },
+      withKey({ role: 'cut', label: m.cut }, keys.cut), withKey({ role: 'copy', label: m.copy }, keys.copy),
+      { label: m.paste, accelerator: keys.paste, click: () => send('edit:paste') },
       { role: 'selectAll', label: m.selectAll },
     ] },
     { label: m.view, submenu: [{ role: 'reload', label: m.reload }, { role: 'toggleDevTools', label: m.devTools }, { type: 'separator' }, { role: 'togglefullscreen', label: m.fullscreen }] },
@@ -677,7 +723,7 @@ app.whenReady().then(() => {
   loadUsageCache();
   lastFocusCheck = Date.now();
   checkAllAuth();
-  // paketlenmiş uygulamada ikon .icns'ten gelir; npm start'ta Dock'a elle ver
+  // paketlenmiş uygulamada ikon .icns'ten gelir; npm start'ta Dock'a elle ver (Linux'ta app.dock yok)
   if (!app.isPackaged) try { app.dock?.setIcon(path.join(__dirname, 'build', 'icon.png')); } catch {}
   return createWindow();
 });
