@@ -1,0 +1,15 @@
+{
+  // Renderer'ın tip denetimi (çıktı yok): npx -p typescript tsc -p app/renderer
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["*.js", "*.d.ts", "../src/office/core.mjs"]
+}

@@ -130,7 +130,7 @@ node plugin/tests/viewer-smoke.mjs        # terminal viewer
 
 ## Contributing
 
-Issues and pull requests are welcome. Some good places to start:
+Issues and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) explains the layout, the tests and the conventions. Some good places to start:
 
 - More translations of the app interface (strings live in a `{ en, tr }` table at the top of each renderer module)
 - Linux and Windows builds

@@ -195,6 +195,10 @@ async function copyText(text) {
   }
 }
 
+/**
+ * @param {HTMLElement} el
+ * @param {{ onClose?: () => void, onSelect?: (id: string) => void, onOpenProject?: (name: string) => void, anchor?: HTMLElement }} [opts]
+ */
 export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, anchor } = {}) {
   let data = null;
   let id = null;
@@ -384,8 +388,8 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, anchor }
 
   function fillTimes() {
     const now = Date.now();
-    for (const t of el.querySelectorAll('time[data-ago]')) t.textContent = ago(Number(t.dataset.ago), now);
-    for (const t of el.querySelectorAll('time[data-since]')) t.textContent = span(now - Number(t.dataset.since));
+    for (const t of /** @type {NodeListOf<HTMLElement>} */ (el.querySelectorAll('time[data-ago]'))) t.textContent = ago(Number(t.dataset.ago), now);
+    for (const t of /** @type {NodeListOf<HTMLElement>} */ (el.querySelectorAll('time[data-since]'))) t.textContent = span(now - Number(t.dataset.since));
   }
 
   function render() {
@@ -425,7 +429,7 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, anchor }
   }
 
   el.addEventListener('click', async (e) => {
-    const b = e.target.closest('button');
+    const b = /** @type {Element} */ (e.target).closest('button');
     if (!b || !el.contains(b)) return;
     if (b.hasAttribute('data-close')) return api.hide();
     if (b.dataset.go) {

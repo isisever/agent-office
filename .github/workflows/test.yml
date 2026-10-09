@@ -22,10 +22,14 @@ jobs:
         run: npm install --no-save --no-package-lock --ignore-scripts typescript@5.6.3 @types/node@22 electron@44.7.0 node-pty@1.1.0 electron-updater@6.8.9
       - name: Type-check the main process
         run: npx tsc -p app
+      - name: Type-check the renderer
+        run: npx tsc -p app/renderer
       - name: Main process tests
         run: node --test app/test/main.test.cjs
       - name: Office renderer and session reading
         run: node app/test/office.test.mjs
+      - name: Office pictures (visual regression)
+        run: node app/test/visual.test.mjs
 
   plugin:
     runs-on: ubuntu-latest

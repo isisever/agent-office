@@ -1,0 +1,98 @@
+// Ofis çiziminin görsel regresyon testi: node app/test/visual.test.mjs
+// Belirli senaryolar sabit zamanda çizilir; her karenin (mantıksal piksel tamponu) özeti
+// visual-snapshots.json'dakiyle karşılaştırılır. Fark varsa çizilen kare PNG olarak yazılır, yolu söylenir.
+// Değişiklik bilerek yapıldıysa: UPDATE_SNAPSHOTS=1 node app/test/visual.test.mjs (sonra PNG'lere bakıp commit'le).
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { crc32, deflateSync } from 'node:zlib'
+import { demoOffice, render, resetOffice, setBotColor, setGeometry, setLanguage, setTheme, setThemes } from '../src/office/core.mjs'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const FILE = join(here, 'visual-snapshots.json')
+const OUT = join(tmpdir(), 'agent-office-visual')
+const NOW = new Date(2026, 9, 9, 11, 0, 0).getTime()
+const isUpdate = process.env.UPDATE_SNAPSHOTS === '1'
+
+function png(path, { fb, LW, LH }) {
+  const raw = Buffer.alloc((LW * 3 + 1) * LH)
+  for (let y = 0; y < LH; y++)
+    for (let x = 0; x < LW; x++) {
+      const c = fb[y * LW + x]
+      const o = y * (LW * 3 + 1) + 1 + x * 3
+      raw[o] = (c >> 16) & 255
+      raw[o + 1] = (c >> 8) & 255
+      raw[o + 2] = c & 255
+    }
+  const chunk = (type, body) => {
+    const len = Buffer.alloc(4)
+    len.writeUInt32BE(body.length)
+    const tb = Buffer.concat([Buffer.from(type), body])
+    const crc = Buffer.alloc(4)
+    crc.writeUInt32BE(crc32(tb))
+    return Buffer.concat([len, tb, crc])
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(LW, 0)
+  ihdr.writeUInt32BE(LH, 4)
+  ihdr.set([8, 2, 0, 0, 0], 8)
+  writeFileSync(path, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]))
+}
+
+const multi = now => {
+  const d = demoOffice(now)
+  const names = ['shop-api', 'notes']
+  const workers = d.workers.map((w, i) => ({ ...w, project: names[i % 2] }))
+  return {
+    ...d, workers, isBossBusy: true, isBossAsking: true,
+    projects: [
+      { name: 'shop-api', working: 2, delivered: 3, isBossBusy: true, waiting: { tool: 'Bash', since: now - 5000 } },
+      { name: 'notes', working: 1, delivered: 1, isBossBusy: false, waiting: null },
+    ],
+    shells: [{ id: 's1', command: 'npm run dev', startAt: now - 60000, status: 'running', project: 'shop-api' }],
+  }
+}
+
+// [ad, dil, tema, veri]
+const CASES = [
+  ['demo-tr', 'tr', 'classic', demoOffice],
+  ['demo-en', 'en', 'classic', demoOffice],
+  ['forest-tr', 'tr', 'forest', demoOffice],
+  ['multi-asking-en', 'en', 'classic', multi],
+]
+
+const stored = existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : {}
+const next = {}
+const failed = []
+mkdirSync(OUT, { recursive: true })
+for (const [name, lang, theme, data] of CASES) {
+  setThemes({})
+  setBotColor(null)
+  setLanguage(lang)
+  setTheme(theme)
+  resetOffice()
+  setGeometry(1320, 700)
+  const frame = render(NOW, data(NOW))
+  const hash = createHash('sha256').update(Buffer.from(frame.fb.buffer, frame.fb.byteOffset, frame.fb.byteLength)).digest('hex').slice(0, 16)
+  next[name] = hash
+  if (!isUpdate && stored[name] !== hash) {
+    const path = join(OUT, `${name}.png`)
+    png(path, frame)
+    failed.push(`${name}: ${stored[name] ?? '(kayıt yok)'} → ${hash}, çizilen: ${path}`)
+  }
+}
+
+if (isUpdate) {
+  writeFileSync(FILE, JSON.stringify(next, null, 2) + '\n')
+  for (const [name, lang, theme, data] of CASES) {
+    setThemes({}); setBotColor(null); setLanguage(lang); setTheme(theme); resetOffice(); setGeometry(1320, 700)
+    png(join(OUT, `${name}.png`), render(NOW, data(NOW)))
+  }
+  console.log(`güncellendi: ${FILE}\nPNG'ler: ${OUT}`)
+} else {
+  assert.deepEqual(failed, [], `Ofis çizimi değişti:\n${failed.join('\n')}\nBilerek yapıldıysa: UPDATE_SNAPSHOTS=1 node app/test/visual.test.mjs`)
+  console.log('ok', Object.keys(next).length, 'görüntü')
+}

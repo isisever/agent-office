@@ -122,6 +122,8 @@ Everything stays on your machine, under `~/.claude/agent-office/`:
 
 These files clean up after themselves. Each submitted task is removed from the inbox right away. When a session starts, the plugin deletes the `sessions/`, `inbox/` and `frames/` files of other sessions that have ended or have not been updated for a day. It never deletes the files of the current session or of another session that is still running.
 
+A line in `inbox/<session>.jsonl` reaches Claude as if you had typed it. Anything that can write there already runs as your user and could start `claude` itself, so the inbox adds no new access; it is created with your normal file permissions, like the rest of `~/.claude`.
+
 The conversation feed is read directly from Claude Code's local transcript. Nothing is sent anywhere.
 
 ## Requirements
@@ -191,7 +193,7 @@ Tam pencere modunda üstte ofis sahnesi, Claude konuşmasının canlı akışı 
 
 Şerit modu kitty grafik protokolünü destekleyen bir terminal ister (Ghostty, kitty, WezTerm).
 
-Her projenin kendi ofisi vardır: duvardaki tabela proje klasörünün adını gösterir, renkler bu addan üretilir. Kendi temanı `~/.claude/agent-office/themes.json` ile tanımlayabilirsin (yukarıdaki Themes bölümüne bak). Dosya bozuksa ofis varsayılan temalarla açılır ve hatayı gösterir. Beyaz tahtadaki BUGÜN sayısı yerel gece yarısından beri tüm oturumlardaki (bitenler dahil) teslimleri sayar. Arayüz, yerel ayarın `tr` ile başlıyorsa Türkçedir. Tüm veriler `~/.claude/agent-office/` altında, makinende kalır; hiçbir yere gönderilmez. Bu dosyalar kendiliğinden temizlenir: gönderilen görev gelen kutusundan hemen silinir. Her oturum açılışında eklenti, bitmiş ya da bir gündür güncellenmemiş diğer oturumların `sessions/`, `inbox/` ve `frames/` dosyalarını siler. Açık olan oturumun ve hâlâ çalışan başka bir oturumun dosyalarına dokunmaz.
+Her projenin kendi ofisi vardır: duvardaki tabela proje klasörünün adını gösterir, renkler bu addan üretilir. Kendi temanı `~/.claude/agent-office/themes.json` ile tanımlayabilirsin (yukarıdaki Themes bölümüne bak). Dosya bozuksa ofis varsayılan temalarla açılır ve hatayı gösterir. Beyaz tahtadaki BUGÜN sayısı yerel gece yarısından beri tüm oturumlardaki (bitenler dahil) teslimleri sayar. Arayüz, yerel ayarın `tr` ile başlıyorsa Türkçedir. Tüm veriler `~/.claude/agent-office/` altında, makinende kalır; hiçbir yere gönderilmez. Gelen kutusuna (`inbox/<oturum>.jsonl`) yazılan satır Claude'a senin yazmışsın gibi gider; oraya yazabilen bir süreç zaten senin kullanıcınla çalışır ve `claude`'u kendisi de başlatabilir, yani gelen kutusu yeni bir erişim açmaz. Bu dosyalar kendiliğinden temizlenir: gönderilen görev gelen kutusundan hemen silinir. Her oturum açılışında eklenti, bitmiş ya da bir gündür güncellenmemiş diğer oturumların `sessions/`, `inbox/` ve `frames/` dosyalarını siler. Açık olan oturumun ve hâlâ çalışan başka bir oturumun dosyalarına dokunmaz.
 
 İsteğe bağlı ayarlar `~/.claude/agent-office/settings.json` dosyasındadır; eklenti de görüntüleyici de okur: `{ "language": "tr", "forgetMinutes": 5 }`. `language`: `"tr"`, `"en"` ya da `"auto"` (varsayılan; yerel ayara göre). `forgetMinutes`: teslim eden botun ofiste kalma süresi, 1-60 dakika (varsayılan 5); bu sürenin 30 saniye eksiği parti yapar, sonra çıkar. `botColor`: botların rengi, `"#rrggbb"` (uygulamada kenar çubuğundaki **Bot rengi** ile seçilir). Dosya yoksa ya da geçersizse varsayılanlar kullanılır. Değiştirdikten sonra oturumu yeniden başlatıp ofisi yeniden aç.
 

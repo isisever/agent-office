@@ -526,7 +526,7 @@ function updateParty(workers, now) {
   for (const w of workers) {
     if (w.doneAt == null || fates.has(w.id)) continue
     const p = poseOf(w, now, slots.get(w.id))
-    if (p.phase === 'out' || p.phase === 'gone') fates.set(w.id, joinParty(w.id, p.handEnd, now) ? 'party' : 'out')
+    if (p.phase === 'out' || p.phase === 'gone') fates.set(w.id, joinParty(w.id, /** @type {any} */ (p).handEnd, now) ? 'party' : 'out')
   }
   for (const w of workers) {
     if (seen.has(w.id)) continue
@@ -1644,7 +1644,8 @@ function renderFrame(now, data, focus = '', selected = null) {
   }
   const bt = tag(bossLines, L.boss.seat[0], L.boss.by - 19)
   hits.push({ id: BOSS_ID, ...bt })
-  if (poses.some(({ p }) => p.phase === 'hand')) bubbleCheck(L.boss.seat[0] + 14, L.boss.by - 36, lastOk)
+  // balon tabelanın sağında: geniş tabela (NEEDS YOU, ONAY BEKLİYOR) üstüne binmesin
+  if (poses.some(({ p }) => p.phase === 'hand')) bubbleCheck(Math.max(L.boss.seat[0] + 14, bt.x + bt.w + 1), L.boss.by - 36, lastOk)
   if (selected) selectionMarker(selected, now)
 }
 

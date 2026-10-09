@@ -33,6 +33,10 @@ export async function pasteIntoFocused() {
 }
 
 // restartable: false → pty kapanınca "Enter ile yeniden başlat" yok (giriş terminalleri, `login:<hesap>`).
+/**
+ * @param {HTMLElement} el
+ * @param {{ projectId?: string, theme?: Record<string, string>, restartable?: boolean }} [opts]
+ */
 export function mountTerminal(el, { projectId, theme, restartable = !String(projectId).startsWith('login:') } = {}) {
   const { pty } = window.agentOffice;
   const term = new Terminal({

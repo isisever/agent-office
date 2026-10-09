@@ -3,6 +3,10 @@ import { FRAME_MS, hitTest, render, setGeometry, setThemes as coreSetThemes, the
 
 const EMPTY = { workers: [], delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' }
 
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @param {{ onTheme?: (theme: ReturnType<typeof themeInfo>) => void, onSelect?: (id: string | null) => void }} [opts]
+ */
 export function mountOffice(canvas, { onTheme, onSelect } = {}) {
   const ctx = canvas.getContext('2d', { alpha: false })
   const off = document.createElement('canvas')

@@ -385,7 +385,7 @@ function applyStaticText() {
   $('empty-add').title = t().emptyAddTitle;
   $('empty-note').textContent = t().emptyNote;
   $('toggle-sidebar').title = document.body.classList.contains('sidebar-collapsed') ? t().showSidebar : t().hideSidebar;
-  for (const b of document.querySelectorAll('.hint-close')) b.title = t().close;
+  for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.hint-close'))) b.title = t().close;
   setTitleProject();
   setStats(lastStats);
   if (updateVersion) showUpdate(updateVersion);
@@ -417,7 +417,7 @@ window.addEventListener('keydown', (e) => {
 }, true);
 
 document.addEventListener('mouseup', (e) => {
-  if (e.target.closest('button, select, input, #sidebar, #login-overlay') || window.getSelection()?.toString()) return;
+  if (/** @type {Element} */ (e.target).closest('button, select, input, #sidebar, #login-overlay') || window.getSelection()?.toString()) return;
   focusActive();
 });
 
@@ -474,7 +474,7 @@ try {
 // ---- Ofis: ayrı modül; yoksa yalnızca terminal çalışır ----
 try {
   const { mountOffice } = await import('./office-view.js');
-  office = mountOffice($('office'), { onTheme: applyTheme, onSelect: (id) => selectAgent(id) });
+  office = mountOffice(/** @type {HTMLCanvasElement} */ ($('office')), { onTheme: applyTheme, onSelect: (id) => selectAgent(id) });
   setBotColor(store.get('botColor') || null);
   api.office.themes().then((t) => office.setThemes?.(t)).catch(() => {});
 } catch (e) {

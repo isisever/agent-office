@@ -427,9 +427,12 @@ function startPolling() {
   clearInterval(poll);
   clearInterval(usagePoll);
   usagePoll = setInterval(scanUsage, 3000);
+  let tick = 0;
   poll = setInterval(() => {
     const s = office();
     if (!s || !win || win.isDestroyed()) return;
+    // pencere odakta değilken saniyede iki yerine iki saniyede bir oku (pil); bildirimler yine gelir
+    if (!win.isFocused() && tick++ % 4 !== 0) return;
     try {
       const d = s.readOffice(state.projects.map((p) => p.name));
       send('office:data', d);

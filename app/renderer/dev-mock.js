@@ -11,6 +11,7 @@ const ev = { projects: listeners(), data: listeners(), exit: listeners(), office
 let seq = 0;
 const rid = () => Math.random().toString(36).slice(2, 10);
 
+/** @type {any[]} */
 const accounts = [
   { id: 'default', label: 'Varsayılan', configDir: null, auth: { state: 'in', email: 'you@example.com', method: 'claude.ai' },
     usage: { updatedAt: Date.now() - 4 * 60e3, fiveHour: { pct: 74, resetsAt: Date.now() + 2.5 * 3600e3 }, sevenDay: { pct: 24, resetsAt: Date.now() + 4 * 86400e3 } } },
@@ -258,7 +259,7 @@ if (q.has('select')) {
   const want = q.get('select');
   setTimeout(async () => {
     const { hitBoxes } = await import('../src/office/core.mjs');
-    const canvas = document.getElementById('office');
+    const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('office'));
     const b = hitBoxes().find((h) => h.id === want && !h.isTag);
     if (!canvas || !b) return console.warn('seçilecek bot bulunamadı', want);
     const r = canvas.getBoundingClientRect();
@@ -293,3 +294,5 @@ setInterval(() => {
     ...(q.has('themesError') ? { themesError: 'Unexpected token } in JSON at position 120' } : {}),
   });
 }, 500);
+
+export {};
