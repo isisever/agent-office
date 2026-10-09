@@ -27,8 +27,8 @@ const frameAtom = atom(
 // user-facing text: settings.json `language`, else Turkish when the locale starts with `tr`, English otherwise (same rule as the viewer)
 const STRINGS = {
   en: {
-    description: 'Opens the Agent office full-window in a split next to Claude (Ghostty on macOS, kitty, WezTerm); `/office band`: a small band above the prompt',
-    argumentHint: '[band]',
+    description: 'Opens the Agent office full-window in a split next to Claude (Ghostty on macOS, kitty, WezTerm); `/office band`: a small band above the prompt; `/office stats`: today in text',
+    argumentHint: '[band|stats]',
     title: 'AGENT OFFICE',
     status: (working: number, delivered: number, isBossBusy: boolean) =>
       `${working} working · ${delivered} delivered${isBossBusy ? ' · boss busy' : ''}`,
@@ -45,10 +45,23 @@ const STRINGS = {
     failedSplit: (manual: string) => `Could not open the split. Manually: split the window, then ${manual}`,
     noNode: 'Node.js was not found on PATH; the office viewer needs it. Install Node.js 18+ and try again.',
     task: (text: string) => `Task from Agent Office: ${text}\n\nIf it fits, split the work across subagents and run them in parallel.`,
+    stats: {
+      heading: (date: string) => `Agent Office · today (${date})`,
+      delivered: (count: number, failed: number, time: string) =>
+        `Delivered: ${count}${failed ? ` (${failed} failed)` : ''} · agent time ${time}`,
+      none: 'No deliveries yet today.',
+      untracked: (count: number) => `+${count} more without details (older plugin version)`,
+      project: (name: string, count: number, time: string) => `  ${name}: ${count} · ${time}`,
+      last: 'Last deliveries:',
+      working: (count: number) => (count ? `Working now: ${count}` : 'Working now: none'),
+      shells: (count: number) => (count ? `Background shells running: ${count}` : 'Background shells running: none'),
+      duration: (h: number, m: number, s: number) => (h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`),
+      noProject: '(no project)',
+    },
   },
   tr: {
-    description: "Agent ofisini pencerede tam boy bölme olarak açar, Claude birkaç satırda kalır (macOS'ta Ghostty, kitty, WezTerm); `/office şerit`: prompt'un üstünde küçük şerit",
-    argumentHint: '[şerit]',
+    description: "Agent ofisini pencerede tam boy bölme olarak açar, Claude birkaç satırda kalır (macOS'ta Ghostty, kitty, WezTerm); `/office şerit`: prompt'un üstünde küçük şerit; `/office istatistik`: bugünün özeti",
+    argumentHint: '[şerit|istatistik]',
     title: 'AGENT OFİS',
     status: (working: number, delivered: number, isBossBusy: boolean) =>
       `${working} çalışıyor · ${delivered} teslim${isBossBusy ? ' · müdür çalışıyor' : ''}`,
@@ -65,11 +78,30 @@ const STRINGS = {
     failedSplit: (manual: string) => `Bölme açılamadı. Elle: pencereyi böl, sonra ${manual}`,
     noNode: "Node.js PATH'te bulunamadı; ofis görüntüleyicisi buna ihtiyaç duyar. Node.js 18+ kurup yeniden dene.",
     task: (text: string) => `Agent Ofis'ten görev: ${text}\n\nUygunsa işi alt agent'lara bölerek paralel yürüt.`,
+    stats: {
+      heading: (date: string) => `Agent Ofis · bugün (${date})`,
+      delivered: (count: number, failed: number, time: string) =>
+        `Teslim: ${count}${failed ? ` (${failed} başarısız)` : ''} · agent süresi ${time}`,
+      none: 'Bugün henüz teslim yok.',
+      untracked: (count: number) => `+${count} teslim daha, ayrıntısız (eski eklenti sürümü)`,
+      project: (name: string, count: number, time: string) => `  ${name}: ${count} · ${time}`,
+      last: 'Son teslimler:',
+      working: (count: number) => (count ? `Şu an çalışan: ${count}` : 'Şu an çalışan: yok'),
+      shells: (count: number) => (count ? `Çalışan arka plan komutu: ${count}` : 'Çalışan arka plan komutu: yok'),
+      duration: (h: number, m: number, s: number) => (h ? `${h} sa ${m} dk` : m ? `${m} dk ${s} sn` : `${s} sn`),
+      noProject: '(proje yok)',
+    },
   },
 }
 type Strings = (typeof STRINGS)['en']
 
 const BAND_ARGS = new Set(['band', 'şerit', 'serit'])
+// /office stats; 'İSTATİSTİK'.toLowerCase() birleşik nokta (U+0307) bırakır, karşılaştırmadan önce atılır
+const STATS_ARGS = new Set(['stats', 'istatistik'])
+// /office stats: a session counts as live like the app's readOffice (LIVE_MS; the plugin's heartbeat is 30 s)
+const LIVE_MS = 3 * 60_000
+const STATS_LAST = 5 // deliveries listed by /office stats
+const STATS_LIST_MAX = 3 // working agents / shells named per line before "+n"
 
 // the viewer's scene is ~330x200 logical pixels; 420 px high at 2x fits both rows of desks.
 // A terminal cell is roughly half as wide as tall: W = H * (columns * 0.5) / rows.
@@ -111,6 +143,8 @@ let shells: Shell[] = []
 const endsWithAgent = new Map<string, Set<string>>()
 let stats: OfficeStats = { delivered: 0, isBossBusy: false }
 let stateFile = ''
+let rootDir = ''
+let sessionId = ''
 let viewerFile = ''
 let inboxFile = ''
 let inboxSeen = 0
@@ -627,6 +661,101 @@ async function toggleBand($: EngineInterface): Promise<'opened' | 'closed' | 'no
   return isOpen ? 'opened' : 'closed'
 }
 
+type SessionFile = { format?: number; project?: string; updatedAt?: number; endedAt?: number; workers?: Worker[]; shells?: Shell[]; stats?: OfficeStats }
+
+// every session file changed today (or live), this session's from memory (fresher than its throttled file);
+// files of a newer format are skipped, like the app does
+async function readSessions($: EngineInterface, now: number) {
+  const midnight = new Date(now).setHours(0, 0, 0, 0)
+  const sessions: SessionFile[] = []
+  const entries = rootDir ? await $.fs.list(`${rootDir}/sessions`).catch(() => []) : []
+  for (const f of entries) {
+    if (f.kind !== 'file' || f.isLink || !f.name.endsWith('.json')) continue
+    if (f.name === `${sessionId}.json` || f.mtimeMs < Math.min(midnight, now - LIVE_MS)) continue
+    try {
+      const state = JSON.parse(await $.fs.read(`${rootDir}/sessions/${f.name}`)) as SessionFile
+      if (state && typeof state === 'object' && !(Number(state.format) > FORMAT)) sessions.push(state)
+    } catch {
+      // unreadable or half-written: skipped
+    }
+  }
+  sessions.push({ project, updatedAt: now, workers, shells, stats })
+  return sessions
+}
+
+function durationOf(ms: number) {
+  const total = Math.max(0, Math.round(ms / 1000))
+  return t.stats.duration(Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60)
+}
+
+function clockOf(ms: number) {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+// "a, b, c +2"
+function listOf(names: string[]) {
+  const shown = names.slice(0, STATS_LIST_MAX).join(', ')
+  return names.length > STATS_LIST_MAX ? `${shown} +${names.length - STATS_LIST_MAX}` : shown
+}
+
+// /office stats: today's deliveries across all sessions (stats.today.log, contract v2.9), the agents
+// working now and the background shells running now, as a few lines of text
+async function statsText($: EngineInterface) {
+  const now = Date.now()
+  const date = dayKey(now)
+  const sessions = await readSessions($, now)
+  const name = (s: SessionFile) => String(s.project ?? '') || t.stats.noProject
+  const deliveries: (Delivery & { project: string })[] = []
+  let untracked = 0
+  const working: string[] = []
+  const running: string[] = []
+  for (const s of sessions) {
+    const today = s.stats?.today
+    if (today?.date === date) {
+      const log = Array.isArray(today.log) ? today.log.filter(d => d && Number.isFinite(d.doneAt)) : []
+      for (const d of log) deliveries.push({ ...d, project: name(s) })
+      untracked += Math.max(0, new Set(Array.isArray(today.ids) ? today.ids : []).size - log.length)
+    }
+    const isLive = !s.endedAt && now - (s.updatedAt ?? 0) <= LIVE_MS
+    if (!isLive) continue
+    for (const w of Array.isArray(s.workers) ? s.workers : []) {
+      if (w.doneAt === undefined) working.push(`${w.type}${w.description ? ` "${clip(w.description, 40)}"` : ''} (${name(s)})`)
+    }
+    for (const sh of Array.isArray(s.shells) ? s.shells : []) {
+      if (sh.endAt === undefined) running.push(`${clip(sh.command, 40)} (${name(s)})`)
+    }
+  }
+  deliveries.sort((a, b) => b.doneAt - a.doneAt)
+  const timeOf = (d: Delivery) => Math.max(0, d.doneAt - (Number.isFinite(d.spawnAt) ? d.spawnAt : d.doneAt))
+  const lines = [t.stats.heading(date)]
+  if (deliveries.length === 0 && untracked === 0) lines.push(t.stats.none)
+  else {
+    const failed = deliveries.filter(d => d.isOk === false).length
+    const total = deliveries.reduce((sum, d) => sum + timeOf(d), 0)
+    lines.push(t.stats.delivered(deliveries.length + untracked, failed, durationOf(total)))
+    if (untracked) lines.push(t.stats.untracked(untracked))
+    const perProject = new Map<string, { count: number; time: number }>()
+    for (const d of deliveries) {
+      const p = perProject.get(d.project) ?? { count: 0, time: 0 }
+      perProject.set(d.project, { count: p.count + 1, time: p.time + timeOf(d) })
+    }
+    for (const [p, { count, time }] of [...perProject].sort((a, b) => b[1].count - a[1].count))
+      lines.push(t.stats.project(p, count, durationOf(time)))
+    if (deliveries.length) {
+      lines.push(t.stats.last)
+      for (const d of deliveries.slice(0, STATS_LAST)) {
+        const what = [d.type, clip(d.description ?? '', 60)].filter(Boolean).join(' · ')
+        lines.push(`  ${clockOf(d.doneAt)} ${d.isOk === false ? '✗' : '✓'} ${what} · ${durationOf(timeOf(d))}${perProject.size > 1 ? ` (${d.project})` : ''}`)
+      }
+    }
+  }
+  lines.push(t.stats.working(working.length) + (working.length ? ` · ${listOf(working)}` : ''))
+  lines.push(t.stats.shells(running.length) + (running.length ? ` · ${listOf(running)}` : ''))
+
+  return lines.join('\n')
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const home = (await $.env.get('HOME')) ?? ''
@@ -643,6 +772,8 @@ export const register: Register = on => {
     const id = await $.session.id()
     project = (await $.session.root()).split('/').pop() ?? ''
     const root = `${home}/.claude/agent-office`
+    rootDir = root
+    sessionId = id
     stateFile = `${root}/sessions/${id}.json`
     viewerFile = `${$.plugin.root}/viewer/office.mjs`
     inboxFile = `${root}/inbox/${id}.jsonl`
@@ -672,7 +803,8 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'office' }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
+    const arg = e.args.trim().toLowerCase().replace(/\u0307/g, '')
+    if (STATS_ARGS.has(arg)) return { text: await statsText($) }
     const isBandAsked = BAND_ARGS.has(arg)
     // the band is open: plain /office closes it too, so the fallback toggles like /office band
     const splitter = isBandAsked || isOpen ? undefined : await findSplitter($)

@@ -846,3 +846,88 @@ test('a permission dialog marks the session waiting until its tool is answered, 
   expect(stateOf(writes).format).toBe(2)
   expect(stateOf(writes).stats.isBossBusy).toBe(false)
 })
+
+// /office stats: today's deliveries from every session file, plus what works and runs right now
+test('/office stats sums today across sessions: count, failed, agent time, per project, last ones, working agents and shells', async ($, on) => {
+  const root = '/home/tester/.claude/agent-office'
+  const now = Date.now()
+  // "an hour ago", but never before midnight, so the test holds just after midnight too
+  const earlier = Math.max(1000, Math.min(HOUR, Math.floor((now - new Date(now).setHours(0, 0, 0, 0)) / 2)))
+  const today = (() => {
+    const d = new Date(now)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+  const delivery = (id: string, type: string, description: string, minutes: number, isOk = true, ago = 60_000) =>
+    ({ id, type, description, spawnAt: now - ago - minutes * 60_000, doneAt: now - ago, isOk, toolCount: 3 })
+  const sessions: Record<string, unknown> = {
+    // another live session: two deliveries, one agent at work, one shell running
+    'other.json': {
+      format: 2, project: 'api', updatedAt: now - 10_000,
+      workers: [{ id: 'w-1', type: 'Explore', description: 'Map the routes', spawnAt: now - 5000 }],
+      shells: [{ id: 'sh-1', command: 'npm run dev', startAt: now - 9000, status: 'running' }, { id: 'sh-2', command: 'ls', startAt: now - 9000, endAt: now - 8000, status: 'completed' }],
+      stats: { delivered: 2, isBossBusy: true, today: { date: today, ids: ['a', 'b'], log: [delivery('a', 'Explore', 'Scan the code', 2), delivery('b', 'general-purpose', 'Fix the bug', 10, false, 30_000)] } },
+    },
+    // ended today: its delivery counts, its leftover worker does not work any more
+    'ended.json': {
+      format: 2, project: 'web', updatedAt: now - earlier, endedAt: now - earlier,
+      workers: [{ id: 'w-9', type: 'Plan', description: 'gone', spawnAt: now - 2 * HOUR }],
+      stats: { delivered: 1, isBossBusy: false, today: { date: today, ids: ['c', 'd'], log: [delivery('c', 'Plan', 'Plan the release', 1, true, earlier)] } },
+    },
+    // yesterday's file and a newer format are left out
+    'yesterday.json': { format: 2, project: 'old', updatedAt: now - 48 * HOUR, stats: { delivered: 5, isBossBusy: false, today: { date: '2000-01-01', ids: ['x'], log: [] } } },
+    'future.json': { format: 99, project: 'new', updatedAt: now, stats: { delivered: 1, isBossBusy: false, today: { date: today, ids: ['y'], log: [delivery('y', 'Explore', 'future', 1)] } } },
+  }
+  const files = Object.fromEntries(Object.entries(sessions).map(([name, s]) => [`${root}/sessions/${name}`, JSON.stringify(s)]))
+  setUp(on, { HOME: '/home/tester', LANG: 'en_US.UTF-8' }, undefined, { files })
+  on('fs.list', (_$, e) => ({
+    value: e.path === `${root}/sessions`
+      ? [entry('other.json', 'file', now), entry('ended.json', 'file', now - earlier), entry('yesterday.json', 'file', now - 48 * HOUR), entry('future.json', 'file', now)]
+      : [],
+  }))
+  on('agent.spawn', () => ({ model: 'test-model', agentId: 'agent-1' }))
+
+  await $.session.start(start)
+  await spawnAgent($, 'Write the docs', 'general-purpose')
+  const reply = await $.command.run({ command: 'office', args: 'stats' } as Parameters<typeof $.command.run>[0])
+  const text = (reply as { text: string }).text
+  const lines = text.split('\n')
+
+  expect(lines[0]).toBe(`Agent Office · today (${today})`)
+  // 3 logged + 1 delivery without a log entry (ended.json has 2 ids, 1 log row); 13 minutes of agent time
+  expect(lines[1]).toBe('Delivered: 4 (1 failed) · agent time 13m 0s')
+  expect(text).toContain('+1 more without details')
+  expect(text).toContain('  api: 2 · 12m 0s')
+  expect(text).toContain('  web: 1 · 1m 0s')
+  expect(text).not.toContain('future')
+  // newest first, with project names as there are several
+  const last = lines.slice(lines.indexOf('Last deliveries:') + 1, lines.indexOf('Last deliveries:') + 4)
+  expect(last.map(l => l.replace(/^ {2}\d\d:\d\d /, ''))).toEqual([
+    '✗ general-purpose · Fix the bug · 10m 0s (api)',
+    '✓ Explore · Scan the code · 2m 0s (api)',
+    '✓ Plan · Plan the release · 1m 0s (web)',
+  ])
+  expect(text).toContain('Working now: 2 · ')
+  expect(text).toContain('Explore "Map the routes" (api)')
+  expect(text).toContain('general-purpose "Write the docs" (my-app)')
+  expect(text).not.toContain('gone')
+  expect(text).toContain('Background shells running: 1 · npm run dev (api)')
+})
+
+test('/office istatistik answers in Turkish and without deliveries says so; it opens no view', async ($, on) => {
+  const { runs } = setUp(on, { HOME: '/home/tester', LANG: 'tr_TR.UTF-8', TERM_PROGRAM: 'ghostty' }, nodeFound)
+  on('fs.list', () => ({ value: [] }))
+
+  await $.session.start(start)
+  for (const args of ['istatistik', 'İSTATİSTİK', 'stats']) {
+    const reply = await $.command.run({ command: 'office', args } as Parameters<typeof $.command.run>[0])
+    const text = (reply as { text: string }).text
+    expect(text).toContain('Agent Ofis · bugün')
+    expect(text).toContain('Bugün henüz teslim yok.')
+    expect(text).toContain('Şu an çalışan: yok')
+    expect(text).toContain('Çalışan arka plan komutu: yok')
+  }
+  expect(runs.some(argv => argv[0] === '/usr/bin/osascript')).toBe(false)
+  // the band stayed closed: /office şerit now opens it rather than closing it
+  const opened = await $.command.run({ command: 'office', args: 'şerit' } as Parameters<typeof $.command.run>[0])
+  expect(JSON.stringify(opened)).toContain('şeridi açıldı')
+})

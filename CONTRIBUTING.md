@@ -33,3 +33,9 @@ CI runs all of this on every push and pull request.
 - **Comments** in the existing code are mostly Turkish. English comments are welcome in new code.
 - **No new runtime dependencies** without a good reason; the plugin has none at all.
 - Keep `app/CONTRACT.md` and the READMEs in step with what you change.
+
+## Adding a theme to the gallery
+
+1. Add `themes/<name>.json`: a `themes.json` fragment with one key, `{ "<name>": { "description": "<one line>", "match": "<name>", "sign": "<NAME>", "colors": { ... } } }`. The colour keys are those of `C` in `plugin/viewer/core.mjs` (`#rrggbb`); look at an existing theme for the ones that cover the walls, floors, desks, chairs, sign and bots.
+2. Draw the preview: `node plugin/viewer/gallery.mjs <name>` writes `themes/previews/<name>.png` (the demo office at a fixed time and time zone, so it only changes when the theme or the renderer does). Look at it: the theme should read well and look different from the others.
+3. Add it to the table in the "Theme gallery" section of `plugin/README.md` (and the list in the Turkish part), and commit the JSON and the PNG together.

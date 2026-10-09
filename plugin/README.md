@@ -42,6 +42,7 @@ CLAUDE_CODE_PLUGIN_DIRS=/path/to/agent-office/plugin claude
 | --- | --- |
 | `/office` | Ghostty on macOS, kitty (with remote control) or WezTerm: opens the office as a split next to the Claude terminal. Elsewhere it falls back to `/office band`. |
 | `/office band` (alias `/office şerit`) | Toggles the office band inside Claude Code, right above the prompt. |
+| `/office stats` (alias `/office istatistik`) | Replies with today's summary as text, without opening a view (see below). |
 | Type + `Enter` (full-window office) | Sends the task line to Claude. |
 | `Ctrl-C` (full-window office) | Closes the office. |
 | `Ctrl-T` (full-window office) | Toggles demo mode. |
@@ -59,6 +60,26 @@ The Claude terminal keeps a small part of the window. Permission prompts still a
 - **Ghostty** (macOS): the office opens above and the Claude terminal shrinks to about 8 rows at the bottom. The first time, macOS may ask you to let Claude Code control Ghostty (AppleScript automation).
 - **kitty**: needs remote control (`allow_remote_control yes` and `listen_on` in `kitty.conf`, or start kitty with `-o allow_remote_control=yes`). The office opens with `kitty @ launch --location=hsplit` below Claude and takes about 80% of the window; the split needs kitty's `splits` layout (in other layouts it opens as a normal kitty window). Without remote control `/office` falls back to the band.
 - **WezTerm**: the office opens above with `wezterm cli split-pane --top` and takes about 80% of the window. The `wezterm` command must be on your PATH.
+
+### Today in text: `/office stats`
+
+`/office stats` answers right in the conversation with today's numbers across all your Claude Code sessions (ended ones included): deliveries, failures, total agent time, a line per project, the last five deliveries with their type, description and duration, the agents working right now and the background shells still running.
+
+```
+Agent Office · today (2026-10-10)
+Delivered: 4 (1 failed) · agent time 13m 0s
++1 more without details (older plugin version)
+  api: 2 · 12m 0s
+  web: 1 · 1m 0s
+Last deliveries:
+  14:16 ✗ general-purpose · Fix the bug · 10m 0s (api)
+  14:16 ✓ Explore · Scan the code · 2m 0s (api)
+  13:17 ✓ Plan · Plan the release · 1m 0s (web)
+Working now: 2 · Explore "Map the routes" (api), general-purpose "Write the docs" (my-app)
+Background shells running: 1 · npm run dev (api)
+```
+
+It reads the session files in `~/.claude/agent-office/sessions/` (each one's daily delivery log); deliveries made by a plugin version older than the log are counted but not listed.
 
 ### Band mode
 
@@ -87,7 +108,33 @@ To pick your own look, create `~/.claude/agent-office/themes.json`:
 - `title`, `sign`: optional; the window title and the text on the wall sign.
 - `colors`: any color key of the viewer's palette (`C` in `viewer/core.mjs`), as `#rrggbb`. Useful ones: `accent`, `frame`, `wallTop`, `brick`, `rugRed`, `bossChair`, `signGreen`, `statusBg`, `statusText`.
 
+Ready-made palettes are in the [theme gallery](#theme-gallery) below.
+
 If `themes.json` cannot be parsed, the office keeps running with the default themes and tells you why: a warning on stderr for snapshots and the band, and a short notice on the bottom line of the full-window office.
+
+## Theme gallery
+
+Eight ready themes live in [`themes/`](../themes) at the root of the repository, one small JSON file each:
+
+| | |
+| --- | --- |
+| **midnight**: night shift, deep navy rooms, cyan neon and a dark carpet<br>![midnight](../themes/previews/midnight.png) | **sakura**: cherry blossom, soft pink walls, rose brick and light birch desks<br>![sakura](../themes/previews/sakura.png) |
+| **ocean**: seaside, aqua carpet, navy tile wall and driftwood desks<br>![ocean](../themes/previews/ocean.png) | **desert**: terracotta and sand, warm adobe walls, orange accents<br>![desert](../themes/previews/desert.png) |
+| **lavender**: lavender field, lilac carpet, purple walls and pale wood<br>![lavender](../themes/previews/lavender.png) | **graphite**: monochrome concrete greys, black desks, one yellow accent<br>![graphite](../themes/previews/graphite.png) |
+| **terminal**: green phosphor, a black-screen office lit by a CRT<br>![terminal](../themes/previews/terminal.png) | **latte**: coffee house, espresso brick, caramel walls and a latte carpet<br>![latte](../themes/previews/latte.png) |
+
+To use one, merge its file into `~/.claude/agent-office/themes.json` (the file's top-level key is the theme's name) and set `match` to part of your project folder name; `sign` and `title` can be changed too, and `description` is only for the gallery. From a checkout of this repository:
+
+```sh
+node -e '
+const fs = require("fs"), path = require("path"), file = path.join(require("os").homedir(), ".claude/agent-office/themes.json")
+const mine = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {}
+fs.mkdirSync(path.dirname(file), { recursive: true })
+fs.writeFileSync(file, JSON.stringify({ ...mine, ...JSON.parse(fs.readFileSync(process.argv[1], "utf8")) }, null, 2))
+' themes/sakura.json
+```
+
+then edit `match` in `themes.json`. To try a theme without matching a project, start the viewer with `--theme <name>` (for example `node viewer/office.mjs --demo --theme sakura`). The previews are drawn by `node plugin/viewer/gallery.mjs` from the repository root.
 
 ## Language
 
@@ -186,6 +233,7 @@ Yerel kopyadan denemek için: `claude --plugin-dir /yol/agent-office/plugin`
 | --- | --- |
 | `/office` | macOS'ta Ghostty, (uzaktan kontrolü açık) kitty ya da WezTerm: ofisi Claude terminalinin yanında bölme olarak açar. Diğer terminallerde `/office şerit`'e düşer. |
 | `/office şerit` (ya da `/office band`) | Ofisi Claude Code içinde, prompt'un hemen üstündeki şeritte açar/kapatır. |
+| `/office istatistik` (ya da `/office stats`) | Görünüm açmadan bugünün özetini metin olarak verir: tüm oturumlardaki teslimler (sayı, başarısız, toplam agent süresi, proje başına, son teslimler: tip, açıklama, süre), şu an çalışan agent'lar ve çalışan arka plan komutları. |
 | Yaz + `Enter` (tam pencere ofis) | Görev satırındaki görevi Claude'a gönderir. |
 | `Ctrl-C` (tam pencere ofis) | Ofisi kapatır. |
 
@@ -193,7 +241,7 @@ Tam pencere modunda üstte ofis sahnesi, Claude konuşmasının canlı akışı 
 
 Şerit modu kitty grafik protokolünü destekleyen bir terminal ister (Ghostty, kitty, WezTerm).
 
-Her projenin kendi ofisi vardır: duvardaki tabela proje klasörünün adını gösterir, renkler bu addan üretilir. Kendi temanı `~/.claude/agent-office/themes.json` ile tanımlayabilirsin (yukarıdaki Themes bölümüne bak). Dosya bozuksa ofis varsayılan temalarla açılır ve hatayı gösterir. Beyaz tahtadaki BUGÜN sayısı yerel gece yarısından beri tüm oturumlardaki (bitenler dahil) teslimleri sayar. Arayüz, yerel ayarın `tr` ile başlıyorsa Türkçedir. Tüm veriler `~/.claude/agent-office/` altında, makinende kalır; hiçbir yere gönderilmez. Gelen kutusuna (`inbox/<oturum>.jsonl`) yazılan satır Claude'a senin yazmışsın gibi gider; oraya yazabilen bir süreç zaten senin kullanıcınla çalışır ve `claude`'u kendisi de başlatabilir, yani gelen kutusu yeni bir erişim açmaz. Bu dosyalar kendiliğinden temizlenir: gönderilen görev gelen kutusundan hemen silinir. Her oturum açılışında eklenti, bitmiş ya da bir gündür güncellenmemiş diğer oturumların `sessions/`, `inbox/` ve `frames/` dosyalarını siler. Açık olan oturumun ve hâlâ çalışan başka bir oturumun dosyalarına dokunmaz.
+Her projenin kendi ofisi vardır: duvardaki tabela proje klasörünün adını gösterir, renkler bu addan üretilir. Kendi temanı `~/.claude/agent-office/themes.json` ile tanımlayabilirsin (yukarıdaki Themes bölümüne bak). Depo kökündeki [`themes/`](../themes) klasöründe sekiz hazır tema var (midnight, sakura, ocean, desert, lavender, graphite, terminal, latte; önizlemeler yukarıdaki Theme gallery bölümünde): birinin dosyasını `themes.json`'a birleştirip `match`'i proje klasörünün adına göre değiştirmen yeterli. Dosya bozuksa ofis varsayılan temalarla açılır ve hatayı gösterir. Beyaz tahtadaki BUGÜN sayısı yerel gece yarısından beri tüm oturumlardaki (bitenler dahil) teslimleri sayar. Arayüz, yerel ayarın `tr` ile başlıyorsa Türkçedir. Tüm veriler `~/.claude/agent-office/` altında, makinende kalır; hiçbir yere gönderilmez. Gelen kutusuna (`inbox/<oturum>.jsonl`) yazılan satır Claude'a senin yazmışsın gibi gider; oraya yazabilen bir süreç zaten senin kullanıcınla çalışır ve `claude`'u kendisi de başlatabilir, yani gelen kutusu yeni bir erişim açmaz. Bu dosyalar kendiliğinden temizlenir: gönderilen görev gelen kutusundan hemen silinir. Her oturum açılışında eklenti, bitmiş ya da bir gündür güncellenmemiş diğer oturumların `sessions/`, `inbox/` ve `frames/` dosyalarını siler. Açık olan oturumun ve hâlâ çalışan başka bir oturumun dosyalarına dokunmaz.
 
 İsteğe bağlı ayarlar `~/.claude/agent-office/settings.json` dosyasındadır; eklenti de görüntüleyici de okur: `{ "language": "tr", "forgetMinutes": 5 }`. `language`: `"tr"`, `"en"` ya da `"auto"` (varsayılan; yerel ayara göre). `forgetMinutes`: teslim eden botun ofiste kalma süresi, 1-60 dakika (varsayılan 5); bu sürenin 30 saniye eksiği parti yapar, sonra çıkar. `botColor`: botların rengi, `"#rrggbb"` (uygulamada kenar çubuğundaki **Bot rengi** ile seçilir). Dosya yoksa ya da geçersizse varsayılanlar kullanılır. Değiştirdikten sonra oturumu yeniden başlatıp ofisi yeniden aç.
 
