@@ -745,6 +745,7 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
 label.sb-langrow { cursor: pointer; }
 .sb-check { accent-color: var(--accent); margin: 0; cursor: pointer; }
 .sb-lang { flex: 0 0 auto; }
+.sb-theme { max-width: 165px; }
 
 /* ---- Update button (title bar) ---- */
 #update {

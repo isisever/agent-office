@@ -70,6 +70,7 @@ Agent Office checks GitHub Releases at start and every few hours (on Linux only 
 | **Pick up where you left off** | **Continue last session** at the bottom of the sidebar (on by default): when the app starts, each project continues its last Claude session (`claude --continue`) |
 | **See what got done today** | Click the whiteboard: every delivery of the day with its project, duration, tool count and whether it succeeded |
 | **Change the language** | **Language** at the bottom of the sidebar: Auto (system language), English or Türkçe. The labels here are the English ones. |
+| **Change the office theme** | **Theme** at the bottom of the sidebar: **Auto (per project)** gives each project its own colors (or the theme from your `themes.json` whose `match` fits it); classic, forest or one of the eight [gallery themes](plugin/README.md#theme-gallery) colors the whole office and the window frame. Hover an entry for its description. Your **Bot color** still wins over a theme's bots. |
 | **Change the bots' color** | **Bot color** at the bottom of the sidebar (↺ resets it) |
 | **Hide the sidebar** | ≡ in the title bar |
 

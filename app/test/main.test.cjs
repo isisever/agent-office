@@ -457,3 +457,67 @@ test('diller: locales/*.json bulunur, adları kendi dilinde; sistem dili dosyas�
   assert.equal(de('main.cancel'), 'Abbrechen');
   assert.equal(de('main.edit'), 'Edit');
 });
+
+// ---- theme picker (contract v3.1): src/themes.mjs ----
+const themesLib = () => import('../src/themes.mjs');
+const fs = require('node:fs');
+const GALLERY_DIR = path.join(__dirname, '..', '..', 'themes');
+const galleryFiles = () => fs.readdirSync(GALLERY_DIR).filter((f) => f.endsWith('.json')).sort()
+  .map((f) => JSON.parse(fs.readFileSync(path.join(GALLERY_DIR, f), 'utf8')));
+
+test('tema galerisi: match atılır, açıklama ve renkler kalır; bozuk girdiler atlanır', async () => {
+  const TH = await themesLib();
+  const g = TH.galleryThemes([{ sakura: { description: 'pink', match: 'sakura', sign: 'SAKURA', colors: { accent: '#ff6f9c' } } }, null, [], { bad: 3, nocolors: { sign: 'X' } }]);
+  assert.deepEqual(g.sakura, { description: 'pink', sign: 'SAKURA', colors: { accent: '#ff6f9c' } });
+  assert.deepEqual(g.nocolors, { sign: 'X', colors: {} });
+  assert.equal('bad' in g, false);
+  // the real gallery: eight themes, none with match, each with a description
+  const real = TH.galleryThemes(galleryFiles());
+  assert.ok(Object.keys(real).length >= 8);
+  for (const [name, t] of Object.entries(real)) {
+    assert.equal('match' in t, false, `${name} kept match`);
+    assert.equal(typeof t.description, 'string', `${name} has no description`);
+  }
+});
+
+test('tema birleştirme: kullanıcının themes.json\'u çakışmada kazanır (renkler tek tek), match yalnız kullanıcıdan', async () => {
+  const TH = await themesLib();
+  const gallery = TH.galleryThemes([{ sakura: { description: 'pink', match: 'sakura', sign: 'SAKURA', colors: { accent: '#ff6f9c', body: '#f2f2f2' } } }]);
+  const user = { sakura: { match: 'shop', colors: { accent: '#000000' } }, acme: { match: 'acme', colors: { frame: '#111111' } }, junk: 'x' };
+  const m = TH.mergeThemes(gallery, user);
+  assert.deepEqual(m.sakura, { description: 'pink', sign: 'SAKURA', match: 'shop', colors: { accent: '#000000', body: '#f2f2f2' } });
+  assert.deepEqual(m.acme, { match: 'acme', colors: { frame: '#111111' } });
+  assert.equal('junk' in m, false);
+  // no user file, or a broken one ({} from sessions.js; anything not an object): the gallery alone
+  assert.deepEqual(TH.mergeThemes(gallery, {}), gallery);
+  assert.deepEqual(TH.mergeThemes(gallery, null), gallery);
+  assert.equal(TH.mergeThemes(gallery, {}).sakura.match, undefined);
+  // the input is not changed
+  assert.equal(gallery.sakura.colors.accent, '#ff6f9c');
+});
+
+test('tema seçenekleri: önce yerleşikler (classic, forest), sonra diğerleri sırayla; açıklama temadan', async () => {
+  const TH = await themesLib();
+  const m = TH.mergeThemes(TH.galleryThemes([{ sakura: { description: 'pink' }, ocean: { colors: {} } }]), { forest: { colors: { accent: '#00ff00' } } });
+  assert.deepEqual(TH.themeChoices(m), [
+    { name: 'classic', description: '', isBuiltin: true },
+    { name: 'forest', description: '', isBuiltin: true },
+    { name: 'sakura', description: 'pink', isBuiltin: false },
+    { name: 'ocean', description: '', isBuiltin: false },
+  ]);
+  assert.deepEqual(TH.themeChoices({}).map((c) => c.name), ['classic', 'forest']);
+});
+
+test('tema ayarı: auto ya da ad; bilinmeyen ad saklanır ama ofise boş (projeye göre) gider', async () => {
+  const TH = await themesLib();
+  for (const v of [undefined, null, 3, '', '   ', 'x'.repeat(101)]) assert.equal(TH.normalizeThemeSetting(v), 'auto');
+  assert.equal(TH.normalizeThemeSetting(' sakura '), 'sakura');
+  assert.equal(TH.normalizeThemeSetting('gone'), 'gone');
+  const m = TH.galleryThemes([{ sakura: { colors: {} } }]);
+  assert.equal(TH.effectiveTheme('auto', m), '');
+  assert.equal(TH.effectiveTheme('sakura', m), 'sakura');
+  assert.equal(TH.effectiveTheme('forest', m), 'forest');
+  assert.equal(TH.effectiveTheme('classic', {}), 'classic');
+  assert.equal(TH.effectiveTheme('gone', m), '');
+  assert.equal(TH.effectiveTheme(undefined, m), '');
+});

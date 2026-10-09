@@ -4,6 +4,7 @@ import { mountSidebar } from './sidebar.js';
 import { mountLogin } from './login.js';
 import { setLang, onLang, t } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac } from './platform.js';
+import { themeChoices, effectiveTheme } from '../src/themes.mjs';
 
 // Fake window.agentOffice to see the layout in a plain browser (outside Electron).
 if (!window.agentOffice) await import('./dev-mock.js');
@@ -405,6 +406,7 @@ sidebar = mountSidebar($('sidebar'), {
   refreshAuth,
   setLanguage: (setting) => api.language?.set(setting).catch((e) => console.error(e)),
   setResume: (on) => api.prefs?.set({ resume: on }).then((p) => sidebar.setResume(p?.resume)).catch((e) => console.error(e)),
+  setTheme: setThemeSetting,
 });
 
 login = mountLogin(document.body, { getTheme: () => theme, onClose: () => focusActive() });
@@ -427,6 +429,22 @@ function setBotColor(hex) {
 }
 
 setCollapsed(store.get('sidebarCollapsed') === '1');
+
+// ---- Theme picker (v3.1): 'auto' picks by project (core.mjs), a name forces that theme for the whole office.
+// The frame colours follow through onTheme → applyTheme; the bot color picker still wins over a theme's bot colours.
+let officeThemes = {}; // gallery + user themes.json (main, office:themes)
+let themeSetting = 'auto';
+function applyThemeChoice() {
+  sidebar.setThemes(themeChoices(officeThemes), themeSetting);
+  try { office?.setTheme?.(effectiveTheme(themeSetting, officeThemes)); } catch (e) { console.error(e); }
+}
+function setThemeSetting(name) {
+  themeSetting = name;
+  applyThemeChoice();
+  api.prefs?.set({ theme: name }).then((p) => {
+    if (typeof p?.theme === 'string' && p.theme !== themeSetting) { themeSetting = p.theme; applyThemeChoice(); }
+  }).catch((e) => console.error(e));
+}
 
 // ---- Language: title, empty state and hints; sidebar, office and panel redraw themselves ----
 function applyStaticText() {
@@ -451,7 +469,11 @@ async function applyLanguage(li) {
 }
 onLang(applyStaticText);
 applyStaticText();
-api.prefs?.get().then((p) => sidebar.setResume(p?.resume)).catch((e) => console.error(e));
+api.prefs?.get().then((p) => {
+  sidebar.setResume(p?.resume);
+  if (typeof p?.theme === 'string') themeSetting = p.theme;
+  applyThemeChoice();
+}).catch((e) => console.error(e));
 
 $('empty-add').addEventListener('click', addProject);
 $('tab-add').addEventListener('click', () => addTab(activeId));
@@ -545,7 +567,11 @@ try {
   const { mountOffice } = await import('./office-view.js');
   office = mountOffice(/** @type {HTMLCanvasElement} */ ($('office')), { onTheme: applyTheme, onSelect: (id) => selectAgent(id) });
   setBotColor(store.get('botColor') || null);
-  api.office.themes().then((t) => office.setThemes?.(t)).catch(() => {});
+  api.office.themes().then((t) => {
+    officeThemes = t && typeof t === 'object' ? t : {};
+    office.setThemes?.(officeThemes);
+    applyThemeChoice();
+  }).catch(() => {});
 } catch (e) {
   console.warn('Ofis görünümü yüklenemedi:', e.message);
   document.body.classList.add('no-office');

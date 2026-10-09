@@ -9,6 +9,9 @@
 // e.g. ?select=m-1, ?select=shell:sh-1). ?noShells → old data (no shells field).
 // ?tabs → three tabs in the first project (main, same folder, git worktree) with the worktree tab open (contract v3.0);
 // "+" adds a fake tab without a worktree, ⇧⌘T one with a worktree; × closes without asking.
+// ?theme=<name> → theme picker setting (v3.1; e.g. ?theme=sakura, ?theme=forest); default auto. The gallery is read from
+// ../../themes/*.json, so it is there under Electron's loadFile or a static server at the repo root (/app/renderer/index.html).
+import { galleryThemes, mergeThemes } from '../src/themes.mjs';
 const q = new URLSearchParams(location.search);
 const listeners = (set = new Set()) => ({ add: (cb) => (set.add(cb), () => set.delete(cb)), emit: (...a) => set.forEach((cb) => cb(...a)) });
 const ev = { projects: listeners(), data: listeners(), exit: listeners(), office: listeners(), accounts: listeners() };
@@ -117,6 +120,14 @@ const systemLang = () => { const l = navigator.language.toLowerCase(); return la
 const langInfo = () => ({ setting: langSetting, lang: langSetting === 'auto' ? systemLang() : langSetting, languages });
 const langEv = listeners();
 
+// theme gallery (themes/*.json, as main reads it; names listed because a browser cannot list the folder) and the setting
+const GALLERY = ['desert', 'graphite', 'latte', 'lavender', 'midnight', 'ocean', 'sakura', 'terminal'];
+const galleryFiles = (await Promise.all(GALLERY.map((n) => fetch(`../../themes/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
+const mockThemes = mergeThemes(galleryThemes(galleryFiles), {});
+let themeSetting = q.get('theme') || 'auto';
+let resumeSetting = true;
+const prefsNow = () => ({ resume: resumeSetting, theme: themeSetting });
+
 window.agentOffice = {
   platform: q.get('platform') || 'darwin',
   projects: {
@@ -205,8 +216,12 @@ window.agentOffice = {
     restart: (id) => boot(id),
   },
   prefs: {
-    get: async () => ({ resume: true }),
-    set: async (p) => ({ resume: p?.resume !== false }),
+    get: async () => prefsNow(),
+    set: async (p) => {
+      if (typeof p?.resume === 'boolean') resumeSetting = p.resume;
+      if (typeof p?.theme === 'string') themeSetting = p.theme.trim() || 'auto';
+      return prefsNow();
+    },
   },
   language: {
     get: async () => langInfo(),
@@ -229,7 +244,7 @@ window.agentOffice = {
       };
     },
     onData: ev.office.add,
-    themes: async () => ({}),
+    themes: async () => mockThemes,
   },
   clipboard: { hasImage: async () => false, read: async () => ({ hasImage: false, text: '', files: [] }), onPaste: () => () => {}, nativePaste: () => document.execCommand('paste') },
   pathForFile: () => '',

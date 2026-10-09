@@ -52,7 +52,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     install: () => ipcRenderer.send('update:install'),
   },
   prefs: {
-    get: () => ipcRenderer.invoke('prefs:get'),         // { resume: boolean }
+    get: () => ipcRenderer.invoke('prefs:get'),         // { resume: boolean, theme: 'auto' | name } (theme: v3.1)
     set: (p) => ipcRenderer.invoke('prefs:set', p),
   },
   language: {
@@ -62,7 +62,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
   },
   office: {
     onData: listen('office:data'),
-    themes: () => ipcRenderer.invoke('office:themes'),
+    themes: () => ipcRenderer.invoke('office:themes'),   // gallery + user themes.json (contract v3.1)
     today: () => ipcRenderer.invoke('office:today'),     // today's deliveries (contract v2.9)
   },
 });

@@ -129,6 +129,13 @@
           "tsconfig.json",
           "LICENSE"
         ]
+      },
+      {
+        "from": "../themes",
+        "to": "themes",
+        "filter": [
+          "*.json"
+        ]
       }
     ],
     "publish": [

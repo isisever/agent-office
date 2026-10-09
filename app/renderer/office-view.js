@@ -1,5 +1,5 @@
 // Office view: draws core.mjs frames to a <canvas> with crisp (nearest-neighbor) scaling.
-import { FRAME_MS, hitTest, render, setGeometry, setThemes as coreSetThemes, themeInfo, setBotColor as coreSetBotColor, setLanguage as coreSetLanguage } from '../src/office/core.mjs'
+import { FRAME_MS, hitTest, render, setGeometry, setThemes as coreSetThemes, setTheme as coreSetTheme, themeInfo, setBotColor as coreSetBotColor, setLanguage as coreSetLanguage } from '../src/office/core.mjs'
 
 const EMPTY = { workers: [], delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' }
 
@@ -125,6 +125,11 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     },
     setThemes(t) {
       coreSetThemes(t ?? {})
+      draw()
+    },
+    // one theme for the whole office, whatever the project (theme picker, v3.1); '' or null = pick by project
+    setTheme(name) {
+      coreSetTheme(name || '')
       draw()
     },
     // marker above the selected bot (at a desk, walking, at the boss, on the floor); null = none
