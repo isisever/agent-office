@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
-import { BOSS_ID, demoOffice, hitBoxes, hitTest, partyCount, render, resetOffice, setGeometry, setTheme, setThemes, themeInfo } from '../src/office/core.mjs'
+import { BOSS_ID, shellLabel, demoOffice, hitBoxes, hitTest, partyCount, render, resetOffice, setGeometry, setTheme, setThemes, themeInfo } from '../src/office/core.mjs'
 
 const require = createRequire(import.meta.url)
 const { readOffice, readThemes } = require('../src/sessions.js')
@@ -84,6 +84,8 @@ const shape = d => {
   assert.equal(typeof d.sessionId, 'string')
   assert.ok(Array.isArray(d.projects))
   for (const w of d.workers) assert.equal(typeof w.project, 'string')
+  assert.ok(Array.isArray(d.shells))
+  for (const sh of d.shells) assert.equal(typeof sh.project, 'string')
 }
 const all = readOffice(null)
 shape(all)
@@ -131,6 +133,32 @@ assert.equal(typeof readThemes(), 'object')
   // delta: dosya dün değişmiş (kayıt bugünü gösterse de) → atlanır
   put('delta-stale', { project: 'delta', updatedAt: NOW - 15 * H, workers: [], stats: { delivered: 1, isBossBusy: false, today: { date: today, ids: ['d1'] } } }, NOW - 15 * H)
   writeFileSync(join(dir, 'bozuk.json'), '{')
+  // arka plan kabukları: alpha canlı (biri çalışıyor, biri yeni bitti, biri unutma süresini (5 dk) geçti)
+  const M = 60 * 1000
+  const alphaLive = JSON.parse(readFileSync(join(dir, 'alpha-live.json'), 'utf8'))
+  alphaLive.shells = [
+    { id: 'a1', command: 'npm run dev', startAt: NOW - 2 * M, status: 'running' },
+    { id: 'a2', command: 'npm run build', startAt: NOW - 3 * M, endAt: NOW - 1 * M, exitCode: 0, status: 'completed' },
+    { id: 'a3', command: 'cargo test', startAt: NOW - 12 * M, endAt: NOW - 10 * M, exitCode: 1, status: 'failed' },
+  ]
+  put('alpha-live', alphaLive)
+  // beta 2 dk önce bitti: bitenler süre içindeyse kalır, "çalışıyor" görünen oturumla kapanmıştır (killed)
+  put('beta-ended', {
+    project: 'beta', updatedAt: NOW - 2 * M, endedAt: NOW - 2 * M, workers: [],
+    shells: [
+      { id: 'b1', command: 'pytest -x', agentId: 'w1', startAt: NOW - 4 * M, endAt: NOW - 2.5 * M, exitCode: 0, status: 'completed' },
+      { id: 'b2', command: 'tail -f log', startAt: NOW - 3.5 * M, status: 'running' },
+      { id: 'b3', command: 'make', startAt: NOW - 11 * M, endAt: NOW - 10 * M, exitCode: 0, status: 'completed' },
+    ],
+  }, NOW - 2 * M)
+  // epsilon bayat ama bitmemiş: çalışan kabuğu gösterilmez, eski biteni de
+  put('eps-stale', {
+    project: 'epsilon', updatedAt: NOW - 10 * M, workers: [],
+    shells: [
+      { id: 'e1', command: 'sleep 999', startAt: NOW - 11 * M, status: 'running' },
+      { id: 'e2', command: 'ls', startAt: NOW - 21 * M, endAt: NOW - 20 * M, exitCode: 0, status: 'completed' },
+    ],
+  }, NOW - 10 * M)
 
   const byName = d => Object.fromEntries(d.projects.map(p => [p.name, p]))
   const all = readOffice(null, NOW, root)
@@ -145,6 +173,13 @@ assert.equal(typeof readThemes(), 'object')
   assert.equal(all.project, 'alpha')
   assert.equal(all.sessionId, 'alpha-live')
   assert.equal(all.themesError, undefined, 'themes.json yoksa sessiz')
+  // kabuklar: projeleriyle, başlama sırasıyla; süresi geçenler ve bayat oturumun çalışanı yok
+  assert.deepEqual(all.shells.map(sh => [sh.id, sh.project]), [['b1', 'beta'], ['b2', 'beta'], ['a2', 'alpha'], ['a1', 'alpha']])
+  const b2 = all.shells.find(sh => sh.id === 'b2')
+  assert.equal(b2.status, 'killed', 'bitmiş oturumun çalışan kabuğu kapanmıştır')
+  assert.equal(b2.endAt, NOW - 2 * M)
+  assert.equal(all.shells.find(sh => sh.id === 'b1').agentId, 'w1', 'alanlar olduğu gibi geçer')
+  assert.equal(all.shells.find(sh => sh.id === 'a1').endAt, undefined)
 
   // proje süzgeci: verilen sıra, oturumu olmayan proje de sıfırla listede
   const two = readOffice(['beta', 'zeta'], NOW, root)
@@ -156,6 +191,23 @@ assert.equal(typeof readThemes(), 'object')
     { name: 'beta', working: 1, delivered: 1, isBossBusy: false },
     { name: 'zeta', working: 0, delivered: 0, isBossBusy: false },
   ])
+  assert.deepEqual(two.shells.map(sh => sh.id), ['b1', 'b2'], 'süzgeç kabuklara da uygulanır')
+  assert.deepEqual(readOffice(['alpha'], NOW, root).shells.map(sh => sh.id), ['a2', 'a1'])
+  assert.deepEqual(readOffice(['zeta'], NOW, root).shells, [])
+  // alpha canlılığını yitirince (bitmemiş, bayat): çalışan kabuk gider, yeni biten süre dolana dek kalır
+  assert.deepEqual(readOffice(['alpha'], NOW + 3.5 * M, root).shells.map(sh => sh.id), ['a2'])
+  assert.deepEqual(readOffice(['alpha'], NOW + 6 * M, root).shells, [])
+  // beta: bitişten 5 dk sonra kabukları da unutulur
+  assert.deepEqual(readOffice(['beta'], NOW + 2.4 * M, root).shells.map(sh => sh.id), ['b1', 'b2'])
+  assert.deepEqual(readOffice(['beta'], NOW + 2.8 * M, root).shells.map(sh => sh.id), ['b2'])
+  assert.deepEqual(readOffice(['beta'], NOW + 3.5 * M, root).shells, [])
+  // settings.json forgetMinutes: 30 dk → eskiler de görünür, bayat oturumun çalışanı yine görünmez
+  writeFileSync(join(root, 'settings.json'), JSON.stringify({ forgetMinutes: 30 }))
+  const long = readOffice(null, NOW, root)
+  assert.deepEqual(long.shells.map(sh => sh.id).sort(), ['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'e2'])
+  assert.equal(long.shells.find(sh => sh.id === 'e2').project, 'epsilon')
+  rmSync(join(root, 'settings.json'))
+  assert.equal(readOffice(null, NOW, root).shells.length, 4)
   // yalnız bitmiş oturumu olan proje: işçi yok, teslim var, tema projeden
   const ended = readOffice(['alpha'], NOW + 4 * 60 * 1000, root)
   assert.equal(ended.workers.length, 0)
@@ -383,6 +435,92 @@ const selectShots = []
   selectShots.push(path)
 }
 
+// ---------- arka plan kabukları: sunucu odasının raf yuvaları ----------
+const shellShots = []
+{
+  assert.equal(shellLabel('npm run dev'), 'NPM')
+  assert.equal(shellLabel('cd app && FOO=1 python3 -m http.server'), 'PYT')
+  assert.equal(shellLabel('/usr/bin/tail -f x.log'), 'TAI')
+  assert.equal(shellLabel(''), '?')
+
+  // kabuk yokken kare eskisiyle birebir aynı: alan yok, boş dizi
+  const playShells = (extra, opts = {}) => {
+    resetOffice()
+    setTheme('')
+    setGeometry(1320, 700)
+    let frame
+    for (let t = NOW - 30000; t <= NOW; t += 110) frame = render(t, { ...multiOffice(t, PROJECTS), ...(typeof extra === 'function' ? extra(t) : extra) }, opts)
+    return frame.fb.slice()
+  }
+  const noField = playShells({})
+  assert.deepEqual(playShells({ shells: [] }), noField, 'boş kabuk listesi kareyi değiştirmemeli')
+  assert.deepEqual(playShells({ shells: null }), noField)
+  assert.ok(!hitBoxes().some(b => String(b.id).startsWith('shell:')))
+
+  const M = 60 * 1000
+  const shells = [
+    { id: 'sh-dev', command: 'npm run dev', startAt: NOW - 5 * M, status: 'running', project: PROJECTS[0] },
+    { id: 'sh-test', command: 'pytest -x tests', startAt: NOW - 1 * M, status: 'running', project: PROJECTS[1], agentId: 'demo-1' },
+    { id: 'sh-log', command: 'tail -f server.log', startAt: NOW - 3 * M, status: 'running', project: PROJECTS[2] },
+    { id: 'sh-build', command: 'npm run build', startAt: NOW - 4 * M, endAt: NOW - 2 * M, exitCode: 0, status: 'completed', project: PROJECTS[0] },
+    { id: 'sh-cargo', command: 'cargo test', startAt: NOW - 4 * M, endAt: NOW - 1 * M, exitCode: 101, status: 'failed', project: PROJECTS[1] },
+    { id: 'sh-kill', command: 'docker compose up', startAt: NOW - 6 * M, endAt: NOW - 1 * M, status: 'killed', project: PROJECTS[2] },
+  ]
+  const lit = playShells({ shells })
+  assert.notDeepEqual(lit, noField, 'kabuklar raflarda görünmeli')
+  const g = setGeometry(1320, 700)
+  const boxes = hitBoxes()
+  const slotBoxes = boxes.filter(b => String(b.id).startsWith('shell:'))
+  assert.equal(slotBoxes.length, shells.length)
+  // tıklama: yuva → 'shell:<id>'; müdür ve işçiler hâlâ seçilir
+  const toPx = b => [(b.x + b.w / 2) * g.S + Math.floor((1320 - g.LW * g.S) / 2), (b.y + b.h / 2) * g.S + Math.floor((700 - g.LH * g.S) / 2)]
+  for (const b of slotBoxes) assert.equal(hitTest(...toPx(b)), b.id)
+  assert.ok(slotBoxes.every(b => b.x > g.LW - 100 && b.y < 45), 'yuvalar sağ üstteki sunucu odasında')
+  assert.equal(hitTest(...toPx(boxes.find(b => b.id === BOSS_ID && !b.isTag))), BOSS_ID)
+  const worker = boxes.find(b => !b.isTag && b.id.startsWith('demo-'))
+  assert.ok(worker && hitTest(...toPx(worker)) !== null)
+  // çalışan yuvanın lambaları yanıp söner (kabuğa özgü faz), bitenlerinki sabit
+  const at = (fb, b) => { const out = []; for (let x = b.x; x < b.x + b.w; x++) out.push(fb[(b.y + 1) * g.LW + x]); return out }
+  const dev = slotBoxes.find(b => b.id === 'shell:sh-dev')
+  const build = slotBoxes.find(b => b.id === 'shell:sh-build')
+  const blinks = new Set()
+  const steady = new Set()
+  for (let t = NOW; t < NOW + 3000; t += 110) {
+    const f = render(t, { ...multiOffice(NOW, PROJECTS), shells })
+    blinks.add(at(f.fb, dev).join())
+    steady.add(at(f.fb, build).join())
+  }
+  assert.ok(blinks.size > 1, 'çalışan kabuk yanıp sönmeli')
+  assert.equal(steady.size, 1, 'biten kabuk sabit yanmalı')
+  // seçim işareti yuvada da çalışır
+  const plainFb = render(NOW, { ...multiOffice(NOW, PROJECTS), shells }).fb.slice()
+  const sel = render(NOW, { ...multiOffice(NOW, PROJECTS), shells }, { selected: 'shell:sh-test' })
+  assert.notDeepEqual(sel.fb, plainFb, 'yuvada seçim işareti çizilmeli')
+  const accent = parseInt(themeInfo().accent.slice(1), 16)
+  const test = slotBoxes.find(b => b.id === 'shell:sh-test')
+  const ring = []
+  for (let x = test.x - 1; x <= test.x + test.w; x++) ring.push(sel.fb[(test.y - 1) * g.LW + x])
+  assert.ok(ring.includes(accent), 'köşe çizgileri vurgu renginde')
+  let path = join(OUT, 'shells-selected.png')
+  writePng(path, sel)
+  shellShots.push(path)
+
+  // fazlası: 9 yuva; son yuva "+n" ve ilk gizli kabuğu seçer
+  const many = []
+  for (let i = 0; i < 14; i++) many.push({ id: `k${i}`, command: ['npm run dev', 'make watch', 'go test ./...', 'bun x'][i % 4], startAt: NOW - (20 - i) * 1000, status: 'running', project: PROJECTS[0] })
+  resetOffice()
+  setTheme('classic')
+  setGeometry(1320, 700)
+  const crowd = render(NOW, { ...demoOffice(NOW), shells: many }, { selected: 'shell:k8' })
+  const kBoxes = hitBoxes().filter(b => String(b.id).startsWith('shell:'))
+  assert.equal(kBoxes.length, 9)
+  assert.equal(kBoxes[8].id, 'shell:k8', '+n yuvası ilk gizli kabuk')
+  path = join(OUT, 'shells-overflow.png')
+  writePng(path, crowd)
+  shellShots.push(path)
+}
+
+console.log('ok', shellShots)
 console.log('ok', selectShots)
 console.log('ok', multiShots)
 console.log('ok', geo, infos, { live: { project: all.project, workers: all.workers.length, delivered: all.delivered } }, shots)

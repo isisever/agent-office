@@ -601,3 +601,4 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
   color: var(--accent);
 }
 .ap-empty { opacity: .55; padding: 4px 0; }
+.ap-shell-proj { display: block; margin: 6px 0 2px; }

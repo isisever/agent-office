@@ -530,7 +530,7 @@ function selectionMarker(id, now) {
     arms.push([Math.min(cx, cx + dx * 3), cy, 4, 1], [cx, Math.min(cy, cy + dy * 3), 1, 4])
   for (const [rx, ry, rw, rh] of arms) rect(rx - 1, ry - 1, rw + 2, rh + 2, C.ol)
   for (const [rx, ry, rw, rh] of arms) rect(rx, ry, rw, rh, c)
-  const top = Math.min(...own.map(b => b.y))
+  const top = body.markTop ?? Math.min(...own.map(b => b.y))
   const bob = Math.floor(now / 220) % 2
   const ax = x + Math.floor(w / 2)
   const ay = top - 3 - bob
@@ -822,6 +822,77 @@ function rack(x, y, now, isBusy, seed) {
     }
   }
   shade(x, y + 35, 16, 2, 0.7)
+}
+
+// ---------- arka plan kabukları: sunucu odasındaki raf yuvaları ----------
+// her rafta SLOTS_PER_RACK yuva; yuvalar önce raflar boyunca (üst sıra), sonra aşağı dolar
+const SLOTS_PER_RACK = 3
+const SHELL_PREFIX = 'shell:'
+const SKIP_WORDS = new Set(['sudo', 'env', 'nohup', 'time', 'exec', 'command', 'nice'])
+
+// komutun kısa adı: son '&&'/';' parçasının ilk gerçek sözcüğü (VAR=x, sudo… atlanır), yolsuz, 3 harf
+export function shellLabel(command) {
+  const parts = String(command ?? '').split(/&&|\|\||;|\|/).map(p => p.trim()).filter(Boolean)
+  const seg = parts.find(p => !/^cd\s/.test(p) && p !== 'cd') ?? parts[0] ?? ''
+  const word = seg.split(/\s+/).find(t => t && !/^\w+=/.test(t) && !SKIP_WORDS.has(t) && !/^[('"]+$/.test(t)) ?? ''
+  const base = word.replace(/^[('"]+|['")]+$/g, '').split('/').filter(Boolean).pop() ?? ''
+  const ascii = base.toUpperCase().replace(/[^A-Z0-9.\-_+]/g, '')
+  return ascii.slice(0, 3) || '?'
+}
+
+const shellDone = sh => sh.endAt != null || (sh.status != null && sh.status !== 'running')
+const shellOk = sh => (sh.status === 'completed' || sh.status == null || sh.status === 'running') && (sh.exitCode == null || sh.exitCode === 0)
+
+// çalışanlar önce (başlama sırasıyla), sonra bitenler
+function orderShells(shells) {
+  const valid = shells.filter(sh => sh && typeof sh === 'object' && sh.id != null)
+  const by = (a, b) => (a.startAt ?? 0) - (b.startAt ?? 0)
+  return [...valid.filter(sh => !shellDone(sh)).sort(by), ...valid.filter(shellDone).sort(by)]
+}
+
+// rafların yuvaları: lambalar (çalışan: vurgu renginde, kabuğa özgü fazla yanıp söner; biten: sabit yeşil/kırmızı)
+// ve komutun ilk harfleri. Fazlası son yuvada "+n" olur (tıklanınca ilk gizli kabuk).
+function shellSlots(shells, now, projOf) {
+  if (!shells.length) return
+  const { serverX0, B } = L
+  const racks = Math.floor((LW - B - serverX0 - 24) / 20)
+  const total = racks * SLOTS_PER_RACK
+  if (total <= 0) return
+  const list = orderShells(shells)
+  const shown = list.length > total ? list.slice(0, total - 1) : list
+  const place = i => {
+    const r = i % racks
+    const k = Math.floor(i / racks)
+    return { x: serverX0 + 10 + r * 20 + 1, y: 10 + 2 + k * 10, top: 10 }
+  }
+  shown.forEach((sh, i) => {
+    const { x, y, top } = place(i)
+    const seed = strHash(String(sh.id))
+    const done = shellDone(sh)
+    const ok = shellOk(sh)
+    rect(x, y, 14, 9, C.dark)
+    const pr = projOf(sh.project)
+    if (pr) rect(x, y, 1, 9, pr.color)
+    const period = 170 + (seed % 140)
+    const tick = Math.floor((now + (seed % 997)) / period)
+    for (let j = 0; j < 3; j++) {
+      let c
+      if (done) c = ok ? C.green : C.red
+      else c = hash(seed + j * 131 + tick * 7) % 3 === 0 ? mix(C.dark, C.accent, 0.3) : C.accent
+      rect(x + 2 + j * 4, y + 1, 2, 1, c)
+    }
+    text(shellLabel(sh.command), x + 2, y + 3, done ? (ok ? C.dim : C.red) : C.white)
+    hits.push({ id: SHELL_PREFIX + sh.id, x, y, w: 14, h: 9, markTop: top })
+  })
+  if (shown.length < list.length) {
+    const { x, y, top } = place(total - 1)
+    const extra = list.length - shown.length
+    rect(x, y, 14, 9, C.dark)
+    for (let j = 0; j < 3; j++) rect(x + 2 + j * 4, y + 1, 2, 1, mix(C.dark, C.yellow, 0.5))
+    const label = `+${Math.min(99, extra)}`
+    text(label, x + Math.round((14 - textWidth(label)) / 2), y + 3, C.yellow)
+    hits.push({ id: SHELL_PREFIX + list[shown.length].id, x, y, w: 14, h: 9, markTop: top })
+  }
 }
 
 function cabinet(x, y) {
@@ -1408,6 +1479,7 @@ function renderFrame(now, data, focus = '', selected = null) {
   djBooth(now, hot)
   if (party.size > 0) balloons(now)
   for (let i = 0; i < Math.floor((LW - B - serverX0 - 24) / 20); i++) rack(serverX0 + 10 + i * 20, 10, now, isBusy, i)
+  shellSlots(Array.isArray(data.shells) ? data.shells : [], now, projOf)
   if (isBusy) {
     const on = Math.floor(now / 400) % 2
     box(serverX0 + 12, 60, 6, 5, on ? C.red : 0x8a2a24)

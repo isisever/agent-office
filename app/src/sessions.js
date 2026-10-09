@@ -55,6 +55,49 @@ function themesError(root) {
   return loadThemes(root).error
 }
 
+// ---------- ayarlar ----------
+// settings.json { forgetMinutes: 1-60 } (eklentiyle aynı kural, varsayılan 5): bitmiş kabuklar bu kadar kalır
+const FORGET_MINUTES = { min: 1, max: 60, default: 5 }
+let settingsCache = { key: null, forgetMs: FORGET_MINUTES.default * 60_000 }
+
+function forgetMs(root = rootDir()) {
+  const path = join(root, 'settings.json')
+  let key
+  try {
+    const st = statSync(path)
+    key = `${path}|${st.mtimeMs}|${st.size}`
+  } catch {
+    key = `${path}|yok`
+  }
+  if (settingsCache.key === key) return settingsCache.forgetMs
+  let minutes = FORGET_MINUTES.default
+  try {
+    const m = JSON.parse(readFileSync(path, 'utf8'))?.forgetMinutes
+    if (typeof m === 'number' && Number.isFinite(m)) minutes = Math.min(FORGET_MINUTES.max, Math.max(FORGET_MINUTES.min, m))
+  } catch {}
+  settingsCache = { key, forgetMs: minutes * 60_000 }
+  return settingsCache.forgetMs
+}
+
+// ---------- arka plan kabukları ----------
+// canlı oturum: dosyadaki hepsi (çalışanlar + unutma süresi dolmamış bitenler; eklenti budar, burada da süzülür).
+// canlı olmayan oturum: yalnız bitişi unutma süresi içinde olanlar; oturum bittiğinde hâlâ "çalışan" görünenler
+// oturumla birlikte kapanmıştır (killed, endAt = endedAt). Bitmemiş ama bayat oturumun çalışanları gösterilmez.
+function shellsOf(s, isLive, now, forget) {
+  const out = []
+  for (const sh of Array.isArray(s.shells) ? s.shells : []) {
+    if (!sh || typeof sh !== 'object' || sh.id == null) continue
+    let shell = sh
+    if (sh.endAt == null && !isLive) {
+      if (!s.endedAt) continue
+      shell = { ...sh, endAt: s.endedAt, status: 'killed' }
+    }
+    if (shell.endAt != null && now - shell.endAt > forget) continue
+    out.push(shell)
+  }
+  return out
+}
+
 // ---------- ofis ----------
 // projects: dahil edilecek proje adları; null = bütün canlı oturumlar. (Eski tek proje adı da kabul edilir.)
 // delivered: bugün (yerel gün) teslim edilenler; doneAt'i bugün olan işçiler ∪ stats.today kimlikleri,
@@ -62,7 +105,8 @@ function themesError(root) {
 function readOffice(projects, now = Date.now(), root = rootDir()) {
   const list = projects == null ? null : (Array.isArray(projects) ? projects : [projects]).filter(p => p != null && p !== '')
   const only = list ? new Set(list.map(slugOf)) : null
-  const data = { workers: [], delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' }
+  const data = { workers: [], shells: [], delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' }
+  const forget = forgetMs(root)
 
   // proje tablosu: verilen sırayla, sonra görülenler
   const table = new Map()
@@ -111,12 +155,18 @@ function readOffice(projects, now = Date.now(), root = rootDir()) {
       delivers ||= s.stats.today.ids.length > 0
     }
     const isLive = !s.endedAt && now - (s.updatedAt ?? 0) <= LIVE_MS
+    const shells = shellsOf(s, isLive, now, forget)
     if (!isLive) {
-      if (delivers) entry(s.project)
+      if (delivers || shells.length) {
+        const p = entry(s.project)
+        const project = p.name || String(s.project ?? '')
+        for (const sh of shells) data.shells.push({ ...sh, project })
+      }
       continue
     }
     const p = entry(s.project)
     const project = p.name || String(s.project ?? '')
+    for (const sh of shells) data.shells.push({ ...sh, project })
     for (const w of workers) {
       if (!w || typeof w !== 'object') continue
       data.workers.push({ ...w, project })
@@ -136,6 +186,7 @@ function readOffice(projects, now = Date.now(), root = rootDir()) {
     if (p) p.delivered++
   }
   data.delivered = seen.size
+  data.shells.sort((a, b) => (a.startAt ?? 0) - (b.startAt ?? 0))
   data.projects = [...table.values()]
   // oturum yoksa da tema ilk projeye göre seçilsin
   if (!data.project && list?.length) data.project = String(list[0])
@@ -144,4 +195,4 @@ function readOffice(projects, now = Date.now(), root = rootDir()) {
   return data
 }
 
-module.exports = { readOffice, readThemes, themesError, dayKey, LIVE_MS }
+module.exports = { readOffice, readThemes, themesError, dayKey, forgetMs, LIVE_MS }
