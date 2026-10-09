@@ -105,9 +105,19 @@ function shellsOf(s, isLive, now, forget) {
 // Bu uygulamanın okuyabildiği en yeni oturum dosyası biçimi (eklentinin FORMAT'ı; yoksa eski dosya, 2 sayılır).
 const FORMAT = 2
 
-function readOffice(projects, now = Date.now(), root = rootDir()) {
+// Sekmeler (sözleşme v3.0): eklenti oturumu klasörün adıyla anar; worktree sekmesinin klasörü başka adlıysa
+// (`<depo>-wt-<n>`) aliases { oturum adı: proje adı } o oturumları projesine sayar: işçiler, kabuklar,
+// teslimler, meşgul/onay durumu proje adını taşır. Eşlenmeyen ad kendisidir.
+function aliasOf(aliases) {
+  const map = new Map()
+  for (const [from, to] of Object.entries(aliases ?? {})) if (from && to) map.set(slugOf(from), String(to))
+  return name => map.get(slugOf(name)) ?? name
+}
+
+function readOffice(projects, now = Date.now(), root = rootDir(), aliases = null) {
   const list = projects == null ? null : (Array.isArray(projects) ? projects : [projects]).filter(p => p != null && p !== '')
   const only = list ? new Set(list.map(slugOf)) : null
+  const projectOf = aliasOf(aliases)
   const data = { workers: [], shells: [], delivered: 0, isBossBusy: false, isBossAsking: false, projects: [], project: '', sessionId: '' }
   const forget = forgetMs(root)
 
@@ -141,6 +151,7 @@ function readOffice(projects, now = Date.now(), root = rootDir()) {
       continue
     }
     if (!s || typeof s !== 'object') continue
+    s.project = projectOf(s.project)
     const key = slugOf(s.project)
     if (only && !only.has(key)) continue
     // daha yeni bir eklentinin yazdığı dosya: yanlış okumak yerine uyar (sözleşme v2.8)
@@ -212,8 +223,9 @@ function readOffice(projects, now = Date.now(), root = rootDir()) {
 // ---------- gün sonu özeti (sözleşme v2.9) ----------
 // Bugünün teslimleri: her oturumun stats.today.log'u (işçi ofisten ayrılsa da kalır), projesiyle, en yenisi önce.
 // projects verilirse yalnız onlar. untracked: günlüğü olmayan (eski eklenti) teslim sayısı.
-function readToday(projects, now = Date.now(), root = rootDir()) {
+function readToday(projects, now = Date.now(), root = rootDir(), aliases = null) {
   const only = projects == null ? null : new Set(projects.map(slugOf))
+  const projectOf = aliasOf(aliases)
   const day = dayKey(now)
   const midnight = new Date(now).setHours(0, 0, 0, 0)
   const sessions = join(root, 'sessions')
@@ -234,6 +246,7 @@ function readToday(projects, now = Date.now(), root = rootDir()) {
     }
     if (!s || typeof s !== 'object' || s.stats?.today?.date !== day) continue
     if (Number.isFinite(s.format) && s.format > FORMAT) continue
+    s.project = projectOf(s.project)
     if (only && !only.has(slugOf(s.project))) continue
     const project = String(s.project ?? '')
     const ids = Array.isArray(s.stats.today.ids) ? s.stats.today.ids : []

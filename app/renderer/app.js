@@ -1,9 +1,9 @@
-// Her şeyi bağlar: kenar çubuğu (projeler, hesaplar), proje başına terminal, ofis ve tema renkleri.
+// Her şeyi bağlar: kenar çubuğu (projeler, hesaplar), proje başına terminal(ler) (sekmeler, v3.0), ofis ve tema renkleri.
 import { mountTerminal, pasteIntoFocused } from './terminal.js';
 import { mountSidebar } from './sidebar.js';
 import { mountLogin } from './login.js';
 import { setLang, onLang, pick } from './i18n.js';
-import { modLabel, isModKey, keyOf } from './platform.js';
+import { modLabel, isModKey, keyOf, isMac } from './platform.js';
 
 // Düz tarayıcıda (Electron dışında) düzeni görmek için sahte window.agentOffice.
 if (!window.agentOffice) await import('./dev-mock.js');
@@ -43,6 +43,12 @@ const S = {
     emptyAdd: '+ Add project',
     emptyAddTitle: `Add project (${modLabel}O)`,
     emptyNote: 'Pick a folder; Claude starts there.',
+    newTab: isMac ? 'New terminal in this project (⌘T; git worktree: ⇧⌘T)' : 'New terminal in this project (Ctrl+Shift+T)',
+    closeTab: 'Close tab',
+    mainTab: (dir) => `Main terminal (cannot be closed)\n${dir}`,
+    sameTab: (dir) => `Terminal in the project folder\n${dir}`,
+    worktreeTab: (branch, dir) => `Git worktree, branch ${branch}\n${dir}`,
+    stopped: ' (Claude stopped)',
   },
   tr: {
     appTitle: 'AGENT OFİS',
@@ -69,6 +75,12 @@ const S = {
     emptyAdd: '+ Proje ekle',
     emptyAddTitle: `Proje ekle (${modLabel}O)`,
     emptyNote: 'Bir klasör seç; Claude orada başlar.',
+    newTab: isMac ? 'Bu projede yeni terminal (⌘T; git worktree: ⇧⌘T)' : 'Bu projede yeni terminal (Ctrl+Shift+T)',
+    closeTab: 'Sekmeyi kapat',
+    mainTab: (dir) => `Ana terminal (kapatılamaz)\n${dir}`,
+    sameTab: (dir) => `Proje klasöründe terminal\n${dir}`,
+    worktreeTab: (branch, dir) => `Git worktree, dal ${branch}\n${dir}`,
+    stopped: ' (Claude kapalı)',
   },
 };
 const t = () => pick(S);
@@ -86,12 +98,25 @@ let status = [];
 let accounts = [];
 let theme = DEFAULT_THEME;
 let focusName; // ofise son bildirilen proje
-const panes = new Map(); // projectId -> { el, hint, term }
-const pending = new Map(); // projectId -> { data: string, exited: boolean }
+const panes = new Map(); // pty kimliği (projectId ya da `<projectId>:<n>`) -> { el, hint, term }
+const pending = new Map(); // pty kimliği -> { data: string, exited: boolean }
+const activeTab = new Map(); // projectId -> görünen sekmenin numarası (1 = ana terminal; yalnız bu pencerede)
 
+// ---- Sekmeler (sözleşme v3.0): ilk sekme ana terminal (pty kimliği projectId), ek sekme `<projectId>:<n>` ----
+const MAIN_TAB = 1;
+const tabsOf = (p) => (Array.isArray(p?.tabs) ? p.tabs : []);
+const tabPtyId = (projectId, n) => (n === MAIN_TAB ? projectId : `${projectId}:${n}`);
+const ptyIdsOf = (p) => [p.id, ...tabsOf(p).map((x) => tabPtyId(p.id, x.n))];
+/** Projede görünen sekme; kapanmış sekme ana terminale düşer. */
+function tabOf(p) {
+  const n = activeTab.get(p.id);
+  return tabsOf(p).some((x) => x.n === n) ? n : MAIN_TAB;
+}
 const activeProject = () => projects.find((p) => p.id === activeId) || null;
+/** Görünen terminalin pty kimliği. */
+const activePty = () => { const p = activeProject(); return p ? tabPtyId(p.id, tabOf(p)) : null; };
 // Giriş katmanı açıkken odak onun terminalinde kalır.
-const focusActive = () => (login?.isOpen() ? login.focus() : panes.get(activeId)?.term.focus());
+const focusActive = () => (login?.isOpen() ? login.focus() : panes.get(activePty())?.term.focus());
 let login = null; // giriş katmanı (login.js)
 
 // ---- Tema ----
@@ -153,10 +178,10 @@ function hint(projectId, text) {
   p.hint.hidden = !text;
 }
 
-function createPane(project) {
+function createPane(id) {
   const el = document.createElement('div');
   el.className = 'pane';
-  el.dataset.id = project.id;
+  el.dataset.id = id;
   el.hidden = true;
   const hintEl = document.createElement('div');
   hintEl.className = 'hint';
@@ -173,18 +198,18 @@ function createPane(project) {
   el.append(hintEl, host);
   $('terminals').appendChild(el);
 
-  const term = mountTerminal(host, { projectId: project.id, theme });
-  panes.set(project.id, { el, hint: hintEl, term });
-  const buf = pending.get(project.id);
+  const term = mountTerminal(host, { projectId: id, theme });
+  panes.set(id, { el, hint: hintEl, term });
+  const buf = pending.get(id);
   if (buf) {
-    pending.delete(project.id);
+    pending.delete(id);
     if (buf.data) term.write(buf.data);
     if (buf.exited) term.exit();
   }
 }
 
 function syncPanes() {
-  const ids = new Set(projects.map((p) => p.id).filter((id) => !isLoginId(id)));
+  const ids = new Set(projects.flatMap(ptyIdsOf).filter((id) => !isLoginId(id)));
   for (const [id, p] of panes) {
     if (ids.has(id)) continue;
     p.term.destroy();
@@ -192,17 +217,107 @@ function syncPanes() {
     panes.delete(id);
   }
   for (const id of pending.keys()) if (!ids.has(id)) pending.delete(id);
-  for (const p of projects) if (ids.has(p.id) && !panes.has(p.id)) createPane(p);
+  for (const id of ids) if (!panes.has(id)) createPane(id);
 }
 
 let shownId; // görünür terminal; yalnız değişince odak/boyut
 function showActive() {
-  for (const [id, p] of panes) p.el.hidden = id !== activeId;
+  const visible = activePty();
+  for (const [id, p] of panes) p.el.hidden = id !== visible;
   $('empty').hidden = projects.length > 0;
-  if (shownId === activeId) return;
-  shownId = activeId;
-  const p = panes.get(activeId);
+  renderTabs();
+  if (shownId === visible) return;
+  shownId = visible;
+  const p = panes.get(visible);
   if (p) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
+}
+
+// Sekme şeridi yalnız projede birden çok sekme varken görünür; tek terminal eskisi gibi kalır
+// (o zaman "+" terminalin sağ üst köşesinde, üzerine gelince belirir).
+const baseName = (d) => String(d || '').replace(/\/+$/, '').split('/').pop() || '';
+function tabButton(p, tab, active, running) {
+  const n = tab?.n ?? MAIN_TAB;
+  const dir = tab?.dir || p.dir;
+  const b = document.createElement('div');
+  b.className = 'tab' + (n === active ? ' active' : '') + (running ? '' : ' stopped') + (tab?.worktree ? ' worktree' : '');
+  b.dataset.n = String(n);
+  b.title = (tab?.worktree ? t().worktreeTab(tab.worktree.branch, dir) : n === MAIN_TAB ? t().mainTab(dir) : t().sameTab(dir)) + (running ? '' : t().stopped);
+  const num = document.createElement('span');
+  num.className = 'tab-n';
+  num.textContent = String(n);
+  const label = document.createElement('span');
+  label.className = 'tab-label';
+  label.textContent = tab?.worktree ? `⎇ ${tab.worktree.branch}` : baseName(dir);
+  b.append(num, label);
+  b.addEventListener('click', () => selectTab(p.id, n));
+  if (tab) {
+    const x = document.createElement('button');
+    x.className = 'tab-x';
+    x.textContent = '×';
+    x.title = t().closeTab;
+    x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(p.id, n); });
+    b.append(x);
+  }
+  return b;
+}
+function renderTabs() {
+  const p = activeProject();
+  const strip = $('tabs');
+  const many = Boolean(p && tabsOf(p).length);
+  strip.hidden = !many;
+  $('terminal').classList.toggle('has-tabs', many);
+  $('tab-add').hidden = !p || many;
+  $('tab-add').title = t().newTab;
+  if (!many) { strip.replaceChildren(); return; }
+  const st = status.find((x) => x.id === p.id);
+  const runningOf = (n) => (n === MAIN_TAB ? st?.isRunning !== false : st?.tabs?.find((x) => x.n === n)?.isRunning !== false);
+  const active = tabOf(p);
+  const add = document.createElement('button');
+  add.className = 'tab-new';
+  add.textContent = '+';
+  add.title = t().newTab;
+  add.addEventListener('click', () => addTab(p.id));
+  strip.replaceChildren(
+    tabButton(p, null, active, runningOf(MAIN_TAB)),
+    ...tabsOf(p).map((tab) => tabButton(p, tab, active, runningOf(tab.n))),
+    add,
+  );
+}
+
+function selectTab(projectId, n) {
+  activeTab.set(projectId, n);
+  render();
+  focusActive();
+}
+// mode verilmezse main sorar (git deposunda menü: aynı klasör / yeni worktree).
+async function addTab(projectId, mode) {
+  if (!projectId) return;
+  try {
+    const tab = await api.tabs?.add(projectId, mode);
+    if (tab?.n) {
+      applyProjects(await api.projects.list());
+      selectTab(projectId, tab.n);
+      return;
+    }
+  } catch (e) { console.error(e); }
+  focusActive();
+}
+async function closeTab(projectId, n) {
+  try {
+    const r = await api.tabs?.close(projectId, n);
+    // git worktree'yi kaldırmadı: claude aynı sekmede son oturumundan yeniden başladı
+    if (r?.restarted) panes.get(tabPtyId(projectId, n))?.term.reset({ restarting: true });
+    applyProjects(await api.projects.list());
+  } catch (e) { console.error(e); }
+  focusActive();
+}
+/** ⇧⌘[ / ⇧⌘] (Linux: Ctrl+Shift+PageUp/PageDown): etkin projede önceki/sonraki sekme. */
+function cycleTab(step) {
+  const p = activeProject();
+  if (!p || !tabsOf(p).length) return;
+  const ns = [MAIN_TAB, ...tabsOf(p).map((x) => x.n)];
+  const i = ns.indexOf(tabOf(p));
+  selectTab(p.id, ns[(i + step + ns.length) % ns.length]);
 }
 
 // `login:<hesap>` kimlikleri giriş katmanına gider; onlar için hiçbir zaman proje bölmesi kurulmaz.
@@ -285,7 +400,9 @@ async function removeProject(p) {
 }
 
 async function setAccount(projectId, accountId) {
-  panes.get(projectId)?.term.reset({ restarting: true }); // yeni hesapla yeni claude başlar
+  // yeni hesapla bütün sekmelerde yeni claude başlar
+  const proj = projects.find((p) => p.id === projectId);
+  for (const id of proj ? ptyIdsOf(proj) : [projectId]) panes.get(id)?.term.reset({ restarting: true });
   hint(projectId, '');
   try {
     await api.projects.setAccount(projectId, accountId);
@@ -363,7 +480,7 @@ function setCollapsed(c) {
   document.body.classList.toggle('sidebar-collapsed', c);
   $('toggle-sidebar').title = c ? t().showSidebar : t().hideSidebar;
   store.set('sidebarCollapsed', c ? '1' : '0');
-  requestAnimationFrame(() => panes.get(activeId)?.term.fit());
+  requestAnimationFrame(() => panes.get(activePty())?.term.fit());
 }
 $('toggle-sidebar').addEventListener('click', () => {
   setCollapsed(!document.body.classList.contains('sidebar-collapsed'));
@@ -389,6 +506,7 @@ function applyStaticText() {
   for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.hint-close'))) b.title = t().close;
   setTitleProject();
   setStats(lastStats);
+  renderTabs();
   if (updateVersion) showUpdate(updateVersion);
 }
 function applyLanguage(li) {
@@ -402,6 +520,7 @@ applyStaticText();
 api.prefs?.get().then((p) => sidebar.setResume(p?.resume)).catch((e) => console.error(e));
 
 $('empty-add').addEventListener('click', addProject);
+$('tab-add').addEventListener('click', () => addTab(activeId));
 
 // ⌘V (Linux'ta Ctrl+Shift+V; menüden): odaktaki terminale akıllı yapıştırma; terminal dışında (ör. hesap adı) normal yapıştırma.
 api.clipboard.onPaste?.(async () => {
@@ -410,8 +529,20 @@ api.clipboard.onPaste?.(async () => {
 
 // ⌘O / ⌘1…9 (Linux'ta Ctrl+Shift+O / Ctrl+Shift+1…9). Yakalanan tuş terminale (xterm) ulaşmaz.
 window.addEventListener('keydown', (e) => {
+  // sekmeler: macOS'ta ⇧⌘T yeni git worktree, ⇧⌘[ ve ⇧⌘] önceki/sonraki; Linux'ta Shift değiştiricinin
+  // parçası olduğu için önceki/sonraki Ctrl+Shift+PageUp/PageDown (worktree "+" menüsünden)
+  if (isMac && e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey) {
+    if (e.code === 'KeyT') { e.preventDefault(); e.stopPropagation(); addTab(activeId, 'worktree'); return; }
+    if (e.code === 'BracketLeft' || e.code === 'BracketRight') { e.preventDefault(); e.stopPropagation(); cycleTab(e.code === 'BracketLeft' ? -1 : 1); return; }
+    return;
+  }
+  if (!isMac && e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'PageUp' || e.code === 'PageDown')) {
+    e.preventDefault(); e.stopPropagation(); cycleTab(e.code === 'PageUp' ? -1 : 1); return;
+  }
   if (!isModKey(e)) return;
   const key = keyOf(e);
+  // ⌘T / Ctrl+Shift+T: yeni sekme (git deposunda main aynı klasör mü worktree mi diye sorar)
+  if (key === 't') { e.preventDefault(); e.stopPropagation(); addTab(activeId); return; }
   if (key === 'o') { e.preventDefault(); e.stopPropagation(); addProject(); return; }
   if (/^[1-9]$/.test(key)) {
     const p = projects[Number(key) - 1];

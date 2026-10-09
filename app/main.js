@@ -1,4 +1,4 @@
-// Agent Office kabuğu: pencere, projeler, hesaplar, her projeye bir claude pty'si ve ofis verisi.
+// Agent Office kabuğu: pencere, projeler, hesaplar, her projeye bir (sekmelerle birkaç) claude pty'si ve ofis verisi.
 const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, shell: eShell } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
@@ -16,9 +16,9 @@ let win = null;
 let poll = null;
 let state = null;            // { projects, accounts, activeId }
 let isLoaded = false;        // renderer yüklendi mi: pty'ler ancak o zaman başlar (erken çıktı kaybolmasın)
-const terms = new Map();     // projectId → pty
+const terms = new Map();     // pty kimliği → pty: ana sekme projectId, ek sekme `<projectId>:<n>` (bkz. projects.js tabPtyId)
 const logins = new Map();    // 'login:<accountId>' → `claude auth login` pty'si (projects:changed'e girmez)
-const sizes = new Map();     // projectId → { cols, rows } (son pty:resize)
+const sizes = new Map();     // pty kimliği → { cols, rows } (son pty:resize)
 const auths = new Map();     // accountId → AccountAuth (yalnız bellekte)
 const usages = new Map();    // accountId → AccountUsage (usage/<accountId>/last.json'da da durur)
 const ptyOf = (id) => terms.get(id) || logins.get(id);
@@ -52,7 +52,10 @@ const send = (ch, ...args) => { if (win && !win.isDestroyed()) win.webContents.s
 const snapshot = () => ({
   projects: state.projects,
   activeId: state.activeId,
-  status: state.projects.map((p) => ({ id: p.id, isRunning: terms.has(p.id), attention: attention.get(p.id) || null })),
+  status: state.projects.map((p) => ({
+    id: p.id, isRunning: terms.has(p.id), attention: attention.get(p.id) || null,
+    tabs: P.tabsOf(p).map((t) => ({ n: t.n, isRunning: terms.has(P.tabPtyId(p.id, t.n)) })),
+  })),
 });
 const broadcast = () => send('projects:changed', snapshot());
 
@@ -76,7 +79,7 @@ function notify(title, body, projectId) {
 }
 function updateAttention() {
   if (!lastOffice) return;
-  const r = N.nextAttention(attnState, state.projects, lastOffice, seenId());
+  const r = N.nextAttention(attnState, state.projects, lastOffice, seenId(), sessionAliases());
   attnState = r.state;
   for (const ev of r.events) {
     const p = P.findProject(state, ev.id);
@@ -129,6 +132,16 @@ const MSG = {
     notifyDone: 'Claude işini bitirdi, seni bekliyor.',
     notifyUsage: (w, pct, when) => `${w === 'fiveHour' ? '5 saatlik' : 'Haftalık'} kotanın %${pct}'i kullanıldı${when ? ` · ${when} sıfırlanır` : ''}`,
     view: 'Görünüm', reload: 'Yeniden yükle', devTools: 'Geliştirici araçları', fullscreen: 'Tam ekran', window: 'Pencere',
+    tabSame: 'Yeni terminal (aynı klasör)', tabWorktree: 'Yeni terminal, yeni git worktree\'de',
+    notGit: 'Bu proje bir git deposu değil; worktree açılamaz.',
+    worktreeFailed: 'Git worktree oluşturulamadı.',
+    cancel: 'Vazgeç', closeTab: 'Sekmeyi kapat',
+    closeTabConfirm: 'Bu sekme kapatılsın mı?', closeTabDetail: 'İçindeki Claude oturumu kapanır (sonra /resume ile devam edebilirsin).',
+    closeWorktreeConfirm: (branch) => `Sekme kapatılsın mı? Worktree (${branch}) de kaldırılsın mı?`,
+    closeWorktreeDetail: (root) => `${root}\n\nKaldırmak "git worktree remove" çalıştırır (zorlamadan): değişiklik varsa git reddeder ve hiçbir şey silinmez. Dal yerinde kalır.`,
+    removeWorktree: 'Kapat ve worktree\'yi kaldır', keepWorktree: 'Kapat, klasör kalsın',
+    worktreeKept: 'Git worktree\'yi kaldırmadı; sekme açık kaldı.',
+    worktreeKeptDetail: (err) => `${err}\n\nDeğişiklikleri commit'le ya da geri al ve sekmeyi yeniden kapat; ya da "Kapat, klasör kalsın"ı seç.`,
   },
   en: {
     defaultAccount: 'Default',
@@ -144,6 +157,16 @@ const MSG = {
     notifyDone: 'Claude finished and is waiting for you.',
     notifyUsage: (w, pct, when) => `${pct}% of the ${w === 'fiveHour' ? '5-hour' : 'weekly'} limit used${when ? ` · resets ${when}` : ''}`,
     view: 'View', reload: 'Reload', devTools: 'Developer Tools', fullscreen: 'Full Screen', window: 'Window',
+    tabSame: 'New terminal (same folder)', tabWorktree: 'New terminal in a new git worktree',
+    notGit: 'This project is not a git repository; a worktree cannot be created.',
+    worktreeFailed: 'Could not create the git worktree.',
+    cancel: 'Cancel', closeTab: 'Close Tab',
+    closeTabConfirm: 'Close this tab?', closeTabDetail: 'Its Claude session ends (continue later with /resume).',
+    closeWorktreeConfirm: (branch) => `Close this tab? Remove its worktree (${branch}) too?`,
+    closeWorktreeDetail: (root) => `${root}\n\nRemoving runs "git worktree remove" (never forced): if there are changes git refuses and nothing is deleted. The branch is kept.`,
+    removeWorktree: 'Close and Remove Worktree', keepWorktree: 'Close, Keep Folder',
+    worktreeKept: 'Git did not remove the worktree; the tab stays open.',
+    worktreeKeptDetail: (err) => `${err}\n\nCommit or discard the changes and close the tab again, or choose "Close, Keep Folder".`,
   },
 };
 const LANG_SETTINGS = ['auto', 'en', 'tr'];
@@ -323,23 +346,25 @@ function ensureUsageScript() {
   return usageScript;
 }
 
-// Projenin --settings'i ve kullanıcının kendi status line komutu. Projenin önceki hesaplardaki
-// dosyaları silinir: hesabı değişen proje eski hesabın kotasını yazmaya devam etmiş gibi görünmesin.
-function usageStatusLine(project, configDir) {
+// Sekmenin kota dosyasının adı: ana sekme `<projectId>`, ek sekme `<projectId>-<n>` (.json).
+const usageKey = (ptyId) => String(ptyId).replace(':', '-');
+// Projenin --settings'i ve kullanıcının kendi status line komutu (sekmenin klasöründen). Sekmenin önceki
+// hesaplardaki dosyaları silinir: hesabı değişen proje eski hesabın kotasını yazmaya devam etmiş gibi görünmesin.
+function usageStatusLine(project, configDir, dir = project.dir, key = project.id) {
   const script = ensureUsageScript();
   if (!script) return null;
-  const dir = path.join(usageRoot(), project.accountId);
+  const accDir = path.join(usageRoot(), project.accountId);
   try {
     for (const a of state.accounts) {
-      if (a.id !== project.accountId) fs.rmSync(path.join(usageRoot(), a.id, `${project.id}.json`), { force: true });
+      if (a.id !== project.accountId) fs.rmSync(path.join(usageRoot(), a.id, `${key}.json`), { force: true });
     }
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(accDir, { recursive: true });
   } catch (e) {
     console.error('kota klasörü:', e.message);
     return null;
   }
-  const user = U.userStatusLine(U.settingsPaths(project.dir, configDir, app.getPath('home')).map(readJson));
-  return { settings: U.statusLineSettings(script, path.join(dir, `${project.id}.json`), user), userCommand: user?.command };
+  const user = U.userStatusLine(U.settingsPaths(dir, configDir, app.getPath('home')).map(readJson));
+  return { settings: U.statusLineSettings(script, path.join(accDir, `${key}.json`), user), userCommand: user?.command };
 }
 
 // Hesap klasörlerindeki proje dosyalarından en yenisi; değişen hesap last.json'a yazılır ve gönderilir.
@@ -374,17 +399,21 @@ function scanUsage() {
   if (changed) sendAccounts();
 }
 
-// Projede bu hesapla sürdürülecek bir Claude oturumu var mı (bkz. projects.js historyDir).
-function hasHistory(project, configDir) {
-  try { return fs.readdirSync(P.historyDir(project.dir, configDir, app.getPath('home'))).some((f) => f.endsWith('.jsonl')); } catch { return false; }
+// Klasörde bu hesapla sürdürülecek bir Claude oturumu var mı (bkz. projects.js historyDir).
+function hasHistory(dir, configDir) {
+  try { return fs.readdirSync(P.historyDir(dir, configDir, app.getPath('home'))).some((f) => f.endsWith('.jsonl')); } catch { return false; }
 }
 const RESUME_GRACE_MS = 8000; // --continue bu sürede hatayla biterse claude yeniden, düz başlar
 
-// Projenin claude'unu (yeniden) başlatır; boyut o projenin son pty:resize'ı. resume: son oturumdan devam (--continue).
+// Bir sekmenin claude'unu (yeniden) başlatır; id ana sekmede projectId, ek sekmede `<projectId>:<n>`.
+// Boyut o sekmenin son pty:resize'ı. resume: son oturumdan devam (--continue). Sekme kendi klasöründe
+// (worktree) aynı hesap, eklenti ve status line kurallarıyla başlar. Aynı klasördeki ek sekme --continue
+// almaz: ana sekmenin sürdürdüğü oturumu ikinci bir claude açmasın.
 function startPty(id, { resume = false } = {}) {
   killPty(id);
-  const project = P.findProject(state, id);
-  if (!project || !win || !isLoaded) return broadcast();
+  const r = P.resolvePty(state, id);
+  if (!r || !win || !isLoaded) return broadcast();
+  const { project, tab, dir: cwd } = r;
   const { configDir } = A.accountOf(state, project);
   if (configDir) try { fs.mkdirSync(configDir, { recursive: true }); } catch {}
   const { cols, rows } = sizes.get(id) || lastSize;
@@ -392,8 +421,8 @@ function startPty(id, { resume = false } = {}) {
   // Hesap klasörü rc dosyalarından sonra yeniden verilir (bkz. accounts.js ptyEnv).
   // claude'un argümanları "$@" ile geçer: eklenti yolu ve status line ayarı (kota için, bkz. usage.js).
   const dir = pluginDir();
-  const sl = usageStatusLine(project, configDir);
-  const isResume = resume && hasHistory(project, configDir);
+  const sl = usageStatusLine(project, configDir, cwd, usageKey(id));
+  const isResume = resume && (!tab || Boolean(tab.worktree)) && hasHistory(cwd, configDir);
   const args = [...(dir ? ['--plugin-dir', dir] : []), ...(sl ? ['--settings', sl.settings] : []), ...(isResume ? ['--continue'] : [])];
   const startedAt = Date.now();
   const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; exec claude "$@"';
@@ -405,7 +434,7 @@ function startPty(id, { resume = false } = {}) {
     t = pty.spawn(shell(), ['-l', '-i', '-c', cmd, 'claude', ...args], {
       name: 'xterm-256color',
       cols, rows,
-      cwd: isDir(project.dir) ? project.dir : app.getPath('home'),
+      cwd: isDir(cwd) ? cwd : app.getPath('home'),
       env,
     });
   } catch (e) {
@@ -429,8 +458,17 @@ function startPty(id, { resume = false } = {}) {
 // Yüklemeden sonra çalışmayan her projenin claude'unu başlat (yeniden yüklemede çalışanlara dokunma).
 // Açılışta (ayar açıksa) her proje son oturumundan devam eder.
 function startMissing() {
-  for (const p of state.projects) if (!terms.has(p.id)) startPty(p.id, { resume: state.resume !== false });
+  for (const p of state.projects) {
+    for (const id of P.ptyIdsOf(p)) if (!terms.has(id)) startPty(id, { resume: state.resume !== false });
+  }
 }
+// Projenin bütün sekmelerini yeniden başlatır (hesap değişimi).
+const restartProject = (projectId) => {
+  const p = P.findProject(state, projectId);
+  if (p) for (const id of P.ptyIdsOf(p)) startPty(id);
+};
+// Worktree oturumlarının adı → proje adı (bkz. projects.js sessionAliases): ofis ve bildirimler projeye sayar.
+const sessionAliases = () => P.sessionAliases(state.projects);
 
 let usagePoll = null;
 function startPolling() {
@@ -444,7 +482,7 @@ function startPolling() {
     // pencere odakta değilken saniyede iki yerine iki saniyede bir oku (pil); bildirimler yine gelir
     if (!win.isFocused() && tick++ % 4 !== 0) return;
     try {
-      const d = s.readOffice(state.projects.map((p) => p.name));
+      const d = s.readOffice(state.projects.map((p) => p.name), undefined, undefined, sessionAliases());
       send('office:data', d);
       lastOffice = d.projects;
       updateAttention();
@@ -466,11 +504,14 @@ ipcMain.handle('projects:add', async () => {
   const dir = await pickFolder();
   return dir ? addDir(dir) : null;
 });
+// Proje kaldırılınca bütün sekmeleri kapanır; worktree klasörlerine dokunulmaz (proje klasörü gibi).
 ipcMain.handle('projects:remove', (_e, id) => {
-  killPty(id);
-  sizes.delete(id);
   const p = P.findProject(state, id);
-  if (p) try { fs.rmSync(path.join(usageRoot(), p.accountId, `${id}.json`), { force: true }); } catch {}
+  for (const pid of p ? P.ptyIdsOf(p) : [id]) {
+    killPty(pid);
+    sizes.delete(pid);
+    if (p) try { fs.rmSync(path.join(usageRoot(), p.accountId, `${usageKey(pid)}.json`), { force: true }); } catch {}
+  }
   commit(P.removeProject(state, id));
 });
 ipcMain.handle('projects:setActive', (_e, id) => { commit(P.setActive(state, id)); updateAttention(); });
@@ -480,7 +521,7 @@ ipcMain.handle('projects:setAccount', (_e, id, accountId) => {
   const next = P.setProjectAccount(state, id, accountId);
   if (next === state) return;
   commit(next);
-  startPty(id);
+  restartProject(id);
 });
 
 // --- hesaplar
@@ -502,7 +543,7 @@ ipcMain.handle('accounts:remove', (_e, id) => {
   usages.delete(id);
   try { fs.rmSync(path.join(usageRoot(), id), { recursive: true, force: true }); } catch {}
   commit(r.state, { accounts: true });
-  for (const pid of r.moved) startPty(pid);
+  for (const pid of r.moved) restartProject(pid);
 });
 
 ipcMain.handle('accounts:refreshAuth', async (_e, id) => {
@@ -521,7 +562,112 @@ ipcMain.handle('accounts:logout', async (_e, id) => {
   await checkAuth(id);
 });
 
-// --- pty (her mesaj projectId ya da 'login:<accountId>' taşır)
+// --- sekmeler (sözleşme v3.0): projede birkaç claude; ilk sekme ana terminaldir, kapanmaz
+// git, uygulamanın ortamıyla (/usr/bin/git Finder'dan açılışta da PATH'te); hiçbir zaman parola sormaz.
+function git(args) {
+  return new Promise((resolve) => {
+    execFile('git', args, {
+      cwd: app.getPath('home'), timeout: 30000, maxBuffer: 1 << 20, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    }, (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '').trim() || (err ? err.message : '') }));
+  });
+}
+// Klasör bir git deposundaysa deponun kökü (git'in verdiği gerçek yol), değilse null.
+async function gitTop(dir) {
+  if (!isDir(dir)) return null;
+  const r = await git(['-C', dir, 'rev-parse', '--show-toplevel']);
+  return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
+}
+
+// "+" menüsü: aynı klasör ya da yeni worktree (yalnız git deposunda sorulur). Seçilmezse null.
+function pickTabMode() {
+  return new Promise((resolve) => {
+    const menu = Menu.buildFromTemplate([
+      { label: M().tabSame, click: () => resolve('same') },
+      { label: M().tabWorktree, click: () => resolve('worktree') },
+    ]);
+    // menü kapanınca tıklama birazdan gelir; gelmezse vazgeçilmiştir
+    menu.popup({ window: win, callback: () => setTimeout(() => resolve(null), 300) });
+  });
+}
+
+function openTab(projectId, tab) {
+  commit(P.addTab(state, projectId, tab));
+  startPty(P.tabPtyId(projectId, tab.n));
+  return tab;
+}
+
+// Deponun yanına `<depo>-wt-<n>` klasörü, `agent-office/<n>` dalıyla (HEAD'den) worktree açar.
+// Numara, klasörü ya da dalı zaten olan numaraları atlar.
+async function addWorktreeTab(project) {
+  const repo = await gitTop(project.dir);
+  if (!repo) { await dialog.showMessageBox(win, { type: 'info', message: M().notGit }); return null; }
+  const list = await git(['-C', repo, 'branch', '--list', 'agent-office/*', '--format=%(refname:short)']);
+  const branches = new Set(list.stdout.split('\n').map((b) => b.trim()).filter(Boolean));
+  const n = P.nextTabNumber(project, (k) => fs.existsSync(P.worktreeRoot(repo, k)) || branches.has(P.worktreeBranch(k)));
+  const root = P.worktreeRoot(repo, n);
+  const branch = P.worktreeBranch(n);
+  const r = await git(['-C', repo, 'worktree', 'add', '-b', branch, root]);
+  if (!r.ok) { await dialog.showMessageBox(win, { type: 'warning', message: M().worktreeFailed, detail: r.stderr }); return null; }
+  let real = project.dir;
+  try { real = fs.realpathSync(project.dir); } catch {}
+  // menü/git beklenirken proje kaldırılmış olabilir
+  if (!P.findProject(state, project.id)) return null;
+  return openTab(project.id, { n, dir: P.worktreeDir(repo, root, real), worktree: { root, repo, branch } });
+}
+
+// Sekmeyi durumdan çıkarır (pty, boyut ve kota dosyasıyla).
+function dropTab(project, n) {
+  const id = P.tabPtyId(project.id, n);
+  killPty(id);
+  sizes.delete(id);
+  try { fs.rmSync(path.join(usageRoot(), project.accountId, `${usageKey(id)}.json`), { force: true }); } catch {}
+  commit(P.removeTab(state, project.id, n));
+}
+
+// mode: 'same' | 'worktree'; verilmezse git deposunda menü sorar, değilse aynı klasör. → Tab | null
+ipcMain.handle('tabs:add', async (_e, projectId, mode) => {
+  const p = P.findProject(state, projectId);
+  if (!p || !win) return null;
+  let m = mode === 'same' || mode === 'worktree' ? mode : null;
+  if (!m) m = (await gitTop(p.dir)) ? await pickTabMode() : 'same';
+  if (m === 'worktree') return addWorktreeTab(p);
+  const now = P.findProject(state, projectId);
+  if (m === 'same' && now) return openTab(now.id, { n: P.nextTabNumber(now) });
+  return null;
+});
+// Kapatmayı sorar. Worktree sekmesinde worktree kaldırılsın mı da sorulur; git reddederse (değişiklik var)
+// sekme kalır ve claude'u son oturumundan devam eder. → { closed, restarted? }
+ipcMain.handle('tabs:close', async (_e, projectId, n) => {
+  const p = P.findProject(state, projectId);
+  const tab = P.tabsOf(p).find((t) => t.n === n);
+  if (!p || !tab || !win) return { closed: false };
+  if (!tab.worktree) {
+    const r = await dialog.showMessageBox(win, {
+      type: 'question', buttons: [M().closeTab, M().cancel], defaultId: 0, cancelId: 1,
+      message: M().closeTabConfirm, detail: M().closeTabDetail,
+    });
+    if (r.response !== 0) return { closed: false };
+    dropTab(p, n);
+    return { closed: true };
+  }
+  const w = tab.worktree;
+  const r = await dialog.showMessageBox(win, {
+    type: 'question', buttons: [M().removeWorktree, M().keepWorktree, M().cancel], defaultId: 0, cancelId: 2,
+    message: M().closeWorktreeConfirm(w.branch), detail: M().closeWorktreeDetail(w.root),
+  });
+  if (r.response === 2) return { closed: false };
+  if (r.response === 1) { dropTab(p, n); return { closed: true }; }
+  const id = P.tabPtyId(p.id, n);
+  killPty(id); // claude klasörde yazarken silinmesin
+  const g = await git(['-C', w.repo, 'worktree', 'remove', w.root]);
+  if (g.ok) { dropTab(p, n); return { closed: true }; }
+  await dialog.showMessageBox(win, { type: 'warning', message: M().worktreeKept, detail: M().worktreeKeptDetail(g.stderr) });
+  startPty(id, { resume: true });
+  return { closed: false, restarted: true };
+});
+
+// --- pty (her mesaj bir sekmenin pty kimliği — projectId ya da `<projectId>:<n>` — ya da 'login:<accountId>' taşır)
+
 ipcMain.on('pty:write', (_e, id, d) => ptyOf(id)?.write(d));
 ipcMain.on('pty:resize', (_e, id, cols, rows) => {
   if (!(cols > 0 && rows > 0)) return;
@@ -585,7 +731,7 @@ ipcMain.on('edit:nativePaste', (e) => e.sender.paste());
 ipcMain.handle('clipboard:hasImage', () => clipboardHasImage());
 ipcMain.handle('office:today', () => {
   const s = office();
-  return s ? s.readToday(state.projects.map((p) => p.name)) : { date: '', deliveries: [], untracked: 0 };
+  return s ? s.readToday(state.projects.map((p) => p.name), undefined, undefined, sessionAliases()) : { date: '', deliveries: [], untracked: 0 };
 });
 ipcMain.handle('office:themes', () => {
   const s = office();

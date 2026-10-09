@@ -239,3 +239,29 @@ Clicking the whiteboard opens the day's deliveries in the agent panel.
 - Bridge: `agentOffice.office.today(): Promise<…>` (`office:today`).
 - Office: the whiteboard records the hit box `@today` (`core.mjs` `TODAY_ID`), the board's own size in single- and multi-project offices; bots stay on top of it.
 - Panel: `mountAgentPanel(el, { …, loadToday })`; `@today` shows the totals (delivered, failed, agent time), per-project counts and time when there are several projects, then each delivery (time, ✓/✗, type, description, duration, tool count, project). It reloads at most every 3 s while open.
+
+## Tabs and worktrees (v3.0)
+
+A project can run several Claude terminals at once. Each extra one can work in the same folder or in a new git worktree.
+
+```ts
+type Tab = {
+  n: number                                                // ≥ 2; the main terminal is tab 1, implicit and never stored
+  dir?: string                                             // worktree tabs only: where claude runs
+  worktree?: { root: string; repo: string; branch: string } // worktree tabs only
+}
+// Project gains `tabs?: Tab[]` (extra tabs only; absent when there are none, so old state.json files keep working)
+// ProjectStatus gains `tabs?: { n: number; isRunning: boolean }[]`
+
+agentOffice.tabs.add(projectId: string, mode?: 'same' | 'worktree'): Promise<Tab | null>
+  // no mode: in a git repo main pops up a native menu (same folder / new git worktree), otherwise same folder
+agentOffice.tabs.close(projectId: string, n: number): Promise<{ closed: boolean; restarted?: boolean }>
+```
+
+- **Pty ids.** The main terminal keeps the id `<projectId>`; tab `n` uses `<projectId>:<n>` (`projects.js` `tabPtyId` / `parsePtyId`). The existing channels (`pty:write`, `pty:resize`, `pty:restart`, `pty:data`, `pty:exit`) take either id, so size, restart, exit, paste and focus are per tab. `login:<accountId>` ids are never parsed as tabs. A new tab's number is one above the highest in the project (worktree tabs also skip numbers whose folder or branch already exists).
+- **Starting.** Every tab starts with the project's account (`CLAUDE_CONFIG_DIR`), `--plugin-dir` and the usage `--settings` (status line file `usage/<accountId>/<projectId>-<n>.json`; the user's own status line is looked up from the tab's folder). At app start, `--continue` follows the v2.7 rule for the main terminal and for worktree tabs (history of the tab's own folder). Same-folder extra tabs always start fresh, so two claudes never continue the same session. Changing the project's account restarts all its tabs; removing the project kills them and leaves every folder (worktrees included) alone.
+- **Worktrees.** Offered only when the project folder is inside a git repository (`git rev-parse --show-toplevel`). Main runs `git -C <repo> worktree add -b agent-office/<n> <repo>-wt-<n>` from `HEAD`: the folder sits next to the repository root (`/x/shop` → `/x/shop-wt-3`, branch `agent-office/3`). If the project is a subfolder of the repository, the tab runs in the same subfolder of the worktree.
+- **Closing.** The main terminal has no ×. Closing a same-folder tab asks first. Closing a worktree tab gives three choices: close and remove the worktree, close and keep the folder, or cancel. Removing runs `git worktree remove <root>` (never `--force`) after the tab's claude is stopped. If git refuses (changes or untracked files), the user sees git's message, the tab stays and its claude starts again with `--continue` (`restarted: true`). The branch is always kept.
+- **Office and attention.** The plugin names a session after its folder's basename. Same-folder tabs therefore already carry the project's name. A worktree tab's folder (`shop-wt-3`) has its own name. Main maps it back with `projects.js` `sessionAliases(projects)` → `{ "shop-wt-3": "shop" }`, and passes that map to `readOffice(projects, now, root, aliases)` and `readToday(…, aliases)`. A mapped session counts as its project: its workers, shells and deliveries carry the project's name, and its busy state and permission dialogs are the project's. `attention.js` `nextAttention(…, aliases)` merges the same way (busy if any session is busy; the project's dialog is the oldest one). A folder name that equals another project's name is never mapped (that name belongs to that project). Attention stays per project, not per tab.
+- **UI.** A project with one terminal looks exactly as before. Its only addition is a "+" at the terminal's top right that shows on hover. With extra tabs, a strip above the terminal shows `1 <folder>` for the main terminal, `n <folder>` for same-folder tabs and `n ⎇ <branch>` for worktree tabs (tooltip: kind and folder), each extra tab with a ×, then "+". The visible tab per project is kept only in the window. Shortcuts: ⌘T new tab (asks in a git repository), ⇧⌘T new worktree tab, ⇧⌘[ and ⇧⌘] previous and next tab; on Linux Ctrl+Shift+T new tab (worktree from the menu it opens) and Ctrl+Shift+PageUp/PageDown previous and next.
+- `dev-mock.js`: `?tabs` gives the first project a same-folder tab and a worktree tab and shows the worktree tab.

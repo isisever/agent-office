@@ -338,12 +338,90 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
   max-height: 45%;
   position: relative;
   display: flex;
+  flex-direction: column;
   background: var(--status-bg);
   border: 2px solid var(--accent);
   border-top: 0;
   overflow: hidden;
 }
-#terminals { flex: 1; min-width: 0; display: flex; }
+#terminals { flex: 1; min-width: 0; min-height: 0; display: flex; }
+
+/* ---- Sekmeler (v3.0): projede birden çok terminal varken üstte ince bir şerit ---- */
+#tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 6px;
+  background: var(--frame);
+  border-bottom: 1px solid var(--accent);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#tabs[hidden] { display: none; }
+#tabs::-webkit-scrollbar { display: none; }
+.tab {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 8px;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--status-text);
+  opacity: .6;
+  border-radius: 3px 3px 0 0;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.tab:hover { opacity: .85; }
+.tab.active { opacity: 1; background: var(--status-bg); box-shadow: inset 0 2px 0 var(--accent); }
+.tab.stopped .tab-label { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--status-text) 50%, transparent); }
+.tab-n {
+  flex: 0 0 auto;
+  min-width: 14px;
+  padding: 0 3px;
+  text-align: center;
+  font-weight: bold;
+  color: var(--status-bg);
+  background: var(--accent);
+  border-radius: 2px;
+}
+.tab-label { overflow: hidden; text-overflow: ellipsis; }
+.tab.worktree .tab-label { font-family: Menlo, "SF Mono", Monaco, monospace; }
+.tab-x, .tab-new, #tab-add {
+  background: none;
+  border: 0;
+  color: var(--status-text);
+  cursor: pointer;
+  padding: 0 3px;
+  font-size: 13px;
+  line-height: 1;
+}
+.tab-x { opacity: .5; }
+.tab-x:hover { opacity: 1; color: var(--accent); }
+.tab-new { flex: 0 0 auto; margin-top: 3px; padding: 0 8px; opacity: .7; font-size: 15px; }
+.tab-new:hover { opacity: 1; color: var(--accent); }
+/* tek terminalde "+" görünmez; terminalin üzerine gelince sağ üstte belirir (görünüm eskisi gibi kalır) */
+#tab-add {
+  position: absolute;
+  top: 4px;
+  right: 14px;
+  z-index: 2;
+  width: 20px;
+  height: 20px;
+  font-size: 15px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity .15s;
+}
+#tab-add[hidden] { display: none; }
+#terminal:hover #tab-add, #tab-add:focus-visible { opacity: .55; }
+#tab-add:hover { opacity: 1 !important; color: var(--status-bg); background: var(--accent); }
 
 /* Proje başına bir bölme; yalnızca etkin olan görünür, gizliler geçmişini korur. */
 .pane {
