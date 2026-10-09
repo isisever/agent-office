@@ -73,9 +73,9 @@ const SETTINGS = (() => {
 })()
 const LIVE_MS = 3 * 60 * 1000
 
-// ---------- dil (i18n) ----------
+// ---------- language (i18n) ----------
 // settings.json "language" if set, else Turkish if the first non-empty of LC_ALL, LC_MESSAGES, LANG starts with "tr", otherwise English.
-// Ofisin içindeki yazılar core.mjs'te (setLanguage); burada yalnız terminal satırları.
+// Text inside the office lives in core.mjs (setLanguage); here only the terminal lines.
 const LOCALE = [process.env.LC_ALL, process.env.LC_MESSAGES, process.env.LANG].find(v => v) ?? ''
 const LANG = SETTINGS.language ?? (/^tr/i.test(LOCALE) ? 'tr' : 'en')
 const STRINGS = {
@@ -110,18 +110,18 @@ const STRINGS = {
 }
 const T = STRINGS[LANG]
 
-// ---------- çizim ayarları ----------
-// çekirdek: dil, bot rengi, parti süresi (unutma süresinden 30 sn kısa, bot dosyadan silinmeden çıkıp gitsin)
+// ---------- drawing settings ----------
+// core: language, bot colour, party time (30 s shorter than the forget time, so the bot leaves before it is deleted from the file)
 setLanguage(LANG)
 if (SETTINGS.botColor !== null) setBotColor('#' + SETTINGS.botColor.toString(16).padStart(6, '0'))
 setPartyMinutes(SETTINGS.forgetMinutes - 0.5)
 setTheme(argValue('--theme') ?? '')
 
-// ---------- temalar ----------
-// Tema proje adına (çalışma dizini) göre seçilir; eşleşen tema yoksa proje adından otomatik
-// üretilir. Proje yoksa classic (kırmızı-ahşap). themes.json biçimi dosya başında.
-// bozuk themes.json ofisi durdurmaz; hata themesWarning'e yazılır ve kullanıcıya gösterilir
-// (--snapshot/--frames: stderr, terminal modu: alt satırda kısa bir uyarı). Dosya yoksa sessiz.
+// ---------- themes ----------
+// The theme is picked by project name (working directory); with no matching theme one is generated
+// from the project name. With no project, classic (red and wood). themes.json format at the top of the file.
+// a broken themes.json does not stop the office; the error goes to themesWarning and is shown to the user
+// (--snapshot/--frames: stderr, terminal mode: a short warning on the bottom line). Silent if the file is missing.
 const THEMES_FILE = join(ROOT, 'themes.json')
 let themesWarning = ''
 try {
@@ -132,11 +132,11 @@ try {
   if (err?.code !== 'ENOENT') themesWarning = T.themesBroken(THEMES_FILE.replace(homedir(), '~'), err?.message ?? String(err))
 }
 
-// son çizilen kare ({ fb, LW, LH, S }) ve temanın renkleri (terminal satırları için)
+// last drawn frame ({ fb, LW, LH, S }) and the theme's colours (for the terminal lines)
 let shot = null
 let C = themeColors()
 
-// --project verildiyse tema ondan seçilir (veri başka projeden olsa bile)
+// with --project the theme is picked from it (even if the data comes from another project)
 function draw(now, data) {
   shot = render(now, data, { project: argValue('--project') })
   C = themeColors()
@@ -151,13 +151,13 @@ function argValue(flag) {
   return i > 0 ? process.argv[i + 1] : undefined
 }
 
-// ---------- veri ----------
+// ---------- data ----------
 let cached = { at: 0, data: null }
 
-// "BUGÜN n TESLİM": yerel takvim gününde doneAt'i olan teslimler, biten oturumlar dahil.
-// Kanca teslim edilen işçiyi 5 dk sonra dosyadan siler; görülen teslimler bu yüzden
-// today.json'da gün anahtarıyla saklanır: { "2026-10-09": { "<oturum>/<işçi>": "<proje>" } }.
-// Yalnız bugünün anahtarı tutulur; birden çok görüntüleyici yazarken kayıtlar birleştirilir.
+// "BUGÜN n TESLİM": deliveries with a doneAt on the local calendar day, ended sessions included.
+// The hook deletes a delivered worker from the file 5 min later, so the deliveries seen are
+// kept in today.json under a day key: { "2026-10-09": { "<session>/<worker>": "<project>" } }.
+// Only today's key is kept; records are merged when several viewers write.
 const TODAY_FILE = join(ROOT, 'today.json')
 let tally = { day: '', entries: {} }
 
@@ -175,7 +175,7 @@ function readTally(day) {
   }
 }
 
-// bugünün teslimlerini kaydeder; yeni kayıt varsa dosyayla birleştirip yazar
+// saves today's deliveries; if there are new records, merges them with the file and writes it
 function recordDeliveries(day, seen) {
   if (tally.day !== day) tally = { day, entries: readTally(day) }
   const fresh = Object.keys(seen).filter(k => !(k in tally.entries))
@@ -206,7 +206,7 @@ function loadOffice(now) {
   for (const f of files) {
     let s
     try {
-      // bugün ve son LIVE_MS içinde değişmemiş dosyalar ne canlıdır ne de bugünün teslimini taşır
+      // files unchanged today and within the last LIVE_MS are neither live nor carry today's deliveries
       if (statSync(join(SESSIONS, f)).mtimeMs < Math.min(midnight, now - LIVE_MS)) continue
       s = JSON.parse(readFileSync(join(SESSIONS, f), 'utf8'))
     } catch {
@@ -217,13 +217,13 @@ function loadOffice(now) {
     for (const w of s.workers ?? []) {
       if (w?.doneAt != null && w.id != null && dayKey(w.doneAt) === day) seen[`${sessionId}/${w.id}`] = slugOf(s.project)
     }
-    // kancanın kalıcı günlük kaydı: unutulan işçiler, görüntüleyici kapalıyken yapılan teslimler
+    // the hook's persistent daily log: forgotten workers, deliveries made while the viewer was closed
     if (s.stats?.today?.date === day) for (const id of s.stats.today.ids ?? []) seen[`${sessionId}/${id}`] = slugOf(s.project)
     if (s.endedAt || now - (s.updatedAt ?? 0) > LIVE_MS) continue
-    // --project verildiyse ofis yalnız o projenin oturumlarını gösterir
+    // with --project the office shows only that project's sessions
     if (ONLY_PROJECT && slugOf(s.project) !== ONLY_PROJECT) continue
     data.workers.push(...(s.workers ?? []))
-    // sunucu odası: çalışan arka plan kabukları ve forgetMinutes içinde bitenler (uygulamayla aynı kural)
+    // server room: running background shells and those finished within forgetMinutes (same rule as the app)
     for (const sh of Array.isArray(s.shells) ? s.shells : [])
       if (sh && (sh.endAt == null || now - sh.endAt <= SETTINGS.forgetMinutes * 60000)) data.shells.push(sh)
     data.isBossBusy ||= Boolean(s.stats?.isBossBusy)
@@ -241,7 +241,7 @@ function loadOffice(now) {
   return data
 }
 
-// ---------- görüntü kodlama ----------
+// ---------- image encoding ----------
 function encodeRGB({ fb, LW, LH, S }) {
   const W = LW * S
   const H = LH * S
@@ -290,7 +290,7 @@ function writePng(path) {
 
 const args = process.argv.slice(2)
 
-// görüntü modlarında bozuk themes.json uyarısı stderr'e (terminal modu: alt satırda, bkz. notice)
+// in image modes the broken themes.json warning goes to stderr (terminal mode: on the bottom line, see notice)
 if (themesWarning && (args[0] === '--snapshot' || args[0] === '--frames')) console.error(themesWarning)
 
 if (args[0] === '--snapshot') {
@@ -302,10 +302,10 @@ if (args[0] === '--snapshot') {
   process.exit(0)
 }
 
-// --frames <klasör> <G>x<Y>: Claude Code eklentisi için. Terminale çizmez; değişen her kareyi
-// <klasör>/frame.png'ye (yarım yazılmış dosya okunmasın diye ad değiştirerek) yazar ve stdout'a
-// "frame <no> <vurgu> <çerçeve> <başlık>" satırı basar. Boyut değişince eklenti süreci yeniden
-// başlatır; Claude Code kapanırsa (üst süreç değişir) kendiliğinden çıkar.
+// --frames <dir> <W>x<H>: for the Claude Code plugin. Does not draw to the terminal; writes every changed frame
+// to <dir>/frame.png (via rename, so a half-written file is never read) and prints a line
+// "frame <no> <accent> <frame> <title>" to stdout. The plugin restarts the process when the size
+// changes; it exits on its own when Claude Code closes (the parent process changes).
 const isFrames = args[0] === '--frames'
 if (isFrames) {
   const dir = args[1]
@@ -339,12 +339,12 @@ let imageId = 1
 let lastFrame = null
 let lastStatus = ''
 let input = ''
-// bozuk themes.json varsa açılışta alt satırda kısa süre uyarı gösterilir
+// with a broken themes.json, a short warning shows on the bottom line at startup
 let notice = themesWarning ? { text: themesWarning, until: Date.now() + 15000, isWarn: true } : { text: '', until: 0 }
 let reported = {}
 let shownTheme = ''
-// --below: Claude terminali altta birkaç satıra iner (izin onayları için); ofis penceresi
-// sahneyi, Claude'un akışını (oturum kaydından) ve görev satırını kendi içinde gösterir.
+// --below: the Claude terminal shrinks to a few rows at the bottom (for permission prompts); the office
+// window shows the scene, Claude's activity (from the session transcript) and the task line itself.
 const isBelow = args.includes('--below')
 const growFrom = argValue('--grow-from')
 const TERMINAL_ROWS = Number(argValue('--terminal-rows') ?? 14)
@@ -365,7 +365,7 @@ function sendImage() {
   const data = deflateSync(pixels, { level: 1 }).toString('base64')
   const prev = imageId
   imageId = imageId === 1 ? 2 : 1
-  // resmi ortala: satır/sütun + hücre içi piksel kaydırma
+  // centre the image: rows/columns + pixel offset within the cell
   const offX = Math.max(0, Math.floor((term.pxW - W) / 2))
   const offY = Math.max(0, Math.floor((term.imgH - H) / 2))
   const col = Math.floor(offX / term.cellW) + 1
@@ -383,7 +383,7 @@ function sendImage() {
   out.write(s)
 }
 
-// ---------- Claude akışı (oturum kaydı) ----------
+// ---------- Claude activity (session transcript) ----------
 function transcriptOf(sessionId) {
   try {
     for (const dir of readdirSync(PROJECTS)) {
@@ -407,7 +407,7 @@ function userLine(text) {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-// kaydın son ~256 KB'ını okur; değişmediyse eskisini döner
+// reads the last ~256 KB of the transcript; returns the previous result if unchanged
 function loadFeed(sessionId, now) {
   if (!sessionId) return []
   if (feed.sessionId !== sessionId) feed = { sessionId, file: transcriptOf(sessionId), size: -1, at: 0, items: [] }
@@ -453,7 +453,7 @@ function loadFeed(sessionId, now) {
   return feed.items
 }
 
-// akışı satırlara böler; en yeni satırlar altta
+// splits the activity into lines; newest lines at the bottom
 function feedRows(items, cols, count) {
   const width = Math.max(10, cols - 4)
   const lines = []
@@ -467,7 +467,7 @@ function feedRows(items, cols, count) {
       const room = width - [...lead].length
       for (let i = 0; i < chars.length || i === 0; i += room) {
         lines.push({ color, isBold: item.kind === 'user', text: (i === 0 ? lead : ' '.repeat([...lead].length)) + chars.slice(i, i + room).join('') })
-        if (item.kind === 'tool') break // araç satırı tek satır
+        if (item.kind === 'tool') break // a tool line is a single line
       }
     })
   }
@@ -496,7 +496,7 @@ function statusLines(now, data) {
   const line1 = `\x1b[${term.rows - 1};1H${bg(C.statusBg)}${fg(C.accent)}\x1b[1m${prompt}\x1b[22m${fg(C.statusText)}${shown}${fg(C.accent)}▌\x1b[0m${bg(C.statusBg)}\x1b[K\x1b[0m`
   const line2 = `\x1b[${term.rows};1H${bg(C.frame)}${fg(notice.until > now ? (notice.isWarn ? C.yellow : C.good) : C.dim)} ${[...hint].slice(0, cols - 2).join('')}\x1b[K\x1b[0m`
   if (!isBelow) return top + line1 + line2
-  // Claude'un akışı: görev satırının hemen üstünde, temanın renginde
+  // Claude's activity: right above the task line, in the theme's colour
   const height = feedHeight(term.rows)
   const first = term.rows - 2 - height
   const rule = `\x1b[${first};1H${bg(C.frame)}${fg(C.accent)}${'─'.repeat(cols)}\x1b[0m`
@@ -542,8 +542,8 @@ function applyGeometry(pxW, pxH, cols, rows) {
   growOffice()
 }
 
-// /office bölmeyi yarı yarıya açar; alttaki Claude terminalini TERMINAL_ROWS satıra indirmek
-// için ayracı aşağı iter. Punto/satır oranı ilk denemede ölçülür, sonraki adım onunla düzeltilir.
+// /office opens the split half and half; to shrink the Claude terminal below to TERMINAL_ROWS rows
+// it pushes the divider down. The point/row ratio is measured on the first try and corrects the next step.
 function growOffice() {
   if (!grow) return
   if (grow.points && term.rows > grow.rows) grow.ptsPerRow = grow.points / (term.rows - grow.rows)
@@ -620,7 +620,7 @@ function quit() {
   process.exit(0)
 }
 
-// terminal modu (kare modunda terminale hiç dokunulmaz)
+// terminal mode (frame mode never touches the terminal)
 if (!isFrames) {
   if (!out.isTTY) {
     console.error(T.needTerminal)

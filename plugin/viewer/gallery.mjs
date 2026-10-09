@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { crc32, deflateSync } from 'node:zlib'
 
-// ofisteki saat ve gün yerel saate göre çizilir: core yüklenmeden önce saat dilimi sabitlenir
+// the office clock and day are drawn in local time: the time zone is pinned before core loads
 process.env.TZ = 'Europe/Istanbul'
 const { demoOffice, render, resetOffice, setBotColor, setGeometry, setLanguage, setTheme, setThemes } = await import('./core.mjs')
 

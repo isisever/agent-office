@@ -33,7 +33,7 @@ CI runs all of this on every push and pull request.
 ## Conventions
 
 - **Translations**: every user-visible string sits in a `{ en, tr }` table at the top of its module (`S` in the renderer modules, `MSG` in `main.js`, `STRINGS` in the office renderer) and is read with `pick(S)` at render time. A new language is a new key in each table plus an option in the sidebar's language picker.
-- **Comments** in the existing code are mostly Turkish. English comments are welcome in new code.
+- **Comments** are in English (the user-visible strings stay bilingual, see Translations above).
 - **No new runtime dependencies** without a good reason; the plugin has none at all.
 - **Platforms**: macOS and Linux. Keep differences behind small `process.platform` checks: pure helpers in `app/src/platform.js` (default shell, Linux clipboard files, menu shortcuts), and in the renderer `renderer/platform.js` (`platform-darwin` / `platform-linux` class on `<html>`, ⌘ vs Ctrl+Shift shortcuts). macOS behaviour must not change when you touch Linux code, and the other way round.
 - Keep `app/CONTRACT.md` and the READMEs in step with what you change.

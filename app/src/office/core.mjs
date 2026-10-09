@@ -1,25 +1,25 @@
-// Agent Ofis çizici çekirdeği: piksel ofisin TEK çizim kodu.
-// Kaynak burası (plugin/viewer/core.mjs). Eklentinin görüntüleyicisi (viewer/office.mjs) buradan alır;
-// uygulama (app/src/office/core.mjs) bunun birebir kopyasını kullanır: app/scripts/sync-core.mjs kopyalar,
-// app/test/office.test.mjs aynı olduklarını denetler. Burada değiştir, sonra `node app/scripts/sync-core.mjs`.
-// Saf ES modülü (Node API'si yok); hem Electron renderer'da hem Node'da çalışır.
+// Agent Office renderer core: the ONLY drawing code of the pixel office.
+// This is the source (plugin/viewer/core.mjs). The plugin's viewer (viewer/office.mjs) imports it from here;
+// the app (app/src/office/core.mjs) uses an exact copy: app/scripts/sync-core.mjs copies it,
+// app/test/office.test.mjs checks they are identical. Edit here, then run `node app/scripts/sync-core.mjs`.
+// Pure ES module (no Node APIs); runs both in the Electron renderer and in Node.
 
-const SPEED = 40 / 1000 // mantıksal piksel / ms
+const SPEED = 40 / 1000 // logical pixels / ms
 const HANDOFF_MS = 1500
 const SETTLE_MS = 500
 const SIT = 4
-let PARTY_MS = 10 * 60 * 1000 // pistte kalma süresi (setPartyMinutes)
-const RECALL_MS = 4000 // yeni iş bu kadar tazeyse pistten biri çağrılır
+let PARTY_MS = 10 * 60 * 1000 // time spent on the dance floor (setPartyMinutes)
+const RECALL_MS = 4000 // when new work is this fresh, someone is called off the dance floor
 export const FRAME_MS = 110
 
-// pistte kalma süresi, dakika; görüntüleyici eklentinin unutma süresine (forgetMinutes) bağlar
+// time on the dance floor, in minutes; the viewer ties it to the plugin's forget time (forgetMinutes)
 export function setPartyMinutes(minutes) {
   const m = Number(minutes)
   PARTY_MS = Number.isFinite(m) && m > 0 ? m * 60 * 1000 : 10 * 60 * 1000
 }
 
-// ---------- dil ----------
-// Ofisteki yazılar (eklentinin görüntüleyicisiyle aynı); uygulama setLanguage ile seçer, varsayılan Türkçe.
+// ---------- language ----------
+// Text inside the office (same as the plugin's viewer); the app picks it with setLanguage, Turkish by default.
 const STRINGS = {
   tr: {
     office: 'OFİS', boss: 'MÜDÜR', working: 'ÇALIŞIYOR', waiting: 'BEKLİYOR', asking: 'ONAY BEKLİYOR', thinking: 'DÜŞÜNÜYOR',
@@ -41,7 +41,7 @@ export function setLanguage(lang) {
 const DESIGN_W = 330
 const DESIGN_H = 200
 
-// ---------- renkler ----------
+// ---------- colours ----------
 const C = {
   frame: 0x2b1d1a, ol: 0x3a2a22, wallTop: 0x6e4b3a, wallTopHi: 0x84604a,
   brick: 0xb5654a, brickDark: 0x9c4f3a, mortar: 0xc98b6e,
@@ -69,19 +69,19 @@ const C = {
   cooler: 0xdfe8ee, water: 0x7cc3ea, mat: 0x8a6a4a, matDark: 0x6e5238,
   cat: 0x8a8f99, catDark: 0x6c717b, basket: 0xb88a52, basketDark: 0x936a3a, pillow: 0xd98a8a,
   windowFrame: 0xffffff, statusBg: 0x231815, statusText: 0xf3ead8,
-  // parti alanı
+  // party area
   neonPink: 0xff4fa8, neonCyan: 0x3fe0e8, neonPurple: 0x9b5cff, floorDark: 0x2a2340, floorDarkHi: 0x3a3257, floorGrout: 0x17131f,
   ballA: 0xd4d8e2, ballB: 0x9aa0ae, ballDark: 0x6c7280,
 }
 
-// ---------- temalar ----------
-// Tema proje adına (çalışma dizini) göre seçilir; eşleşme yoksa classic (kırmızı-ahşap).
-// ~/.claude/agent-office/themes.json ile eklenebilir/ezilebilir:
-//   { "acme": { "match": "acme", "title": "ACME OFİS", "sign": "ACME", "colors": { "accent": "#ff8800" } } }
+// ---------- themes ----------
+// The theme is picked by project name (working directory); with no match, classic (red and wood).
+// Themes can be added or overridden in ~/.claude/agent-office/themes.json:
+//   { "acme": { "match": "acme", "title": "ACME HQ", "sign": "ACME", "colors": { "accent": "#ff8800" } } }
 const BASE = { ...C }
 const THEMES = {
   classic: { sign: 'AGENT', colors: {} },
-  // örnek yerleşik tema: adında "forest" geçen projeler yeşil ofiste çalışır
+  // sample built-in theme: projects with "forest" in their name work in a green office
   forest: {
     match: 'forest',
     sign: 'FOREST',
@@ -96,7 +96,7 @@ const THEMES = {
 }
 const BUILTIN = Object.fromEntries(Object.entries(THEMES).map(([k, t]) => [k, { ...t, colors: { ...t.colors } }]))
 
-// themes.json içeriğini (hex string renkler) yerleşik temaların üstüne birleştirir
+// merges the contents of themes.json (hex string colours) over the built-in themes
 export function setThemes(userThemes) {
   for (const k of Object.keys(THEMES)) delete THEMES[k]
   for (const [k, t] of Object.entries(BUILTIN)) THEMES[k] = { ...t, colors: { ...t.colors } }
@@ -107,7 +107,7 @@ export function setThemes(userThemes) {
     )
     THEMES[name] = { ...THEMES[name], ...t, colors: { ...THEMES[name]?.colors, ...colors } }
   }
-  // yeni renkler bir sonraki karede uygulansın
+  // apply the new colours on the next frame
   themeName = ''
   backgroundKey = ''
 }
@@ -118,7 +118,7 @@ let themeName = ''
 const slugOf = p => String(p ?? '').replace(/[^\w.-]/g, '_')
 let forcedTheme = ''
 
-// temayı projeden bağımsız seçer (--theme karşılığı); boş verilirse projeye göre seçilir
+// picks the theme regardless of the project (like --theme); empty means pick by project
 export function setTheme(name) {
   forcedTheme = name ? String(name) : ''
 }
@@ -138,10 +138,10 @@ function hsl(h, s, l) {
   return (f(0) << 16) | (f(8) << 8) | f(4)
 }
 
-// eşleşen tema yoksa proje adından kendi temasını üretir: adın tonu duvar, halı, çerçeve, vurgu
+// with no matching theme, generates one from the project name: the name's hue drives wall, carpet, frame, accent
 function projectTheme(project) {
   const hue = strHash(String(project).toLowerCase()) % 360
-  // tabela: proje klasörünün tam adı (my-app → MY-APP); yol verilirse son parçası
+  // wall sign: the project folder's full name (my-app → MY-APP); given a path, its last segment
   const label = String(project).split('/').filter(Boolean).pop() || 'AGENT'
   return {
     sign: label,
@@ -156,7 +156,7 @@ function projectTheme(project) {
   }
 }
 
-// tema değiştiyse renkleri yükler; true dönerse arka plan yeniden çizilmeli
+// loads the colours when the theme changed; true means the background must be redrawn
 function useTheme(name) {
   if (name === themeName) return false
   themeName = name
@@ -166,7 +166,7 @@ function useTheme(name) {
   return true
 }
 
-// bot rengi (kullanıcı seçimi, '#rrggbb'); gövde, parlak üst ve gölge bu renkten türetilir. null = temanın rengi
+// bot colour (user choice, '#rrggbb'); body, bright top and shadow derive from it. null = the theme's colour
 let botColors = null
 export function setBotColor(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? ''))
@@ -181,7 +181,7 @@ export function setBotColor(hex) {
 }
 
 
-// ---------- 3x5 piksel yazı ----------
+// ---------- 3x5 pixel font ----------
 const FONT = {
   A: '.#.#.####.##.#', B: '##.#.###.#.###.', C: '.###..#..#...##', D: '##.#.##.##.###.', E: '####..##.#..###',
 }
@@ -211,13 +211,13 @@ const MARKS = {
   Ö: ['O', '#.#', null], İ: ['I', '.#.', null],
 }
 
-// büyük harfe çevirir: Türkçede i→İ, ı→I; İngilizcede düz toUpperCase (eklentiyle aynı)
+// upper-cases: in Turkish i→İ, ı→I; in English plain toUpperCase (same as the plugin)
 function normalize(str) {
   if (LANG === 'tr') return String(str).replace(/i/g, 'İ').replace(/ı/g, 'I').toLocaleUpperCase('tr-TR')
   return String(str).toUpperCase()
 }
 
-// fontta olmayan harf: aksanını at (É→E); yine yoksa '?'
+// letter missing from the font: drop its accent (É→E); still missing → '?'
 function glyphOf(ch) {
   return FONT[ch] ?? FONT[ch.normalize('NFD')[0]] ?? FONT['?']
 }
@@ -247,7 +247,7 @@ function fit(str, max) {
   return s.length <= max ? s.join('') : s.slice(0, max - 1).join('') + '.'
 }
 
-// ---------- çerçeve tamponu ----------
+// ---------- frame buffer ----------
 let LW = DESIGN_W
 let LH = DESIGN_H
 let S = 4
@@ -270,7 +270,7 @@ function rect(x, y, w, h, c) {
   for (let j = y0; j < y1; j++) fb.fill(c, j * LW + x0, j * LW + x1)
 }
 
-// dış çizgili dikdörtgen: referanstaki koyu kontur görünümü
+// outlined rectangle: the dark contour look of the reference
 function box(x, y, w, h, c) {
   rect(x - 1, y - 1, w + 2, h + 2, C.ol)
   rect(x, y, w, h, c)
@@ -302,13 +302,13 @@ function strHash(s) {
   return hash(h)
 }
 
-// ---------- yerleşim ----------
+// ---------- layout ----------
 let L
 
 function computeLayout() {
   const B = 4
-  const wallFaceBottom = 26 // üst odaların arka duvarı
-  const dividerY = 90 // odalar ile çalışma salonu arasındaki duvar
+  const wallFaceBottom = 26 // back wall of the top rooms
+  const dividerY = 90 // wall between the rooms and the work hall
   const hallFaceTop = 95
   const hallFloorY = 113
   const bossX1 = B + 112
@@ -317,7 +317,7 @@ function computeLayout() {
   const loungeX1 = serverX0 - 4
   const corridorX = 16
   const aisle0 = hallFloorY + 9
-  const firstSeat = hallFloorY + 35 // 1. sıranın etiketleri beyaz tahtaya binmesin
+  const firstSeat = hallFloorY + 35 // keep the first row's labels off the whiteboard
   const pitchY = 38
   const rows = Math.max(1, Math.min(4, 1 + Math.floor((LH - B - 16 - firstSeat) / pitchY)))
   const pitchX = 40
@@ -345,7 +345,7 @@ function computeLayout() {
   }
 }
 
-// parti alanı: dans pisti, disko topu, DJ masası, dans yerleri
+// party area: dance floor, disco ball, DJ booth, dance spots
 function partyLayout(x0, x1, B) {
   const w = x1 - x0
   const hasDj = w >= 150
@@ -362,7 +362,7 @@ function partyLayout(x0, x1, B) {
   for (let r = 0; r < 2; r++)
     for (let c = 0; c < n; c++)
       spots.push([Math.round(fx0 + (fw * (c + 0.5 + (r ? 0.2 : -0.15))) / n), fy0 + 14 + r * 14])
-  // disko topu: kahve tezgâhı ile tabela arasında, yer yoksa yok
+  // disco ball: between the coffee counter and the wall sign; none if there is no room
   const counterRight = x0 + 6 + Math.min(46, w - 44) + 1
   const signLeft = w > 130 ? x0 + 84 : x0 + 30
   const signRight = w > 110 ? x1 - 30 : x1
@@ -372,7 +372,7 @@ function partyLayout(x0, x1, B) {
   return { fx0, fy0, fw, fh, cols, rows, spots, ball, dj: hasDj ? { x: x1 - 41, y: 48 } : null }
 }
 
-// ---------- yollar ----------
+// ---------- paths ----------
 function seatInfo(slot) {
   if (slot < L.desks.length) {
     const d = L.desks[slot]
@@ -433,7 +433,7 @@ function along(path, dist) {
   return { x, y, look: 0 }
 }
 
-// pistten masaya: salon kapısından koridora, oradan masaya
+// dance floor to desk: through the hall door to the corridor, then to the desk
 function pathFromParty(spot, slot) {
   const info = seatInfo(slot)
   const head = [spot, [L.loungeDoorX, spot[1]]]
@@ -442,13 +442,13 @@ function pathFromParty(spot, slot) {
   return [...head, [L.loungeDoorX, L.aisles[0]], ...via, [info.seat[0], info.aisle], info.seat]
 }
 
-// müdürden piste
+// boss to dance floor
 function pathToParty(spot) {
   const st = L.boss.stand
   return [st, [L.bossDoorX, st[1]], [L.bossDoorX, L.aisles[0]], [L.loungeDoorX, L.aisles[0]], [L.loungeDoorX, spot[1]], spot]
 }
 
-// pistten dış kapıya
+// dance floor to the outer door
 function pathPartyOut(spot) {
   return [spot, [L.loungeDoorX, spot[1]], [L.loungeDoorX, L.aisles[0]], [L.corridorX, L.aisles[0]], [L.corridorX, L.bottomAisle], L.door]
 }
@@ -476,11 +476,11 @@ function poseOf(w, now, slot) {
   return { phase: 'gone', x: 0, y: 0, look: 0, handEnd }
 }
 
-// ---------- parti ----------
-// teslim eden botlar veriden bağımsız burada yaşar (eklenti işi 90 sn sonra siler)
+// ---------- party ----------
+// bots that delivered live here independently of the data (the plugin deletes the job after 90 s)
 const party = new Map() // id → { spot, startAt, seed }
-const fates = new Map() // işçi id → 'party' | 'out'
-const entries = new Map() // işçi id → pistten çağrıldığı nokta
+const fates = new Map() // worker id → 'party' | 'out'
+const entries = new Map() // worker id → the spot it was called from on the dance floor
 const seen = new Set()
 
 function partyPose(g, now) {
@@ -507,7 +507,7 @@ function joinParty(id, startAt, now) {
   return true
 }
 
-// en uzun süredir dans edeni pistten alır, yerini döndürür
+// takes the longest dancer off the dance floor, returns their spot
 function recallDancer(now) {
   let best = null
   for (const [id, g] of party) {
@@ -557,22 +557,22 @@ function assignSlots(workers, now) {
   }
 }
 
-// ---------- seçim ----------
-// son karede çizilen botlar (çizim sırasıyla) ve etiketleri: { id, x, y, w, h } mantıksal piksel
+// ---------- picking ----------
+// bots drawn in the last frame (in drawing order) and their labels: { id, x, y, w, h } in logical pixels
 export const BOSS_ID = '@boss'
-// beyaz tahta: tıklanınca günün teslimleri (sözleşme v2.9)
+// whiteboard: clicking it shows the day's deliveries (contract v2.9)
 export const TODAY_ID = '@today'
 const HIT_SLACK = 3
 let hits = []
 let canvasW = DESIGN_W * 4
 let canvasH = DESIGN_H * 4
 
-// bot()/dancer() ile aynı kutu: gövde + kollar + bacaklar + kontur; up = şapka/zıplama için yukarı pay
+// same box as bot()/dancer(): body + arms + legs + contour; up = headroom for a hat/jump
 function hitBot(id, cx, by, up = 0) {
   hits.push({ id, x: cx - 9, y: by - 13 - up, w: 18, h: 15 + up })
 }
 
-// seçili botun üstünde vurgu renginde köşe çizgileri ve sallanan bir ok (masada, yolda, müdürde, pistte)
+// accent-coloured corner marks and a bobbing arrow above the selected bot (at a desk, walking, at the boss, dancing)
 function selectionMarker(id, now) {
   const own = hits.filter(b => b.id === id)
   const body = own.find(b => !b.isTag)
@@ -588,13 +588,13 @@ function selectionMarker(id, now) {
   const bob = Math.floor(now / 220) % 2
   const ax = x + Math.floor(w / 2)
   const ay = top - 3 - bob
-  // aşağı bakan ok: sap + üçgen, önce bir piksel taşan kontur
+  // downward arrow: shaft + triangle, first a contour one pixel wider
   const parts = [[ax - 1, ay - 7, 3, 4], ...[0, 1, 2, 3].map(i => [ax - 3 + i, ay - 3 + i, 7 - i * 2, 1])]
   for (const [rx, ry, rw, rh] of parts) rect(rx - 1, ry - 1, rw + 2, rh + 2, C.ol)
   for (const [rx, ry, rw, rh] of parts) rect(rx, ry, rw, rh, c)
 }
 
-// ---------- karakter ----------
+// ---------- character ----------
 function bot(cx, by, { pose = 'stand', frame = 0, isBoss = false, look = 0, isBlink = false, hasMug = false, hat = null } = {}) {
   const bob = pose === 'walk' && frame === 1 ? 1 : 0
   const x0 = cx - 8
@@ -611,7 +611,7 @@ function bot(cx, by, { pose = 'stand', frame = 0, isBoss = false, look = 0, isBl
   rect(x0 + 5 + ex, top + 4 - eyeH, 1, eyeH, C.eye)
   rect(x0 + 10 + ex, top + 4 - eyeH, 1, eyeH, C.eye)
   if (isBoss) {
-    // müdür: kravat
+    // boss: necktie
     rect(x0 + 7, top + 8, 2, 1, C.tie)
   }
   if (hasMug) {
@@ -621,7 +621,7 @@ function bot(cx, by, { pose = 'stand', frame = 0, isBoss = false, look = 0, isBl
   if (hat !== null) partyHat(x0, top, hat)
 }
 
-// sivri parti şapkası: çizgili koni, tepesinde ponpon
+// pointed party hat: striped cone with a pompom on top
 function partyHat(x0, top, c) {
   const rows = [[x0 + 5, top - 1, 6], [x0 + 6, top - 2, 4], [x0 + 6, top - 3, 4], [x0 + 7, top - 4, 2], [x0 + 7, top - 5, 2]]
   for (const [x, y, w] of rows) rect(x - 1, y - 1, w + 2, 3, C.ol)
@@ -630,7 +630,7 @@ function partyHat(x0, top, c) {
   rect(x0 + 7, top - 7, 2, 2, C.white)
 }
 
-// kaynana zırlası: n = açılan uzunluk (0 sarılı), dir = yön
+// party horn: n = unrolled length (0 rolled up), dir = direction
 function partyHorn(x0, top, dir, n, c) {
   const y = top + 5
   const x = dir > 0 ? x0 + 13 : x0 + 2
@@ -642,7 +642,7 @@ function partyHorn(x0, top, dir, n, c) {
   px(x + dir * n, y - 1, c)
 }
 
-// dans eden bot: 0 iki kol yukarı + zıplama, 1 sol kol, 2 sağ kol; isBack arkası dönük
+// dancing bot: 0 both arms up + jump, 1 left arm, 2 right arm; isBack faces away
 function dancer(cx, by, { frame = 0, look = 0, isBack = false, isBlink = false, hat = null, horn = null } = {}) {
   const jump = frame === 0 ? 2 : 0
   const x0 = cx - 8
@@ -678,7 +678,7 @@ function paper(x, y, isOk) {
   rect(x + 1, y + 5, 2, 1, ink)
 }
 
-// ---------- zeminler ve duvarlar ----------
+// ---------- floors and walls ----------
 function checker(x0, y0, x1, y1, size, a, b) {
   for (let y = y0; y < y1; y++)
     for (let x = x0; x < x1; x++) px(x, y, (Math.floor(x / size) + Math.floor(y / size)) % 2 ? a : b)
@@ -732,7 +732,7 @@ function wallFace(x0, y0, x1, y1, kind) {
   shade(x0, y1, x1 - x0, 2, 0.8)
 }
 
-// ---------- mobilyalar ----------
+// ---------- furniture ----------
 function bookshelf(x, y, w, h) {
   box(x, y, w, h, C.shelf)
   rect(x, y, w, 2, C.shelfDark)
@@ -835,12 +835,12 @@ function counter(x, y, w, now, isBusy) {
   box(x, y, w, 7, C.deskEdge)
   box(x, y + 7, w, 10, C.wainscot)
   for (let i = x + 8; i < x + w; i += 9) rect(i, y + 9, 1, 7, C.wainscotDark)
-  // kahve makinesi
+  // coffee machine
   box(x + 3, y - 12, 12, 13, C.machine)
   rect(x + 4, y - 11, 10, 2, C.machineHi)
   px(x + 12, y - 8, isBusy && Math.floor(now / 300) % 2 ? C.green : C.red)
   box(x + 6, y - 3, 5, 3, C.mug)
-  // kupalar
+  // mugs
   box(x + w - 10, y + 1, 3, 3, C.mug)
   box(x + w - 6, y + 1, 3, 3, C.rugRed)
 }
@@ -857,13 +857,13 @@ function rack(x, y, now, isBusy, seed) {
   shade(x, y + 35, 16, 2, 0.7)
 }
 
-// ---------- arka plan kabukları: sunucu odasındaki raf yuvaları ----------
-// her rafta SLOTS_PER_RACK yuva; yuvalar önce raflar boyunca (üst sıra), sonra aşağı dolar
+// ---------- background shells: rack slots in the server room ----------
+// SLOTS_PER_RACK slots per rack; slots fill across the racks first (top row), then downward
 const SLOTS_PER_RACK = 3
 const SHELL_PREFIX = 'shell:'
 const SKIP_WORDS = new Set(['sudo', 'env', 'nohup', 'time', 'exec', 'command', 'nice'])
 
-// komutun kısa adı: son '&&'/';' parçasının ilk gerçek sözcüğü (VAR=x, sudo… atlanır), yolsuz, 3 harf
+// short name of the command: first real word of the last '&&'/';' part (VAR=x, sudo… skipped), no path, 3 letters
 export function shellLabel(command) {
   const parts = String(command ?? '').split(/&&|\|\||;|\|/).map(p => p.trim()).filter(Boolean)
   const seg = parts.find(p => !/^cd\s/.test(p) && p !== 'cd') ?? parts[0] ?? ''
@@ -876,15 +876,15 @@ export function shellLabel(command) {
 const shellDone = sh => sh.endAt != null || (sh.status != null && sh.status !== 'running')
 const shellOk = sh => (sh.status === 'completed' || sh.status == null || sh.status === 'running') && (sh.exitCode == null || sh.exitCode === 0)
 
-// çalışanlar önce (başlama sırasıyla), sonra bitenler
+// running ones first (in start order), then finished ones
 function orderShells(shells) {
   const valid = shells.filter(sh => sh && typeof sh === 'object' && sh.id != null)
   const by = (a, b) => (a.startAt ?? 0) - (b.startAt ?? 0)
   return [...valid.filter(sh => !shellDone(sh)).sort(by), ...valid.filter(shellDone).sort(by)]
 }
 
-// rafların yuvaları: lambalar (çalışan: vurgu renginde, kabuğa özgü fazla yanıp söner; biten: sabit yeşil/kırmızı)
-// ve komutun ilk harfleri. Fazlası son yuvada "+n" olur (tıklanınca ilk gizli kabuk).
+// rack slots: lamps (running: accent colour, blinking at a per-shell rate; finished: steady green/red)
+// and the command's first letters. Overflow becomes "+n" in the last slot (clicking it picks the first hidden shell).
 function shellSlots(shells, now, projOf) {
   if (!shells.length) return
   const { serverX0, B } = L
@@ -956,16 +956,16 @@ function whiteboard(x, y, w, data) {
   }
 }
 
-// ---------- projeler ----------
-// müdür bütün projelere bakar: her projenin adından üretilen bir tonu var (otomatik temayla aynı ton)
+// ---------- projects ----------
+// the boss oversees every project: each project has a hue derived from its name (same hue as the auto theme)
 const hueOf = name => strHash(String(name ?? '').toLowerCase()) % 360
-const projColor = name => hsl(hueOf(name), 0.6, 0.62) // koyu zeminde plaka, kenar, nokta
-const projInk = name => hsl(hueOf(name), 0.7, 0.36) // beyaz tahtada yazı
+const projColor = name => hsl(hueOf(name), 0.6, 0.62) // plate, edge, dot on a dark ground
+const projInk = name => hsl(hueOf(name), 0.7, 0.36) // text on the whiteboard
 
 const words = name => String(name ?? '').replace(/[-_.\s]+/g, ' ').trim().split(' ').filter(Boolean)
 const head = (s, n) => [...normalize(s)].slice(0, n).join('')
 
-// kısa adlar (en çok 6 harf, plakaya sığar); ilk kelime çakışırsa ilk + son kelimeden üretilir
+// short names (at most 6 letters, fit on the plate); if first words clash, built from the first + last word
 function shortNames(names) {
   const out = new Map()
   const first = n => head(words(n)[0] ?? n, 6) || '?'
@@ -985,7 +985,7 @@ function shortNames(names) {
   return out
 }
 
-// veride görünen projeler: önce data.projects (sırasıyla), sonra yalnız işçilerden bilinenler
+// projects seen in the data: data.projects first (in order), then those known only from workers
 function projectsOf(data) {
   const out = []
   const known = new Set()
@@ -1003,8 +1003,8 @@ function projectsOf(data) {
   return out
 }
 
-// çok projeli tahta: solda bugünün toplamı, sonra her proje bir sütun (ad + bugün teslim);
-// müdür o projede çalışıyorsa sayının yanında yanıp sönen nokta. Sığmayanlar "+n". Genişliği döner.
+// multi-project board: today's total on the left, then one column per project (name + delivered today);
+// a blinking dot beside the count when the boss works on that project. What does not fit is "+n". Returns the width.
 function projectBoard(x, y, maxW, projs, short, data, now) {
   const headW = Math.max(textWidth(T.today), textWidth(String(data.delivered))) + 6
   const colW = 28
@@ -1038,7 +1038,7 @@ function projectBoard(x, y, maxW, projs, short, data, now) {
   return w
 }
 
-// odaklı projenin masaları: zemin proje rengine hafifçe boyanır, ince bir çerçeve
+// desks of the focused project: floor lightly tinted with the project colour, a thin frame
 function deskGlow(d, c) {
   const x0 = d.cx - 18
   const y0 = d.by - 25
@@ -1092,7 +1092,7 @@ function laptop(x, y, isBusy, now) {
   rect(x + 4, y + 2, 3, 3, isBusy ? (on ? C.logoOn : C.logo) : C.lidDark)
 }
 
-// proj: { short, color } verilirse plakada masa numarası yerine projenin kısa adı yazar
+// given proj: { short, color }, the plate shows the project's short name instead of the desk number
 function desk(d, n, isBusy, now, proj = null) {
   const { cx, by } = d
   box(cx - 14, by - 5, 28, 5, C.deskTop)
@@ -1117,7 +1117,7 @@ function bossDesk(now, isBusy, stack, lastOk) {
   for (let i = cx - 22; i < cx + 24; i += 12) rect(i, by + 2, 1, 6, C.wainscotDark)
   box(cx - 10, by + 2, 20, 5, C.gold)
   text(T.boss, cx - Math.floor(textWidth(T.boss) / 2), by + 2, C.deskLeg)
-  // büyük monitör
+  // big monitor
   box(cx + 6, by - 19, 16, 11, C.lid)
   rect(cx + 7, by - 18, 14, 8, isBusy ? 0x1b2a38 : C.lidDark)
   if (isBusy) {
@@ -1127,7 +1127,7 @@ function bossDesk(now, isBusy, stack, lastOk) {
     }
   }
   rect(cx + 13, by - 8, 2, 2, C.lidDark)
-  // evrak tepsisi
+  // paper tray
   box(cx - 24, by - 9, 11, 3, C.cabinetDark)
   const n = Math.min(stack, 10)
   for (let i = 0; i < n; i++) rect(cx - 23, by - 10 - i, 9, 1, i === n - 1 && !lastOk ? C.bad : i % 2 ? C.paper : 0xe6e6de)
@@ -1148,7 +1148,7 @@ function bubbleCheck(x, y, isOk) {
   }
 }
 
-// edge: kenar rengi (çok projede işçinin proje rengi)
+// edge: edge colour (with several projects, the worker's project colour)
 function tag(lines, cx, bottom, edge = C.ol) {
   const w = Math.max(...lines.map(([s]) => textWidth(s))) + 5
   const h = lines.length * 7 + 2
@@ -1160,13 +1160,13 @@ function tag(lines, cx, bottom, edge = C.ol) {
   return { x: x - 1, y: y - 1, w: w + 2, h: h + 2, isTag: true }
 }
 
-// ---------- parti alanı ----------
+// ---------- party area ----------
 function mix(a, b, t) {
   const m = s => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t)
   return (m(16) << 16) | (m(8) << 8) | m(0)
 }
 
-// var olan pikseli renge doğru boyar (ışık benekleri)
+// tints an existing pixel toward a colour (light specks)
 function tint(x, y, c, t, clip) {
   x |= 0
   y |= 0
@@ -1179,9 +1179,9 @@ const neon = () => [C.neonPink, C.neonCyan, C.neonPurple, C.accent]
 function partyBackground() {
   const P = L.party
   const { B, loungeX0, loungeX1 } = L
-  // ışık zinciri teli
+  // string-light wire
   rect(loungeX0, B, loungeX1 - loungeX0, 1, C.ol)
-  // pist: derz ve çerçeve; karolar her karede boyanır
+  // dance floor: grout and frame; tiles are painted every frame
   box(P.fx0, P.fy0, P.fw, P.fh, C.floorGrout)
   shade(P.fx0 - 1, P.fy0 + P.fh + 1, P.fw + 2, 2, 0.75)
   if (P.ball) {
@@ -1290,20 +1290,20 @@ function djBooth(now, hot) {
   const beat = Math.floor(now / beatMs)
   speaker(dj.x, dj.y - 1, beat % 2 === 0 ? 1 : 0)
   speaker(dj.x + 30, dj.y - 1, beat % 2 === 0 ? 1 : 0)
-  // pikaplar
+  // turntables
   for (const [k, tx] of [[0, dj.x + 11], [1, dj.x + 22]]) {
     rect(tx, dj.y + 1, 6, 4, C.dark)
     const a = (Math.floor(now / 90) + k * 2) % 4
     px(tx + [1, 4, 4, 1][a], dj.y + [1, 1, 4, 4][a], C.white)
     px(tx + 2, dj.y + 2, C.red)
   }
-  // mikser ışıkları
+  // mixer lights
   const pal = neon()
   for (let i = 0; i < 2; i++) {
     const h = 1 + (hash(beat * 3 + i) % 4)
     rect(dj.x + 18 + i * 2, dj.y + 5 - h, 1, h, pal[(beat + i) % pal.length])
   }
-  // yükselen notalar
+  // rising notes
   for (let k = 0; k < 2; k++) {
     const t = (Math.floor(now / 110) + k * 9) % 18
     if (t > 11) continue
@@ -1316,7 +1316,7 @@ function djBooth(now, hot) {
   }
 }
 
-// pist köşelerinde iplere bağlı, hafifçe sallanan balonlar
+// balloons tied with strings at the dance floor corners, swaying gently
 function balloons(now) {
   const P = L.party
   const pal = [...neon(), C.yellow]
@@ -1336,7 +1336,7 @@ function balloons(now) {
   }
 }
 
-// salona yağan konfeti; yalnız pistte biri dans ederken
+// confetti falling on the hall; only while someone dances on the floor
 function confetti(now, hot) {
   const { B, loungeX0, loungeX1 } = L
   const P = L.party
@@ -1355,7 +1355,7 @@ function confetti(now, hot) {
   }
 }
 
-// ---------- arka plan ----------
+// ---------- background ----------
 let background = null
 let backgroundKey = ''
 let layoutKey = ''
@@ -1363,17 +1363,17 @@ let layoutKey = ''
 function drawBackground() {
   const { B, wallFaceBottom, dividerY, hallFaceTop, hallFloorY, bossX1, serverX0, loungeX0, loungeX1 } = L
   rect(0, 0, LW, LH, C.frame)
-  // zeminler
+  // floors
   wood(B, wallFaceBottom, bossX1, dividerY)
   checker(loungeX0, wallFaceBottom, loungeX1, dividerY, 8, C.checkA, C.checkB)
   checker(serverX0 + 4, wallFaceBottom, LW - B, dividerY, 10, C.serverA, C.serverB)
   checker(B, hallFloorY, LW - B, LH - B, 12, C.carpetA, C.carpetB)
-  // arka duvar yüzleri
+  // back wall faces
   wallFace(B, B, bossX1, wallFaceBottom, 'brick')
   wallFace(loungeX0, B, loungeX1, wallFaceBottom, 'cream')
   wallFace(serverX0 + 4, B, LW - B, wallFaceBottom, 'panel')
   wallFace(B, hallFaceTop, LW - B, hallFloorY, 'sage')
-  // odalar arası duvar ve kapılar
+  // walls and doors between rooms
   rect(B, dividerY, LW - 2 * B, hallFaceTop - dividerY, C.wallTop)
   rect(B, dividerY, LW - 2 * B, 1, C.wallTopHi)
   rect(B, hallFaceTop - 1, LW - 2 * B, 1, C.ol)
@@ -1384,13 +1384,13 @@ function drawBackground() {
     rect(dx - 12, dividerY, 2, hallFloorY - dividerY, C.ol)
     rect(dx + 10, dividerY, 2, hallFloorY - dividerY, C.ol)
   }
-  // dikey duvarlar (üstten görünüş)
+  // vertical walls (top-down view)
   for (const wx of [bossX1, serverX0]) {
     rect(wx, B, 4, hallFaceTop - B, C.wallTop)
     rect(wx, B, 1, hallFaceTop - B, C.wallTopHi)
     rect(wx + 3, B, 1, hallFaceTop - B, C.ol)
   }
-  // dış çerçeve ve giriş kapısı
+  // outer frame and entrance door
   rect(0, 0, LW, B, C.frame)
   rect(0, LH - B, LW, B, C.frame)
   rect(0, 0, B, LH, C.frame)
@@ -1398,13 +1398,13 @@ function drawBackground() {
   rect(0, L.bottomAisle - 17, B, 19, C.carpetB)
   mat(B + 1, L.bottomAisle - 17)
 
-  // müdür odası
+  // boss's office
   rug(B + 14, 38, 84, 48, C.rugRed, C.rugRedIn, C.rugGold)
   bookshelf(B + 4, 8, 22, 34)
   picture(B + 64, 8)
   plant(B + 98, 26, true)
   catBasket(B + 6, 66, 0)
-  // salon (mutfak)
+  // lounge (kitchen)
   const signLeft = loungeX1 - loungeX0 > 130 ? loungeX0 + 84 : loungeX0 + 30
   const signRight = loungeX1 - loungeX0 > 110 ? loungeX1 - 30 : loungeX1
   const signLabel = fit(normalize(THEME.sign), 14)
@@ -1412,10 +1412,10 @@ function drawBackground() {
   counter(loungeX0 + 6, 28, Math.min(46, loungeX1 - loungeX0 - 44), 0, false)
   partyBackground()
   plant(loungeX1 - 12, 24)
-  // sunucu odası
+  // server room
   for (let i = 0; i < Math.floor((LW - B - serverX0 - 24) / 20); i++) rack(serverX0 + 10 + i * 20, 10, 0, false, i)
   cabinet(LW - B - 18, 62)
-  // çalışma salonu
+  // work hall
   whiteboard(40, hallFaceTop + 2, 58, { delivered: 0 })
   plant(LW - B - 14, hallFloorY + 4, true)
   cooler(LW - B - 16, LH - B - 26)
@@ -1424,12 +1424,12 @@ function drawBackground() {
   chair(L.boss.seat[0], L.boss.by, true)
 }
 
-// ---------- kare ----------
+// ---------- frame ----------
 function shortType(type) {
   return fit(T.types[type] ?? String(type).split(':').pop(), 8)
 }
 
-// focus: odaktaki proje adı; tema ondan seçilir, çok projede masaları vurgulanır
+// focus: name of the focused project; the theme is picked from it, with several projects its desks are highlighted
 function renderFrame(now, data, focus = '', selected = null) {
   hits = []
   useTheme(themeFor(focus || data.project))
@@ -1437,7 +1437,7 @@ function renderFrame(now, data, focus = '', selected = null) {
   if (backgroundKey !== key) {
     fb = new Uint32Array(LW * LH)
     L = computeLayout()
-    // koltuklar yalnız boyut değişince sıfırlanır: odak/tema değişimi masaları karıştırmasın
+    // seats reset only when the size changes: a focus/theme change must not shuffle the desks
     if (layoutKey !== `${LW}x${LH}`) {
       layoutKey = `${LW}x${LH}`
       slots.clear()
@@ -1455,7 +1455,7 @@ function renderFrame(now, data, focus = '', selected = null) {
   const poses = workers
     .map(w => {
       const p = poseOf(w, now, slots.get(w.id))
-      // piste gidenleri parti listesi çizer
+      // those going to the dance floor are drawn by the party list
       if (fates.get(w.id) === 'party' && (p.phase === 'out' || p.phase === 'gone')) p.phase = 'party'
       return { w, slot: slots.get(w.id), p }
     })
@@ -1468,7 +1468,7 @@ function renderFrame(now, data, focus = '', selected = null) {
   const isBusy = busySlots.size > 0 || data.isBossBusy
   const typeFrame = Math.floor(now / 200) % 2
   const walkFrame = Math.floor(now / 150) % 2
-  // çok proje: müdür hepsine bakar; tek projede görünüm eskisi gibi
+  // several projects: the boss oversees all; with one project the view is as before
   const projs = projectsOf(data)
   const isMulti = projs.length > 1
   const short = shortNames(projs.map(p => p.name))
@@ -1477,12 +1477,12 @@ function renderFrame(now, data, focus = '', selected = null) {
     const p = projs.find(q => slugOf(q.name) === slugOf(name))
     return p ? { name: p.name, short: short.get(p.name), color: projColor(p.name) } : null
   }
-  // masa → orada oturan (ya da oturmaya gelen) işçinin projesi
+  // desk → project of the worker sitting there (or coming to sit)
   const deskProj = new Map()
   for (const { w, slot, p } of poses)
     if (slot < L.desks.length && (p.phase === 'in' || p.phase === 'work')) deskProj.set(slot, projOf(w.project))
 
-  // canlı dekor
+  // live decor
   const { B, bossX1, serverX0, loungeX0, loungeX1, hallFaceTop } = L
   const isNight = windowPane(B + 34, 7, 24, 15, now)
   windowPane(loungeX0 + 8, 7, 20, 15, now)
@@ -1490,7 +1490,7 @@ function renderFrame(now, data, focus = '', selected = null) {
   lamp(bossX1 - 14, 30, isNight)
   lamp(loungeX0 + 6, 52, isNight)
   if (isMulti) {
-    // geniş tahta: duvarın başından salon kapısına kadar; saat sığarsa sağında
+    // wide board: from the start of the wall to the hall door; the clock to its right if it fits
     const x = 24
     const room = L.loungeDoorX - 14 - x
     const bw = projectBoard(x, hallFaceTop + 2, room, projs, short, data, now)
@@ -1503,7 +1503,7 @@ function renderFrame(now, data, focus = '', selected = null) {
   }
   catBasket(B + 6, 66, now)
   counter(loungeX0 + 6, 28, Math.min(46, loungeX1 - loungeX0 - 44), now, isBusy)
-  // parti: kimse çalışmıyor ve müdür boştayken en canlı hâli
+  // party: at its liveliest when nobody works and the boss is idle
   const hot = !isBusy
   danceFloor(now, hot)
   discoSpecks(now, hot)
@@ -1518,7 +1518,7 @@ function renderFrame(now, data, focus = '', selected = null) {
     box(serverX0 + 12, 60, 6, 5, on ? C.red : 0x8a2a24)
   } else box(serverX0 + 12, 60, 6, 5, 0x5a3a36)
 
-  // odaktaki projenin masaları
+  // desks of the focused project
   const focusKey = isMulti && focus ? slugOf(focus) : null
   if (focusKey !== null)
     for (const [slot, pr] of deskProj) if (pr && slugOf(pr.name) === focusKey) deskGlow(L.desks[slot], projColor(pr.name))
@@ -1552,11 +1552,11 @@ function renderFrame(now, data, focus = '', selected = null) {
         const hat = neon()[g.seed % 4]
         hitBot(id, p.x, p.y, p.phase === 'walk' ? 7 : 9)
         if (p.phase === 'walk') return bot(p.x, p.y, { pose: 'walk', frame: walkFrame, look: p.look, isBlink, hat })
-        // kişi başı faz farkı; ara sıra bir tur döner
+        // per-dancer phase offset; now and then one spins around
         const frame = Math.floor((now + (g.seed % 997)) / beatMs) % 3
         const cyc = (now + g.seed * 7) % 5200
         const spin = cyc < 640 ? Math.floor(cyc / 160) : -1
-        // ara sıra kaynana zırlası öttürür: açılır, bekler, sarılır
+        // now and then blows a party horn: unrolls, holds, rolls back
         const blow = (now + g.seed * 3) % 3400
         const n = blow < 900 ? Math.min(6, Math.floor(blow / 60), Math.floor((900 - blow) / 60)) : -1
         dancer(p.x, p.y, {
@@ -1602,7 +1602,7 @@ function renderFrame(now, data, focus = '', selected = null) {
   drawables.sort((a, b) => a.y - b.y).forEach(d => d.draw())
   if ([...party.values()].some(g => partyPose(g, now).phase === 'dance')) confetti(now, hot)
 
-  // etiketler en üstte
+  // labels on top
   for (const { w, slot, p } of poses) {
     if (p.phase !== 'work') continue
     const info = seatInfo(slot)
@@ -1610,25 +1610,25 @@ function renderFrame(now, data, focus = '', selected = null) {
     const cx = info.kind === 'desk' ? L.desks[slot].cx : p.x
     const top = p.y - (info.kind === 'desk' ? 18 : 14)
     const pr = projOf(w.project)
-    // çok projede etiketin kenarı projenin renginde (salondakilerin plakası yok, onları da ayırır)
+    // with several projects the label edge is the project's colour (those in the hall have no plate; this tells them apart too)
     const tb = tag([[shortType(w.type), C.white], [fit(tool, 8), C.yellow]], cx, top, pr ? pr.color : C.ol)
     hits.push({ id: w.id, ...tb })
   }
-  // izin penceresi açıksa (sözleşme v2.6) tabela yanıp söner ve hangi projede olduğunu söyler
+  // when a permission dialog is open (contract v2.6) the sign blinks and says which project it is in
   const isAsking = Boolean(data.isBossAsking)
   const status = isAsking
     ? [T.asking, Math.floor(now / 500) % 2 ? C.yellow : C.white]
     : [data.isBossBusy ? T.working : T.waiting, C.dim]
   const bossLines = [[T.boss, C.accent], status]
   if (isMulti && (isAsking || data.isBossBusy)) {
-    // hangi projelerde onay beklediği ya da çalıştığı: en çok iki ad, gerisi +n
+    // projects waiting for approval or working: at most two names, the rest +n
     const busy = projs.filter(p => (isAsking ? p.waiting : p.isBossBusy))
     busy.slice(0, 2).forEach(p => bossLines.push([short.get(p.name), projColor(p.name)]))
     if (busy.length > 2) bossLines.push([`+${busy.length - 2}`, C.dim])
   }
   const bt = tag(bossLines, L.boss.seat[0], L.boss.by - 19)
   hits.push({ id: BOSS_ID, ...bt })
-  // balon tabelanın sağında: geniş tabela (NEEDS YOU, ONAY BEKLİYOR) üstüne binmesin
+  // bubble to the right of the sign: must not cover a wide sign (NEEDS YOU, ONAY BEKLİYOR)
   if (poses.some(({ p }) => p.phase === 'hand')) bubbleCheck(Math.max(L.boss.seat[0] + 14, bt.x + bt.w + 1), L.boss.by - 36, lastOk)
   if (selected) selectionMarker(selected, now)
 }
@@ -1659,7 +1659,7 @@ function demoOffice(now) {
   return { workers, delivered: 14 + done, isBossBusy: true, project: T.demoProject, sessionId: '', isDemo: true }
 }
 
-// ekran pikselleri → ölçek ve mantıksal tuval
+// screen pixels → scale and logical canvas
 export function setGeometry(pxW, pxH) {
   canvasW = pxW
   canvasH = pxH
@@ -1670,11 +1670,11 @@ export function setGeometry(pxW, pxH) {
   return { LW, LH, S }
 }
 
-// ---------- dışa açık arayüz ----------
+// ---------- public interface ----------
 const EMPTY = { workers: [], delivered: 0, isBossBusy: false, project: '', sessionId: '' }
 
-// opts.project verilirse veri projesinin yerine tema seçiminde o kullanılır (--project karşılığı)
-// parti ve koltuk durumunu sıfırlar (testler, oturum değişimi)
+// when opts.project is given, it is used for the theme instead of the data's project (like --project)
+// resets party and seat state (tests, session change)
 export function resetOffice() {
   slots.clear()
   party.clear()
@@ -1685,7 +1685,7 @@ export function resetOffice() {
   layoutKey = ''
 }
 
-// test/teşhis için: pistteki bot sayısı
+// for tests/diagnostics: number of bots on the dance floor
 export function partyCount() {
   return party.size
 }
@@ -1699,8 +1699,8 @@ export function render(now, data, opts = {}) {
   return { fb, LW, LH, S }
 }
 
-// canvas pikseli (office-view'in drawImage uzayı) → son karede orada çizilen en üstteki botun id'si
-// ya da null. Kare tuvalde ortalanır; birkaç mantıksal piksel pay bırakılır.
+// canvas pixel (office-view's drawImage space) → id of the topmost bot drawn there in the last frame,
+// or null. The frame is centred on the canvas; a few logical pixels of slack are allowed.
 export function hitTest(pxX, pxY) {
   if (!Number.isFinite(pxX) || !Number.isFinite(pxY)) return null
   const lx = (pxX - Math.floor((canvasW - LW * S) / 2)) / S
@@ -1715,14 +1715,14 @@ export function hitTest(pxX, pxY) {
   return null
 }
 
-// test/teşhis için: son karede kaydedilen bot kutuları (mantıksal piksel)
+// for tests/diagnostics: bot boxes recorded in the last frame (logical pixels)
 export function hitBoxes() {
   return hits.map(b => ({ ...b }))
 }
 
 const hex = c => '#' + (c >>> 0 & 0xffffff).toString(16).padStart(6, '0')
 
-// temanın o anki renkleri (0xrrggbb); görüntüleyicinin terminal satırları için
+// the theme's current colours (0xrrggbb); for the viewer's terminal lines
 export function themeColors() {
   return { ...C }
 }

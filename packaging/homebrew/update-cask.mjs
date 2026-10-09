@@ -1,6 +1,6 @@
-// Homebrew cask'ını app/release'teki dmg'lerden yazar: node packaging/homebrew/update-cask.mjs
-// Sürüm app/package.json'dan, sha256'lar AgentOffice-<sürüm>-{arm64,x64}.dmg dosyalarından gelir.
-// Çıktı: packaging/homebrew/Casks/agent-office.rb (tap deposuna aynen kopyalanır).
+// Writes the Homebrew cask from the dmgs in app/release: node packaging/homebrew/update-cask.mjs
+// The version comes from app/package.json, the sha256s from the AgentOffice-<version>-{arm64,x64}.dmg files.
+// Output: packaging/homebrew/Casks/agent-office.rb (copied as is to the tap repo).
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..', '..')
 const { version } = JSON.parse(readFileSync(join(root, 'app', 'package.json'), 'utf8'))
-// dmg klasörü: ilk argüman (ör. app/release-signed), yoksa app/release
+// dmg folder: the first argument (e.g. app/release-signed), else app/release
 const dir = process.argv[2] ? join(process.cwd(), process.argv[2]) : join(root, 'app', 'release')
 const sha = arch => createHash('sha256').update(readFileSync(join(dir, `AgentOffice-${version}-${arch}.dmg`))).digest('hex')
 

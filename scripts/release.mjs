@@ -1,12 +1,12 @@
-// Tek komutla sürüm: node scripts/release.mjs <sürüm> --notes <notlar.md> [--dry-run]
-// Sırası (README "Releasing"):
-//   1. denetim: main dalı, temiz çalışma ağacı, HEAD için CI (test.yml) başarılı, etiket yok
-//   2. sürümü yaz: app/package.json, app/package-lock.json (kök + packages[""]), plugin/.claude-plugin/plugin.json → "Version X" commit'i
-//   3. cd app && npm run dist:release (imzalı + noterli dmg/zip)
-//   4. noter denetimi: her dmg bağlanır, içindeki .app için spctl -a -vv "Notarized Developer ID" demeli
-//   5. commit'i gönder (etiket onu göstersin), gh release create vX (dmg, zip, blockmap, latest-mac.yml)
-//   6. Homebrew cask'ı yaz, commit'le, gönder; tap deposuna (isisever/homebrew-tap) kopyala, commit'le, gönder
-// --dry-run: denetimleri yapar (başarısızlıkları yalnız söyler), değişiklik yapan her adımı yazdırır ama çalıştırmaz.
+// One-command release: node scripts/release.mjs <version> --notes <notes.md> [--dry-run]
+// Steps (README "Releasing"):
+//   1. checks: main branch, clean working tree, CI (test.yml) green for HEAD, no tag yet
+//   2. write the version: app/package.json, app/package-lock.json (root + packages[""]), plugin/.claude-plugin/plugin.json → "Version X" commit
+//   3. cd app && npm run dist:release (signed + notarized dmg/zip)
+//   4. notarization check: each dmg is mounted, spctl -a -vv on its .app must say "Notarized Developer ID"
+//   5. push the commit (so the tag points at it), gh release create vX (dmg, zip, blockmap, latest-mac.yml)
+//   6. write the Homebrew cask, commit, push; copy it to the tap repo (isisever/homebrew-tap), commit, push
+// --dry-run: runs the checks (only reports failures), prints every step that changes something but does not run it.
 import { execFileSync, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -21,7 +21,7 @@ const REPO = 'isisever/agent-office'
 const TAP = 'isisever/homebrew-tap'
 const WORKFLOW = 'test.yml'
 
-// ---------- argümanlar ----------
+// ---------- arguments ----------
 const args = process.argv.slice(2)
 const isDry = args.includes('--dry-run')
 const notesAt = args.indexOf('--notes')
@@ -34,8 +34,8 @@ if (!version || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version) || !notesArg)
 const notes = resolve(process.cwd(), notesArg)
 const tag = `v${version}`
 
-// ---------- yardımcılar ----------
-// depo içindeki yollar göreli, dışındakiler (tap klonu) mutlak yazılır
+// ---------- helpers ----------
+// paths inside the repo are shown relative, those outside (the tap clone) absolute
 const rel = p => {
   const r = relative(ROOT, p)
   return r.startsWith('..') ? p : r || '.'
@@ -44,16 +44,16 @@ const show = (cmd, argv, cwd) => `$ ${cwd && cwd !== ROOT ? `(cd ${rel(cwd)}) ` 
 let stepNo = 0
 const step = title => console.log(`\n== ${++stepNo}. ${title}${isDry ? ' (dry run)' : ''}`)
 
-// değişiklik yapan komut: dry run'da yalnız yazdırılır
+// command that changes something: only printed in a dry run
 function run(cmd, argv, { cwd = ROOT } = {}) {
   console.log(show(cmd, argv, cwd))
   if (!isDry) execFileSync(cmd, argv, { cwd, stdio: 'inherit' })
 }
-// salt okuyan komut: dry run'da da çalışır, çıktısını döndürür
+// read-only command: runs in a dry run too, returns its output
 function read(cmd, argv, { cwd = ROOT } = {}) {
   return execFileSync(cmd, argv, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
-// denetim: gerçek sürümde durdurur, dry run'da uyarır
+// check: stops a real release, warns in a dry run
 function check(isOk, message) {
   if (isOk) return console.log(`ok: ${message}`)
   if (isDry) return console.log(`WARNING (a real release would stop here): ${message}`)
@@ -61,7 +61,7 @@ function check(isOk, message) {
   process.exit(1)
 }
 
-// ---------- 1. denetim ----------
+// ---------- 1. checks ----------
 step('Checks')
 const branch = read('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
 check(branch === 'main', `on main (now: ${branch})`)
@@ -81,9 +81,9 @@ check(existsSync(notes), `release notes ${notesArg}`)
 const current = JSON.parse(readFileSync(join(APP, 'package.json'), 'utf8')).version
 check(current !== version, `version changes (${current} → ${version})`)
 
-// ---------- 2. sürüm ----------
+// ---------- 2. version ----------
 step(`Set version ${version}`)
-// biçim korunsun diye JSON baştan yazılmaz: yalnız sürüm alanları değişir, sonra JSON olarak doğrulanır
+// the JSON is not rewritten, to keep its formatting: only the version fields change, then it is validated as JSON
 const edits = [
   [join(APP, 'package.json'), [/^(\s{2}"version": ")[^"]+(")/m], j => [j.version]],
   [join(APP, 'package-lock.json'), [/^(\s{2}"version": ")[^"]+(")/m, /("packages": \{\s*"": \{[^{}]*?"version": ")[^"]+(")/], j => [j.version, j.packages[''].version]],
@@ -103,13 +103,13 @@ for (const [file, patterns, versionsOf] of edits) {
 run('git', ['add', ...edits.map(([f]) => rel(f))])
 run('git', ['commit', '-m', `Version ${version}`])
 
-// ---------- 3. derleme ----------
+// ---------- 3. build ----------
 step('Build, sign and notarize')
 console.log(`$ rm -rf ${rel(RELEASE)}`)
 if (!isDry) rmSync(RELEASE, { recursive: true, force: true })
 run('npm', ['run', 'dist:release'], { cwd: APP })
 
-// dry run'da derleme yok: beklenen dosya adları gösterilir
+// no build in a dry run: the expected file names are shown
 const ARCHS = ['arm64', 'x64']
 const expected = ARCHS.flatMap(a => ['dmg', 'dmg.blockmap', 'zip', 'zip.blockmap'].map(ext => `AgentOffice-${version}-${a}.${ext}`))
 const assets = isDry
@@ -121,7 +121,7 @@ if (!isDry) {
   check(assets.includes('latest-mac.yml') && assets.some(f => f.endsWith('.zip')), 'zips and latest-mac.yml built')
 }
 
-// ---------- 4. noter denetimi ----------
+// ---------- 4. notarization check ----------
 step('Verify notarization')
 for (const dmg of dmgs) {
   const path = join(RELEASE, dmg)
@@ -134,7 +134,7 @@ for (const dmg of dmgs) {
   if (!mount) throw new Error(`${dmg}: mount point not found in:\n${out}`)
   let verdict = ''
   try {
-    // spctl sonucu stderr'e yazar; reddederse sıfırdan farklı çıkar (o da sonuçtur)
+    // spctl writes its verdict to stderr; on rejection it exits non-zero (that is a verdict too)
     const r = spawnSync('spctl', ['-a', '-vv', join(mount, 'Agent Office.app')], { encoding: 'utf8' })
     verdict = `${r.stdout ?? ''}${r.stderr ?? ''}`
   } finally {
@@ -148,7 +148,7 @@ for (const dmg of dmgs) {
   check(/accepted/.test(verdict) && /source=Notarized Developer ID/.test(verdict), `${dmg}: notarized`)
 }
 
-// ---------- 5. GitHub sürümü ----------
+// ---------- 5. GitHub release ----------
 step(`Push and create GitHub release ${tag}`)
 run('git', ['push', 'origin', 'main'])
 const commit = isDry ? '<Version commit>' : read('git', ['rev-parse', 'HEAD'])

@@ -1,7 +1,7 @@
-// README'deki demo GIF'i: ortak ofis çizicisiyle (src/office/core.mjs) ~10 sn'lik canlı bir sahne.
-// node app/scripts/make-demo.mjs → plugin/docs/demo.gif (ffmpeg gerekir: FFMPEG=/yol/ffmpeg ile değiştirilebilir)
-// Üç proje: işçiler gelir, çalışır, müdüre teslim edip partiye gider; arka planda bir sunucu çalışır,
-// ortalarda müdürün tabelası bir süre NEEDS YOU der. Kareler geçici klasöre PNG yazılır, ffmpeg GIF'e çevirir.
+// The README's demo GIF: a ~10 s live scene drawn with the shared office renderer (src/office/core.mjs).
+// node app/scripts/make-demo.mjs → plugin/docs/demo.gif (needs ffmpeg; override with FFMPEG=/path/ffmpeg)
+// Three projects: workers arrive, work, deliver to the boss and go to the party; a server runs in the background,
+// midway the boss's sign says NEEDS YOU for a while. Frames are written as PNGs to a temp folder, ffmpeg makes the GIF.
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -13,13 +13,13 @@ import { render, resetOffice, setBotColor, setGeometry, setLanguage, setTheme, s
 const app = dirname(dirname(fileURLToPath(import.meta.url)))
 const OUT = join(app, '..', 'plugin', 'docs', 'demo.gif')
 const FFMPEG = process.env.FFMPEG || (existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg')
-// saat ve gün yerel saate göre çizilir: her makinede aynı GIF
+// clock and day are drawn in local time: the same GIF on every machine
 process.env.TZ = 'Europe/Istanbul'
-const T0 = new Date(2026, 9, 9, 11, 0, 0).getTime() // kaydın başı
+const T0 = new Date(2026, 9, 9, 11, 0, 0).getTime() // start of the recording
 const FPS = 12
 const SECONDS = 10
-const WARMUP_S = 45 // parti ve koltuk durumu kare kare birikir: kayıttan önce sessizce çizilir
-const SCALE = 2 // mantıksal piksel → GIF pikseli (400×242 → 800×484)
+const WARMUP_S = 45 // party and seat state builds up frame by frame: drawn silently before recording
+const SCALE = 2 // logical pixels → GIF pixels (400×242 → 800×484)
 
 function png(path, { fb, LW, LH }) {
   const raw = Buffer.alloc((LW * 3 + 1) * LH)
@@ -46,9 +46,9 @@ function png(path, { fb, LW, LH }) {
   writeFileSync(path, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]))
 }
 
-// ---------- senaryo (saniye, kaydın başına göre) ----------
+// ---------- script (seconds from the start of the recording) ----------
 const s = sec => T0 + sec * 1000
-// [id, proje, tür, geliş, teslim (yoksa çalışıyor), başarılı mı, araçlar]
+// [id, project, kind, arrival, delivery (none: still working), succeeded, tools]
 const CAST = [
   ['w1', 'shop-api', 'Explore', -44, -30, true, ['Grep', 'Read']],
   ['w2', 'notes', 'general-purpose', -42, -26, true, ['Edit', 'Bash']],
@@ -66,8 +66,8 @@ const CAST = [
   ['w11', 'notes', 'general-purpose', 5.2, null, true, ['Bash', 'Edit']],
 ]
 const PROJECTS = ['shop-api', 'notes', 'docs-site']
-const BASE_DELIVERED = { 'shop-api': 5, notes: 3, 'docs-site': 2 } // önceki oturumlardan bugünkü teslimler
-const ASK = [s(5.5), s(8)] // shop-api bir Bash çağrısı için onay bekler
+const BASE_DELIVERED = { 'shop-api': 5, notes: 3, 'docs-site': 2 } // today's deliveries from earlier sessions
+const ASK = [s(5.5), s(8)] // shop-api waits for approval of a Bash call
 
 function officeAt(now) {
   const workers = []
@@ -107,7 +107,7 @@ function officeAt(now) {
   }
 }
 
-// ---------- kareler ----------
+// ---------- frames ----------
 setThemes({})
 setBotColor(null)
 setLanguage('en')
@@ -124,7 +124,7 @@ for (let i = 0; i < count; i++) {
 }
 
 mkdirSync(dirname(OUT), { recursive: true })
-// tek palet tüm kareler için; titreşim (dither) yok: piksel sanatı düz renk kalsın
+// one palette for all frames; no dithering: pixel art stays flat colour
 const filter = `scale=${LW * SCALE}:${LH * SCALE}:flags=neighbor,split[a][b];[a]palettegen=max_colors=96:stats_mode=full[p];[b][p]paletteuse=dither=none:diff_mode=rectangle`
 execFileSync(FFMPEG, ['-v', 'error', '-y', '-framerate', String(FPS), '-i', join(dir, 'frame-%04d.png'), '-vf', filter, '-loop', '0', OUT], { stdio: 'inherit' })
 if (process.env.KEEP_FRAMES) console.log(`kareler: ${dir}`)

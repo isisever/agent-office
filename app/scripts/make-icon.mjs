@@ -1,5 +1,5 @@
-// Uygulama ikonu: masasındaki müdür bot, 32×32 piksel sanatı, macOS kare-yuvarlak maskesiyle.
-// node scripts/make-icon.mjs → build/icon.png (1024) ve build/icon.icns (iconutil ile)
+// App icon: the boss bot at its desk, 32×32 pixel art, with the macOS rounded-square mask.
+// node scripts/make-icon.mjs → build/icon.png (1024) and build/icon.icns (via iconutil)
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -20,7 +20,7 @@ const C = {
   wire: 0x1d1310,
 }
 
-// 32×32 sahne
+// 32×32 scene
 const N = 32
 const grid = new Uint32Array(N * N)
 const rect = (x, y, w, h, c) => {
@@ -28,18 +28,18 @@ const rect = (x, y, w, h, c) => {
 }
 const px = (x, y, c) => rect(x, y, 1, 1, c)
 
-// duvar: alta doğru koyulaşır, süpürgelik
+// wall: darkens toward the bottom, skirting board
 rect(0, 0, N, 22, C.wall)
 rect(0, 14, N, 8, C.wallLo)
 rect(0, 21, N, 1, C.trim)
-// parti ışıkları: sarkan tel ve renkli ampuller
+// party lights: a hanging wire and coloured bulbs
 for (let x = 0; x < N; x++) px(x, 3 + (Math.abs((x % 8) - 4) > 2 ? 0 : 1), C.wire)
 for (let k = 0, x = 2; x < N; x += 4, k++) {
   const y = 4 + (Math.abs((x % 8) - 4) > 2 ? 0 : 1)
   rect(x, y, 2, 2, C.lights[k % C.lights.length])
 }
 
-// müdür bot (kollar masaya dayalı)
+// boss bot (arms resting on the desk)
 const parts = [[9, 9, 14, 13], [6, 15, 3, 3], [23, 15, 3, 3]]
 for (const [x, y, w, h] of parts) rect(x - 1, y - 1, w + 2, h + 2, C.ol)
 for (const [x, y, w, h] of parts) rect(x, y, w, h, C.body)
@@ -49,17 +49,17 @@ rect(12, 12, 1, 2, C.eye)
 rect(19, 12, 1, 2, C.eye)
 rect(15, 19, 2, 2, C.tie)
 
-// masa
+// desk
 rect(0, 21, N, 1, C.ol)
 rect(0, 22, N, 2, C.deskHi)
 rect(0, 24, N, 8, C.desk)
 rect(0, 30, N, 2, C.deskLo)
 rect(0, 24, N, 1, C.deskLo)
-// isimlik
+// name plate
 rect(11, 26, 10, 3, C.ol)
 rect(12, 26, 8, 2, C.plate)
 rect(12, 28, 8, 1, C.plateLo)
-// evrak yığını (sağ) ve kahve (sol)
+// stack of papers (right) and coffee (left)
 rect(24, 17, 6, 5, C.ol)
 rect(25, 17, 4, 1, C.paper)
 rect(25, 18, 4, 1, C.paperLo)
@@ -70,7 +70,7 @@ rect(3, 18, 2, 3, C.mug)
 rect(3, 18, 2, 1, C.coffee)
 px(5, 19, C.mug)
 
-// 1024'lük tuvale: 832 px'lik kare-yuvarlak (süperelips) maske, ortalı
+// onto a 1024 canvas: an 832 px rounded-square (superellipse) mask, centred
 const S = 1024
 const CELL = 26
 const OFF = (S - N * CELL) / 2
@@ -79,7 +79,7 @@ const rgba = Buffer.alloc(S * S * 4)
 const inside = (x, y) => Math.abs((x - S / 2) / R) ** 5 + Math.abs((y - S / 2) / R) ** 5 <= 1
 for (let y = 0; y < S; y++)
   for (let x = 0; x < S; x++) {
-    // kenarlar için 4×4 alt örnekleme
+    // 4×4 supersampling for the edges
     let cover = 0
     for (let sy = 0; sy < 4; sy++) for (let sx = 0; sx < 4; sx++) if (inside(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4)) cover++
     if (!cover) continue
@@ -115,7 +115,7 @@ mkdirSync(out, { recursive: true })
 const master = join(out, 'icon.png')
 writeFileSync(master, png(S, S, rgba))
 
-// .icns: iconutil yalnız macOS'ta; yoksa PNG yeter (electron-builder dönüştürür)
+// .icns: iconutil only on macOS; otherwise the PNG is enough (electron-builder converts it)
 const set = join(out, 'icon.iconset')
 try {
   rmSync(set, { recursive: true, force: true })

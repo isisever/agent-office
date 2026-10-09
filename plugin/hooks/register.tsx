@@ -96,7 +96,7 @@ const STRINGS = {
 type Strings = (typeof STRINGS)['en']
 
 const BAND_ARGS = new Set(['band', 'şerit', 'serit'])
-// /office stats; 'İSTATİSTİK'.toLowerCase() birleşik nokta (U+0307) bırakır, karşılaştırmadan önce atılır
+// /office stats; 'İSTATİSTİK'.toLowerCase() leaves a combining dot (U+0307), stripped before comparing
 const STATS_ARGS = new Set(['stats', 'istatistik'])
 // /office stats: a session counts as live like the app's readOffice (LIVE_MS; the plugin's heartbeat is 30 s)
 const LIVE_MS = 3 * 60_000
@@ -155,7 +155,7 @@ let isDirty = false // workers changed since the state file was last written
 let isFlushScheduled = false
 let framesDir = ''
 let nodePath = ''
-let wantedSize = '' // çizimin istediği "GxY"; ticker çalışan süreçle karşılaştırır
+let wantedSize = '' // the "WxH" the drawing wants; the ticker compares it with the running process
 let runningSize = ''
 let viewerToken = 0
 let isOpen = false
@@ -478,7 +478,7 @@ async function cleanUp($: EngineInterface, root: string, id: string) {
 function syncViewer($: EngineInterface) {
   const want = isOpen ? wantedSize : ''
   if (want === runningSize) return
-  viewerToken++ // eski döngü bir sonraki karede çıkar, süreci öldürür
+  viewerToken++ // the old loop exits on the next frame and kills the process
   runningSize = want
   if (want) void runViewer($, want, viewerToken)
 }
