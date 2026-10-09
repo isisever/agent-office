@@ -19,7 +19,10 @@ jobs:
       # the tests need no packages; the type-check needs typescript and the types of Node and the app's
       # modules (found from app/ upwards). --ignore-scripts: no Electron download, no native builds
       - name: Install the type-checker
-        run: npm install --no-save --no-package-lock --ignore-scripts typescript@5.6.3 @types/node@22 electron@44.7.0 node-pty@1.1.0 electron-updater@6.8.9
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts typescript@5.6.3 @types/node@22 electron@44.7.0 node-pty@1.1.0 electron-updater@6.8.9 @xterm/xterm@6.0.0 @xterm/addon-fit@0.11.0
+          # the renderer imports xterm from app/node_modules by relative path
+          mkdir -p app/node_modules && cp -R node_modules/@xterm app/node_modules/
       - name: Type-check the main process
         run: npx tsc -p app
       - name: Type-check the renderer
