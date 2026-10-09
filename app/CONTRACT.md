@@ -127,3 +127,27 @@ Implementation notes (v2.2):
 - The boss is selectable too: `BOSS_ID = '@boss'` (exported by `core.mjs`). The panel shows a summary for it (busy/idle, today's count, per-project working/delivered, working agents; clicking an agent switches to it).
 - Panel options: `mountAgentPanel(el, { onClose, onSelect(id), anchor })`; `onSelect` fires when the panel itself switches agents (boss list), `anchor` (the office canvas) makes the panel cover exactly that box. Extra methods: `shownId()`, `destroy()`. Esc closes it unless focus is in a terminal (Esc there belongs to Claude); the panel takes focus when it opens. Clicking empty floor closes it.
 - `dev-mock.js`: `?select=<id|@boss>` clicks that bot through the real click path after a few seconds (mock workers `m-1`…`m-4`; `m-3` is old data without the new fields).
+
+## Background shells (v2.3)
+
+Background shell commands (Bash with `run_in_background`, and similar long-running background tasks Claude starts) are shown in the office's server room.
+
+The plugin adds to the session state file:
+
+```ts
+type Shell = {
+  id: string            // stable id (the background task id if the engine gives one, else the tool_use_id)
+  command: string       // one line, ≤ 160 chars (same rule as Worker.detail)
+  description?: string  // the tool call's description, if any
+  agentId?: string      // set when a subagent started it
+  startAt: number
+  endAt?: number        // when it finished (or was killed); omitted while running
+  exitCode?: number
+  status?: 'running' | 'completed' | 'failed' | 'killed'
+}
+// session file: { ..., shells?: Shell[] }  — running ones plus those finished in the last forgetMinutes; at most 20
+```
+
+`readOffice` passes them through as `OfficeData.shells: (Shell & { project: string })[]`.
+
+Office: each running shell lights one rack slot in the server room (blinking LEDs, the rack's label shows a short command), finished ones show a green (exit 0) or red light until they are forgotten. Clicking a rack slot calls `onSelect('shell:<id>')`; the agent panel shows the command, project, status, elapsed time, exit code and which agent started it. When more shells run than slots exist, the last slot shows "+n".
