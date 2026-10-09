@@ -42,23 +42,23 @@ Open it and drag **Agent Office** to Applications.
 
 ### Updates
 
-Agent Office checks GitHub Releases at start and every few hours. A new version downloads in the background; then **⬆ … hazır · yeniden başlat** appears in the title bar (or it installs when you quit). You can also check from the app menu: **Güncellemeleri denetle…**.
+Agent Office checks GitHub Releases at start and every few hours. A new version downloads in the background; then **⬆ … ready · restart** appears in the title bar (or it installs when you quit). You can also check from the app menu: **Check for Updates…**.
 
 ## Using it
 
 | | |
 | --- | --- |
-| **Add a project** | **+ Proje ekle** in the sidebar, or ⌘O |
+| **Add a project** | **+ Add project** in the sidebar, or ⌘O |
 | **Switch projects** | Click a project, or ⌘1 … ⌘9 |
-| **Choose a project's account** | The **Hesap ▾** picker on the project's row. Its last entry, **+ Yeni hesap…**, creates an account for that project. |
-| **Log in to an account** | **Giriş yap** next to the account. A small terminal runs `claude auth login`; approve in the browser and it closes by itself. |
-| **See an account's usage** | The **5 sa** and **Hafta** bars under the account: percentage used and reset time. They fill in once a project on that account has talked to Claude; hover for how old the value is. |
+| **Choose a project's account** | The **Account ▾** picker on the project's row. Its last entry, **+ New account…**, creates an account for that project. |
+| **Log in to an account** | **Log in** next to the account. A small terminal runs `claude auth login`; approve in the browser and it closes by itself. |
+| **See an account's usage** | The **5 h** and **Week** bars under the account: percentage used and reset time. They fill in once a project on that account has talked to Claude; hover for how old the value is. |
 | **See what an agent does** | Click the worker in the office. Esc closes the panel. |
-| **Change the language** | **Language** at the bottom of the sidebar: Auto (system language), English or Türkçe |
-| **Change the bots' color** | **Bot rengi** at the bottom of the sidebar (↺ resets it) |
+| **Change the language** | **Language** at the bottom of the sidebar: Auto (system language), English or Türkçe. The labels here are the English ones. |
+| **Change the bots' color** | **Bot color** at the bottom of the sidebar (↺ resets it) |
 | **Hide the sidebar** | ≡ in the title bar |
 
-The **Varsayılan** (default) account is your normal Claude Code login in `~/.claude`. A new account starts empty: it does not share settings, MCP servers or `CLAUDE.md` with your default one.
+The **Default** account is your normal Claude Code login in `~/.claude`. A new account starts empty: it does not share settings, MCP servers or `CLAUDE.md` with your default one.
 
 ## How it works
 
