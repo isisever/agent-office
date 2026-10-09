@@ -32,6 +32,8 @@ jobs:
         run: npx tsc -p app/renderer
       - name: Main process tests
         run: node --test app/test/main.test.cjs
+      - name: Locale files (same keys and placeholders, keys used in code exist)
+        run: node --test app/test/locales.test.mjs
       - name: Office renderer and session reading
         run: node app/test/office.test.mjs
       - name: Office pictures (visual regression)

@@ -176,21 +176,26 @@ type AccountUsage = { updatedAt: number; fiveHour?: UsageWindow; sevenDay?: Usag
 - Main scans those files every 3 s; the newest one with `rate_limits` becomes the account's usage, is kept in `usage/<accountId>/last.json` (loaded at start) and sent with `accounts:changed`. A project's file is removed from other accounts' folders when its pty starts, and when the project is removed; an account's folder goes with the account.
 - UI: under a logged-in account, one line per window: label (`5 sa`, `Hafta`), a bar (accent; yellow from 70%, red from 90%), the percentage and the reset time (`14:30` within 24 h, else `Pzt 09:00`; `sıfırlandı` once passed, shown as 0%). The tooltip says how old the value is; values older than 30 minutes are dimmed. Redrawn every minute.
 
-## Language (v2.5)
+## Language (v2.5; one file per language)
 
-The app speaks English and Turkish.
+The app speaks English and Turkish; each language is one file, `app/locales/<code>.json`.
 
 ```ts
-type LanguageInfo = { setting: 'auto' | 'en' | 'tr'; lang: 'en' | 'tr' }   // 'auto' → system language (tr* → 'tr', else 'en')
+type Language = { code: string; name: string }                        // name: the file's "_name", in its own language
+type LanguageInfo = { setting: 'auto' | string; lang: string; languages: Language[] }
+// setting: 'auto' or a code with a file; 'auto' → the system language (exact code, then its base language: tr-TR → tr), else 'en'
 agentOffice.language.get(): Promise<LanguageInfo>
-agentOffice.language.set(setting: 'auto' | 'en' | 'tr'): Promise<LanguageInfo>
+agentOffice.language.set(setting: 'auto' | string): Promise<LanguageInfo>   // unknown codes are ignored
 agentOffice.language.onChange(cb: (info: LanguageInfo) => void): () => void   // 'language:changed'
 ```
 
-- Main keeps the setting as `language` in `state.json`, builds the menu and dialogs in that language, and sends the default account's label (`Default` / `Varsayılan`) and known auth errors (`errorKey` from `src/accounts.js`, localized by `localizeAuth`) in it; it re-sends `accounts:changed` on a change.
-- Renderer: `renderer/i18n.js` holds the current language (`getLang`, `setLang`, `onLang`, `pick`, `locale`). Each module keeps its own `{ en, tr }` string table and re-renders on `onLang`; the window is not reloaded, terminals keep running.
-- Office: `core.mjs` `setLanguage('en' | 'tr')` switches the drawn words (boss, waiting/working, today/done, agent types), the uppercase rule (Turkish i→İ only in Turkish) and the default titles (`AGENT OFFICE` / `AGENT OFİS`; a theme's own `title` wins). Default is Turkish.
-- Sidebar: a Language picker (Auto, English, Türkçe) next to the bot colour.
+- Locale files: one JSON object per language with namespaces `app`, `sidebar`, `panel`, `login`, `terminal` (renderer), `main` (menus, dialogs, notifications) and `auth` (known login errors). Values are strings with named placeholders (`"{n} working"`), nested objects (`sidebar.days.0`…`6`, `sidebar.authDot.<state>`, `panel.types.<agent type>`) or a plural group (`{ "one": "1 tool call", "other": "{n} tool calls" }`: CLDR categories, `other` required, chosen by `vars.n` with `Intl.PluralRules` for the language). Keys starting with `_` are metadata (`_name`). Every file has the same keys and the same placeholders per key as `en.json` (a plural group counts as one key); a key a file lacks falls back to English, an unknown key shows as the key itself. `app/test/locales.test.mjs` checks this, and that every key used in code exists and every key is used.
+- Formatter (`app/src/i18n.mjs`, pure ES module, shared): `translator(dict, fallbackDict, lang)` → `t(key, vars?)` with `t.has(key)`; also `format`, `lookup`, `placeholders`, `isPluralGroup`. Conditionals are composed in code from two keys (e.g. `panel.todaySummary` + `panel.todayFailed`, `main.notifyPermission` / `main.notifyPermissionTool`).
+- Main: `src/locales.js` reads `locales/*.json` at start (`loadLocales`, `languagesOf`, `resolveLang`); the picker's list and the valid settings come from the files present. Main keeps the setting as `language` in `state.json`, loads the formatter with `import()` before the window opens, and uses `T('main.key', vars)` for the menu, dialogs and notifications. It sends the default account's label (`main.defaultAccount`) and known auth errors (`errorKey` from `src/accounts.js`, localized by `localizeAuth(auth, T)` from `auth.<errorKey>`) in the current language; it re-sends `accounts:changed` on a change.
+- Renderer: `renderer/i18n.js` loads `../locales/<code>.json` with `fetch` (English at start, another language when it is chosen) and exports `t(key, vars)`, `hasText(key)`, `getLang`, `setLang` (async: resolves once the file is loaded), `onLang`, `locale` (the code, for `Intl` dates). Modules read `t('ns.key')` at render time and re-render on `onLang`; the window is not reloaded, terminals keep running. The dev mock lists `?langs=en,tr` (the browser cannot list a folder).
+- Office: `core.mjs` `setLanguage('en' | 'tr')` switches the drawn words (boss, waiting/working, today/done, agent types), the uppercase rule (Turkish i→İ only in Turkish) and the default titles (`AGENT OFFICE` / `AGENT OFİS`; a theme's own `title` wins). Default is Turkish. Its words stay in `STRINGS` in `core.mjs`; the app passes `'tr'` for Turkish and `'en'` for every other language.
+- Sidebar: a Language picker (Auto, then each locale file's `_name`, sorted by code) next to the bot colour.
+- Packaging: `locales/*.json` is in `build.files`.
 
 ## Waiting on you (v2.6)
 

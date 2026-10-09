@@ -2,7 +2,7 @@
 import { mountTerminal, pasteIntoFocused } from './terminal.js';
 import { mountSidebar } from './sidebar.js';
 import { mountLogin } from './login.js';
-import { setLang, onLang, pick } from './i18n.js';
+import { setLang, onLang, t } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac } from './platform.js';
 
 // Düz tarayıcıda (Electron dışında) düzeni görmek için sahte window.agentOffice.
@@ -12,78 +12,11 @@ const api = window.agentOffice;
 // dil ilk çizimden önce: kenar çubuğu ve başlık doğru dille kurulsun
 let initialLang = null;
 try { initialLang = await api.language?.get(); } catch (e) { console.error(e); }
-if (initialLang) setLang(initialLang.lang);
+if (initialLang) await setLang(initialLang.lang);
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
 
 const DEFAULT_THEME = { frame: '#2b1d1a', accent: '#3fb6a8', statusBg: '#231815', statusText: '#f3ead8' };
-const S = {
-  en: {
-    appTitle: 'AGENT OFFICE',
-    loginHint: 'This account is not logged in: log in with “not logged in” on the left.',
-    noProject: 'no project',
-    bossBusy: ' · boss busy',
-    stats: (working, delivered, busy) => `${working} working · ${delivered} delivered${busy}`,
-    statsTitle: 'All projects (the boss watches them all)',
-    themeWarn: '⚠ theme',
-    themesError: (e) => `Could not read themes.json: ${e}`,
-    formatWarn: '⚠ update',
-    formatError: 'A newer Agent Office plugin wrote some sessions; this app cannot read them. Update the app.',
-    updateReady: (v) => `⬆ ${v} ready · restart`,
-    updateTitle: 'A new version was downloaded. Restarting closes open Claude sessions (continue later with /resume).',
-    updateConfirm: 'Restart Agent Office to update? Open Claude sessions will close.',
-    close: 'Close',
-    removeProject: (name) => `“${name}”\n\nRemove this project from the list? The folder is not touched.`,
-    logout: (label) => `Log out of ${label}?`,
-    removeAccountNote: (n) => `\n${n} project(s) will move to the Default account and restart.`,
-    removeAccount: (label, note) => `Remove the account “${label}”?${note}`,
-    showSidebar: 'Show projects',
-    hideSidebar: 'Hide projects',
-    emptyTitle: 'No projects yet.',
-    emptyAdd: '+ Add project',
-    emptyAddTitle: `Add project (${modLabel}O)`,
-    emptyNote: 'Pick a folder; Claude starts there.',
-    newTab: isMac ? 'New terminal in this project (⌘T; git worktree: ⇧⌘T)' : 'New terminal in this project (Ctrl+Shift+T)',
-    closeTab: 'Close tab',
-    mainTab: (dir) => `Main terminal (cannot be closed)\n${dir}`,
-    sameTab: (dir) => `Terminal in the project folder\n${dir}`,
-    worktreeTab: (branch, dir) => `Git worktree, branch ${branch}\n${dir}`,
-    stopped: ' (Claude stopped)',
-  },
-  tr: {
-    appTitle: 'AGENT OFİS',
-    loginHint: 'Bu hesapta giriş yapılmamış: soldaki “giriş yok” ile giriş yap.',
-    noProject: 'proje yok',
-    bossBusy: ' · patron meşgul',
-    stats: (working, delivered, busy) => `${working} çalışıyor · ${delivered} teslim${busy}`,
-    statsTitle: 'Tüm projeler (patron hepsine bakar)',
-    themeWarn: '⚠ tema',
-    themesError: (e) => `themes.json okunamadı: ${e}`,
-    formatWarn: '⚠ güncelle',
-    formatError: 'Bazı oturumları daha yeni bir Agent Office eklentisi yazmış; bu uygulama onları okuyamıyor. Uygulamayı güncelle.',
-    updateReady: (v) => `⬆ ${v} hazır · yeniden başlat`,
-    updateTitle: 'Yeni sürüm indirildi. Yeniden başlatınca açık Claude oturumları kapanır (sonra /resume ile devam edebilirsin).',
-    updateConfirm: 'Agent Office yeniden başlatılıp güncellensin mi? Açık Claude oturumları kapanır.',
-    close: 'Kapat',
-    removeProject: (name) => `“${name}”\n\nProje listeden kaldırılsın mı? Klasöre dokunulmaz.`,
-    logout: (label) => `${label} hesabından çıkış yapılsın mı?`,
-    removeAccountNote: (n) => `\n${n} proje Varsayılan hesaba geçer ve yeniden başlar.`,
-    removeAccount: (label, note) => `“${label}” hesabı kaldırılsın mı?${note}`,
-    showSidebar: 'Projeleri göster',
-    hideSidebar: 'Projeleri gizle',
-    emptyTitle: 'Henüz proje yok.',
-    emptyAdd: '+ Proje ekle',
-    emptyAddTitle: `Proje ekle (${modLabel}O)`,
-    emptyNote: 'Bir klasör seç; Claude orada başlar.',
-    newTab: isMac ? 'Bu projede yeni terminal (⌘T; git worktree: ⇧⌘T)' : 'Bu projede yeni terminal (Ctrl+Shift+T)',
-    closeTab: 'Sekmeyi kapat',
-    mainTab: (dir) => `Ana terminal (kapatılamaz)\n${dir}`,
-    sameTab: (dir) => `Proje klasöründe terminal\n${dir}`,
-    worktreeTab: (branch, dir) => `Git worktree, dal ${branch}\n${dir}`,
-    stopped: ' (Claude kapalı)',
-  },
-};
-const t = () => pick(S);
 const isLoginId = (id) => typeof id === 'string' && id.startsWith('login:');
 const BUFFER_MAX = 256 * 1024; // terminali henüz olmayan projenin verisi
 
@@ -133,7 +66,7 @@ function applyTheme(t) {
 // ---- Başlık ----
 function setTitleProject() {
   const p = activeProject();
-  $('project').textContent = p ? p.name : t().noProject;
+  $('project').textContent = p ? p.name : t('app.noProject');
   $('project').title = p ? p.dir : '';
 }
 
@@ -144,14 +77,14 @@ function setStats(d) {
   const working = Array.isArray(list)
     ? list.reduce((n, p) => n + (p.working || 0), 0)
     : (d?.workers || []).filter((w) => w.doneAt == null).length;
-  const busy = d?.isBossBusy ? t().bossBusy : '';
-  $('stats').textContent = t().stats(working, d?.delivered ?? 0, busy);
-  $('stats').title = t().statsTitle;
+  const busy = d?.isBossBusy ? t('app.bossBusy') : '';
+  $('stats').textContent = t('app.stats', { working, delivered: d?.delivered ?? 0, busy });
+  $('stats').title = t('app.statsTitle');
   const warn = $('warn');
   // daha yeni biçimde oturum dosyası (sözleşme v2.8) tema uyarısından önce gelir
-  warn.textContent = d?.newerFormat ? t().formatWarn : t().themeWarn;
+  warn.textContent = d?.newerFormat ? t('app.formatWarn') : t('app.themeWarn');
   warn.hidden = !d?.themesError && !d?.newerFormat;
-  warn.title = d?.newerFormat ? t().formatError : d?.themesError ? t().themesError(d.themesError) : '';
+  warn.title = d?.newerFormat ? t('app.formatError') : d?.themesError ? t('app.themesError', { error: d.themesError }) : '';
 }
 
 // ---- Güncelleme: yeni sürüm indiğinde başlıkta düğme; tıklayınca uygulama yeniden başlar ----
@@ -161,11 +94,11 @@ function showUpdate(version) {
   if (!version) return;
   updateVersion = version;
   b.hidden = false;
-  b.textContent = t().updateReady(version);
-  b.title = t().updateTitle;
+  b.textContent = t('app.updateReady', { version });
+  b.title = t('app.updateTitle');
 }
 $('update').addEventListener('click', () => {
-  if (confirm(t().updateConfirm)) api.update?.install();
+  if (confirm(t('app.updateConfirm'))) api.update?.install();
 });
 api.update?.onReady(showUpdate);
 api.update?.state().then((s) => showUpdate(s?.ready)).catch(() => {});
@@ -190,7 +123,7 @@ function createPane(id) {
   const close = document.createElement('button');
   close.textContent = '×';
   close.className = 'hint-close';
-  close.title = t().close;
+  close.title = t('app.close');
   close.addEventListener('click', () => { hintEl.hidden = true; focusActive(); });
   hintEl.append(hintText, close);
   const host = document.createElement('div');
@@ -241,7 +174,7 @@ function tabButton(p, tab, active, running) {
   const b = document.createElement('div');
   b.className = 'tab' + (n === active ? ' active' : '') + (running ? '' : ' stopped') + (tab?.worktree ? ' worktree' : '');
   b.dataset.n = String(n);
-  b.title = (tab?.worktree ? t().worktreeTab(tab.worktree.branch, dir) : n === MAIN_TAB ? t().mainTab(dir) : t().sameTab(dir)) + (running ? '' : t().stopped);
+  b.title = (tab?.worktree ? t('app.worktreeTab', { branch: tab.worktree.branch, dir }) : n === MAIN_TAB ? t('app.mainTab', { dir }) : t('app.sameTab', { dir })) + (running ? '' : t('app.stopped'));
   const num = document.createElement('span');
   num.className = 'tab-n';
   num.textContent = String(n);
@@ -254,7 +187,7 @@ function tabButton(p, tab, active, running) {
     const x = document.createElement('button');
     x.className = 'tab-x';
     x.textContent = '×';
-    x.title = t().closeTab;
+    x.title = t('app.closeTab');
     x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(p.id, n); });
     b.append(x);
   }
@@ -267,7 +200,7 @@ function renderTabs() {
   strip.hidden = !many;
   $('terminal').classList.toggle('has-tabs', many);
   $('tab-add').hidden = !p || many;
-  $('tab-add').title = t().newTab;
+  $('tab-add').title = t(isMac ? 'app.newTabMac' : 'app.newTab');
   if (!many) { strip.replaceChildren(); return; }
   const st = status.find((x) => x.id === p.id);
   const runningOf = (n) => (n === MAIN_TAB ? st?.isRunning !== false : st?.tabs?.find((x) => x.n === n)?.isRunning !== false);
@@ -275,7 +208,7 @@ function renderTabs() {
   const add = document.createElement('button');
   add.className = 'tab-new';
   add.textContent = '+';
-  add.title = t().newTab;
+  add.title = t(isMac ? 'app.newTabMac' : 'app.newTab');
   add.addEventListener('click', () => addTab(p.id));
   strip.replaceChildren(
     tabButton(p, null, active, runningOf(MAIN_TAB)),
@@ -392,7 +325,7 @@ function selectProject(id) {
 }
 
 async function removeProject(p) {
-  if (!confirm(t().removeProject(p.name))) return focusActive();
+  if (!confirm(t('app.removeProject', { name: p.name }))) return focusActive();
   try {
     await api.projects.remove(p.id);
     applyProjects(await api.projects.list());
@@ -407,7 +340,7 @@ async function setAccount(projectId, accountId) {
   try {
     await api.projects.setAccount(projectId, accountId);
     applyProjects(await api.projects.list());
-    if (accounts.find((a) => a.id === accountId)?.auth?.state === 'out') hint(projectId, t().loginHint);
+    if (accounts.find((a) => a.id === accountId)?.auth?.state === 'out') hint(projectId, t('app.loginHint'));
   } catch (e) { console.error(e); }
   if (projectId !== activeId) selectProject(projectId);
   else focusActive();
@@ -430,7 +363,7 @@ function openLogin(id, fallback) {
 
 async function logoutAccount(a) {
   if (a.id === 'default') return; // sistemdeki Claude Code girişi buradan kapatılmaz
-  if (!confirm(t().logout(a.label))) return focusActive();
+  if (!confirm(t('app.logout', { label: a.label }))) return focusActive();
   try { await api.accounts.logout(a.id); } catch (e) { console.error(e); }
   await refreshAccounts();
 }
@@ -450,8 +383,8 @@ async function renameAccount(id, label) {
 
 async function removeAccount(a) {
   const users = projects.filter((p) => p.accountId === a.id).length;
-  const note = users ? t().removeAccountNote(users) : '';
-  if (!confirm(t().removeAccount(a.label, note))) return;
+  const note = users ? t('app.removeAccountNote', { n: users }) : '';
+  if (!confirm(t('app.removeAccount', { label: a.label, note }))) return;
   try { await api.accounts.remove(a.id); } catch (e) { console.error(e); }
   await refreshAccounts();
   try { applyProjects(await api.projects.list()); } catch {}
@@ -478,7 +411,7 @@ login = mountLogin(document.body, { getTheme: () => theme, onClose: () => focusA
 
 function setCollapsed(c) {
   document.body.classList.toggle('sidebar-collapsed', c);
-  $('toggle-sidebar').title = c ? t().showSidebar : t().hideSidebar;
+  $('toggle-sidebar').title = c ? t('app.showSidebar') : t('app.hideSidebar');
   store.set('sidebarCollapsed', c ? '1' : '0');
   requestAnimationFrame(() => panes.get(activePty())?.term.fit());
 }
@@ -497,22 +430,23 @@ setCollapsed(store.get('sidebarCollapsed') === '1');
 
 // ---- Dil: başlık, boş durum ve ipuçları; kenar çubuğu, ofis ve panel kendini yeniden çizer ----
 function applyStaticText() {
-  $('title').textContent = t().appTitle;
-  $('empty-title').textContent = t().emptyTitle;
-  $('empty-add').textContent = t().emptyAdd;
-  $('empty-add').title = t().emptyAddTitle;
-  $('empty-note').textContent = t().emptyNote;
-  $('toggle-sidebar').title = document.body.classList.contains('sidebar-collapsed') ? t().showSidebar : t().hideSidebar;
-  for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.hint-close'))) b.title = t().close;
+  $('title').textContent = t('app.appTitle');
+  $('empty-title').textContent = t('app.emptyTitle');
+  $('empty-add').textContent = t('app.emptyAdd');
+  $('empty-add').title = t('app.emptyAddTitle', { mod: modLabel });
+  $('empty-note').textContent = t('app.emptyNote');
+  $('toggle-sidebar').title = document.body.classList.contains('sidebar-collapsed') ? t('app.showSidebar') : t('app.hideSidebar');
+  for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.hint-close'))) b.title = t('app.close');
   setTitleProject();
   setStats(lastStats);
   renderTabs();
   if (updateVersion) showUpdate(updateVersion);
 }
-function applyLanguage(li) {
+async function applyLanguage(li) {
   if (!li) return;
-  setLang(li.lang);
-  try { office?.setLanguage?.(li.lang); } catch (e) { console.error(e); }
+  await setLang(li.lang);
+  // ofisin çizilen yazıları (core.mjs) yalnız İngilizce ve Türkçe bilir; başka dilde İngilizce
+  try { office?.setLanguage?.(li.lang === 'tr' ? 'tr' : 'en'); } catch (e) { console.error(e); }
   sidebar.setLanguage(li);
 }
 onLang(applyStaticText);

@@ -142,14 +142,12 @@ function authFromRun(err, stdout, stderr) {
 }
 
 // Bilinen hatalar anahtarla saklanır, renderer'a o anki dilde gider (dil sonradan değişebilir).
-const AUTH_ERRORS = {
-  tr: { unreadable: 'giriş durumu okunamadı', timeout: 'zaman aşımı', noClaude: 'claude bulunamadı', noShell: 'kabuk bulunamadı' },
-  en: { unreadable: 'could not read the login status', timeout: 'timed out', noClaude: 'claude not found', noShell: 'shell not found' },
-};
-function localizeAuth(auth, lang) {
+// Metinler locales/<kod>.json "auth" altında; t: main'in çevirmeni (src/i18n.mjs translator, t.has ile).
+/** @param {any} auth @param {{ (key: string): string, has: (key: string) => boolean }} t */
+function localizeAuth(auth, t) {
   if (!auth?.errorKey) return auth;
   const { errorKey, ...rest } = auth;
-  return { ...rest, error: (AUTH_ERRORS[lang] || AUTH_ERRORS.en)[errorKey] || errorKey };
+  return { ...rest, error: t.has(`auth.${errorKey}`) ? t(`auth.${errorKey}`) : errorKey };
 }
 
 // Giriş kabuğu (`$SHELL -l -i -c`) ile çalışan claude komutu; hesap klasörü rc'lerden sonra yeniden verilir.

@@ -163,7 +163,7 @@ By hand, if the script stops halfway:
 
 Issues and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) explains the layout, the tests and the conventions. Some good places to start:
 
-- More translations of the app interface (strings live in a `{ en, tr }` table at the top of each renderer module)
+- More translations of the app interface (one file per language in `app/locales/`, see CONTRIBUTING.md)
 - Windows builds, and Linux arm64
 
 The app's main process, UI and office renderer meet at the interfaces described in [`app/CONTRACT.md`](app/CONTRACT.md); please keep it up to date when you change them.
