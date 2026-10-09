@@ -14,6 +14,8 @@ import { demoOffice, render, resetOffice, setBotColor, setGeometry, setLanguage,
 const here = dirname(fileURLToPath(import.meta.url))
 const FILE = join(here, 'visual-snapshots.json')
 const OUT = join(tmpdir(), 'agent-office-visual')
+// ofisteki saat ve gün yerel saate göre çizilir: her makinede aynı kare için saat dilimi sabit
+process.env.TZ = 'Europe/Istanbul'
 const NOW = new Date(2026, 9, 9, 11, 0, 0).getTime()
 const isUpdate = process.env.UPDATE_SNAPSHOTS === '1'
 
