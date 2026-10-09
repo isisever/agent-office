@@ -8,6 +8,13 @@ import { crc32, deflateSync } from 'node:zlib'
 import { BOSS_ID, shellLabel, demoOffice, hitBoxes, hitTest, partyCount, render, resetOffice, setGeometry, setTheme, setThemes, themeInfo } from '../src/office/core.mjs'
 
 const require = createRequire(import.meta.url)
+
+// çizicinin tek kaynağı eklentide; uygulamadaki dosya onun birebir kopyası olmalı
+{
+  const source = new URL('../../plugin/viewer/core.mjs', import.meta.url)
+  const copy = new URL('../src/office/core.mjs', import.meta.url)
+  assert.ok(readFileSync(copy).equals(readFileSync(source)), 'app/src/office/core.mjs, plugin/viewer/core.mjs ile aynı değil: node app/scripts/sync-core.mjs çalıştırın')
+}
 const { readOffice, readThemes } = require('../src/sessions.js')
 
 const OUT = process.env.SNAP_DIR ?? join(tmpdir(), 'agent-office-snapshots')
@@ -143,6 +150,8 @@ assert.equal(typeof readThemes(), 'object')
   // gamma dün: hem dosya hem kayıt dünden
   put('gamma-yday', { project: 'gamma', updatedAt: NOW - 20 * H, endedAt: NOW - 20 * H, workers: [], stats: { delivered: 4, isBossBusy: false, today: { date: '2026-10-08', ids: ['y1', 'y2'] } } }, NOW - 20 * H)
   // delta: dosya dün değişmiş (kayıt bugünü gösterse de) → atlanır
+  // omega: daha yeni bir eklentinin biçimi: okunmaz, uyarı verir
+  put('omega-future', { format: 3, project: 'omega', updatedAt: NOW - 1000, workers: [{ id: 'z', type: 'x', spawnAt: NOW }], stats: { isBossBusy: true } })
   put('delta-stale', { project: 'delta', updatedAt: NOW - 15 * H, workers: [], stats: { delivered: 1, isBossBusy: false, today: { date: today, ids: ['d1'] } } }, NOW - 15 * H)
   writeFileSync(join(dir, 'bozuk.json'), '{')
   // arka plan kabukları: alpha canlı (biri çalışıyor, biri yeni bitti, biri unutma süresini (5 dk) geçti)
@@ -187,6 +196,8 @@ assert.equal(typeof readThemes(), 'object')
   assert.equal(all.project, 'alpha')
   assert.equal(all.sessionId, 'alpha-live')
   assert.equal(all.themesError, undefined, 'themes.json yoksa sessiz')
+  assert.equal(all.newerFormat, 3, 'yeni biçimli dosya uyarı verir, işçileri sayılmaz')
+  assert.equal(readOffice(['beta'], NOW, root).newerFormat, undefined, 'süzgeç dışındaki proje uyarmaz')
   // kabuklar: projeleriyle, başlama sırasıyla; süresi geçenler ve bayat oturumun çalışanı yok
   assert.deepEqual(all.shells.map(sh => [sh.id, sh.project]), [['b1', 'beta'], ['b2', 'beta'], ['a2', 'alpha'], ['a1', 'alpha']])
   const b2 = all.shells.find(sh => sh.id === 'b2')

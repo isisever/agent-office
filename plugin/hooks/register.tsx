@@ -98,6 +98,9 @@ const HISTORY_MAX = 20
 const SHELLS_MAX = 20
 // every tool call changes a worker's detail: state-file writes from tool calls are coalesced to one per PUBLISH_MS
 const PUBLISH_MS = 500
+// session file format (contract): fields are only added within a format; a reader that knows an older
+// format reads a newer one wrong, so the app warns when it sees a format above its own
+const FORMAT = 2
 
 let workers: Worker[] = []
 let shells: Shell[] = []
@@ -130,7 +133,7 @@ async function publish($: EngineInterface, endedAt?: number) {
   if (!stateFile) return
   lastPublish = Date.now()
   isDirty = false
-  await $.fs.write(stateFile, JSON.stringify({ project, updatedAt: lastPublish, endedAt, workers, shells, stats }))
+  await $.fs.write(stateFile, JSON.stringify({ format: FORMAT, project, updatedAt: lastPublish, endedAt, workers, shells, stats }))
 }
 
 async function setWorkers($: EngineInterface, change: (list: Worker[]) => Worker[]) {

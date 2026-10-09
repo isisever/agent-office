@@ -85,7 +85,7 @@ To pick your own look, create `~/.claude/agent-office/themes.json`:
 
 - `match`: case-insensitive substring of the project folder name.
 - `title`, `sign`: optional; the window title and the text on the wall sign.
-- `colors`: any color key of the viewer's palette (`C` in `viewer/office.mjs`), as `#rrggbb`. Useful ones: `accent`, `frame`, `wallTop`, `brick`, `rugRed`, `bossChair`, `signGreen`, `statusBg`, `statusText`.
+- `colors`: any color key of the viewer's palette (`C` in `viewer/core.mjs`), as `#rrggbb`. Useful ones: `accent`, `frame`, `wallTop`, `brick`, `rugRed`, `bossChair`, `signGreen`, `statusBg`, `statusText`.
 
 If `themes.json` cannot be parsed, the office keeps running with the default themes and tells you why: a warning on stderr for snapshots and the band, and a short notice on the bottom line of the full-window office.
 
@@ -134,7 +134,7 @@ The conversation feed is read directly from Claude Code's local transcript. Noth
 ## How it works
 
 1. The plugin's hooks module (`hooks/register.tsx`) listens to Claude Code events: subagents starting, using tools and finishing, and the main session working or waiting. It writes that state to `~/.claude/agent-office/sessions/<session>.json`.
-2. The viewer (`viewer/office.mjs`, plain Node, no dependencies) reads the state files and renders the pixel-art office with the kitty graphics protocol, either full-window in a terminal split (Ghostty, kitty, WezTerm) or as PNG frames that the plugin shows in the band above the prompt.
+2. The viewer (`viewer/office.mjs`, plain Node, no dependencies) reads the state files and renders the pixel-art office with the kitty graphics protocol (the drawing itself is in `viewer/core.mjs`, shared with the Agent Office app), either full-window in a terminal split (Ghostty, kitty, WezTerm) or as PNG frames that the plugin shows in the band above the prompt.
 3. Tasks typed into the office are appended to `~/.claude/agent-office/inbox/`, and the plugin hands them to Claude.
 
 You can run the viewer on its own:
@@ -152,6 +152,8 @@ claude plugin test .       # run the tests in tests/
 node tests/viewer-smoke.mjs # render the viewer to PNG (needs Node 18+)
 claude --plugin-dir .      # try your checkout in a real session
 ```
+
+`viewer/core.mjs` is the only copy of the drawing code to edit; the app keeps a byte-identical copy in `app/src/office/core.mjs`. After changing it, run `node ../app/scripts/sync-core.mjs` (the app's tests check the two match).
 
 ## License
 

@@ -1,15 +1,19 @@
 {
   "name": "agent-office",
   "productName": "Agent Office",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Claude Code in a pixel office: the real claude CLI in a terminal per project, under one live office where the boss oversees every project",
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
+    "sync-core": "node scripts/sync-core.mjs",
+    "prestart": "node scripts/sync-core.mjs",
     "start": "electron .",
     "postinstall": "electron-builder install-app-deps && chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper || true",
+    "predist": "node scripts/sync-core.mjs",
     "dist": "electron-builder --mac && rm -rf release/mac release/mac-arm64 release/builder-debug.yml",
     "icon": "node scripts/make-icon.mjs",
+    "predist:release": "node scripts/sync-core.mjs",
     "dist:release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-agent-office} electron-builder --mac -c.mac.identity=\"${CSC_NAME:-Savas Isisever (GLTH2M74NT)}\" && rm -rf release/mac release/mac-arm64 release/mac-universal release/builder-debug.yml"
   },
   "author": "Savas Isisever",

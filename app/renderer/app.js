@@ -26,6 +26,8 @@ const S = {
     statsTitle: 'All projects (the boss watches them all)',
     themeWarn: '⚠ theme',
     themesError: (e) => `Could not read themes.json: ${e}`,
+    formatWarn: '⚠ update',
+    formatError: 'A newer Agent Office plugin wrote some sessions; this app cannot read them. Update the app.',
     updateReady: (v) => `⬆ ${v} ready · restart`,
     updateTitle: 'A new version was downloaded. Restarting closes open Claude sessions (continue later with /resume).',
     updateConfirm: 'Restart Agent Office to update? Open Claude sessions will close.',
@@ -50,6 +52,8 @@ const S = {
     statsTitle: 'Tüm projeler (patron hepsine bakar)',
     themeWarn: '⚠ tema',
     themesError: (e) => `themes.json okunamadı: ${e}`,
+    formatWarn: '⚠ güncelle',
+    formatError: 'Bazı oturumları daha yeni bir Agent Office eklentisi yazmış; bu uygulama onları okuyamıyor. Uygulamayı güncelle.',
     updateReady: (v) => `⬆ ${v} hazır · yeniden başlat`,
     updateTitle: 'Yeni sürüm indirildi. Yeniden başlatınca açık Claude oturumları kapanır (sonra /resume ile devam edebilirsin).',
     updateConfirm: 'Agent Office yeniden başlatılıp güncellensin mi? Açık Claude oturumları kapanır.',
@@ -118,9 +122,10 @@ function setStats(d) {
   $('stats').textContent = t().stats(working, d?.delivered ?? 0, busy);
   $('stats').title = t().statsTitle;
   const warn = $('warn');
-  warn.textContent = t().themeWarn;
-  warn.hidden = !d?.themesError;
-  warn.title = d?.themesError ? t().themesError(d.themesError) : '';
+  // daha yeni biçimde oturum dosyası (sözleşme v2.8) tema uyarısından önce gelir
+  warn.textContent = d?.newerFormat ? t().formatWarn : t().themeWarn;
+  warn.hidden = !d?.themesError && !d?.newerFormat;
+  warn.title = d?.newerFormat ? t().formatError : d?.themesError ? t().themesError(d.themesError) : '';
 }
 
 // ---- Güncelleme: yeni sürüm indiğinde başlıkta düğme; tıklayınca uygulama yeniden başlar ----

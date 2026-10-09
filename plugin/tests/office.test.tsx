@@ -837,5 +837,6 @@ test('a permission dialog marks the session waiting until its tool is answered, 
   expect(stateOf(writes).stats.waiting?.tool).toBe('Edit')
   await completeTurn($, 'aborted')
   expect(stateOf(writes).stats.waiting).toBe(undefined)
+  expect((stateOf(writes) as unknown as { format: number }).format).toBe(2)
   expect(stateOf(writes).stats.isBossBusy).toBe(false)
 })

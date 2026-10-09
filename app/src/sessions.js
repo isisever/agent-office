@@ -102,6 +102,9 @@ function shellsOf(s, isLive, now, forget) {
 // projects: dahil edilecek proje adları; null = bütün canlı oturumlar. (Eski tek proje adı da kabul edilir.)
 // delivered: bugün (yerel gün) teslim edilenler; doneAt'i bugün olan işçiler ∪ stats.today kimlikleri,
 // oturum/işçi kimliğiyle tekilleştirilir; bugün biten oturumlar dahil.
+// Bu uygulamanın okuyabildiği en yeni oturum dosyası biçimi (eklentinin FORMAT'ı; yoksa eski dosya, 2 sayılır).
+const FORMAT = 2
+
 function readOffice(projects, now = Date.now(), root = rootDir()) {
   const list = projects == null ? null : (Array.isArray(projects) ? projects : [projects]).filter(p => p != null && p !== '')
   const only = list ? new Set(list.map(slugOf)) : null
@@ -140,6 +143,11 @@ function readOffice(projects, now = Date.now(), root = rootDir()) {
     if (!s || typeof s !== 'object') continue
     const key = slugOf(s.project)
     if (only && !only.has(key)) continue
+    // daha yeni bir eklentinin yazdığı dosya: yanlış okumak yerine uyar (sözleşme v2.8)
+    if (Number.isFinite(s.format) && s.format > FORMAT) {
+      data.newerFormat = Math.max(data.newerFormat ?? 0, s.format)
+      continue
+    }
     const sessionId = f.replace(/\.json$/, '')
     const workers = Array.isArray(s.workers) ? s.workers : []
     let delivers = false
@@ -201,4 +209,4 @@ function readOffice(projects, now = Date.now(), root = rootDir()) {
   return data
 }
 
-module.exports = { readOffice, readThemes, themesError, dayKey, forgetMs, LIVE_MS }
+module.exports = { readOffice, readThemes, themesError, dayKey, forgetMs, LIVE_MS, FORMAT }

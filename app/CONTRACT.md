@@ -220,3 +220,10 @@ agentOffice.prefs.set(p: { resume?: boolean }): Promise<{ resume: boolean }>
 - Main keeps `resume` in `state.json` (default true). When the window loads, each project whose claude is not running starts with `--continue` if it has a session to continue: a `.jsonl` in `<account config dir or ~/.claude>/projects/<project dir with every non-alphanumeric character as '-'>` (`projects.js` `historyDir`). Restarts, account changes and new projects start fresh.
 - If a `--continue` start exits non-zero within 8 s, main starts it again without `--continue` and sends no `pty:exit`.
 - Sidebar: a "Continue last session" checkbox above the language picker.
+
+## Shared renderer (v2.8)
+
+- One drawing implementation: the source is `plugin/viewer/core.mjs` (pure ES module, no Node APIs). The plugin's terminal viewer (`plugin/viewer/office.mjs`) imports it and keeps only the Node parts (settings, `themes.json` → `setThemes`, session files, PNG, terminal, transcript feed).
+- `app/src/office/core.mjs` is a byte-identical copy, so the renderer can load it from inside the asar (`../plugin` is outside it). Edit the plugin file, then run `node app/scripts/sync-core.mjs`; `npm start`, `npm run dist` and `npm run dist:release` run it first (`prestart`, `predist`, `predist:release`). `app/test/office.test.mjs` fails when the two differ.
+- Additions for the viewer: `setPartyMinutes(minutes)` (how long a bot dances; default 10, the viewer uses `forgetMinutes - 0.5`) and `themeColors()` (the current palette as `0xrrggbb` numbers). The auto theme's wall sign is the full project folder name (`my-app` → `MY-APP`).
+- Session file format: the plugin stamps each session file with `format: 2` (`FORMAT` in `register.tsx`); fields are only ever added within a format. `readOffice` skips a file whose `format` is above its own (`sessions.js` `FORMAT`) and sets `newerFormat` on the data; the title bar then shows "⚠ update" / "⚠ güncelle" instead of reading it wrong. Files without `format` are read as format 2. The terminal viewer also passes live sessions' `shells` to the core now, so its server room shows them.
