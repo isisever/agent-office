@@ -65,7 +65,7 @@ export default [
   },
   // betikler, testler, terminal görüntüleyici: Node ES modülleri
   {
-    files: ['app/scripts/**/*.mjs', 'app/test/**/*.mjs', 'plugin/viewer/office.mjs', 'plugin/tests/**/*.mjs', 'scripts/**/*.mjs', 'packaging/**/*.mjs', 'eslint.config.mjs'],
+    files: ['app/scripts/**/*.mjs', 'app/test/**/*.mjs', 'plugin/viewer/office.mjs', 'plugin/viewer/gallery.mjs', 'plugin/tests/**/*.mjs', 'scripts/**/*.mjs', 'packaging/**/*.mjs', 'eslint.config.mjs'],
     languageOptions: { globals: node },
   },
 ]
