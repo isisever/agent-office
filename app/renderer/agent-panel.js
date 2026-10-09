@@ -4,8 +4,10 @@
 // - Eski eklenti verisinde prompt/detail/history/toolCount/result yoktur: panel yine çalışır.
 // - '@boss' (core.mjs BOSS_ID) müdürün özetini gösterir; oradaki ajan satırına tıklamak onSelect(id) çağırır.
 // - anchor verilirse panel o öğenin (ofis tuvali) kutusunu kaplar.
+// - 'shell:<id>' sunucu odasındaki bir arka plan komutunu gösterir (OfficeData.shells; eski veride yoktur).
 
 const BOSS_ID = '@boss';
+const SHELL = 'shell:';
 const CLAMP = 220; // bundan uzun görev/sonuç daraltılır
 const TYPE_NAMES = { 'general-purpose': 'Genel', Explore: 'Keşif', Plan: 'Plan', 'claude-code-guide': 'Rehber' };
 
@@ -100,6 +102,19 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     return (Array.isArray(data?.workers) ? data.workers : []).find((w) => w && w.id === wid) || null;
   }
 
+  function findShell(sid) {
+    return (Array.isArray(data?.shells) ? data.shells : []).find((s) => s && String(s.id) === sid) || null;
+  }
+
+  const shellDone = (s) => num(s.endAt) != null || (s.status != null && s.status !== 'running');
+  function shellState(s) {
+    if (!shellDone(s)) return { cls: 'busy', txt: 'çalışıyor' };
+    if (s.status === 'killed') return { cls: 'bad', txt: 'durduruldu ✗' };
+    const code = num(s.exitCode);
+    if (s.status === 'failed' || (code != null && code !== 0)) return { cls: 'bad', txt: 'başarısız ✗' };
+    return { cls: 'ok', txt: 'bitti ✓' };
+  }
+
   function block(key, label, text, { copy = false, clamp = false, mono = false } = {}) {
     const body = str(text);
     if (!body) return '';
@@ -167,6 +182,56 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     return { title: typeLabel(w.type), project: str(w.project), html, now };
   }
 
+  function shellHtml(s, isGone) {
+    const st = shellState(s);
+    const startAt = num(s.startAt);
+    const endAt = num(s.endAt);
+    const elapsed = startAt == null ? '' : endAt != null
+      ? `${span(endAt - startAt)} sürdü · <time data-ago="${endAt}"></time>`
+      : shellDone(s) ? '' : `<time data-since="${startAt}"></time>`;
+    let html = `<div class="ap-status ${st.cls}"><span class="ap-dot"></span>${st.txt}<span class="ap-dim">${elapsed}</span></div>`;
+    if (isGone) html += `<div class="ap-note">Komut ofisten ayrıldı</div>`;
+    html += block('command', 'Komut', s.command, { copy: true, mono: true });
+    const code = num(s.exitCode);
+    if (code != null) {
+      html += `<section class="ap-sec"><div class="ap-label">Çıkış kodu</div><div class="ap-text mono">${code}</div></section>`;
+    }
+    html += block('desc', 'Açıklama', s.description);
+    // başlatan: alt ajan (ofisteyse tıklanır) ya da ana oturum (müdür)
+    const agentId = str(s.agentId);
+    let who;
+    if (agentId) {
+      const w = find(agentId);
+      who = w
+        ? `<button class="ap-agent" data-pick="${esc(w.id)}" title="Ajanı göster"><span class="ap-tool">${esc(typeLabel(w.type))}</span><span class="ap-detail">${esc(str(w.description))}</span></button>`
+        : `<div class="ap-text"><span class="ap-dim">ajan ${esc(agentId)} · ofisten ayrıldı</span></div>`;
+    } else {
+      who = `<button class="ap-agent" data-pick="${BOSS_ID}" title="Müdürü göster"><span class="ap-tool">Müdür</span><span class="ap-detail">ana oturum</span></button>`;
+    }
+    html += `<section class="ap-sec"><div class="ap-label">Başlatan</div>${who}</section>`;
+    if (startAt != null) {
+      html += `<section class="ap-sec"><div class="ap-label">Başladı</div><div class="ap-text">${esc(clock(startAt))}${endAt != null ? ` → ${esc(clock(endAt))}` : ''}</div></section>`;
+    }
+    return { title: 'Arka plan komutu', project: str(s.project), html };
+  }
+
+  function bossShells(d) {
+    const running = (Array.isArray(d.shells) ? d.shells : []).filter((s) => s && s.id != null && !shellDone(s));
+    let html = `<section class="ap-sec"><div class="ap-label">Arka plan komutları<span class="ap-dim">${running.length} çalışıyor</span></div>`;
+    if (!running.length) return html + `<div class="ap-empty">Çalışan arka plan komutu yok.</div></section>`;
+    const groups = new Map();
+    for (const s of running) {
+      const k = str(s.project);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(s);
+    }
+    for (const [proj, list] of groups) {
+      if (proj) html += `<div class="ap-shell-proj ap-dim">${esc(proj)}</div>`;
+      html += `<ul class="ap-agents">${list.map((s) => `<li><button class="ap-agent" data-pick="${esc(SHELL + s.id)}" title="${esc(str(s.command))}"><span class="ap-detail mono">${esc(str(s.command) || '?')}</span>${num(s.startAt) != null ? `<time class="ap-dim" data-since="${s.startAt}"></time>` : ''}</button></li>`).join('')}</ul>`;
+    }
+    return html + '</section>';
+  }
+
   function bossHtml() {
     const d = data || {};
     const workers = (Array.isArray(d.workers) ? d.workers : []).filter((w) => w && num(w.doneAt) == null);
@@ -181,6 +246,7 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
       ? `<ul class="ap-agents">${workers.map((w) => `<li><button class="ap-agent" data-pick="${esc(w.id)}" title="Ayrıntıları göster"><span class="ap-tool">${esc(shortTool(w.tool) || 'düşünüyor')}</span><span class="ap-detail">${esc(str(w.description) || typeLabel(w.type))}</span>${w.project ? `<span class="ap-dim">${esc(w.project)}</span>` : ''}</button></li>`).join('')}</ul>`
       : `<div class="ap-empty">Şu an çalışan ajan yok.</div>`;
     html += '</section>';
+    html += bossShells(d);
     return { title: 'Müdür', project: '', html };
   }
 
@@ -195,7 +261,13 @@ export function mountAgentPanel(el, { onClose, onSelect, anchor } = {}) {
     copies.clear();
     let view;
     if (id === BOSS_ID) view = bossHtml();
-    else {
+    else if (id.startsWith(SHELL)) {
+      const s = findShell(id.slice(SHELL.length));
+      if (s) last = s;
+      view = last && SHELL + last.id === id
+        ? shellHtml(last, !s)
+        : { title: 'Arka plan komutu', project: '', html: '<div class="ap-note">Komut ofisten ayrıldı</div>' };
+    } else {
       const w = find(id);
       if (w) last = w;
       view = last && last.id === id

@@ -2,7 +2,8 @@
 // Electron'da preload window.agentOffice'u verir ve bu dosya hiç yüklenmez.
 // ?empty → proje yok; ?themesError → başlıkta tema uyarısı; ?authError → üçüncü hesap 'error';
 // ?loginFail → sahte giriş 1 koduyla biter ve hesap 'out' kalır.
-// ?select=<işçi id | @boss> → birkaç saniye sonra o bota tıklanır (ajan paneli denemesi; ör. ?select=m-1).
+// ?select=<işçi id | @boss | shell:<id>> → birkaç saniye sonra o bota/raf yuvasına tıklanır (ajan paneli denemesi;
+// ör. ?select=m-1, ?select=shell:sh-1). ?noShells → eski veri (shells alanı yok).
 const q = new URLSearchParams(location.search);
 const listeners = (set = new Set()) => ({ add: (cb) => (set.add(cb), () => set.delete(cb)), emit: (...a) => set.forEach((cb) => cb(...a)) });
 const ev = { projects: listeners(), data: listeners(), exit: listeners(), office: listeners(), accounts: listeners() };
@@ -225,6 +226,18 @@ const mockWorkers = () => {
   ].filter((w) => w.doneAt == null || now < w.doneAt + 60000);
 };
 
+// ---- sahte arka plan komutları (sunucu odası): ikisi çalışıyor, biri bitti (0), biri başarısız ----
+const mockShells = () => {
+  const p0 = projects[0]?.name ?? 'agent-office';
+  const p1 = projects[1]?.name ?? p0;
+  return [
+    { id: 'sh-1', command: 'npm run dev -- --port 5173', description: 'Geliştirme sunucusunu başlat', startAt: T0 - 95000, status: 'running', project: p0 },
+    { id: 'sh-2', command: 'pytest -x tests/test_orders.py --maxfail=3 -q', description: 'Sipariş testlerini arka planda çalıştır', agentId: 'm-2', startAt: T0 - 20000, status: 'running', project: p1 },
+    { id: 'sh-3', command: 'npm run build', startAt: T0 - 120000, endAt: T0 - 70000, exitCode: 0, status: 'completed', project: p0 },
+    { id: 'sh-4', command: 'cargo test --workspace', description: 'Rust testleri', agentId: 'm-old', startAt: T0 - 80000, endAt: T0 - 30000, exitCode: 101, status: 'failed', project: p1 },
+  ];
+};
+
 if (q.has('select')) {
   // gerçek tıklama yolu: core.mjs kutusundan tuval pikseline, oradan CSS pikseline
   const want = q.get('select');
@@ -259,6 +272,7 @@ setInterval(() => {
     projects: per,
     project: projects[0]?.name ?? '',
     sessionId: '',
+    ...(q.has('noShells') ? {} : { shells: mockShells() }),
     ...(q.has('themesError') ? { themesError: 'Unexpected token } in JSON at position 120' } : {}),
   });
 }, 500);
