@@ -157,7 +157,7 @@ const claudeCommand = (args) =>
   '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; exec claude ' + args;
 
 // Renderer'a giden hesaplar: auth bellekte tutulur, state.json'a yazılmaz; kota bilinmiyorsa alan yok.
-const withAuth = (accounts, authOf, usageOf = () => undefined) =>
+const withAuth = (accounts, authOf, usageOf = (_id) => undefined) =>
   accounts.map((a) => {
     const usage = usageOf(a.id);
     return { ...a, auth: authOf(a.id) || { state: 'checking' }, ...(usage ? { usage } : {}) };

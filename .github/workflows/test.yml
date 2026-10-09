@@ -1,0 +1,45 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install (no Electron download, no native builds)
+        run: npm ci --ignore-scripts
+        working-directory: app
+      - name: Type-check the main process
+        run: npx -y -p typescript@5.6.3 tsc -p app
+      - name: Main process tests
+        run: node --test app/test/main.test.cjs
+      - name: Office renderer and session reading
+        run: node app/test/office.test.mjs
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate the plugin
+        run: claude plugin validate plugin
+      - name: Plugin hook tests
+        run: claude plugin test plugin
+      - name: Terminal viewer smoke test
+        run: node --test plugin/tests/viewer-smoke.mjs

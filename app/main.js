@@ -1,5 +1,5 @@
 // Agent Office kabuğu: pencere, projeler, hesaplar, her projeye bir claude pty'si ve ofis verisi.
-const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, shell: eShell } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -566,9 +566,13 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
+  // Pencere yalnızca kendi sayfasını gösterir: yeni pencere ve başka adrese gitme yok; web bağlantıları tarayıcıda açılır.
+  const openOutside = (url) => { if (/^https?:\/\//i.test(url)) eShell.openExternal(url).catch(() => {}); };
+  win.webContents.setWindowOpenHandler(({ url }) => { openOutside(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (e, url) => { if (url !== win.webContents.getURL()) { e.preventDefault(); openOutside(url); } });
   isLoaded = false;
   win.once('ready-to-show', () => win.show());
   win.on('focus', onFocus);

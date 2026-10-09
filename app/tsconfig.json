@@ -1,0 +1,16 @@
+{
+  // Tip denetimi (yalnızca denetim, çıktı yok): npx -p typescript tsc -p app
+  // Şimdilik ana süreç: main.js, preload.js, src/*.js. Renderer ve ofis çizicisi sonra eklenecek.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "files": ["main.js", "preload.js"],
+  "include": ["src/*.js"]
+}
