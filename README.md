@@ -56,6 +56,7 @@ xattr -dr com.apple.quarantine "/Applications/Agent Office.app"
 | **Choose a project's account** | The **Hesap ▾** picker on the project's row. Its last entry, **+ Yeni hesap…**, creates an account for that project. |
 | **Log in to an account** | **Giriş yap** next to the account. A small terminal runs `claude auth login`; approve in the browser and it closes by itself. |
 | **See what an agent does** | Click the worker in the office. Esc closes the panel. |
+| **Change the bots' color** | **Bot rengi** at the bottom of the sidebar (↺ resets it) |
 | **Hide the sidebar** | ≡ in the title bar |
 
 The **Varsayılan** (default) account is your normal Claude Code login in `~/.claude`. A new account starts empty: it does not share settings, MCP servers or `CLAUDE.md` with your default one.

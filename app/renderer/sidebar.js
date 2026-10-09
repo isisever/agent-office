@@ -42,6 +42,11 @@ export function mountSidebar(el, on) {
   let acctKey = '';
   let editing = null; // { id: string | null } — hesap adı düzenleniyor (null id = yeni hesap)
 
+  // bot rengi: ofisteki botların gövde rengi (↺ = temanın varsayılanı)
+  const botInput = h('input', { type: 'color', class: 'sb-color', title: 'Botların rengi', oninput: (e) => on.setBotColor?.(e.target.value) });
+  const botRow = h('div', { class: 'sb-botcolor' },
+    h('span', {}, 'Bot rengi'), botInput,
+    h('button', { class: 'sb-x', title: 'Varsayılan renk', onclick: () => on.setBotColor?.(null) }, '↺'));
   const projList = h('ul', { class: 'sb-list', id: 'sb-projects' });
   const acctList = h('ul', { class: 'sb-list', id: 'sb-accounts' });
   el.append(
@@ -52,6 +57,7 @@ export function mountSidebar(el, on) {
       h('div', { class: 'sb-head' }, h('span', {}, 'HESAPLAR')),
       acctList,
     ),
+    botRow,
   );
 
   // Projenin hesabı: açıkça "Hesap" etiketli açılır liste; son seçenek yeni hesap açıp bu projeye atar.
@@ -196,6 +202,8 @@ export function mountSidebar(el, on) {
   }
 
   return {
+    /** Seçicide gösterilen bot rengi. */
+    setBotColor(hex) { botInput.value = hex || '#3fb6a8'; },
     /** Proje listesi, etkin proje, çalışma durumu ve hesaplar. */
     setState(s) {
       projects = s.projects || [];

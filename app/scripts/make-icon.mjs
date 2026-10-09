@@ -12,7 +12,7 @@ const out = join(root, 'build')
 const C = {
   wall: 0x3a2533, wallLo: 0x2e1d29, trim: 0x5a3846,
   ol: 0x1d1310, body: 0x3fb6a8, bodyHi: 0x6fd6c9, shade: 0x2b8a7f, eye: 0x1a1a1a,
-  tie: 0x2a3a6a, tieKnot: 0x1d2a50,
+  tie: 0x2a3a6a, tieKnot: 0x1d2a50, stache: 0x3b2418, collar: 0xf4efe6,
   desk: 0x9a6a44, deskHi: 0xb8875c, deskLo: 0x7a5034, deskDark: 0x5e3c27,
   plate: 0xd9b25a, plateLo: 0xa8843a,
   paper: 0xf3ead8, paperLo: 0xcfc3a8, mug: 0xf3ead8, coffee: 0x5a3a28,
@@ -47,10 +47,16 @@ rect(10, 9, 12, 1, C.bodyHi)
 rect(9, 20, 14, 2, C.shade)
 rect(12, 12, 1, 2, C.eye)
 rect(19, 12, 1, 2, C.eye)
-rect(15, 15, 2, 1, C.tieKnot)
-rect(15, 16, 2, 3, C.tie)
-px(15, 19, C.tie)
-px(16, 19, C.tie)
+// pala bıyık (uçları sarkık), altında beyaz yaka ve kravat
+rect(12, 15, 8, 1, C.stache)
+rect(11, 16, 2, 1, C.stache)
+rect(19, 16, 2, 1, C.stache)
+rect(13, 17, 2, 1, C.collar)
+rect(17, 17, 2, 1, C.collar)
+px(14, 18, C.collar)
+px(17, 18, C.collar)
+rect(15, 18, 2, 1, C.tieKnot)
+rect(15, 19, 2, 2, C.tie)
 
 // masa
 rect(0, 21, N, 1, C.ol)
