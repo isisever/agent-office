@@ -1,25 +1,25 @@
-// Ofis verisi: agent-office eklentisinin yazdığı oturum dosyalarını okur (Electron main).
-// Bütün projeler tek ofiste: müdür hepsine bakar, her işçi kendi projesinin adını taşır.
+// Office data: reads the session files written by the agent-office plugin (Electron main).
+// All projects in one office: the manager oversees them all, each worker carries its own project's name.
 const { readdirSync, readFileSync, statSync } = require('node:fs')
 const { homedir } = require('node:os')
 const { join } = require('node:path')
 
 const LIVE_MS = 3 * 60 * 1000
 
-// yollar her çağrıda hesaplanır: testler HOME'u değiştirebilsin
+// paths are computed on every call: so tests can change HOME
 const rootDir = () => join(homedir(), '.claude', 'agent-office')
 
 const slugOf = p => String(p ?? '').replace(/[^\w.-]/g, '_')
 
-// eklentinin görüntüleyicisiyle (viewer/office.mjs) aynı: yerel takvim günü
+// same as the plugin's viewer (viewer/office.mjs): local calendar day
 function dayKey(ms) {
   const d = new Date(ms)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-// ---------- temalar ----------
-// themes.json bozuksa hata kaydedilir; dosya yoksa sessiz kalınır.
-// Dosya ancak değiştiğinde (mtime/boyut) yeniden okunur; readOffice her 500 ms'de buna bakar.
+// ---------- themes ----------
+// If themes.json is broken the error is recorded; if the file is missing, stay silent.
+// The file is re-read only when it changes (mtime/size); readOffice checks this every 500 ms.
 let themesCache = { key: null, themes: {}, error: undefined }
 
 function loadThemes(root = rootDir()) {
@@ -50,13 +50,13 @@ function readThemes(root) {
   return loadThemes(root).themes
 }
 
-// son okunan themes.json hatası (yoksa undefined)
+// last themes.json error read (undefined if none)
 function themesError(root) {
   return loadThemes(root).error
 }
 
-// ---------- ayarlar ----------
-// settings.json { forgetMinutes: 1-60 } (eklentiyle aynı kural, varsayılan 5): bitmiş kabuklar bu kadar kalır
+// ---------- settings ----------
+// settings.json { forgetMinutes: 1-60 } (same rule as the plugin, default 5): finished shells stay this long
 const FORGET_MINUTES = { min: 1, max: 60, default: 5 }
 let settingsCache = { key: null, forgetMs: FORGET_MINUTES.default * 60_000 }
 
@@ -79,10 +79,10 @@ function forgetMs(root = rootDir()) {
   return settingsCache.forgetMs
 }
 
-// ---------- arka plan kabukları ----------
-// canlı oturum: dosyadaki hepsi (çalışanlar + unutma süresi dolmamış bitenler; eklenti budar, burada da süzülür).
-// canlı olmayan oturum: yalnız bitişi unutma süresi içinde olanlar; oturum bittiğinde hâlâ "çalışan" görünenler
-// oturumla birlikte kapanmıştır (killed, endAt = endedAt). Bitmemiş ama bayat oturumun çalışanları gösterilmez.
+// ---------- background shells ----------
+// live session: everything in the file (running + finished within the forget window; the plugin prunes, filtered here too).
+// non-live session: only those finished within the forget window; ones still shown as "running" when the session ended
+// closed with the session (killed, endAt = endedAt). Running shells of an unfinished but stale session are not shown.
 function shellsOf(s, isLive, now, forget) {
   const out = []
   for (const sh of Array.isArray(s.shells) ? s.shells : []) {
@@ -98,16 +98,16 @@ function shellsOf(s, isLive, now, forget) {
   return out
 }
 
-// ---------- ofis ----------
-// projects: dahil edilecek proje adları; null = bütün canlı oturumlar. (Eski tek proje adı da kabul edilir.)
-// delivered: bugün (yerel gün) teslim edilenler; doneAt'i bugün olan işçiler ∪ stats.today kimlikleri,
-// oturum/işçi kimliğiyle tekilleştirilir; bugün biten oturumlar dahil.
-// Bu uygulamanın okuyabildiği en yeni oturum dosyası biçimi (eklentinin FORMAT'ı; yoksa eski dosya, 2 sayılır).
+// ---------- office ----------
+// projects: project names to include; null = all live sessions. (An old single project name is accepted too.)
+// delivered: deliveries today (local day); workers whose doneAt is today ∪ stats.today ids,
+// deduplicated by session/worker id; sessions that ended today are included.
+// The newest session file format this app can read (the plugin's FORMAT; if missing, an old file, counted as 2).
 const FORMAT = 2
 
-// Sekmeler (sözleşme v3.0): eklenti oturumu klasörün adıyla anar; worktree sekmesinin klasörü başka adlıysa
-// (`<depo>-wt-<n>`) aliases { oturum adı: proje adı } o oturumları projesine sayar: işçiler, kabuklar,
-// teslimler, meşgul/onay durumu proje adını taşır. Eşlenmeyen ad kendisidir.
+// Tabs (contract v3.0): the plugin names a session after its folder; if a worktree tab's folder has another name
+// (`<repo>-wt-<n>`), aliases { session name: project name } count those sessions toward its project: workers, shells,
+// deliveries and busy/approval status carry the project name. An unmapped name stays as it is.
 function aliasOf(aliases) {
   const map = new Map()
   for (const [from, to] of Object.entries(aliases ?? {})) if (from && to) map.set(slugOf(from), String(to))
@@ -121,7 +121,7 @@ function readOffice(projects, now = Date.now(), root = rootDir(), aliases = null
   const data = { workers: [], shells: [], delivered: 0, isBossBusy: false, isBossAsking: false, projects: [], project: '', sessionId: '' }
   const forget = forgetMs(root)
 
-  // proje tablosu: verilen sırayla, sonra görülenler
+  // project table: in the given order, then the ones seen
   const table = new Map()
   const entry = name => {
     const key = slugOf(name)
@@ -139,12 +139,12 @@ function readOffice(projects, now = Date.now(), root = rootDir(), aliases = null
   }
   const day = dayKey(now)
   const midnight = new Date(now).setHours(0, 0, 0, 0)
-  const seen = new Map() // "<oturum>/<işçi>" → proje anahtarı
+  const seen = new Map() // "<session>/<worker>" → project key
   let newest = 0
   for (const f of files) {
     let s
     try {
-      // bugünden önce değişmiş ve canlı olmayan dosyalar ne işçi ne de bugünün teslimini taşır
+      // files changed before today that aren't live carry neither workers nor today's deliveries
       if (statSync(join(sessions, f)).mtimeMs < Math.min(midnight, now - LIVE_MS)) continue
       s = JSON.parse(readFileSync(join(sessions, f), 'utf8'))
     } catch {
@@ -154,7 +154,7 @@ function readOffice(projects, now = Date.now(), root = rootDir(), aliases = null
     s.project = projectOf(s.project)
     const key = slugOf(s.project)
     if (only && !only.has(key)) continue
-    // daha yeni bir eklentinin yazdığı dosya: yanlış okumak yerine uyar (sözleşme v2.8)
+    // a file written by a newer plugin: warn instead of misreading it (contract v2.8)
     if (Number.isFinite(s.format) && s.format > FORMAT) {
       data.newerFormat = Math.max(data.newerFormat ?? 0, s.format)
       continue
@@ -168,7 +168,7 @@ function readOffice(projects, now = Date.now(), root = rootDir(), aliases = null
         delivers = true
       }
     }
-    // kancanın kalıcı günlük kaydı: dosyadan silinmiş teslimler
+    // the hook's persistent daily log: deliveries removed from the file
     if (s.stats?.today?.date === day && Array.isArray(s.stats.today.ids)) {
       for (const id of s.stats.today.ids) seen.set(`${sessionId}/${id}`, key)
       delivers ||= s.stats.today.ids.length > 0
@@ -194,7 +194,7 @@ function readOffice(projects, now = Date.now(), root = rootDir(), aliases = null
     const busy = Boolean(s.stats?.isBossBusy)
     p.isBossBusy ||= busy
     data.isBossBusy ||= busy
-    // açık izin penceresi (sözleşme v2.6): projede en eskisi
+    // open permission prompt (contract v2.6): the oldest one in the project
     const w = s.stats?.waiting
     if (w && w.kind === 'permission' && Number.isFinite(w.since) && (!p.waiting || w.since < p.waiting.since)) {
       p.waiting = { tool: typeof w.tool === 'string' ? w.tool : '', since: w.since }
@@ -213,16 +213,16 @@ function readOffice(projects, now = Date.now(), root = rootDir(), aliases = null
   data.delivered = seen.size
   data.shells.sort((a, b) => (a.startAt ?? 0) - (b.startAt ?? 0))
   data.projects = [...table.values()]
-  // oturum yoksa da tema ilk projeye göre seçilsin
+  // pick the theme by the first project even with no sessions
   if (!data.project && list?.length) data.project = String(list[0])
   const err = themesError(root)
   if (err) data.themesError = err
   return data
 }
 
-// ---------- gün sonu özeti (sözleşme v2.9) ----------
-// Bugünün teslimleri: her oturumun stats.today.log'u (işçi ofisten ayrılsa da kalır), projesiyle, en yenisi önce.
-// projects verilirse yalnız onlar. untracked: günlüğü olmayan (eski eklenti) teslim sayısı.
+// ---------- end-of-day summary (contract v2.9) ----------
+// Today's deliveries: each session's stats.today.log (kept even after a worker leaves the office), with project, newest first.
+// If projects is given, only those. untracked: number of deliveries without a log (old plugin).
 function readToday(projects, now = Date.now(), root = rootDir(), aliases = null) {
   const only = projects == null ? null : new Set(projects.map(slugOf))
   const projectOf = aliasOf(aliases)

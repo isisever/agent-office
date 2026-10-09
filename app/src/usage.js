@@ -1,16 +1,16 @@
-// Hesap kotası (Pro/Max planı): saf işlevler (Electron yok; node --test ile sınanır).
+// Account quota (Pro/Max plan): pure functions (no Electron; tested with node --test).
 //
-// Kaynak (code.claude.com/docs/en/statusline): status line komutunun girdisindeki
-// rate_limits.five_hour / seven_day → { used_percentage: 0-100, resets_at: Unix saniye }. Yalnız
-// claude.ai aboneliğinde ve oturumun ilk API yanıtından sonra gelir; süresi geçen pencere düşer.
-// Uygulama her projenin claude'unu `--settings` ile kendi status line'ıyla başlatır: betik girdiyi
-// usage/<accountId>/<projectId>.json'a yazar, kullanıcının kendi status line'ı varsa onu çalıştırır.
+// Source (code.claude.com/docs/en/statusline): in the status line command's input,
+// rate_limits.five_hour / seven_day → { used_percentage: 0-100, resets_at: Unix seconds }. Only
+// with a claude.ai subscription and after the session's first API response; an expired window is dropped.
+// The app starts each project's claude with its own status line via `--settings`: the script writes the input
+// to usage/<accountId>/<projectId>.json and runs the user's own status line if there is one.
 const path = require('path');
 
 const LAST = 'last.json';
 
-// Status line betiği: girdiyi dosyaya yazar (yarım dosya okunmasın diye önce geçici dosyaya),
-// ardından kullanıcının status line komutunu aynı girdiyle çalıştırır; onun çıktısı ekranda görünür.
+// Status line script: writes the input to a file (to a temp file first so a partial file is never read),
+// then runs the user's status line command with the same input; its output is what shows on screen.
 const SCRIPT = `# Agent Office: Claude Code status line girdisini (kota dahil) uygulamaya bırakır.
 out=$1; tmp="$out.$$"
 cat > "$tmp" || exit 0
@@ -21,9 +21,9 @@ exit 0
 
 const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
-// Kullanıcının etkin status line'ı: --settings bunu ezer, betik yeniden çalıştırır. Sıra Claude
-// Code'unki: projenin settings.local.json'ı, projenin settings.json'ı, hesabın settings.json'ı.
-// İlk tanımlı statusLine kazanır; komut türünde değilse (ya da komutsuzsa) çalıştırılacak bir şey yok.
+// The user's effective status line: --settings overrides it, the script runs it again. The order is Claude
+// Code's: the project's settings.local.json, the project's settings.json, the account's settings.json.
+// The first defined statusLine wins; if it isn't a command type (or has no command), there is nothing to run.
 function userStatusLine(settingsList) {
   for (const s of settingsList) {
     const sl = s && typeof s === 'object' ? s.statusLine : undefined;
@@ -40,14 +40,14 @@ const settingsPaths = (projectDir, configDir, home) => [
   path.join(configDir || path.join(home, '.claude'), 'settings.json'),
 ];
 
-// claude'a verilecek --settings JSON'u.
+// The --settings JSON passed to claude.
 function statusLineSettings(scriptPath, outPath, user) {
   const statusLine = { type: 'command', command: `/bin/sh ${shq(scriptPath)} ${shq(outPath)}` };
   if (user?.padding !== undefined) statusLine.padding = user.padding;
   return JSON.stringify({ statusLine });
 }
 
-// Status line girdisi → AccountUsage (bkz. CONTRACT.md) ya da rate_limits yoksa null.
+// Status line input → AccountUsage (see CONTRACT.md), or null if there is no rate_limits.
 function usageFromStatus(obj, updatedAt) {
   const rl = obj && typeof obj === 'object' ? obj.rate_limits : null;
   if (!rl || typeof rl !== 'object') return null;
@@ -65,7 +65,7 @@ function usageFromStatus(obj, updatedAt) {
   return five || week ? usage : null;
 }
 
-// Önbellekteki kayıt (last.json) ya da bozuksa null.
+// The cached record (last.json), or null if it is corrupt.
 function usageFromCache(obj) {
   if (!obj || typeof obj !== 'object' || !Number.isFinite(obj.updatedAt)) return null;
   const ok = (w) => w && Number.isFinite(w.pct);

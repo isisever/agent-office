@@ -1,21 +1,21 @@
-// Claude Code hesapları: saf durum işlevleri ve pty ortamı (Electron yok; node --test ile sınanır).
+// Claude Code accounts: pure state functions and the pty environment (no Electron; tested with node --test).
 //
-// Girişler nasıl ayrılıyor (Claude Code 2.1.295, macOS; code.claude.com/docs/en/authentication):
-// - Giriş bilgisi macOS Anahtar Zinciri'nde ("Claude Code-credentials" öğesi) durur; zincir yazmayı
-//   reddederse <config>/.credentials.json'a (0600) düşer.
-// - CLAUDE_CONFIG_DIR verilirse .credentials.json o klasöre gider VE zincir öğesi o klasöre göre
-//   anahtarlanır: farklı CLAUDE_CONFIG_DIR farklı öğeyi okur. Belgelenmiş çoklu hesap yolu budur.
-//   Denendi: boş bir CLAUDE_CONFIG_DIR ile `claude auth status` → loggedIn:false, varsayılan girişi görmüyor.
-// - Ayrılmayanlar: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_PROFILE
-//   ortamdaysa tüm hesaplarda girişin önüne geçer; API anahtarı olmadan yapılan Console girişi
-//   (Anthropic profili, ~/.config/anthropic) klasör dışında durduğu için ayrılmaz.
-// - Yeni klasör boş başlar: ~/.claude'daki ayarlar, eklentiler, MCP sunucuları, CLAUDE.md o hesapta yok.
+// How logins are kept apart (Claude Code 2.1.295, macOS; code.claude.com/docs/en/authentication):
+// - Credentials live in the macOS Keychain (the "Claude Code-credentials" item); if the keychain refuses
+//   the write, they fall back to <config>/.credentials.json (0600).
+// - If CLAUDE_CONFIG_DIR is set, .credentials.json goes to that folder AND the keychain item is keyed
+//   by that folder: a different CLAUDE_CONFIG_DIR reads a different item. This is the documented multi-account path.
+//   Tried: with an empty CLAUDE_CONFIG_DIR, `claude auth status` → loggedIn:false, it doesn't see the default login.
+// - Not kept apart: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_PROFILE
+//   in the environment take precedence over the login in every account; a Console login made without an API key
+//   (Anthropic profile, ~/.config/anthropic) lives outside the folder, so it isn't kept apart.
+// - A new folder starts empty: the settings, plugins, MCP servers and CLAUDE.md in ~/.claude are not in that account.
 const path = require('path');
 
 const DEFAULT_ID = 'default';
 const DEFAULT_ACCOUNT = Object.freeze({ id: DEFAULT_ID, label: 'Varsayılan', configDir: null });
 
-// Varsayılan hesap her zaman ilk sırada ve configDir'i null.
+// The default account is always first and its configDir is null.
 function normalizeAccounts(list) {
   const out = [{ ...DEFAULT_ACCOUNT }];
   const seen = new Set([DEFAULT_ID]);
@@ -30,7 +30,7 @@ function normalizeAccounts(list) {
 
 const cleanLabel = (label, fallback) => (typeof label === 'string' && label.trim()) || fallback;
 
-// configDir = <root>/<id>; root main'de userData/accounts. Klasörü main oluşturur.
+// configDir = <root>/<id>; in main, root is userData/accounts. main creates the folder.
 function addAccount(state, label, { id, root }) {
   const account = { id, label: cleanLabel(label, `Hesap ${state.accounts.length}`), configDir: path.join(root, id) };
   return { state: { ...state, accounts: [...state.accounts, account] }, account };
@@ -42,7 +42,7 @@ function renameAccount(state, id, label) {
   return { ...state, accounts: state.accounts.map((a) => (a.id === id ? { ...a, label: l } : a)) };
 }
 
-// Hesap silinince projeleri varsayılana geçer; `moved` yeniden başlatılacak proje id'leri.
+// When an account is deleted its projects move to the default; `moved` holds the ids of projects to restart.
 function removeAccount(state, id) {
   if (id === DEFAULT_ID || !state.accounts.some((a) => a.id === id)) return { state, moved: [] };
   const moved = state.projects.filter((p) => p.accountId === id).map((p) => p.id);
@@ -59,8 +59,8 @@ function removeAccount(state, id) {
 const accountOf = (state, project) =>
   state.accounts.find((a) => a.id === project?.accountId) || state.accounts.find((a) => a.id === DEFAULT_ID) || DEFAULT_ACCOUNT;
 
-// Uygulama bir claude oturumunun içinden açıldıysa iç içe oturum işaretlerini temizle; üst sürecin
-// CLAUDE_CONFIG_DIR'ini de alma (varsayılan hesap sistemin ~/.claude'u). Hesabın klasörü varsa onu ver.
+// If the app was opened from inside a claude session, clear the nested-session markers; don't take the parent
+// process's CLAUDE_CONFIG_DIR either (the default account is the system's ~/.claude). If the account has a folder, pass it.
 function ptyEnv(base, configDir = null) {
   const env = { ...base, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
   for (const k of Object.keys(env)) {
@@ -68,16 +68,16 @@ function ptyEnv(base, configDir = null) {
   }
   if (configDir) {
     env.CLAUDE_CONFIG_DIR = configDir;
-    // giriş kabuğunun rc dosyaları CLAUDE_CONFIG_DIR'i ezebilir; komut bunu son anda yeniden ayarlar
+    // the login shell's rc files may override CLAUDE_CONFIG_DIR; the command sets it again at the last moment
     env.AGENT_OFFICE_CONFIG_DIR = configDir;
   }
   return env;
 }
 
-// --- giriş durumu (`claude auth status --json`)
+// --- login status (`claude auth status --json`)
 
-// Çıktıdaki son JSON nesnesi: rc dosyaları önüne/arkasına gürültü basabilir. Dizgelerdeki
-// süslü parantezleri sayan bir tarama ile en dıştaki nesneler bulunur; ayrışan sonuncusu döner.
+// The last JSON object in the output: rc files may print noise before/after it. A brace-counting scan
+// that skips braces inside strings finds the outermost objects; the last one that parses is returned.
 function lastJsonObject(text) {
   const s = typeof text === 'string' ? text : String(text ?? '');
   let found = null;
@@ -97,7 +97,7 @@ function lastJsonObject(text) {
   return found;
 }
 
-// s[start] === '{' için eşleşen '}' konumu; yoksa -1.
+// Position of the '}' matching s[start] === '{'; -1 if none.
 function matchBrace(s, start) {
   let depth = 0;
   let inStr = false;
@@ -118,7 +118,7 @@ const shortError = (msg) => {
   return line.length > 120 ? line.slice(0, 117) + '…' : line;
 };
 
-// `auth status --json` nesnesi → AccountAuth (bkz. CONTRACT.md).
+// `auth status --json` object → AccountAuth (see CONTRACT.md).
 function authFromStatus(obj) {
   if (!obj || typeof obj !== 'object' || typeof obj.loggedIn !== 'boolean') {
     return { state: 'error', errorKey: 'unreadable' };
@@ -130,7 +130,7 @@ function authFromStatus(obj) {
   return auth;
 }
 
-// execFile sonucu → AccountAuth. Çıkış kodu sıfır olmasa da stdout'ta JSON varsa o geçerlidir.
+// execFile result → AccountAuth. Even with a non-zero exit code, JSON on stdout is what counts.
 function authFromRun(err, stdout, stderr) {
   const obj = lastJsonObject(stdout);
   if (obj && typeof obj.loggedIn === 'boolean') return authFromStatus(obj);
@@ -141,8 +141,8 @@ function authFromRun(err, stdout, stderr) {
   return { state: 'error', errorKey: 'unreadable' };
 }
 
-// Bilinen hatalar anahtarla saklanır, renderer'a o anki dilde gider (dil sonradan değişebilir).
-// Metinler locales/<kod>.json "auth" altında; t: main'in çevirmeni (src/i18n.mjs translator, t.has ile).
+// Known errors are stored as keys and reach the renderer in the current language (the language may change later).
+// Strings are under "auth" in locales/<code>.json; t: main's translator (src/i18n.mjs translator, with t.has).
 /** @param {any} auth @param {{ (key: string): string, has: (key: string) => boolean }} t */
 function localizeAuth(auth, t) {
   if (!auth?.errorKey) return auth;
@@ -150,11 +150,11 @@ function localizeAuth(auth, t) {
   return { ...rest, error: t.has(`auth.${errorKey}`) ? t(`auth.${errorKey}`) : errorKey };
 }
 
-// Giriş kabuğu (`$SHELL -l -i -c`) ile çalışan claude komutu; hesap klasörü rc'lerden sonra yeniden verilir.
+// claude command run via the login shell (`$SHELL -l -i -c`); the account folder is set again after the rc files.
 const claudeCommand = (args) =>
   '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; exec claude ' + args;
 
-// Renderer'a giden hesaplar: auth bellekte tutulur, state.json'a yazılmaz; kota bilinmiyorsa alan yok.
+// Accounts sent to the renderer: auth is kept in memory, not written to state.json; no field if the quota is unknown.
 const withAuth = (accounts, authOf, usageOf = (_id) => undefined) =>
   accounts.map((a) => {
     const usage = usageOf(a.id);

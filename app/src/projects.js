@@ -1,5 +1,5 @@
-// Proje listesi: saf durum işlevleri (Electron yok; node --test ile sınanır).
-// Durum: { projects: Project[], accounts: Account[], activeId: string | null } (bkz. CONTRACT.md).
+// Project list: pure state functions (no Electron; tested with node --test).
+// State: { projects: Project[], accounts: Account[], activeId: string | null } (see CONTRACT.md).
 const path = require('path');
 const crypto = require('crypto');
 const { DEFAULT_ID, normalizeAccounts } = require('./accounts.js');
@@ -7,7 +7,7 @@ const { DEFAULT_ID, normalizeAccounts } = require('./accounts.js');
 const newId = () => crypto.randomBytes(6).toString('hex');
 const projectName = (dir) => path.basename(dir);
 
-// state.json'dan okunanı temizler; eski tek projeli sürümün `lastProject`'i ilk proje olur.
+// Cleans what was read from state.json; the old single-project version's `lastProject` becomes the first project.
 function normalizeState(raw, { id = newId } = {}) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const accounts = normalizeAccounts(r.accounts);
@@ -32,15 +32,15 @@ function normalizeState(raw, { id = newId } = {}) {
   return { projects, accounts, activeId };
 }
 
-// --- sekmeler (sözleşme v3.0)
-// Proje.tabs yalnız ek sekmeleri tutar; ilk sekme (ana terminal) örtüktür, numarası 1 sayılır ve kapanmaz.
+// --- tabs (contract v3.0)
+// Project.tabs holds only extra tabs; the first tab (main terminal) is implicit, counts as number 1 and cannot be closed.
 // Tab = { n: number (≥ 2), dir?: string, worktree?: { root, repo, branch } }
-// dir yoksa sekme proje klasöründe çalışır; worktree varsa sekme `git worktree add` ile açılmış klasördedir.
+// Without dir the tab runs in the project folder; with worktree the tab is in a folder created by `git worktree add`.
 const MAIN_TAB = 1;
 const isObj = (o) => Boolean(o) && typeof o === 'object';
 const isStr = (s) => typeof s === 'string' && s.length > 0;
 
-// state.json'daki sekmeleri temizler: bozuk ve yinelenen numaralar atılır, sıraları korunur.
+// Cleans the tabs from state.json: invalid and duplicate numbers are dropped, order is kept.
 function normalizeTabs(list) {
   const out = [];
   const seen = new Set();
@@ -57,13 +57,13 @@ function normalizeTabs(list) {
   }
   return out;
 }
-// sekmesiz proje eskisi gibi kalır (tabs alanı hiç yazılmaz)
+// a project without tabs stays as before (the tabs field is never written)
 const withTabs = (tabs) => (tabs.length ? { tabs } : {});
 const tabsOf = (project) => (Array.isArray(project?.tabs) ? project.tabs : []);
 
-// pty kimliği: ana sekme projectId, ek sekme `<projectId>:<n>`. Giriş pty'leri `login:<hesap>` (karışmaz).
+// pty id: main tab projectId, extra tab `<projectId>:<n>`. Login ptys are `login:<account>` (no clash).
 const tabPtyId = (projectId, n = MAIN_TAB) => (n === MAIN_TAB ? projectId : `${projectId}:${n}`);
-/** pty kimliği → { projectId, n } (ana sekme n = 1); giriş pty'si ya da bozuk kimlik → null. */
+/** pty id → { projectId, n } (main tab n = 1); a login pty or invalid id → null. */
 function parsePtyId(id) {
   if (!isStr(id) || id.startsWith('login:')) return null;
   const m = /^(.+):(\d+)$/.exec(id);
@@ -71,11 +71,11 @@ function parsePtyId(id) {
   const n = Number(m[2]);
   return n > MAIN_TAB ? { projectId: m[1], n } : null;
 }
-/** Projenin bütün pty kimlikleri: önce ana sekme. */
+/** All of the project's pty ids: main tab first. */
 const ptyIdsOf = (project) => [project.id, ...tabsOf(project).map((t) => tabPtyId(project.id, t.n))];
-/** Sekmenin çalıştığı klasör. */
+/** The folder the tab runs in. */
 const tabDir = (project, tab) => tab?.dir || project.dir;
-/** pty kimliğinden proje ve sekme (ana sekmede tab null); bilinmeyen → null. */
+/** Project and tab from a pty id (tab is null for the main tab); unknown → null. */
 function resolvePty(state, id) {
   const r = parsePtyId(id);
   const project = r && findProject(state, r.projectId);
@@ -86,8 +86,8 @@ function resolvePty(state, id) {
 }
 
 /**
- * Yeni sekme numarası: en büyük numaradan sonraki. taken(n) true dönerse (ör. worktree klasörü ya da dalı
- * zaten var) bir sonrakine geçilir; en çok 100 deneme.
+  * New tab number: the one after the largest. If taken(n) returns true (e.g. the worktree folder or branch
+  * already exists) it moves on to the next; at most 100 tries.
  * @param {{ tabs?: { n: number }[] } | null} project
  * @param {(n: number) => boolean} [taken]
  */
@@ -97,11 +97,11 @@ function nextTabNumber(project, taken = (_n) => false) {
   return n;
 }
 
-// Worktree adlandırması: deponun yanında `<depo>-wt-<n>` klasörü, `agent-office/<n>` dalı.
-// Proje deponun alt klasörüyse sekme worktree içindeki aynı alt klasörde çalışır.
+// Worktree naming: a `<repo>-wt-<n>` folder next to the repo, branch `agent-office/<n>`.
+// If the project is a subfolder of the repo, the tab runs in the same subfolder inside the worktree.
 const worktreeRoot = (repo, n) => path.join(path.dirname(repo), `${path.basename(repo)}-wt-${n}`);
 const worktreeBranch = (n) => `agent-office/${n}`;
-/** projectDir deponun içindeyse worktree'deki karşılığı; dışındaysa worktree kökü. */
+/** The worktree counterpart of projectDir if it is inside the repo; otherwise the worktree root. */
 function worktreeDir(repo, root, projectDir) {
   const rel = path.relative(repo, projectDir);
   return !rel || rel.startsWith('..') || path.isAbsolute(rel) ? root : path.join(root, rel);
@@ -112,7 +112,7 @@ function addTab(state, projectId, tab) {
   if (!p || !Number.isInteger(tab?.n) || tab.n <= MAIN_TAB || tabsOf(p).some((t) => t.n === tab.n)) return state;
   return { ...state, projects: state.projects.map((x) => (x.id === projectId ? { ...x, tabs: [...tabsOf(x), tab] } : x)) };
 }
-// Ana sekme kaldırılamaz; son ek sekme gidince tabs alanı silinir.
+// The main tab cannot be removed; when the last extra tab goes, the tabs field is deleted.
 function removeTab(state, projectId, n) {
   const p = findProject(state, projectId);
   if (!p || !tabsOf(p).some((t) => t.n === n)) return state;
@@ -127,9 +127,9 @@ function removeTab(state, projectId, n) {
 }
 
 /**
- * Oturum adı → proje adı. Eklenti oturumu klasörün adıyla (basename) anar; worktree sekmesinin klasörü
- * başka adlıysa (`<depo>-wt-<n>`) o oturumlar projesine sayılır. Bir projenin kendi adıyla çakışan
- * ad eşlenmez (o ad o projenindir).
+  * Session name → project name. The plugin names a session after its folder (basename); if a worktree tab's
+  * folder has another name (`<repo>-wt-<n>`), those sessions count toward its project. A name that clashes
+  * with a project's own name is not mapped (that name belongs to that project).
  */
 function sessionAliases(projects) {
   const names = new Set(projects.map((p) => p.name));
@@ -146,7 +146,7 @@ function sessionAliases(projects) {
 const findProject = (state, id) => state.projects.find((p) => p.id === id) || null;
 const findByDir = (state, dir) => state.projects.find((p) => p.dir === dir) || null;
 
-// Klasör listede varsa yalnızca etkinleşir; yoksa eklenir ve etkinleşir.
+// If the folder is in the list it is only activated; otherwise it is added and activated.
 function addProject(state, dir, { id = newId, accountId = DEFAULT_ID } = {}) {
   const old = findByDir(state, dir);
   if (old) return { state: { ...state, activeId: old.id }, project: old, isNew: false };
@@ -155,7 +155,7 @@ function addProject(state, dir, { id = newId, accountId = DEFAULT_ID } = {}) {
   return { state: { ...state, projects: [...state.projects, project], activeId: project.id }, project, isNew: true };
 }
 
-// Etkin proje silinirse yerine komşusu (sonraki, yoksa önceki) geçer.
+// If the active project is deleted, its neighbor (the next one, else the previous) takes its place.
 function removeProject(state, id) {
   const i = state.projects.findIndex((p) => p.id === id);
   if (i < 0) return state;
@@ -174,8 +174,8 @@ function setProjectAccount(state, id, accountId) {
   return { ...state, projects: state.projects.map((p) => (p.id === id ? { ...p, accountId } : p)) };
 }
 
-// Claude Code'un oturum geçmişi klasörü: <hesap klasörü ya da ~/.claude>/projects/<yol, harf/rakam dışı '-'>
-// (denendi: /Users/a/.claude → -Users-a--claude). Burada .jsonl varsa `claude --continue` sürdürecek bir oturum bulur.
+// Claude Code's session history folder: <account folder or ~/.claude>/projects/<path, non-alphanumerics → '-'>
+// (tried: /Users/a/.claude → -Users-a--claude). If it has a .jsonl, `claude --continue` finds a session to resume.
 const historyDir = (projectDir, configDir, home) =>
   path.join(configDir || path.join(home, '.claude'), 'projects', String(projectDir).replace(/[^a-zA-Z0-9]/g, '-'));
 

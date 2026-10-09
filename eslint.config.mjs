@@ -1,10 +1,10 @@
-// ESLint (yalnız hata yakalayan kurallar, biçim kuralı yok): npx -y eslint@9 .
-// Depoda paket bağımlılığı yok: ESLint'in "recommended" ayarı, onu çalıştıran eslint'in kendi
-// @eslint/js'inden alınır (npx önbelleği); global adlar aşağıda elle sayılır (globals paketi yerine).
+// ESLint (bug-catching rules only, no style rules): npx -y eslint@9 .
+// The repo has no package dependencies: ESLint's "recommended" config comes from the @eslint/js of the eslint
+// that runs it (npx cache); global names are listed by hand below (instead of the globals package).
 import { createRequire } from 'node:module'
 
 function eslintJs() {
-  // process.argv[1]: eslint'in bin/eslint.js'i; bulunamazsa (ör. editör eklentisi) depodan dene
+  // process.argv[1]: eslint's bin/eslint.js; if not found (e.g. an editor extension), try the repo
   for (const from of [process.argv[1], import.meta.url]) {
     try {
       return createRequire(from)('@eslint/js')
@@ -37,33 +37,33 @@ export default [
   {
     linterOptions: { reportUnusedDisableDirectives: 'error' },
     rules: {
-      // boş catch bu depoda bilinçli bir kalıp: "okunamazsa varsayılanla devam et"
+      // an empty catch is a deliberate pattern in this repo: "if it can't be read, carry on with the default"
       'no-empty': ['error', { allowEmptyCatch: true }],
-      // _ ile başlayan argüman bilerek kullanılmıyor (imzayı belgeler); { a, ...rest } ile alan atmak da bir kalıp
+      // an argument starting with _ is unused on purpose (it documents the signature); dropping fields with { a, ...rest } is also a pattern
       'no-unused-vars': ['error', { argsIgnorePattern: '^_', ignoreRestSiblings: true }],
     },
   },
-  // Electron main, preload, main süreci mantığı ve testi: CommonJS, Node
+  // Electron main, preload, main-process logic and its tests: CommonJS, Node
   {
     files: ['app/main.js', 'app/preload.js', 'app/src/**/*.js', 'app/test/**/*.cjs'],
     languageOptions: { sourceType: 'commonjs', globals: { ...node, ...commonjs } },
   },
-  // arayüz: tarayıcıda ES modülleri
+  // UI: ES modules in the browser
   {
     files: ['app/renderer/**/*.js'],
     languageOptions: { sourceType: 'module', globals: browser },
   },
-  // ortak ofis çizicisi hem tarayıcıda hem Node'da çalışır: yalnız ikisinde de olan adlar
+  // the shared office drawing code runs both in the browser and in Node: only names present in both
   {
     files: ['plugin/viewer/core.mjs', 'app/src/office/core.mjs'],
     languageOptions: { globals: shared },
   },
-  // terminal görüntüleyici klavye ve terminal yanıtlarındaki ESC dizilerini düzenli ifadeyle ayıklar: kontrol karakteri amaçlı
+  // the terminal viewer strips ESC sequences from keyboard input and terminal replies with regexes: control characters are intended
   {
     files: ['plugin/viewer/office.mjs'],
     rules: { 'no-control-regex': 'off' },
   },
-  // betikler, testler, terminal görüntüleyici: Node ES modülleri
+  // scripts, tests, terminal viewer: Node ES modules
   {
     files: ['app/scripts/**/*.mjs', 'app/test/**/*.mjs', 'plugin/viewer/office.mjs', 'plugin/viewer/gallery.mjs', 'plugin/tests/**/*.mjs', 'scripts/**/*.mjs', 'packaging/**/*.mjs', 'eslint.config.mjs'],
     languageOptions: { globals: node },

@@ -1,4 +1,4 @@
-// Hızlı kontrol: node test/office.test.mjs
+// Quick check: node test/office.test.mjs
 import assert from 'node:assert/strict'
 import { writeFileSync, mkdirSync, existsSync, readFileSync, mkdtempSync, utimesSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -9,7 +9,7 @@ import { BOSS_ID, shellLabel, demoOffice, hitBoxes, hitTest, partyCount, render,
 
 const require = createRequire(import.meta.url)
 
-// çizicinin tek kaynağı eklentide; uygulamadaki dosya onun birebir kopyası olmalı
+// the drawing code's single source is in the plugin; the app's file must be an exact copy of it
 {
   const source = new URL('../../plugin/viewer/core.mjs', import.meta.url)
   const copy = new URL('../src/office/core.mjs', import.meta.url)
@@ -20,7 +20,7 @@ const { readOffice, readThemes, readToday } = require('../src/sessions.js')
 const OUT = process.env.SNAP_DIR ?? join(tmpdir(), 'agent-office-snapshots')
 const NOW = Number(process.env.NOW ?? new Date(2026, 9, 9, 11, 0, 0).getTime())
 
-// office.mjs writePng ile aynı: fb'yi S kat büyütüp RGB PNG yazar
+// same as office.mjs writePng: scales fb up S times and writes an RGB PNG
 function writePng(path, { fb, LW, LH, S }) {
   const W = LW * S
   const H = LH * S
@@ -74,7 +74,7 @@ assert.notDeepEqual(firstPixels.classic, firstPixels.forest)
 assert.equal(infos.classic.title, 'AGENT OFİS')
 assert.equal(infos.forest.title, 'FOREST OFİS')
 
-// dil: başlık, yazılar ve büyük harf kuralı İngilizceye geçer, Türkçeye döner
+// language: the title, labels and uppercase rule switch to English, then back to Turkish
 {
   const { setLanguage } = await import('../src/office/core.mjs')
   setTheme('classic')
@@ -86,7 +86,7 @@ assert.equal(infos.forest.title, 'FOREST OFİS')
   assert.equal(themeInfo().title, 'AGENT OFİS')
 }
 
-// boş veriyle (henüz veri gelmemiş) çizim
+// drawing with empty data (no data yet)
 setTheme('')
 const empty = render(NOW, { workers: [], delivered: 0, isBossBusy: false, project: '', sessionId: '' })
 assert.equal(themeInfo().name, 'classic')
@@ -94,7 +94,7 @@ assert.ok(empty.fb.some(c => c !== 0))
 assert.equal(render(NOW, { project: 'forest-api' }) && themeInfo().name, 'forest')
 assert.ok(render(NOW, { project: 'billing' }) && themeInfo().name.startsWith('auto:'))
 
-// gerçek oturum dizini: yalnız şekil
+// real session directory: shape only
 const shape = d => {
   assert.ok(Array.isArray(d.workers))
   assert.equal(typeof d.delivered, 'number')
@@ -113,7 +113,7 @@ shape(readOffice('olmayan-proje-xyz'))
 assert.equal(readOffice('olmayan-proje-xyz').workers.length, 0)
 assert.equal(typeof readThemes(), 'object')
 
-// ---------- readOffice: geçici kök dizinde ----------
+// ---------- readOffice: in a temporary root directory ----------
 {
   const root = mkdtempSync(join(tmpdir(), 'agent-office-test-'))
   const dir = join(root, 'sessions')
@@ -125,8 +125,8 @@ assert.equal(typeof readThemes(), 'object')
     writeFileSync(f, JSON.stringify(body))
     utimesSync(f, mtime / 1000, mtime / 1000)
   }
-  // alpha canlı: biri çalışıyor, biri bugün teslim etti (stats.today'de de var: tekilleşmeli),
-  // w0 dosyadan silinmiş ama stats.today'de; w9 dün gece teslim etti (sayılmaz)
+  // alpha live: one is working, one delivered today (also in stats.today: must be deduplicated),
+  // w0 removed from the file but in stats.today; w9 delivered last night (not counted)
   put('alpha-live', {
     project: 'alpha', updatedAt: NOW - 1000,
     workers: [
@@ -136,9 +136,9 @@ assert.equal(typeof readThemes(), 'object')
     ],
     stats: { delivered: 3, isBossBusy: true, today: { date: today, ids: ['w2', 'w0'] } },
   })
-  // alpha bugün bitmiş oturum: işçisi yok ama teslimleri bugünün sayısında
+  // alpha session that ended today: no workers, but its deliveries are in today's count
   put('alpha-ended', { project: 'alpha', updatedAt: NOW - 3 * H, endedAt: NOW - 3 * H, workers: [], stats: { delivered: 2, isBossBusy: false, today: { date: today, ids: ['e1', 'e2'] } } }, NOW - 3 * H)
-  // beta canlı: eski eklenti (stats.today yok), aynı işçi kimliği başka oturumda
+  // beta live: old plugin (no stats.today), same worker id in another session
   put('beta-live', {
     project: 'beta', updatedAt: NOW - 2000,
     workers: [
@@ -147,14 +147,14 @@ assert.equal(typeof readThemes(), 'object')
     ],
     stats: { delivered: 1, isBossBusy: false, waiting: { kind: 'permission', tool: 'Bash', since: NOW - 5000 } },
   })
-  // gamma dün: hem dosya hem kayıt dünden
+  // gamma yesterday: both the file and the log are from yesterday
   put('gamma-yday', { project: 'gamma', updatedAt: NOW - 20 * H, endedAt: NOW - 20 * H, workers: [], stats: { delivered: 4, isBossBusy: false, today: { date: '2026-10-08', ids: ['y1', 'y2'] } } }, NOW - 20 * H)
-  // delta: dosya dün değişmiş (kayıt bugünü gösterse de) → atlanır
-  // omega: daha yeni bir eklentinin biçimi: okunmaz, uyarı verir
+  // delta: file changed yesterday (even though the log shows today) → skipped
+  // omega: a newer plugin's format: not read, gives a warning
   put('omega-future', { format: 3, project: 'omega', updatedAt: NOW - 1000, workers: [{ id: 'z', type: 'x', spawnAt: NOW }], stats: { isBossBusy: true } })
   put('delta-stale', { project: 'delta', updatedAt: NOW - 15 * H, workers: [], stats: { delivered: 1, isBossBusy: false, today: { date: today, ids: ['d1'] } } }, NOW - 15 * H)
   writeFileSync(join(dir, 'bozuk.json'), '{')
-  // arka plan kabukları: alpha canlı (biri çalışıyor, biri yeni bitti, biri unutma süresini (5 dk) geçti)
+  // background shells: alpha live (one running, one just finished, one past the forget window (5 min))
   const M = 60 * 1000
   const alphaLive = JSON.parse(readFileSync(join(dir, 'alpha-live.json'), 'utf8'))
   alphaLive.shells = [
@@ -163,7 +163,7 @@ assert.equal(typeof readThemes(), 'object')
     { id: 'a3', command: 'cargo test', startAt: NOW - 12 * M, endAt: NOW - 10 * M, exitCode: 1, status: 'failed' },
   ]
   put('alpha-live', alphaLive)
-  // beta 2 dk önce bitti: bitenler süre içindeyse kalır, "çalışıyor" görünen oturumla kapanmıştır (killed)
+  // beta ended 2 min ago: finished ones within the window stay, ones shown as "running" closed with the session (killed)
   put('beta-ended', {
     project: 'beta', updatedAt: NOW - 2 * M, endedAt: NOW - 2 * M, workers: [],
     shells: [
@@ -172,7 +172,7 @@ assert.equal(typeof readThemes(), 'object')
       { id: 'b3', command: 'make', startAt: NOW - 11 * M, endAt: NOW - 10 * M, exitCode: 0, status: 'completed' },
     ],
   }, NOW - 2 * M)
-  // epsilon bayat ama bitmemiş: çalışan kabuğu gösterilmez, eski biteni de
+  // epsilon stale but not ended: its running shell isn't shown, nor its old finished one
   put('eps-stale', {
     project: 'epsilon', updatedAt: NOW - 10 * M, workers: [],
     shells: [
@@ -198,7 +198,7 @@ assert.equal(typeof readThemes(), 'object')
   assert.equal(all.themesError, undefined, 'themes.json yoksa sessiz')
   assert.equal(all.newerFormat, 3, 'yeni biçimli dosya uyarı verir, işçileri sayılmaz')
   assert.equal(readOffice(['beta'], NOW, root).newerFormat, undefined, 'süzgeç dışındaki proje uyarmaz')
-  // kabuklar: projeleriyle, başlama sırasıyla; süresi geçenler ve bayat oturumun çalışanı yok
+  // shells: with their projects, in start order; no expired ones and no running shell of the stale session
   assert.deepEqual(all.shells.map(sh => [sh.id, sh.project]), [['b1', 'beta'], ['b2', 'beta'], ['a2', 'alpha'], ['a1', 'alpha']])
   const b2 = all.shells.find(sh => sh.id === 'b2')
   assert.equal(b2.status, 'killed', 'bitmiş oturumun çalışan kabuğu kapanmıştır')
@@ -206,7 +206,7 @@ assert.equal(typeof readThemes(), 'object')
   assert.equal(all.shells.find(sh => sh.id === 'b1').agentId, 'w1', 'alanlar olduğu gibi geçer')
   assert.equal(all.shells.find(sh => sh.id === 'a1').endAt, undefined)
 
-  // proje süzgeci: verilen sıra, oturumu olmayan proje de sıfırla listede
+  // project filter: the given order, a project with no sessions is listed too, with zeros
   const two = readOffice(['beta', 'zeta'], NOW, root)
   assert.equal(two.delivered, 1)
   assert.equal(two.isBossBusy, false)
@@ -219,33 +219,33 @@ assert.equal(typeof readThemes(), 'object')
   assert.deepEqual(two.shells.map(sh => sh.id), ['b1', 'b2'], 'süzgeç kabuklara da uygulanır')
   assert.deepEqual(readOffice(['alpha'], NOW, root).shells.map(sh => sh.id), ['a2', 'a1'])
   assert.deepEqual(readOffice(['zeta'], NOW, root).shells, [])
-  // alpha canlılığını yitirince (bitmemiş, bayat): çalışan kabuk gider, yeni biten süre dolana dek kalır
+  // when alpha loses liveness (not ended, stale): the running shell goes, the just-finished one stays until the window ends
   assert.deepEqual(readOffice(['alpha'], NOW + 3.5 * M, root).shells.map(sh => sh.id), ['a2'])
   assert.deepEqual(readOffice(['alpha'], NOW + 6 * M, root).shells, [])
-  // beta: bitişten 5 dk sonra kabukları da unutulur
+  // beta: 5 min after the end its shells are forgotten too
   assert.deepEqual(readOffice(['beta'], NOW + 2.4 * M, root).shells.map(sh => sh.id), ['b1', 'b2'])
   assert.deepEqual(readOffice(['beta'], NOW + 2.8 * M, root).shells.map(sh => sh.id), ['b2'])
   assert.deepEqual(readOffice(['beta'], NOW + 3.5 * M, root).shells, [])
-  // settings.json forgetMinutes: 30 dk → eskiler de görünür, bayat oturumun çalışanı yine görünmez
+  // settings.json forgetMinutes: 30 min → older ones show too, the stale session's running shell still doesn't
   writeFileSync(join(root, 'settings.json'), JSON.stringify({ forgetMinutes: 30 }))
   const long = readOffice(null, NOW, root)
   assert.deepEqual(long.shells.map(sh => sh.id).sort(), ['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'e2'])
   assert.equal(long.shells.find(sh => sh.id === 'e2').project, 'epsilon')
   rmSync(join(root, 'settings.json'))
   assert.equal(readOffice(null, NOW, root).shells.length, 4)
-  // yalnız bitmiş oturumu olan proje: işçi yok, teslim var, tema projeden
+  // a project with only an ended session: no workers, has deliveries, theme from the project
   const ended = readOffice(['alpha'], NOW + 4 * 60 * 1000, root)
   assert.equal(ended.workers.length, 0)
   assert.equal(ended.delivered, 4)
   assert.equal(ended.project, 'alpha')
   assert.equal(readOffice(['gamma'], NOW, root).delivered, 0, 'dün sayılmaz')
   assert.equal(readOffice(['delta'], NOW, root).delivered, 0, 'dünden kalma dosya atlanır')
-  // eski imza: tek proje adı
+  // old signature: a single project name
   assert.equal(readOffice('beta', NOW, root).delivered, 1)
-  // ertesi gün: hepsi sıfır
+  // next day: all zero
   assert.equal(readOffice(null, NOW + 24 * H, root).delivered, 0)
 
-  // themes.json: bozuk → hata (yol + ayrıştırma mesajı), nesne değil → hata, düzelince sessiz
+  // themes.json: broken → error (path + parse message), not an object → error, silent once fixed
   const themesPath = join(root, 'themes.json')
   writeFileSync(themesPath, '{ "acme": ')
   let d = readOffice(null, NOW, root)
@@ -263,7 +263,7 @@ assert.equal(typeof readThemes(), 'object')
   rmSync(root, { recursive: true, force: true })
 }
 
-// HOME'dan okuma (varsayılan kök): HOME geçici dizine çevrilince oradan okur
+// reading from HOME (default root): when HOME points to a temp directory it reads from there
 {
   const home = mkdtempSync(join(tmpdir(), 'agent-office-home-'))
   mkdirSync(join(home, '.claude', 'agent-office', 'sessions'), { recursive: true })
@@ -281,9 +281,9 @@ assert.equal(typeof readThemes(), 'object')
   }
 }
 
-// ---------- çok proje: müdür hepsine bakar ----------
+// ---------- many projects: the manager oversees them all ----------
 const PROJECTS = ['agent-office-app', 'forest-api', 'billing']
-// demo işçilerini projelere dağıtır; proje tablosu readOffice ile aynı biçimde
+// distributes demo workers across projects; project table in the same shape as readOffice
 function multiOffice(t, names) {
   const d = demoOffice(t)
   const workers = d.workers.map(w => ({ ...w, project: names[Number(w.id.split('-')[1]) % names.length] }))
@@ -308,7 +308,7 @@ const play = (names, name, opts = {}) => {
   return frame
 }
 const one = play(PROJECTS.slice(0, 1), '1')
-// tek projede görünüm değişmez: proje alanları olmayan aynı veriyle birebir aynı kare
+// one project leaves the view unchanged: the exact same frame as the same data without project fields
 resetOffice()
 setGeometry(1320, 700)
 let plain
@@ -325,7 +325,7 @@ assert.notDeepEqual(focused.fb, three.fb)
 play(PROJECTS, '3-narrow', { w: 600, h: 400 })
 play([...PROJECTS, 'acme-web', 'beta-api', 'gamma', 'delta-svc', 'epsilon'], '8-projects')
 
-// odak değişimi masaları karıştırmaz: aynı veride odaklı ve odaksız karelerde işçiler aynı yerde
+// a focus change doesn't shuffle desks: in focused and unfocused frames of the same data the workers are in the same place
 resetOffice()
 setTheme('')
 setGeometry(1320, 700)
@@ -336,7 +336,7 @@ render(NOW, multiOffice(NOW, PROJECTS), { focus: 'billing' })
 const back = render(NOW, multiOffice(NOW, PROJECTS), { focus: 'forest-api' })
 assert.deepEqual(back.fb, fbA, 'odak gidip gelince kare aynı kalmalı')
 
-// kalabalık: masalar dolunca salona taşar, birkaç proje birden
+// crowded: when the desks fill up they spill into the hall, several projects at once
 {
   resetOffice()
   setTheme('')
@@ -352,8 +352,8 @@ assert.deepEqual(back.fb, fbA, 'odak gidip gelince kare aynı kalmalı')
   multiShots.push(path)
 }
 
-// ---------- parti alanı ----------
-// zaman çizelgesi oynatılır: teslim edenler piste gider, veri silinse de kalır, yeni iş gelince biri pistten masaya döner
+// ---------- party area ----------
+// a timeline is played: deliverers go to the dance floor and stay even if the data is deleted; when new work comes, one goes back from the floor to a desk
 const shots = []
 const snap = (name, frame) => {
   const path = join(OUT, `party-${name}.png`)
@@ -374,25 +374,25 @@ for (const theme of ['classic', 'forest']) {
   frame = render(NOW + 3000, demoOffice(NOW + 3000))
   snap('classic-demo-3s', frame)
 
-  // veri tamamen silinir (FORGET_MS), müdür boşta: parti en canlı, botlar kalır
+  // the data is deleted entirely (FORGET_MS), manager idle: the party is at its liveliest, bots stay
   const before = partyCount()
   const idle = { workers: [], delivered: 20, isBossBusy: false, project: '', sessionId: '' }
   for (let t = NOW; t <= NOW + 4000; t += 110) frame = render(t, idle)
   assert.equal(partyCount(), before, 'veri gidince partidekiler kaybolmamalı')
   snap('classic-idle', frame)
 
-  // yeni iş: biri pistten masaya yürür
+  // new work: one walks from the floor to a desk
   const T1 = NOW + 4100
   const fresh = { ...idle, isBossBusy: true, workers: [{ id: 'yeni-1', type: 'Explore', spawnAt: T1, tool: 'Read' }] }
   render(T1, fresh)
   assert.equal(partyCount(), before - 1, 'pistten biri çağrılmalı')
   frame = render(T1 + 2000, fresh)
   snap('classic-recall', frame)
-  // 10 dk sonra pist boşalır
+  // after 10 min the floor empties
   for (let t = T1; t <= T1 + 11 * 60 * 1000; t += 5000) render(t, { ...fresh, workers: [] })
   assert.equal(partyCount(), 0, 'parti süresi bitince pist boşalmalı')
 }
-// dar ekran: yerleşim bozulmasın
+// narrow screen: the layout must not break
 resetOffice()
 setTheme('classic')
 setGeometry(600, 400)
@@ -400,19 +400,19 @@ snap('narrow', render(NOW, demoOffice(NOW)))
 setGeometry(2400, 1000)
 snap('wide', render(NOW, demoOffice(NOW)))
 
-// ---------- seçim: tıklanan bot ----------
+// ---------- selection: the clicked bot ----------
 const selectShots = []
 {
   resetOffice()
   setTheme('classic')
-  // ortalanan kare: tuval LW*S'e tam bölünmüyor, kaydırma hesaba katılmalı
+  // centered frame: the canvas isn't evenly divisible by LW*S, the offset must be taken into account
   const g = setGeometry(1333, 707)
   const ox = Math.floor((1333 - g.LW * g.S) / 2)
   const oy = Math.floor((707 - g.LH * g.S) / 2)
   for (let t = NOW - 70000; t <= NOW; t += 110) render(t, demoOffice(t))
   const toPx = b => [ox + (b.x + b.w / 2) * g.S, oy + (b.y + b.h / 2) * g.S]
   const boxes = hitBoxes()
-  // üstünde sonra çizilmiş başka kutu olmayanlar (en üstteki kazanır)
+  // those with no other box drawn later on top of them (the topmost wins)
   const inside = (b, x, y) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h
   const clear = b => !boxes.slice(boxes.indexOf(b) + 1).some(o => o.id !== b.id && inside(o, b.x + b.w / 2, b.y + b.h / 2))
   const bodies = boxes.filter(b => !b.isTag && b.id !== BOSS_ID && clear(b))
@@ -421,21 +421,21 @@ const selectShots = []
   const working = bodies.find(b => live.has(b.id) && boxes.some(t => t.isTag && t.id === b.id && clear(t)))
   assert.ok(working, 'masada çalışan bir işçi olmalı')
   assert.equal(hitTest(...toPx(working)), working.id)
-  // etiketine tıklamak da onu seçer
+  // clicking its label also selects it
   assert.equal(hitTest(...toPx(boxes.find(t => t.isTag && t.id === working.id))), working.id)
-  // pistteki dansçı (veride olmayabilir) da seçilebilir
+  // a dancer on the floor (possibly not in the data) can be selected too
   const dancer = bodies.find(b => b.y > g.LH * 0.4 && !boxes.some(t => t.isTag && t.id === b.id))
   if (dancer) assert.equal(hitTest(...toPx(dancer)), dancer.id)
-  // müdür
+  // manager
   const boss = boxes.find(b => b.id === BOSS_ID && !b.isTag)
   assert.equal(hitTest(...toPx(boss)), BOSS_ID)
-  // boş zemin: sol üst köşe duvar, tuval dışı, ölçü dışı değerler
+  // empty floor: top-left corner wall, outside the canvas, out-of-range values
   assert.equal(hitTest(ox + 2, oy + 2), null)
   assert.equal(hitTest(-5, -5), null)
   assert.equal(hitTest(NaN, 10), null)
-  // birkaç piksel pay: kutunun hemen dışı (2 mantıksal piksel) hâlâ isabet, uzağı değil
+  // a few pixels of slack: just outside the box (2 logical pixels) still hits, far away doesn't
   assert.equal(hitTest(ox + (working.x + working.w + 2) * g.S, oy + (working.y + working.h / 2) * g.S) !== null, true)
-  // seçim işareti: aynı kare, seçili işçiyle farklı ve vurgu renginde piksel var
+  // selection marker: same frame, differs with a selected worker and has pixels in the accent color
   const plain = render(NOW, demoOffice(NOW)).fb.slice()
   const sel = render(NOW, demoOffice(NOW), { selected: working.id })
   assert.notDeepEqual(sel.fb, plain, 'seçim işareti çizilmeli')
@@ -445,9 +445,9 @@ const selectShots = []
     for (let x = Math.floor(working.x); x < working.x + working.w; x++) above.push(sel.fb[y * sel.LW + x])
   assert.ok(above.includes(accent), 'ok botun üstünde olmalı')
   let path = join(OUT, 'select-desk.png')
-  writePng(path, sel) // fb paylaşımlı: sonraki render üstüne yazar
+  writePng(path, sel) // fb is shared: the next render overwrites it
   selectShots.push(path)
-  // seçili id karede yoksa işaret yok, kare aynı
+  // if the selected id isn't in the frame there is no marker, the frame is the same
   assert.deepEqual(render(NOW, demoOffice(NOW), { selected: 'yok-boyle-biri' }).fb, plain)
   if (dancer) {
     path = join(OUT, 'select-party.png')
@@ -459,7 +459,7 @@ const selectShots = []
   selectShots.push(path)
 }
 
-// ---------- arka plan kabukları: sunucu odasının raf yuvaları ----------
+// ---------- background shells: rack slots in the server room ----------
 const shellShots = []
 {
   assert.equal(shellLabel('npm run dev'), 'NPM')
@@ -467,7 +467,7 @@ const shellShots = []
   assert.equal(shellLabel('/usr/bin/tail -f x.log'), 'TAI')
   assert.equal(shellLabel(''), '?')
 
-  // kabuk yokken kare eskisiyle birebir aynı: alan yok, boş dizi
+  // with no shells the frame is identical to the old one: no field, empty array
   const playShells = (extra, opts = {}) => {
     resetOffice()
     setTheme('')
@@ -496,14 +496,14 @@ const shellShots = []
   const boxes = hitBoxes()
   const slotBoxes = boxes.filter(b => String(b.id).startsWith('shell:'))
   assert.equal(slotBoxes.length, shells.length)
-  // tıklama: yuva → 'shell:<id>'; müdür ve işçiler hâlâ seçilir
+  // click: slot → 'shell:<id>'; the manager and workers are still selectable
   const toPx = b => [(b.x + b.w / 2) * g.S + Math.floor((1320 - g.LW * g.S) / 2), (b.y + b.h / 2) * g.S + Math.floor((700 - g.LH * g.S) / 2)]
   for (const b of slotBoxes) assert.equal(hitTest(...toPx(b)), b.id)
   assert.ok(slotBoxes.every(b => b.x > g.LW - 100 && b.y < 45), 'yuvalar sağ üstteki sunucu odasında')
   assert.equal(hitTest(...toPx(boxes.find(b => b.id === BOSS_ID && !b.isTag))), BOSS_ID)
   const worker = boxes.find(b => !b.isTag && b.id.startsWith('demo-'))
   assert.ok(worker && hitTest(...toPx(worker)) !== null)
-  // çalışan yuvanın lambaları yanıp söner (kabuğa özgü faz), bitenlerinki sabit
+  // a running slot's lights blink (shell-specific phase), finished ones stay steady
   const at = (fb, b) => { const out = []; for (let x = b.x; x < b.x + b.w; x++) out.push(fb[(b.y + 1) * g.LW + x]); return out }
   const dev = slotBoxes.find(b => b.id === 'shell:sh-dev')
   const build = slotBoxes.find(b => b.id === 'shell:sh-build')
@@ -516,7 +516,7 @@ const shellShots = []
   }
   assert.ok(blinks.size > 1, 'çalışan kabuk yanıp sönmeli')
   assert.equal(steady.size, 1, 'biten kabuk sabit yanmalı')
-  // seçim işareti yuvada da çalışır
+  // the selection marker works on slots too
   const plainFb = render(NOW, { ...multiOffice(NOW, PROJECTS), shells }).fb.slice()
   const sel = render(NOW, { ...multiOffice(NOW, PROJECTS), shells }, { selected: 'shell:sh-test' })
   assert.notDeepEqual(sel.fb, plainFb, 'yuvada seçim işareti çizilmeli')
@@ -529,7 +529,7 @@ const shellShots = []
   writePng(path, sel)
   shellShots.push(path)
 
-  // fazlası: 9 yuva; son yuva "+n" ve ilk gizli kabuğu seçer
+  // overflow: 9 slots; the last slot shows "+n" and selects the first hidden shell
   const many = []
   for (let i = 0; i < 14; i++) many.push({ id: `k${i}`, command: ['npm run dev', 'make watch', 'go test ./...', 'bun x'][i % 4], startAt: NOW - (20 - i) * 1000, status: 'running', project: PROJECTS[0] })
   resetOffice()
@@ -544,7 +544,7 @@ const shellShots = []
   shellShots.push(path)
 }
 
-// gün sonu özeti (sözleşme v2.9): günlükteki teslimler projesiyle, en yenisi önce; günlüğü olmayanlar sayılır
+// end-of-day summary (contract v2.9): deliveries in the log with their project, newest first; those without a log are counted
 {
   const root = mkdtempSync(join(tmpdir(), 'ao-today-'))
   const dir = join(root, 'sessions')
@@ -560,9 +560,9 @@ const shellShots = []
     { id: 'w1', type: 'Explore', description: 'bul', spawnAt: NOW - 30 * M, doneAt: NOW - 20 * M, isOk: true, toolCount: 5 },
     { id: 'w2', type: 'Plan', description: 'planla', spawnAt: NOW - 10 * M, doneAt: NOW - 5 * M, isOk: false, toolCount: 2 },
   ] } } })
-  // eski eklenti: yalnız kimlikler
+  // old plugin: ids only
   put('b', { project: 'beta', updatedAt: NOW, stats: { today: { date: day, ids: ['x1', 'x2', 'x3'] } } })
-  // dünün günlüğü ve daha yeni biçim sayılmaz
+  // yesterday's log and a newer format aren't counted
   put('c', { format: 2, project: 'alpha', updatedAt: NOW, stats: { today: { date: '2000-01-01', ids: ['y'], log: [{ id: 'y', doneAt: NOW }] } } })
   put('d', { format: 3, project: 'alpha', updatedAt: NOW, stats: { today: { date: day, ids: ['z'], log: [{ id: 'z', doneAt: NOW }] } } })
   const all = readToday(null, NOW, root)
@@ -575,7 +575,7 @@ const shellShots = []
   rmSync(root, { recursive: true })
 }
 
-// ---------- sekmeler (sözleşme v3.0): worktree oturumları projesine sayılır ----------
+// ---------- tabs (contract v3.0): worktree sessions count toward their project ----------
 {
   const root = mkdtempSync(join(tmpdir(), 'agent-office-tabs-'))
   const dir = join(root, 'sessions')
@@ -601,7 +601,7 @@ const shellShots = []
   assert.deepEqual(d.shells.map(s => s.project), ['shop'])
   assert.equal(d.project, 'shop', 'en yeni oturum worktree\'de: tema yine projeden')
   assert.equal(d.isBossAsking, true)
-  // eşleme yoksa worktree oturumu süzgecin dışında kalır (eski davranış)
+  // without a map the worktree session stays outside the filter (old behavior)
   assert.deepEqual(readOffice(['shop'], NOW, root).workers.map(w => w.id), ['a'])
   const t = readToday(['shop'], NOW, root, aliases)
   assert.deepEqual(t.deliveries.map(x => [x.id, x.project]), [['c', 'shop']])

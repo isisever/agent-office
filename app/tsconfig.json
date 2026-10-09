@@ -1,6 +1,6 @@
 {
-  // Tip denetimi (yalnızca denetim, çıktı yok): npx -p typescript tsc -p app
-  // Şimdilik ana süreç: main.js, preload.js, src/*.js. Renderer ve ofis çizicisi sonra eklenecek.
+  // Type check (check only, no output): npx -p typescript tsc -p app
+  // For now the main process: main.js, preload.js, src/*.js. The renderer and the office drawing code come later.
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,

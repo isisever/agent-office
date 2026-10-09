@@ -1,7 +1,7 @@
-// Renderer'a dar bir köprü: window.agentOffice (bkz. CONTRACT.md).
+// A narrow bridge to the renderer: window.agentOffice (see CONTRACT.md).
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
-// Kanalın tüm argümanlarını geri çağrıya geçirir; dönen işlev aboneliği kaldırır.
+// Passes all of the channel's arguments to the callback; the returned function unsubscribes.
 const listen = (ch) => (cb) => {
   const h = (_e, ...args) => cb(...args);
   ipcRenderer.on(ch, h);
@@ -9,7 +9,7 @@ const listen = (ch) => (cb) => {
 };
 
 contextBridge.exposeInMainWorld('agentOffice', {
-  platform: process.platform,                           // 'darwin' | 'linux': başlık çubuğu ve kısayollar buna göre
+  platform: process.platform,                           // 'darwin' | 'linux': the title bar and shortcuts follow it
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),
     add: () => ipcRenderer.invoke('projects:add'),
@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onChange: listen('projects:changed'),
   },
   tabs: {
-    add: (projectId, mode) => ipcRenderer.invoke('tabs:add', projectId, mode),   // mode: 'same' | 'worktree' | undefined (menü)
+    add: (projectId, mode) => ipcRenderer.invoke('tabs:add', projectId, mode),   // mode: 'same' | 'worktree' | undefined (menu)
     close: (projectId, n) => ipcRenderer.invoke('tabs:close', projectId, n),    // { closed, restarted? }
   },
   accounts: {
@@ -42,13 +42,13 @@ contextBridge.exposeInMainWorld('agentOffice', {
   clipboard: {
     hasImage: () => ipcRenderer.invoke('clipboard:hasImage'),
     read: () => ipcRenderer.invoke('clipboard:read'),   // { hasImage, text, files }
-    onPaste: listen('edit:paste'),                      // menüdeki Yapıştır (⌘V; Linux'ta Ctrl+Shift+V)
-    nativePaste: () => ipcRenderer.send('edit:nativePaste'), // terminal dışı: normal yapıştırma
+    onPaste: listen('edit:paste'),                      // the menu's Paste (⌘V; Ctrl+Shift+V on Linux)
+    nativePaste: () => ipcRenderer.send('edit:nativePaste'), // outside the terminal: normal paste
   },
   pathForFile: (file) => webUtils.getPathForFile(file),
   update: {
     state: () => ipcRenderer.invoke('update:state'),   // { version, ready }
-    onReady: listen('update:ready'),                    // indirilen sürüm numarası
+    onReady: listen('update:ready'),                    // downloaded version number
     install: () => ipcRenderer.send('update:install'),
   },
   prefs: {
@@ -56,13 +56,13 @@ contextBridge.exposeInMainWorld('agentOffice', {
     set: (p) => ipcRenderer.invoke('prefs:set', p),
   },
   language: {
-    get: () => ipcRenderer.invoke('language:get'),                 // { setting: 'auto'|kod, lang: kod, languages: [{ code, name }] } (locales/*.json)
+    get: () => ipcRenderer.invoke('language:get'),                 // { setting: 'auto'|code, lang: code, languages: [{ code, name }] } (locales/*.json)
     set: (setting) => ipcRenderer.invoke('language:set', setting),
     onChange: listen('language:changed'),                           // { setting, lang, languages }
   },
   office: {
     onData: listen('office:data'),
     themes: () => ipcRenderer.invoke('office:themes'),
-    today: () => ipcRenderer.invoke('office:today'),     // günün teslimleri (sözleşme v2.9)
+    today: () => ipcRenderer.invoke('office:today'),     // today's deliveries (contract v2.9)
   },
 });

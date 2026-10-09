@@ -1,7 +1,7 @@
-// Ofis çiziminin görsel regresyon testi: node app/test/visual.test.mjs
-// Belirli senaryolar sabit zamanda çizilir; her karenin (mantıksal piksel tamponu) özeti
-// visual-snapshots.json'dakiyle karşılaştırılır. Fark varsa çizilen kare PNG olarak yazılır, yolu söylenir.
-// Değişiklik bilerek yapıldıysa: UPDATE_SNAPSHOTS=1 node app/test/visual.test.mjs (sonra PNG'lere bakıp commit'le).
+// Visual regression test for the office drawing: node app/test/visual.test.mjs
+// Fixed scenarios are drawn at a fixed time; each frame's digest (of the logical pixel buffer)
+// is compared with the one in visual-snapshots.json. On a mismatch the drawn frame is written as a PNG and its path printed.
+// If the change is intentional: UPDATE_SNAPSHOTS=1 node app/test/visual.test.mjs (then look at the PNGs and commit).
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -14,7 +14,7 @@ import { demoOffice, render, resetOffice, setBotColor, setGeometry, setLanguage,
 const here = dirname(fileURLToPath(import.meta.url))
 const FILE = join(here, 'visual-snapshots.json')
 const OUT = join(tmpdir(), 'agent-office-visual')
-// ofisteki saat ve gün yerel saate göre çizilir: her makinede aynı kare için saat dilimi sabit
+// the office clock and day are drawn in local time: the time zone is fixed so every machine draws the same frame
 process.env.TZ = 'Europe/Istanbul'
 const NOW = new Date(2026, 9, 9, 11, 0, 0).getTime()
 const isUpdate = process.env.UPDATE_SNAPSHOTS === '1'
@@ -58,7 +58,7 @@ const multi = now => {
   }
 }
 
-// [ad, dil, tema, veri]
+// [name, language, theme, data]
 const CASES = [
   ['demo-tr', 'tr', 'classic', demoOffice],
   ['demo-en', 'en', 'classic', demoOffice],

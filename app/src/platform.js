@@ -1,15 +1,15 @@
-// İşletim sistemi farkları (macOS / Linux): saf işlevler (Electron yok; node --test ile sınanır).
-// macOS davranışı değişmez; Linux'ta karşılıkları kullanılır.
+// OS differences (macOS / Linux): pure functions (no Electron; tested with node --test).
+// macOS behavior is unchanged; Linux uses the equivalents.
 
 const isMac = (platform = process.platform) => platform === 'darwin';
 
-// Proje ve giriş pty'lerinin kabuğu: $SHELL, yoksa macOS'ta zsh, Linux'ta bash.
+// Shell for project and login ptys: $SHELL, else zsh on macOS, bash on Linux.
 const defaultShell = (env = process.env, platform = process.platform) =>
   env.SHELL || (isMac(platform) ? '/bin/zsh' : '/bin/bash');
 
-// Linux dosya yöneticilerinin panoya koyduğu dosyalar: text/uri-list ya da GNOME/Nautilus'un
-// x-special/gnome-copied-files biçimi ("copy" / "cut" satırı, ardından file:// adresleri).
-// Yalnız yerel file:// adresleri yola çevrilir; diğer satırlar (yorum, http, eylem) atlanır.
+// Files that Linux file managers put on the clipboard: text/uri-list or GNOME/Nautilus's
+// x-special/gnome-copied-files format (a "copy" / "cut" line, then file:// URLs).
+// Only local file:// URLs become paths; other lines (comments, http, actions) are skipped.
 function filesFromUriList(text) {
   const out = [];
   for (const raw of String(text || '').split(/\r?\n/)) {
@@ -25,8 +25,8 @@ function filesFromUriList(text) {
   return out;
 }
 
-// Linux'ta panodan dosya okumak için denenecek komutlar (sırayla): Wayland'de wl-paste, X11'de xclip.
-// Her biri { cmd, args } ve okunan biçim; ilk boş olmayan sonuç kullanılır.
+// Commands to try (in order) for reading files from the clipboard on Linux: wl-paste on Wayland, xclip on X11.
+// Each is { cmd, args } plus the format it reads; the first non-empty result is used.
 function linuxClipboardCommands(env = process.env) {
   const types = ['x-special/gnome-copied-files', 'text/uri-list'];
   const wl = types.map((t) => ({ cmd: 'wl-paste', args: ['--no-newline', '--type', t] }));
@@ -34,10 +34,10 @@ function linuxClipboardCommands(env = process.env) {
   return env.WAYLAND_DISPLAY ? [...wl, ...x] : [...x, ...wl];
 }
 
-// Klavye kısayolları. macOS: ⌘ (metaKey). Linux: Ctrl+Shift, çünkü Ctrl+V, Ctrl+O, Ctrl+C gibi
-// tuşlar terminalde Claude Code'a gider (ör. Ctrl+V görsel yapıştırır, Ctrl+O dökümü açar).
+// Keyboard shortcuts. macOS: ⌘ (metaKey). Linux: Ctrl+Shift, because keys such as Ctrl+V, Ctrl+O, Ctrl+C
+// go to Claude Code in the terminal (e.g. Ctrl+V pastes an image, Ctrl+O opens the transcript).
 const shortcuts = (platform = process.platform) => (isMac(platform)
-  ? { paste: 'CmdOrCtrl+V', copy: null, cut: null }               // null: rolün kendi kısayolu
+  ? { paste: 'CmdOrCtrl+V', copy: null, cut: null }               // null: the role's own shortcut
   : { paste: 'Ctrl+Shift+V', copy: 'Ctrl+Shift+C', cut: 'Ctrl+Shift+X' });
 
 module.exports = { isMac, defaultShell, filesFromUriList, linuxClipboardCommands, shortcuts };
