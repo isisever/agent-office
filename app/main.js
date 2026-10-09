@@ -233,8 +233,8 @@ function usageStatusLine(project, configDir) {
   if (!script) return null;
   const dir = path.join(usageRoot(), project.accountId);
   try {
-    for (const a of fs.readdirSync(usageRoot())) {
-      if (a !== project.accountId) fs.rmSync(path.join(usageRoot(), a, `${project.id}.json`), { force: true });
+    for (const a of state.accounts) {
+      if (a.id !== project.accountId) fs.rmSync(path.join(usageRoot(), a.id, `${project.id}.json`), { force: true });
     }
     fs.mkdirSync(dir, { recursive: true });
   } catch (e) {
