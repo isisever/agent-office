@@ -1,0 +1,15 @@
+{
+  "name": "agent-office",
+  "displayName": "Agent Office",
+  "version": "0.3.0",
+  "description": "8-bit pixel-art office for Claude Code: subagents walk in as bots, work at desks and deliver to the boss",
+  "author": {
+    "name": "isisever",
+    "url": "https://github.com/isisever"
+  },
+  "homepage": "https://github.com/isisever/agent-office",
+  "repository": "https://github.com/isisever/agent-office",
+  "license": "MIT",
+  "keywords": ["subagents", "pixel-art", "8-bit", "office", "visualization", "mod", "hooks"],
+  "types": "./types/index.d.ts"
+}

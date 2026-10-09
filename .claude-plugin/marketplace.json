@@ -1,0 +1,21 @@
+{
+  "name": "agent-office",
+  "description": "Agent Office: an 8-bit pixel-art office where Claude Code subagents walk in, work at desks and deliver to the boss",
+  "owner": {
+    "name": "isisever",
+    "url": "https://github.com/isisever"
+  },
+  "plugins": [
+    {
+      "name": "agent-office",
+      "source": "./plugin",
+      "description": "8-bit pixel-art office for Claude Code: subagents walk in as bots, work at desks and deliver to the boss",
+      "category": "fun",
+      "tags": [
+        "subagents",
+        "pixel-art",
+        "visualization"
+      ]
+    }
+  ]
+}

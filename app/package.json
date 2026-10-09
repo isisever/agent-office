@@ -1,0 +1,93 @@
+{
+  "name": "agent-office",
+  "productName": "Agent Office",
+  "version": "0.3.0",
+  "description": "Claude Code in a pixel office: the real claude CLI in a terminal per project, under one live office where the boss oversees every project",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "postinstall": "electron-builder install-app-deps && chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper || true",
+    "dist": "electron-builder --mac && rm -rf release/mac release/mac-arm64 release/builder-debug.yml",
+    "icon": "node scripts/make-icon.mjs"
+  },
+  "author": "Savas Isisever",
+  "license": "MIT",
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "io.github.isisever.agentoffice",
+    "productName": "Agent Office",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "src/**/*",
+      "package.json",
+      "!**/*.map",
+      "!node_modules/node-pty/{src,scripts,deps,third_party,typings}/**",
+      "!node_modules/node-pty/prebuilds/win32-*/**",
+      "!node_modules/node-addon-api/**"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "icon": "build/icon.icns",
+      "identity": "-",
+      "artifactName": "AgentOffice-${version}-${arch}.${ext}",
+      "minimumSystemVersion": "12.0"
+    },
+    "dmg": {
+      "title": "Agent Office"
+    },
+    "extraResources": [
+      {
+        "from": "../plugin",
+        "to": "plugin",
+        "filter": [
+          ".claude-plugin/plugin.json",
+          "hooks/**",
+          "types/**",
+          "tsconfig.json",
+          "LICENSE"
+        ]
+      }
+    ]
+  },
+  "repository": "https://github.com/isisever/agent-office",
+  "homepage": "https://github.com/isisever/agent-office"
+}

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+    <title>Agent Office</title>
+    <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!-- Tek çerçeve: üstte başlık, solda projeler/hesaplar, ortada ofis, altta etkin projenin Claude Code terminali.
+         Tema renkleri --frame, --accent, --status-bg, --status-text CSS değişkenleriyle tüm çerçeveyi sarar. -->
+    <header id="titlebar">
+      <button id="toggle-sidebar" title="Projeleri gizle">≡</button>
+      <span id="title">AGENT OFİS</span>
+      <span id="project"></span>
+      <span id="warn" hidden>⚠ tema</span>
+      <span id="stats"></span>
+    </header>
+    <div id="body">
+      <aside id="sidebar"></aside>
+      <main id="app">
+        <canvas id="office"></canvas>
+        <!-- Ajan ayrıntıları (agent-panel.js): ofiste tıklanan bot -->
+        <aside id="agent-panel" hidden></aside>
+        <div id="divider"></div>
+        <div id="terminal">
+          <div id="terminals"></div>
+          <div id="empty" hidden>
+            <p>Henüz proje yok.</p>
+            <button id="empty-add" title="Proje ekle (⌘O)">+ Proje ekle</button>
+            <p class="dim">Bir klasör seç; Claude orada başlar.</p>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

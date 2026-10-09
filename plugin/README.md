@@ -1,0 +1,192 @@
+# Agent Office
+
+**An 8-bit pixel-art office for Claude Code: watch your subagents walk in, get to work and deliver to the boss.**
+
+![Agent Office: the boss at work, four subagents at their desks, two walking out after delivering](docs/office.png)
+
+Every subagent Claude spawns walks in as a little bot, sits at a numbered desk showing its agent type and the tool it is using right now, and walks the result over to the boss's desk when it is done. The boss (the main Claude) shows whether it is busy or waiting for you, and the whiteboard counts today's deliveries.
+
+## Features
+
+- **Live subagents.** One desk per running subagent, labelled with its type (Explore, general, code-review, ...) and current tool (Bash, Grep, Write, ...).
+- **Deliveries.** Finished agents carry their result to the boss; the whiteboard keeps today's tally (deliveries since local midnight, across all sessions, including ones that already ended; kept in `~/.claude/agent-office/today.json`).
+- **Full-window mode** (Ghostty on macOS, kitty, WezTerm): the office opens as a split next to your Claude terminal, with a live feed of the conversation and a task line to send Claude new work.
+- **Band mode** (any terminal with the kitty graphics protocol): the office is drawn inside Claude Code, right above the prompt.
+- **One office per project.** The wall sign and title show the project folder name, and the colors are generated from it. Custom themes are supported.
+- **English or Turkish** UI, picked from your locale.
+- **Local only.** No network, no dependencies.
+
+## Install
+
+In Claude Code:
+
+```
+/plugin marketplace add isisever/agent-office
+/plugin install agent-office@agent-office
+```
+
+The part after `@` is the marketplace name (`agent-office`, from `.claude-plugin/marketplace.json`).
+
+To try it from a local checkout instead:
+
+```sh
+claude --plugin-dir /path/to/agent-office/plugin
+# or
+CLAUDE_CODE_PLUGIN_DIRS=/path/to/agent-office/plugin claude
+```
+
+## Usage
+
+| Command / key | What it does |
+| --- | --- |
+| `/office` | Ghostty on macOS, kitty (with remote control) or WezTerm: opens the office as a split next to the Claude terminal. Elsewhere it falls back to `/office band`. |
+| `/office band` (alias `/office şerit`) | Toggles the office band inside Claude Code, right above the prompt. |
+| Type + `Enter` (full-window office) | Sends the task line to Claude. |
+| `Ctrl-C` (full-window office) | Closes the office. |
+| `Ctrl-T` (full-window office) | Toggles demo mode. |
+
+### Full-window mode
+
+`/office` splits the current terminal window. The office part shows:
+
+- the office scene,
+- a live feed of the Claude conversation, read from the local session transcript: your prompts (`›`), Claude's replies (`●`) and tool calls (`⎿`),
+- a **Task** line: type a task and press Enter to send it to Claude.
+
+The Claude terminal keeps a small part of the window. Permission prompts still appear there, so answer them in the Claude terminal.
+
+- **Ghostty** (macOS): the office opens above and the Claude terminal shrinks to about 8 rows at the bottom. The first time, macOS may ask you to let Claude Code control Ghostty (AppleScript automation).
+- **kitty**: needs remote control (`allow_remote_control yes` and `listen_on` in `kitty.conf`, or start kitty with `-o allow_remote_control=yes`). The office opens with `kitty @ launch --location=hsplit` below Claude and takes about 80% of the window; the split needs kitty's `splits` layout (in other layouts it opens as a normal kitty window). Without remote control `/office` falls back to the band.
+- **WezTerm**: the office opens above with `wezterm cli split-pane --top` and takes about 80% of the window. The `wezterm` command must be on your PATH.
+
+### Band mode
+
+![The office band, drawn above the Claude Code prompt](docs/band.png)
+
+In other terminals `/office` (or `/office band`) draws the office inside Claude Code, in the band just above the prompt. This needs a terminal that supports the kitty graphics protocol, such as Ghostty, kitty or WezTerm. Run the command again to close it.
+
+## Themes
+
+Each project gets its own office: the sign on the wall shows the full project folder name in capitals (a project in `my-app/` gets a `MY-APP` sign and a `MY-APP OFFICE` title) and the palette is derived from that name, so different projects look different at a glance.
+
+To pick your own look, create `~/.claude/agent-office/themes.json`:
+
+```json
+{
+  "acme": {
+    "match": "acme",
+    "title": "ACME HQ",
+    "sign": "ACME",
+    "colors": { "accent": "#ff8800", "frame": "#101820" }
+  }
+}
+```
+
+- `match`: case-insensitive substring of the project folder name.
+- `title`, `sign`: optional; the window title and the text on the wall sign.
+- `colors`: any color key of the viewer's palette (`C` in `viewer/office.mjs`), as `#rrggbb`. Useful ones: `accent`, `frame`, `wallTop`, `brick`, `rugRed`, `bossChair`, `signGreen`, `statusBg`, `statusText`.
+
+If `themes.json` cannot be parsed, the office keeps running with the default themes and tells you why: a warning on stderr for snapshots and the band, and a short notice on the bottom line of the full-window office.
+
+## Language
+
+The UI is in Turkish when your locale (the first non-empty of `LC_ALL`, `LC_MESSAGES`, `LANG`) starts with `tr`, and in English otherwise. To pick one regardless of the locale, set `language` in `settings.json` (below).
+
+## Settings
+
+Optional, in `~/.claude/agent-office/settings.json`; both the plugin and the viewer read it:
+
+```json
+{
+  "language": "en",
+  "forgetMinutes": 5
+}
+```
+
+- `language`: `"tr"`, `"en"` or `"auto"` (default: follow the locale, see Language).
+- `forgetMinutes`: how long a bot that delivered its work stays in the office, 1 to 60 minutes (default 5). It parties for this time minus 30 seconds, then leaves.
+
+A missing or invalid file, or an invalid value, falls back to the defaults. Restart the session and reopen the office after changing it.
+
+## Privacy
+
+Everything stays on your machine, under `~/.claude/agent-office/`:
+
+| Path | Contents |
+| --- | --- |
+| `sessions/` | Office state per Claude Code session (agents, desks, deliveries) |
+| `inbox/` | Tasks typed into the office's task line, waiting for Claude |
+| `frames/` | Rendered frames for band mode |
+
+These files clean up after themselves. Each submitted task is removed from the inbox right away. When a session starts, the plugin deletes the `sessions/`, `inbox/` and `frames/` files of other sessions that have ended or have not been updated for a day. It never deletes the files of the current session or of another session that is still running.
+
+The conversation feed is read directly from Claude Code's local transcript. Nothing is sent anywhere.
+
+## Requirements
+
+- Claude Code **2.1.295** or newer (plugin hook modules are an early-access feature)
+- Node.js **18** or newer
+- Full-window mode: **Ghostty** on macOS, **kitty** with remote control enabled, or **WezTerm**
+- Band mode: a terminal with the kitty graphics protocol (Ghostty, kitty, WezTerm)
+
+## How it works
+
+1. The plugin's hooks module (`hooks/register.tsx`) listens to Claude Code events: subagents starting, using tools and finishing, and the main session working or waiting. It writes that state to `~/.claude/agent-office/sessions/<session>.json`.
+2. The viewer (`viewer/office.mjs`, plain Node, no dependencies) reads the state files and renders the pixel-art office with the kitty graphics protocol, either full-window in a terminal split (Ghostty, kitty, WezTerm) or as PNG frames that the plugin shows in the band above the prompt.
+3. Tasks typed into the office are appended to `~/.claude/agent-office/inbox/`, and the plugin hands them to Claude.
+
+You can run the viewer on its own:
+
+```sh
+node viewer/office.mjs --demo                          # demo office with fake agents
+node viewer/office.mjs --snapshot out.png 1600x800     # render one demo frame to PNG
+```
+
+## Development
+
+```sh
+claude plugin validate .   # check the manifest and hooks module
+claude plugin test .       # run the tests in tests/
+node tests/viewer-smoke.mjs # render the viewer to PNG (needs Node 18+)
+claude --plugin-dir .      # try your checkout in a real session
+```
+
+## License
+
+MIT
+
+---
+
+## Türkçe
+
+**Claude Code için 8-bit piksel ofis: alt agent'lar içeri yürür, masalarında çalışır, işi müdüre teslim eder.**
+
+Claude'un başlattığı her alt agent küçük bir bot olarak ofise girer, numaralı bir masaya oturur; masanın üstünde agent tipi ve o an kullandığı araç yazar. İşi bitince sonucu müdürün masasına götürür. Müdür (ana Claude) çalışıyor mu, seni mi bekliyor, görünür; beyaz tahta bugünkü teslimleri sayar.
+
+### Kurulum
+
+```
+/plugin marketplace add isisever/agent-office
+/plugin install agent-office@agent-office
+```
+
+Yerel kopyadan denemek için: `claude --plugin-dir /yol/agent-office/plugin`
+
+### Kullanım
+
+| Komut / tuş | Ne yapar |
+| --- | --- |
+| `/office` | macOS'ta Ghostty, (uzaktan kontrolü açık) kitty ya da WezTerm: ofisi Claude terminalinin yanında bölme olarak açar. Diğer terminallerde `/office şerit`'e düşer. |
+| `/office şerit` (ya da `/office band`) | Ofisi Claude Code içinde, prompt'un hemen üstündeki şeritte açar/kapatır. |
+| Yaz + `Enter` (tam pencere ofis) | Görev satırındaki görevi Claude'a gönderir. |
+| `Ctrl-C` (tam pencere ofis) | Ofisi kapatır. |
+
+Tam pencere modunda üstte ofis sahnesi, Claude konuşmasının canlı akışı (istemler `›`, cevaplar `●`, araç çağrıları `⎿`) ve **Görev** satırı bulunur. Claude terminali pencerenin küçük bir kısmında kalır; izin sorularını orada cevaplarsın. Ghostty'de ofis üstte açılır, Claude altta yaklaşık 8 satıra iner. kitty'de uzaktan kontrol gerekir (`kitty.conf` içinde `allow_remote_control yes` ve `listen_on`); ofis `kitty @ launch --location=hsplit` ile Claude'un altında, pencerenin yaklaşık %80'ini kaplayarak açılır (bölme için `splits` düzeni gerekir). Uzaktan kontrol yoksa `/office` şeride düşer. WezTerm'de ofis `wezterm cli split-pane --top` ile üstte, yaklaşık %80 boyutla açılır (`wezterm` komutu PATH'te olmalı).
+
+Şerit modu kitty grafik protokolünü destekleyen bir terminal ister (Ghostty, kitty, WezTerm).
+
+Her projenin kendi ofisi vardır: duvardaki tabela proje klasörünün adını gösterir, renkler bu addan üretilir. Kendi temanı `~/.claude/agent-office/themes.json` ile tanımlayabilirsin (yukarıdaki Themes bölümüne bak). Dosya bozuksa ofis varsayılan temalarla açılır ve hatayı gösterir. Beyaz tahtadaki BUGÜN sayısı yerel gece yarısından beri tüm oturumlardaki (bitenler dahil) teslimleri sayar. Arayüz, yerel ayarın `tr` ile başlıyorsa Türkçedir. Tüm veriler `~/.claude/agent-office/` altında, makinende kalır; hiçbir yere gönderilmez. Bu dosyalar kendiliğinden temizlenir: gönderilen görev gelen kutusundan hemen silinir. Her oturum açılışında eklenti, bitmiş ya da bir gündür güncellenmemiş diğer oturumların `sessions/`, `inbox/` ve `frames/` dosyalarını siler. Açık olan oturumun ve hâlâ çalışan başka bir oturumun dosyalarına dokunmaz.
+
+İsteğe bağlı ayarlar `~/.claude/agent-office/settings.json` dosyasındadır; eklenti de görüntüleyici de okur: `{ "language": "tr", "forgetMinutes": 5 }`. `language`: `"tr"`, `"en"` ya da `"auto"` (varsayılan; yerel ayara göre). `forgetMinutes`: teslim eden botun ofiste kalma süresi, 1-60 dakika (varsayılan 5); bu sürenin 30 saniye eksiği parti yapar, sonra çıkar. Dosya yoksa ya da geçersizse varsayılanlar kullanılır. Değiştirdikten sonra oturumu yeniden başlatıp ofisi yeniden aç.
+
+Gereksinimler: Claude Code 2.1.295+, Node.js 18+, tam pencere için macOS'ta Ghostty, uzaktan kontrolü açık kitty ya da WezTerm.

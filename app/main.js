@@ -1,0 +1,393 @@
+// Agent Office kabuğu: pencere, projeler, hesaplar, her projeye bir claude pty'si ve ofis verisi.
+const { app, BrowserWindow, ipcMain, dialog, clipboard } = require('electron');
+const { execFile } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const pty = require('node-pty');
+const P = require('./src/projects.js');
+const A = require('./src/accounts.js');
+
+let win = null;
+let poll = null;
+let state = null;            // { projects, accounts, activeId }
+let isLoaded = false;        // renderer yüklendi mi: pty'ler ancak o zaman başlar (erken çıktı kaybolmasın)
+const terms = new Map();     // projectId → pty
+const logins = new Map();    // 'login:<accountId>' → `claude auth login` pty'si (projects:changed'e girmez)
+const sizes = new Map();     // projectId → { cols, rows } (son pty:resize)
+const auths = new Map();     // accountId → AccountAuth (yalnız bellekte)
+const ptyOf = (id) => terms.get(id) || logins.get(id);
+let lastSize = { cols: 100, rows: 16 };
+
+// sessions.js yüklenemezse ofis boş veriyle devam eder.
+let sessions = null;
+function office() {
+  if (!sessions) {
+    try { sessions = require('./src/sessions.js'); } catch { return null; }
+  }
+  return sessions;
+}
+
+const statePath = () => path.join(app.getPath('userData'), 'state.json');
+const accountsRoot = () => path.join(app.getPath('userData'), 'accounts');
+function loadState() {
+  try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')); } catch { return {}; }
+}
+// Bilinmeyen anahtarlar korunur; eski `lastProject` göçten sonra atılır.
+function saveState() {
+  try {
+    const { lastProject, ...rest } = loadState();
+    fs.mkdirSync(path.dirname(statePath()), { recursive: true });
+    fs.writeFileSync(statePath(), JSON.stringify({ ...rest, ...state }, null, 2));
+  } catch {}
+}
+
+const send = (ch, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...args); };
+const snapshot = () => ({
+  projects: state.projects,
+  activeId: state.activeId,
+  status: state.projects.map((p) => ({ id: p.id, isRunning: terms.has(p.id) })),
+});
+const broadcast = () => send('projects:changed', snapshot());
+
+// Durumu değiştir, kaydet, renderer'a bildir.
+const accountList = () => A.withAuth(state.accounts, (id) => auths.get(id));
+const sendAccounts = () => send('accounts:changed', accountList());
+function commit(next, { accounts = false } = {}) {
+  state = next;
+  saveState();
+  broadcast();
+  if (accounts) sendAccounts();
+}
+
+const isDir = (d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } };
+
+function argProject() {
+  const args = process.argv.slice(app.isPackaged ? 1 : 2);
+  const i = args.indexOf('--');
+  const cands = i >= 0 ? args.slice(i + 1) : args.filter((a) => !a.startsWith('-') && a !== '.');
+  const dir = cands.find((a) => isDir(path.resolve(a)));
+  return dir ? path.resolve(dir) : null;
+}
+
+async function pickFolder() {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Proje klasörünü seç',
+    buttonLabel: 'Ekle',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: P.findProject(state, state.activeId)?.dir,
+  });
+  return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+}
+
+// node-pty 1.1 önceden derlenmiş spawn-helper bazen çalıştırılabilir bit'i olmadan gelir.
+function fixSpawnHelper() {
+  const dir = path.join(path.dirname(require.resolve('node-pty/package.json')), 'prebuilds', `darwin-${process.arch}`);
+  const helper = path.join(dir, 'spawn-helper').replace('app.asar', 'app.asar.unpacked');
+  try { fs.chmodSync(helper, 0o755); } catch {}
+}
+
+// Eklenti: geliştirmede deponun plugin/ klasörü, paketlenmiş uygulamada Resources/plugin. userData'ya
+// kopyalanır: claude eklenti klasörüne tip dosyaları üretir, imzalı .app paketinin içine yazmamalı.
+// Açılışta bir kez kopyalanır: çalışan claude'lar aynı klasörü paylaşır, sonraki pty'ler onu silmemeli.
+let plugin;
+function pluginDir() {
+  if (plugin !== undefined) return plugin;
+  const bundled = app.isPackaged ? path.join(process.resourcesPath, 'plugin') : path.join(__dirname, '..', 'plugin');
+  const dest = path.join(app.getPath('userData'), 'plugin', 'agent-office');
+  try {
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.cpSync(bundled, dest, { recursive: true });
+    plugin = dest;
+  } catch (e) {
+    console.error('eklenti kopyalanamadı:', e.message);
+    plugin = null;
+  }
+  return plugin;
+}
+
+function killPty(id) {
+  const map = terms.has(id) ? terms : logins;
+  const t = map.get(id);
+  if (!t) return;
+  map.delete(id);
+  try { t.kill(); } catch {}
+}
+function killAll() { for (const id of [...terms.keys(), ...logins.keys()]) killPty(id); }
+
+// --- hesap girişi
+const shell = () => process.env.SHELL || '/bin/zsh';
+const accountById = (id) => state.accounts.find((a) => a.id === id) || null;
+function accountEnv(account) {
+  if (account.configDir) try { fs.mkdirSync(account.configDir, { recursive: true }); } catch {}
+  return A.ptyEnv(process.env, account.configDir);
+}
+
+// Etkileşimsiz claude komutu, projelerin pty'si gibi giriş kabuğundan (PATH ve rc dosyaları geçerli).
+function runClaude(account, args, timeout) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = execFile(shell(), ['-l', '-i', '-c', A.claudeCommand(args)], {
+        env: accountEnv(account), cwd: app.getPath('home'), timeout, maxBuffer: 1 << 20, killSignal: 'SIGKILL',
+      }, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
+    } catch (err) {
+      return resolve({ err, stdout: '', stderr: '' });
+    }
+    // stdin kapanır: rc dosyaları ya da claude girdi beklerse askıda kalmasın (zaman aşımı da var)
+    try { child.stdin?.end(); } catch {}
+  });
+}
+
+// Hesap başına tek denetim; sürerken yeni istek gelirse bittiğinde bir kez daha çalışır.
+const checking = new Map();  // accountId → Promise
+const again = new Set();
+function checkAuth(id, { showChecking = false } = {}) {
+  const account = accountById(id);
+  if (!account) return Promise.resolve();
+  if (showChecking && auths.get(id)?.state !== 'checking') { auths.set(id, { state: 'checking' }); sendAccounts(); }
+  if (checking.has(id)) { again.add(id); return checking.get(id); }
+  const run = (async () => {
+    do {
+      again.delete(id);
+      const acc = accountById(id);
+      if (!acc) break;
+      const { err, stdout, stderr } = await runClaude(acc, 'auth status --json', 20000);
+      if (!accountById(id)) break;
+      auths.set(id, A.authFromRun(err, stdout, stderr));
+      if (err && auths.get(id).state === 'error') console.error(`auth status (${id}):`, err.message);
+      sendAccounts();
+    } while (again.has(id));
+    checking.delete(id);
+  })();
+  checking.set(id, run);
+  return run;
+}
+const checkAllAuth = (opts) => Promise.all(state.accounts.map((a) => checkAuth(a.id, opts)));
+
+let lastFocusCheck = 0;
+function onFocus() {
+  if (Date.now() - lastFocusCheck < 60000) return;
+  lastFocusCheck = Date.now();
+  checkAllAuth();
+}
+
+// `claude auth login` pty'si: proje pty'leriyle aynı kanal, id 'login:<accountId>'. Hesap başına bir tane;
+// yeniden açılırsa önceki (kapatılmış pencereden kalan) sessizce öldürülür, çıkışı yeni pencereye karışmaz.
+function startLogin(accountId) {
+  const id = A.loginPtyId(accountId);
+  const account = accountById(accountId);
+  if (!account || !win) return;
+  const old = logins.get(id);
+  if (old) { logins.delete(id); try { old.kill(); } catch {} }
+  const { cols, rows } = sizes.get(id) || lastSize;
+  let t;
+  try {
+    t = pty.spawn(shell(), ['-l', '-i', '-c', A.claudeCommand('auth login')], {
+      name: 'xterm-256color',
+      cols, rows,
+      cwd: app.getPath('home'),
+      env: accountEnv(account),
+    });
+  } catch (e) {
+    console.error('giriş pty\'si başlatılamadı:', e.message);
+    send('pty:exit', id, -1);
+    return;
+  }
+  logins.set(id, t);
+  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
+  t.onExit(({ exitCode }) => {
+    if (logins.get(id) !== t) return; // bilerek öldürüldü: sessiz
+    logins.delete(id);
+    send('pty:exit', id, exitCode);
+    checkAuth(accountId, { showChecking: true });
+  });
+}
+
+// Projenin claude'unu (yeniden) başlatır; boyut o projenin son pty:resize'ı.
+function startPty(id) {
+  killPty(id);
+  const project = P.findProject(state, id);
+  if (!project || !win || !isLoaded) return broadcast();
+  const { configDir } = A.accountOf(state, project);
+  if (configDir) try { fs.mkdirSync(configDir, { recursive: true }); } catch {}
+  const { cols, rows } = sizes.get(id) || lastSize;
+  // eklenti yolu $1 olarak geçer: boşluklu yollar (Application Support) tırnak derdi çıkarmaz.
+  // Hesap klasörü rc dosyalarından sonra yeniden verilir (bkz. accounts.js ptyEnv).
+  const dir = pluginDir();
+  const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; '
+    + (dir ? 'exec claude --plugin-dir "$1"' : 'exec claude');
+  let t;
+  try {
+    t = pty.spawn(shell(), ['-l', '-i', '-c', cmd, 'claude', ...(dir ? [dir] : [])], {
+      name: 'xterm-256color',
+      cols, rows,
+      cwd: isDir(project.dir) ? project.dir : app.getPath('home'),
+      env: { ...A.ptyEnv(process.env, configDir), AGENT_OFFICE_APP: '1' },
+    });
+  } catch (e) {
+    console.error('pty başlatılamadı:', e.message);
+    send('pty:exit', id, -1);
+    return broadcast();
+  }
+  terms.set(id, t);
+  t.onData((d) => { if (terms.get(id) === t) send('pty:data', id, d); });
+  t.onExit(({ exitCode }) => {
+    if (terms.get(id) !== t) return; // bilerek öldürüldü (yeniden başlatma/silme): sessiz
+    terms.delete(id);
+    send('pty:exit', id, exitCode);
+    broadcast();
+  });
+  broadcast();
+}
+
+// Yüklemeden sonra çalışmayan her projenin claude'unu başlat (yeniden yüklemede çalışanlara dokunma).
+function startMissing() {
+  for (const p of state.projects) if (!terms.has(p.id)) startPty(p.id);
+}
+
+function startPolling() {
+  clearInterval(poll);
+  poll = setInterval(() => {
+    const s = office();
+    if (!s || !win || win.isDestroyed()) return;
+    try { send('office:data', s.readOffice(state.projects.map((p) => p.name))); } catch (e) { console.error('readOffice:', e.message); }
+  }, 500);
+}
+
+// Listede olan klasör yalnızca etkinleşir (claude'u kapalıysa başlar).
+function addDir(dir) {
+  const r = P.addProject(state, dir);
+  commit(r.state);
+  if (!terms.has(r.project.id)) startPty(r.project.id);
+  return r.project;
+}
+
+// --- projeler
+ipcMain.handle('projects:list', () => snapshot());
+ipcMain.handle('projects:add', async () => {
+  const dir = await pickFolder();
+  return dir ? addDir(dir) : null;
+});
+ipcMain.handle('projects:remove', (_e, id) => {
+  killPty(id);
+  sizes.delete(id);
+  commit(P.removeProject(state, id));
+});
+ipcMain.handle('projects:setActive', (_e, id) => { commit(P.setActive(state, id)); });
+ipcMain.handle('projects:setAccount', (_e, id, accountId) => {
+  const p = P.findProject(state, id);
+  if (!p || p.accountId === accountId) return;
+  const next = P.setProjectAccount(state, id, accountId);
+  if (next === state) return;
+  commit(next);
+  startPty(id);
+});
+
+// --- hesaplar
+ipcMain.handle('accounts:list', () => accountList());
+ipcMain.handle('accounts:add', (_e, label) => {
+  const r = A.addAccount(state, label, { id: crypto.randomBytes(6).toString('hex'), root: accountsRoot() });
+  try { fs.mkdirSync(r.account.configDir, { recursive: true }); } catch (e) { console.error('hesap klasörü:', e.message); }
+  commit(r.state, { accounts: true });
+  checkAuth(r.account.id);
+  return A.withAuth([r.account], (id) => auths.get(id))[0];
+});
+ipcMain.handle('accounts:rename', (_e, id, label) => { commit(A.renameAccount(state, id, label), { accounts: true }); });
+// Klasör silinmez: içindeki giriş ve geçmiş, yanlışlıkla silinen hesapta kaybolmasın.
+ipcMain.handle('accounts:remove', (_e, id) => {
+  const r = A.removeAccount(state, id);
+  if (r.state === state) return;
+  killPty(A.loginPtyId(id));
+  auths.delete(id);
+  commit(r.state, { accounts: true });
+  for (const pid of r.moved) startPty(pid);
+});
+
+ipcMain.handle('accounts:refreshAuth', async (_e, id) => {
+  await (id ? checkAuth(id, { showChecking: true }) : checkAllAuth({ showChecking: true }));
+  return accountList();
+});
+ipcMain.handle('accounts:login', (_e, id) => { startLogin(id); });
+ipcMain.handle('accounts:logout', async (_e, id) => {
+  const account = accountById(id);
+  // varsayılan hesap kullanıcının normal Claude Code girişi: uygulama oradan çıkış yaptırmaz
+  if (!account || !account.configDir) return;
+  auths.set(id, { state: 'checking' });
+  sendAccounts();
+  const { err, stderr } = await runClaude(account, 'auth logout', 20000);
+  if (err) console.error(`auth logout (${id}):`, err.message, stderr);
+  await checkAuth(id);
+});
+
+// --- pty (her mesaj projectId ya da 'login:<accountId>' taşır)
+ipcMain.on('pty:write', (_e, id, d) => ptyOf(id)?.write(d));
+ipcMain.on('pty:resize', (_e, id, cols, rows) => {
+  if (!(cols > 0 && rows > 0)) return;
+  // giriş penceresinin boyutu projelerin varsayılan boyutunu değiştirmesin
+  if (A.loginAccountId(id) === null) lastSize = { cols, rows };
+  sizes.set(id, { cols, rows });
+  try { ptyOf(id)?.resize(cols, rows); } catch {}
+});
+ipcMain.on('pty:restart', (_e, id) => {
+  const acc = A.loginAccountId(id);
+  if (acc === null) return startPty(id);
+  killPty(id);
+  startLogin(acc);
+});
+
+ipcMain.handle('clipboard:hasImage', () =>
+  clipboard.availableFormats().some((f) => f.startsWith('image/')) || !clipboard.readImage().isEmpty());
+ipcMain.handle('office:themes', () => {
+  const s = office();
+  try { return s ? s.readThemes() : {}; } catch { return {}; }
+});
+
+async function createWindow() {
+  win = new BrowserWindow({
+    width: 1400, height: 950,
+    minWidth: 900, minHeight: 640,
+    backgroundColor: '#2b1d1a',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 12, y: 10 },
+    title: 'Agent Office',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  isLoaded = false;
+  win.once('ready-to-show', () => win.show());
+  win.on('focus', onFocus);
+  win.on('closed', () => { killAll(); clearInterval(poll); isLoaded = false; win = null; });
+
+  // Komut satırındaki klasör eklenir/etkinleşir; hiç proje yoksa klasör sorulur.
+  const arg = argProject();
+  if (arg) commit(P.addProject(state, arg).state);
+  if (!state.projects.length) {
+    const dir = await pickFolder();
+    if (dir) commit(P.addProject(state, dir).state);
+  }
+
+  // pty, renderer boyutunu ve dinleyicilerini kurmadan önce başlarsa çıktı kaybolur; yüklemeyi bekle.
+  win.webContents.on('did-finish-load', () => { isLoaded = true; startMissing(); });
+  await win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  startPolling();
+}
+
+fixSpawnHelper();
+app.whenReady().then(() => {
+  state = P.normalizeState(loadState());
+  saveState();
+  lastFocusCheck = Date.now();
+  checkAllAuth();
+  // paketlenmiş uygulamada ikon .icns'ten gelir; npm start'ta Dock'a elle ver
+  if (!app.isPackaged) try { app.dock?.setIcon(path.join(__dirname, 'build', 'icon.png')); } catch {}
+  return createWindow();
+});
+app.on('activate', () => { if (!win && state) createWindow(); });
+app.on('window-all-closed', () => { killAll(); app.quit(); });
+app.on('before-quit', killAll);
