@@ -240,6 +240,18 @@ body.sidebar-collapsed #sidebar { display: none; }
 .sb-method { margin-right: auto; font-size: 9px; opacity: .5; letter-spacing: .5px; }
 .auth-checking .sb-auth-text { color: var(--accent); opacity: .9; }
 .auth-error .sb-auth-text { color: var(--err); opacity: 1; cursor: help; }
+
+/* Hesabın plan kotası: etiket, piksel çubuk, yüzde, sıfırlanma zamanı. */
+.sb-usages { display: flex; flex-direction: column; gap: 2px; padding-left: 12px; font-size: 9px; cursor: help; }
+.sb-usages.stale { opacity: .55; }
+.sb-usage { display: flex; align-items: center; gap: 5px; line-height: 1.2; }
+.sb-usage-label { flex: 0 0 30px; opacity: .6; }
+.sb-usage-bar { flex: 1 1 0; height: 5px; min-width: 24px; background: rgba(243, 234, 216, .12); }
+.sb-usage-bar > span { display: block; height: 100%; background: var(--accent); }
+.sb-usage.mid .sb-usage-bar > span { background: #f2c14e; }
+.sb-usage.hi .sb-usage-bar > span { background: var(--err); }
+.sb-usage-pct { flex: 0 0 28px; text-align: right; font-variant-numeric: tabular-nums; opacity: .85; }
+.sb-usage-when { flex: 0 0 56px; text-align: right; opacity: .55; white-space: nowrap; }
 .sb-btn {
   flex: 0 0 auto;
   font-size: 10px;

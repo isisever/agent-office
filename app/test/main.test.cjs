@@ -166,3 +166,72 @@ test('withAuth / login id: auth bellekten eklenir, yoksa checking; state değiş
   assert.equal(A.loginAccountId('p1'), null);
   assert.match(A.claudeCommand('auth status --json'), /export CLAUDE_CONFIG_DIR="\$AGENT_OFFICE_CONFIG_DIR"; exec claude auth status --json$/);
 });
+
+const U = require('../src/usage.js');
+
+test('withAuth: kota varsa eklenir, yoksa alan yok', () => {
+  const usage = { updatedAt: 1, fiveHour: { pct: 5 } };
+  const out = A.withAuth([{ id: 'a' }, { id: 'b' }], () => ({ state: 'in' }), (id) => (id === 'a' ? usage : undefined));
+  assert.deepEqual(out[0].usage, usage);
+  assert.equal('usage' in out[1], false);
+});
+
+test('usageFromStatus: rate_limits → yüzde ve ms cinsinden sıfırlanma; yoksa null', () => {
+  const st = { model: {}, rate_limits: { five_hour: { used_percentage: 6.4, resets_at: 1791586200 }, seven_day: { used_percentage: 124 } } };
+  assert.deepEqual(U.usageFromStatus(st, 99), {
+    updatedAt: 99, fiveHour: { pct: 6.4, resetsAt: 1791586200000 }, sevenDay: { pct: 100 },
+  });
+  assert.deepEqual(U.usageFromStatus({ rate_limits: { seven_day: { used_percentage: 0, resets_at: 2 } } }, 1),
+    { updatedAt: 1, sevenDay: { pct: 0, resetsAt: 2000 } });
+  assert.equal(U.usageFromStatus({ model: {} }, 1), null);
+  assert.equal(U.usageFromStatus({ rate_limits: {} }, 1), null);
+  assert.equal(U.usageFromStatus(undefined, 1), null);
+});
+
+test('usageFromCache: geçerli kayıt döner, bozuk olan null', () => {
+  const u = { updatedAt: 5, sevenDay: { pct: 3 } };
+  assert.equal(U.usageFromCache(u), u);
+  assert.equal(U.usageFromCache({ updatedAt: 5 }), null);
+  assert.equal(U.usageFromCache({ fiveHour: { pct: 1 } }), null);
+  assert.equal(U.usageFromCache(undefined), null);
+});
+
+test('userStatusLine: ilk tanımlı statusLine kazanır; komut değilse null', () => {
+  const cmd = { statusLine: { type: 'command', command: '~/sl.sh', padding: 0 } };
+  assert.deepEqual(U.userStatusLine([undefined, {}, cmd]), { command: '~/sl.sh', padding: 0 });
+  assert.deepEqual(U.userStatusLine([{ statusLine: { type: 'command', command: 'a' } }, cmd]), { command: 'a', padding: undefined });
+  assert.equal(U.userStatusLine([{ statusLine: null }, cmd]), null);
+  assert.equal(U.userStatusLine([{ statusLine: { type: 'command', command: ' ' } }, cmd]), null);
+  assert.equal(U.userStatusLine([]), null);
+});
+
+test('settingsPaths: proje yerel, proje, hesap (yoksa ~/.claude)', () => {
+  assert.deepEqual(U.settingsPaths('/p', null, '/h'), ['/p/.claude/settings.local.json', '/p/.claude/settings.json', '/h/.claude/settings.json']);
+  assert.equal(U.settingsPaths('/p', '/acc', '/h')[2], '/acc/settings.json');
+});
+
+test('statusLineSettings: tırnaklı yollar, padding taşınır', () => {
+  const s = JSON.parse(U.statusLineSettings("/x/Application Support/sl.sh", "/o/it's.json", { padding: 2 }));
+  assert.deepEqual(s.statusLine, { type: 'command', command: `/bin/sh '/x/Application Support/sl.sh' '/o/it'\\''s.json'`, padding: 2 });
+  assert.equal('padding' in JSON.parse(U.statusLineSettings('/a', '/b', null)).statusLine, false);
+});
+
+test('status line betiği: girdiyi dosyaya yazar, kullanıcının komutunu aynı girdiyle çalıştırır', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFileSync } = require('child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-sl-'));
+  const script = path.join(dir, "s l.sh");
+  fs.writeFileSync(script, U.SCRIPT);
+  const out = path.join(dir, 'p.json');
+  const cmd = JSON.parse(U.statusLineSettings(script, out, null)).statusLine.command;
+  const input = JSON.stringify({ rate_limits: { five_hour: { used_percentage: 1 } } });
+  const env = { PATH: process.env.PATH };
+  assert.equal(execFileSync('/bin/sh', ['-c', cmd], { input, env }).toString(), '');
+  assert.equal(fs.readFileSync(out, 'utf8'), input);
+  const shown = execFileSync('/bin/sh', ['-c', cmd], { input, env: { ...env, AGENT_OFFICE_STATUSLINE: 'wc -c | tr -d " "' } }).toString();
+  assert.equal(shown.trim(), String(input.length));
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['p.json', 's l.sh']);
+  fs.rmSync(dir, { recursive: true });
+});

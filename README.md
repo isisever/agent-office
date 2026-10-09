@@ -12,6 +12,7 @@ Agent Office is a macOS app (and a Claude Code plugin that powers it). It wraps 
 - **One boss over every project.** All projects' agents share the office. Desks carry a colored project tag, the whiteboard counts today's deliveries per project, and the boss's sign shows which projects keep it busy.
 - **See what an agent is doing.** Click any worker to open a live panel: its task, the command or file it is on right now (`Bash: npm test`, `Edit: src/app.ts`), its last 20 tool calls and, once done, its result. Click the boss for a summary of every project.
 - **Several Claude accounts.** Add accounts in the sidebar, log in with one click, and pick which account each project uses. Each account has its own Claude Code config folder, so logins never mix.
+- **Plan usage per account.** Under each account, the 5-hour and weekly usage of its Claude plan (Pro/Max) and when each one resets, taken from that account's last Claude session.
 - **Local only.** No server, no telemetry. Everything stays on your Mac.
 
 > The app's interface is currently in Turkish. The plugin's terminal view speaks English and Turkish. Translations are welcome (see [Contributing](#contributing)).
@@ -51,6 +52,7 @@ Agent Office checks GitHub Releases at start and every few hours. A new version 
 | **Switch projects** | Click a project, or ⌘1 … ⌘9 |
 | **Choose a project's account** | The **Hesap ▾** picker on the project's row. Its last entry, **+ Yeni hesap…**, creates an account for that project. |
 | **Log in to an account** | **Giriş yap** next to the account. A small terminal runs `claude auth login`; approve in the browser and it closes by itself. |
+| **See an account's usage** | The **5 sa** and **Hafta** bars under the account: percentage used and reset time. They fill in once a project on that account has talked to Claude; hover for how old the value is. |
 | **See what an agent does** | Click the worker in the office. Esc closes the panel. |
 | **Change the bots' color** | **Bot rengi** at the bottom of the sidebar (↺ resets it) |
 | **Hide the sidebar** | ≡ in the title bar |
@@ -80,7 +82,7 @@ All data stays on your machine:
 | Where | What |
 | --- | --- |
 | `~/.claude/agent-office/sessions/` | Per session: the agents, the first 600 characters of each agent's task and result, and a one-line summary of its last 20 tool calls (commands, file paths, search patterns, URLs). Removed automatically a day after the session ends. |
-| `~/Library/Application Support/Agent Office/` | Your project list and the config folders of the accounts you added (each one holds that account's Claude Code login). |
+| `~/Library/Application Support/Agent Office/` | Your project list, the config folders of the accounts you added (each one holds that account's Claude Code login) and, under `usage/`, each project's latest Claude Code status line input (model, context and plan usage), used for the usage bars. |
 
 Nothing is sent anywhere by Agent Office. Claude Code itself talks to Anthropic as usual.
 

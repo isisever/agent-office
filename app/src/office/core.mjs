@@ -29,7 +29,7 @@ const C = {
   deskTop: 0xd8a56a, deskEdge: 0xe9bd85, deskFront: 0xa8743f, deskLeg: 0x6a4425, plate: 0xf3d9b0,
   chair: 0x3b4252, chairHi: 0x535c70, bossChair: 0x6a2c36, bossChairHi: 0x8a4450,
   lid: 0xd6d8de, lidDark: 0xa9adb8, logo: 0x3fb6a8, logoOn: 0xa8f0e6, mug: 0xf4efe6, coffee: 0x6b4226,
-  body: 0x3fb6a8, bodyHi: 0x6fd6c9, shade: 0x2b8a7f, eye: 0x1a1a1a, tie: 0x2a3a6a, tieKnot: 0x1d2a50, stache: 0x6b3423, stacheDk: 0x3b1a10,
+  body: 0x3fb6a8, bodyHi: 0x6fd6c9, shade: 0x2b8a7f, eye: 0x1a1a1a, tie: 0x2a3a6a, tieKnot: 0x1d2a50,
   paper: 0xf7f6f0, ink: 0x9a9a9a, bad: 0xe05050, good: 0x3fae55,
   white: 0xffffff, dark: 0x1d1a24, yellow: 0xf2c14e, accent: 0x3fb6a8, dim: 0xb8b0a4,
   chairCream: 0xebdcbc, chairCreamDark: 0xcdb990, chairCushion: 0xa87a52,
@@ -571,14 +571,7 @@ function bot(cx, by, { pose = 'stand', frame = 0, isBoss = false, look = 0, isBl
   rect(x0 + 5 + ex, top + 4 - eyeH, 1, eyeH, C.eye)
   rect(x0 + 10 + ex, top + 4 - eyeH, 1, eyeH, C.eye)
   if (isBoss) {
-    // müdür: uçları yukarı kıvrık kalın pala bıyık (altı koyu), bıyığın altında kravat
-    px(x0 + 3, top + 4, C.stacheDk)
-    px(x0 + 12, top + 4, C.stacheDk)
-    rect(x0 + 4, top + 5, 8, 1, C.stache)
-    px(x0 + 3, top + 5, C.stache)
-    px(x0 + 12, top + 5, C.stache)
-    rect(x0 + 5, top + 6, 2, 1, C.stacheDk)
-    rect(x0 + 9, top + 6, 2, 1, C.stacheDk)
+    // müdür: kravat
     rect(x0 + 7, top + 8, 2, 1, C.tie)
   }
   if (hasMug) {

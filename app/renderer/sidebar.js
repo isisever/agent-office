@@ -32,6 +32,24 @@ const AUTH_DOT = {
   error: 'Giriş durumu okunamadı',
 };
 
+const pad2 = (n) => String(n).padStart(2, '0');
+const DAYS = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+/** Sıfırlanma zamanı: 24 saat içindeyse "14:30", değilse "Pzt 09:00". */
+function resetText(ms, now) {
+  const d = new Date(ms);
+  const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return ms - now < 24 * 3600e3 ? hm : `${DAYS[d.getDay()]} ${hm}`;
+}
+/** "3 dk önce", "2 sa önce", "1 gün önce". */
+function agoText(ms, now) {
+  const m = Math.max(0, Math.round((now - ms) / 60000));
+  if (m < 1) return 'az önce';
+  if (m < 60) return `${m} dk önce`;
+  const hr = Math.round(m / 60);
+  return hr < 24 ? `${hr} sa önce` : `${Math.round(hr / 24)} gün önce`;
+}
+const STALE_MS = 30 * 60e3;
+
 export function mountSidebar(el, on) {
   let projects = [];
   let accounts = [];
@@ -162,6 +180,32 @@ export function mountSidebar(el, on) {
     }
   }
 
+  /** Hesabın plan kotası: 5 saatlik ve haftalık kullanım, sıfırlanma zamanı (son açık oturumdan). */
+  function usageRows(a) {
+    const u = a.usage;
+    if (!u || a.auth?.state !== 'in') return null;
+    const now = Date.now();
+    const ago = agoText(u.updatedAt, now);
+    const row = (label, name, w) => {
+      if (!w) return null;
+      const isReset = w.resetsAt != null && w.resetsAt <= now;
+      const pct = isReset ? 0 : Math.round(w.pct);
+      const when = w.resetsAt == null ? '' : isReset ? 'sıfırlandı' : resetText(w.resetsAt, now);
+      const level = pct >= 90 ? ' hi' : pct >= 70 ? ' mid' : '';
+      const tip = `${name}: %${pct} kullanıldı`
+        + (w.resetsAt == null ? '' : isReset ? '\nSıfırlandı' : `\nSıfırlanma: ${new Date(w.resetsAt).toLocaleString('tr-TR', { weekday: 'long', hour: '2-digit', minute: '2-digit' })}`)
+        + `\nSon bilgi: ${ago} (bu hesapta açık bir Claude oturumundan)`;
+      return h('div', { class: 'sb-usage' + level, title: tip },
+        h('span', { class: 'sb-usage-label' }, label),
+        h('span', { class: 'sb-usage-bar' }, h('span', { style: `width:${pct}%` })),
+        h('span', { class: 'sb-usage-pct' }, `%${pct}`),
+        h('span', { class: 'sb-usage-when' }, when));
+    };
+    return h('div', { class: 'sb-usages' + (now - u.updatedAt > STALE_MS ? ' stale' : '') },
+      row('5 sa', '5 saatlik kullanım', u.fiveHour),
+      row('Hafta', 'Haftalık kullanım', u.sevenDay));
+  }
+
   function renderAccounts() {
     const rows = accounts.map((a) => {
       const isDefault = a.id === 'default';
@@ -186,6 +230,7 @@ export function mountSidebar(el, on) {
           ],
         ),
         authRow(a, isDefault),
+        usageRows(a),
       );
     });
     if (editing && editing.id === null) {
@@ -200,6 +245,9 @@ export function mountSidebar(el, on) {
         onclick: () => { editing = { id: null }; renderAccounts(); },
       }, '+ Hesap ekle')));
   }
+
+  // sıfırlanma zamanları ve "x dk önce" kendiliğinden eskir: dakikada bir yeniden çiz
+  setInterval(() => { if (!editing && accounts.some((a) => a.usage)) renderAccounts(); }, 60000);
 
   return {
     /** Seçicide gösterilen bot rengi. */

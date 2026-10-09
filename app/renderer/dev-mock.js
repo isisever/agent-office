@@ -11,7 +11,8 @@ let seq = 0;
 const rid = () => Math.random().toString(36).slice(2, 10);
 
 const accounts = [
-  { id: 'default', label: 'Varsayılan', configDir: null, auth: { state: 'in', email: 'you@example.com', method: 'claude.ai' } },
+  { id: 'default', label: 'Varsayılan', configDir: null, auth: { state: 'in', email: 'you@example.com', method: 'claude.ai' },
+    usage: { updatedAt: Date.now() - 4 * 60e3, fiveHour: { pct: 74, resetsAt: Date.now() + 2.5 * 3600e3 }, sevenDay: { pct: 24, resetsAt: Date.now() + 4 * 86400e3 } } },
   { id: 'is', label: 'İş', configDir: '/tmp/accounts/is', auth: { state: 'out' } },
 ];
 if (q.has('authError')) {

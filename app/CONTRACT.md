@@ -158,3 +158,18 @@ Implementation notes (v2.3, app):
 - `core.mjs`: 3 slots per rack (9 in all), filled across the racks' top row first; running shells first, then finished ones. A lit slot shows 3 LEDs (accent colour, blinking with a per-shell phase; steady green for exit 0 / completed, red for failed / killed / non-zero exit) and the first 3 letters of the command's program (`shellLabel`, exported; `cd …&&`, `VAR=x`, `sudo` are skipped). In multi-project view the slot's left edge has the project colour. With more shells than slots the last slot shows "+n" and selects the first hidden shell. Hit boxes `shell:<id>` are recorded before the bots (bots stay on top); the selection marker's arrow sits above the rack. No shells → the frame is pixel-identical to before.
 - Panel: `shell:<id>` shows status with elapsed time, command (copy), exit code, description, the starting agent (clickable if still in the office; no `agentId` → the boss, clickable) and start/end times; "Komut ofisten ayrıldı" when it disappears. The boss summary lists running shells per project (clickable).
 - `dev-mock.js`: shells `sh-1`…`sh-4` (two running, one completed, one failed); `?select=shell:sh-2` works; `?noShells` sends old data.
+
+## Plan usage per account (v2.4)
+
+Each account row shows its claude.ai plan usage: the 5-hour and weekly windows with the time each one resets.
+
+```ts
+type UsageWindow = { pct: number; resetsAt?: number }   // pct 0-100; resetsAt in ms
+type AccountUsage = { updatedAt: number; fiveHour?: UsageWindow; sevenDay?: UsageWindow }
+// Account gains `usage?: AccountUsage` (absent until a session of that account has reported it)
+```
+
+- Source: the status line input's `rate_limits` (code.claude.com/docs/en/statusline). Claude Code sends it only for Pro/Max subscriptions and only after the session's first API response, so an account's usage is the last value reported by any of its project sessions.
+- Main starts each project's claude with `--settings '{"statusLine":…}'` running `userData/usage/statusline.sh <userData/usage/<accountId>/<projectId>.json>` (written at start, `src/usage.js` `SCRIPT`). The script stores its stdin there and, when the user has a command status line of their own (first `statusLine` found in the project's `.claude/settings.local.json`, `.claude/settings.json`, then the account's `settings.json`), runs it with the same input via `AGENT_OFFICE_STATUSLINE`, so the terminal shows the user's status line as before. Its `padding` is carried over.
+- Main scans those files every 3 s; the newest one with `rate_limits` becomes the account's usage, is kept in `usage/<accountId>/last.json` (loaded at start) and sent with `accounts:changed`. A project's file is removed from other accounts' folders when its pty starts, and when the project is removed; an account's folder goes with the account.
+- UI: under a logged-in account, one line per window: label (`5 sa`, `Hafta`), a bar (accent; yellow from 70%, red from 90%), the percentage and the reset time (`14:30` within 24 h, else `Pzt 09:00`; `sıfırlandı` once passed, shown as 0%). The tooltip says how old the value is; values older than 30 minutes are dimmed. Redrawn every minute.

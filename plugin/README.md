@@ -13,6 +13,7 @@ Every subagent Claude spawns walks in as a little bot, sits at a numbered desk s
 - **Full-window mode** (Ghostty on macOS, kitty, WezTerm): the office opens as a split next to your Claude terminal, with a live feed of the conversation and a task line to send Claude new work.
 - **Band mode** (any terminal with the kitty graphics protocol): the office is drawn inside Claude Code, right above the prompt.
 - **One office per project.** The wall sign and title show the project folder name, and the colors are generated from it. Custom themes are supported.
+- **Several projects and Claude accounts at once?** That is the [Agent Office app](../README.md) for macOS: one terminal per project, one shared office for all of them, and a Claude account picked per project. It bundles this plugin.
 - **English or Turkish** UI, picked from your locale.
 - **Local only.** No network, no dependencies.
 
@@ -163,6 +164,8 @@ MIT
 **Claude Code için 8-bit piksel ofis: alt agent'lar içeri yürür, masalarında çalışır, işi müdüre teslim eder.**
 
 Claude'un başlattığı her alt agent küçük bir bot olarak ofise girer, numaralı bir masaya oturur; masanın üstünde agent tipi ve o an kullandığı araç yazar. İşi bitince sonucu müdürün masasına götürür. Müdür (ana Claude) çalışıyor mu, seni mi bekliyor, görünür; beyaz tahta bugünkü teslimleri sayar.
+
+Aynı anda birkaç projede ve birkaç Claude hesabıyla çalışmak için macOS'taki [Agent Office uygulaması](../README.md) var: her projeye ayrı terminal, hepsine tek ortak ofis, her proje için ayrı seçilen Claude hesabı. Bu eklenti uygulamanın içinde gelir.
 
 ### Kurulum
 

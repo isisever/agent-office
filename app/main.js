@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const pty = require('node-pty');
 const P = require('./src/projects.js');
 const A = require('./src/accounts.js');
+const U = require('./src/usage.js');
 
 let win = null;
 let poll = null;
@@ -16,6 +17,7 @@ const terms = new Map();     // projectId → pty
 const logins = new Map();    // 'login:<accountId>' → `claude auth login` pty'si (projects:changed'e girmez)
 const sizes = new Map();     // projectId → { cols, rows } (son pty:resize)
 const auths = new Map();     // accountId → AccountAuth (yalnız bellekte)
+const usages = new Map();    // accountId → AccountUsage (usage/<accountId>/last.json'da da durur)
 const ptyOf = (id) => terms.get(id) || logins.get(id);
 let lastSize = { cols: 100, rows: 16 };
 
@@ -30,6 +32,7 @@ function office() {
 
 const statePath = () => path.join(app.getPath('userData'), 'state.json');
 const accountsRoot = () => path.join(app.getPath('userData'), 'accounts');
+const usageRoot = () => path.join(app.getPath('userData'), 'usage');
 function loadState() {
   try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')); } catch { return {}; }
 }
@@ -51,7 +54,7 @@ const snapshot = () => ({
 const broadcast = () => send('projects:changed', snapshot());
 
 // Durumu değiştir, kaydet, renderer'a bildir.
-const accountList = () => A.withAuth(state.accounts, (id) => auths.get(id));
+const accountList = () => A.withAuth(state.accounts, (id) => auths.get(id), (id) => usages.get(id));
 const sendAccounts = () => send('accounts:changed', accountList());
 function commit(next, { accounts = false } = {}) {
   state = next;
@@ -204,6 +207,75 @@ function startLogin(accountId) {
   });
 }
 
+// --- hesap kotası (bkz. src/usage.js)
+const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return undefined; } };
+
+// Betik açılışta userData/usage'a yazılır (imzalı .app paketinin içinden çalıştırılmaz).
+let usageScript;
+function ensureUsageScript() {
+  if (usageScript !== undefined) return usageScript;
+  const f = path.join(usageRoot(), 'statusline.sh');
+  try {
+    fs.mkdirSync(usageRoot(), { recursive: true });
+    fs.writeFileSync(f, U.SCRIPT, { mode: 0o755 });
+    usageScript = f;
+  } catch (e) {
+    console.error('status line betiği yazılamadı:', e.message);
+    usageScript = null;
+  }
+  return usageScript;
+}
+
+// Projenin --settings'i ve kullanıcının kendi status line komutu. Projenin önceki hesaplardaki
+// dosyaları silinir: hesabı değişen proje eski hesabın kotasını yazmaya devam etmiş gibi görünmesin.
+function usageStatusLine(project, configDir) {
+  const script = ensureUsageScript();
+  if (!script) return null;
+  const dir = path.join(usageRoot(), project.accountId);
+  try {
+    for (const a of fs.readdirSync(usageRoot())) {
+      if (a !== project.accountId) fs.rmSync(path.join(usageRoot(), a, `${project.id}.json`), { force: true });
+    }
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    console.error('kota klasörü:', e.message);
+    return null;
+  }
+  const user = U.userStatusLine(U.settingsPaths(project.dir, configDir, app.getPath('home')).map(readJson));
+  return { settings: U.statusLineSettings(script, path.join(dir, `${project.id}.json`), user), userCommand: user?.command };
+}
+
+// Hesap klasörlerindeki proje dosyalarından en yenisi; değişen hesap last.json'a yazılır ve gönderilir.
+const usageSeen = new Map(); // dosya → mtimeMs
+function loadUsageCache() {
+  for (const a of state.accounts) {
+    const u = U.usageFromCache(readJson(path.join(usageRoot(), a.id, U.LAST)));
+    if (u) usages.set(a.id, u);
+  }
+}
+function scanUsage() {
+  let changed = false;
+  for (const a of state.accounts) {
+    const dir = path.join(usageRoot(), a.id);
+    let names;
+    try { names = fs.readdirSync(dir); } catch { continue; }
+    for (const n of names) {
+      if (n === U.LAST || !n.endsWith('.json')) continue;
+      const f = path.join(dir, n);
+      let mtime;
+      try { mtime = fs.statSync(f).mtimeMs; } catch { continue; }
+      if (usageSeen.get(f) === mtime) continue;
+      usageSeen.set(f, mtime);
+      const u = U.usageFromStatus(readJson(f), Math.round(mtime));
+      if (!u || u.updatedAt <= (usages.get(a.id)?.updatedAt || 0)) continue;
+      usages.set(a.id, u);
+      try { fs.writeFileSync(path.join(dir, U.LAST), JSON.stringify(u)); } catch {}
+      changed = true;
+    }
+  }
+  if (changed) sendAccounts();
+}
+
 // Projenin claude'unu (yeniden) başlatır; boyut o projenin son pty:resize'ı.
 function startPty(id) {
   killPty(id);
@@ -214,16 +286,21 @@ function startPty(id) {
   const { cols, rows } = sizes.get(id) || lastSize;
   // eklenti yolu $1 olarak geçer: boşluklu yollar (Application Support) tırnak derdi çıkarmaz.
   // Hesap klasörü rc dosyalarından sonra yeniden verilir (bkz. accounts.js ptyEnv).
+  // claude'un argümanları "$@" ile geçer: eklenti yolu ve status line ayarı (kota için, bkz. usage.js).
   const dir = pluginDir();
-  const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; '
-    + (dir ? 'exec claude --plugin-dir "$1"' : 'exec claude');
+  const sl = usageStatusLine(project, configDir);
+  const args = [...(dir ? ['--plugin-dir', dir] : []), ...(sl ? ['--settings', sl.settings] : [])];
+  const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; exec claude "$@"';
+  const env = { ...A.ptyEnv(process.env, configDir), AGENT_OFFICE_APP: '1' };
+  delete env.AGENT_OFFICE_STATUSLINE;
+  if (sl?.userCommand) env.AGENT_OFFICE_STATUSLINE = sl.userCommand;
   let t;
   try {
-    t = pty.spawn(shell(), ['-l', '-i', '-c', cmd, 'claude', ...(dir ? [dir] : [])], {
+    t = pty.spawn(shell(), ['-l', '-i', '-c', cmd, 'claude', ...args], {
       name: 'xterm-256color',
       cols, rows,
       cwd: isDir(project.dir) ? project.dir : app.getPath('home'),
-      env: { ...A.ptyEnv(process.env, configDir), AGENT_OFFICE_APP: '1' },
+      env,
     });
   } catch (e) {
     console.error('pty başlatılamadı:', e.message);
@@ -246,8 +323,11 @@ function startMissing() {
   for (const p of state.projects) if (!terms.has(p.id)) startPty(p.id);
 }
 
+let usagePoll = null;
 function startPolling() {
   clearInterval(poll);
+  clearInterval(usagePoll);
+  usagePoll = setInterval(scanUsage, 3000);
   poll = setInterval(() => {
     const s = office();
     if (!s || !win || win.isDestroyed()) return;
@@ -272,6 +352,8 @@ ipcMain.handle('projects:add', async () => {
 ipcMain.handle('projects:remove', (_e, id) => {
   killPty(id);
   sizes.delete(id);
+  const p = P.findProject(state, id);
+  if (p) try { fs.rmSync(path.join(usageRoot(), p.accountId, `${id}.json`), { force: true }); } catch {}
   commit(P.removeProject(state, id));
 });
 ipcMain.handle('projects:setActive', (_e, id) => { commit(P.setActive(state, id)); });
@@ -300,6 +382,8 @@ ipcMain.handle('accounts:remove', (_e, id) => {
   if (r.state === state) return;
   killPty(A.loginPtyId(id));
   auths.delete(id);
+  usages.delete(id);
+  try { fs.rmSync(path.join(usageRoot(), id), { recursive: true, force: true }); } catch {}
   commit(r.state, { accounts: true });
   for (const pid of r.moved) startPty(pid);
 });
@@ -384,7 +468,7 @@ async function createWindow() {
   isLoaded = false;
   win.once('ready-to-show', () => win.show());
   win.on('focus', onFocus);
-  win.on('closed', () => { killAll(); clearInterval(poll); isLoaded = false; win = null; });
+  win.on('closed', () => { killAll(); clearInterval(poll); clearInterval(usagePoll); isLoaded = false; win = null; });
 
   // Komut satırındaki klasör eklenir/etkinleşir; hiç proje yoksa klasör sorulur.
   const arg = argProject();
@@ -455,6 +539,7 @@ app.whenReady().then(() => {
   setupUpdates();
   state = P.normalizeState(loadState());
   saveState();
+  loadUsageCache();
   lastFocusCheck = Date.now();
   checkAllAuth();
   // paketlenmiş uygulamada ikon .icns'ten gelir; npm start'ta Dock'a elle ver
