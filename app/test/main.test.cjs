@@ -281,6 +281,35 @@ test('nextAttention: izin ve bitiş bildirimi yalnız değişince, bakılan proj
   assert.deepEqual([...r.attention], [['a', 'done'], ['b', 'permission']]);
 });
 
+test('nextAttention: tur arka plan ajanları çalışırken biterse bitiş yok; ajanlar bitince bir kez', () => {
+  const projects = [{ id: 'a', name: 'alpha' }];
+  const off = (isBossBusy, working, waiting = null) => [{ name: 'alpha', working, delivered: 0, isBossBusy, waiting }];
+  let r = N.nextAttention(N.emptyAttention(), projects, off(true, 2), null);
+  // the main turn ends while two background agents still run: the boss waits for its agents, not for the user
+  r = N.nextAttention(r.state, projects, off(false, 2), null);
+  assert.deepEqual(r.events, []);
+  assert.equal(r.attention.size, 0);
+  r = N.nextAttention(r.state, projects, off(false, 1), null);
+  assert.deepEqual(r.events, []);
+  // a permission prompt from an agent still counts
+  r = N.nextAttention(r.state, projects, off(false, 1, { tool: 'Bash', since: 4 }), null);
+  assert.deepEqual(r.events, [{ kind: 'permission', id: 'a', tool: 'Bash' }]);
+  r = N.nextAttention(r.state, projects, off(false, 1), null);
+  assert.deepEqual(r.events, []);
+  // the last agent finishes and the boss stays idle: 'done' once
+  r = N.nextAttention(r.state, projects, off(false, 0), null);
+  assert.deepEqual(r.events, [{ kind: 'done', id: 'a' }]);
+  assert.deepEqual([...r.attention], [['a', 'done']]);
+  r = N.nextAttention(r.state, projects, off(false, 0), null);
+  assert.deepEqual(r.events, []);
+  // the last agent finishes and Claude resumes a turn by itself: no 'done' until that turn ends
+  r = N.nextAttention(N.emptyAttention(), projects, off(false, 1), null);
+  r = N.nextAttention(r.state, projects, off(true, 0), null);
+  assert.deepEqual(r.events, []);
+  r = N.nextAttention(r.state, projects, off(false, 0), null);
+  assert.deepEqual(r.events, [{ kind: 'done', id: 'a' }]);
+});
+
 test('usageAlerts: %80 ve %95 bir kez, sıfırlanınca yeniden; açılışta yalnız işaretler', () => {
   const NOW = 1000;
   const alerted = new Map();
@@ -411,7 +440,7 @@ test('nextAttention: worktree oturumu (eşlenen ad) projesinin onayı ve bitişi
   const aliases = { 'shop-wt-2': 'shop' };
   const office = (busy, waiting) => [
     { name: 'shop', working: 0, delivered: 0, isBossBusy: false, waiting: null },
-    { name: 'shop-wt-2', working: 1, delivered: 0, isBossBusy: busy, waiting },
+    { name: 'shop-wt-2', working: busy ? 1 : 0, delivered: 0, isBossBusy: busy, waiting },
   ];
   let r = N.nextAttention(N.emptyAttention(), projects, office(true, null), null, aliases);
   assert.equal(r.attention.size, 0);

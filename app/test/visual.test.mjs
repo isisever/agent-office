@@ -58,12 +58,24 @@ const multi = now => {
   }
 }
 
+// the boss's turn ended while two background agents still run: the sign says it waits on its agents
+const agentsWaiting = now => ({
+  workers: [
+    { id: 'a1', type: 'Explore', spawnAt: now - 40000, tool: 'Grep', project: 'shop-api' },
+    { id: 'a2', type: 'general-purpose', spawnAt: now - 25000, tool: 'Bash', project: 'shop-api' },
+  ],
+  delivered: 3, isBossBusy: false, isBossAsking: false, project: 'shop-api', sessionId: '',
+  projects: [{ name: 'shop-api', working: 2, delivered: 3, isBossBusy: false, waiting: null }],
+})
+
 // [name, language, theme, data]
 const CASES = [
   ['demo-tr', 'tr', 'classic', demoOffice],
   ['demo-en', 'en', 'classic', demoOffice],
   ['forest-tr', 'tr', 'forest', demoOffice],
   ['multi-asking-en', 'en', 'classic', multi],
+  ['agents-waiting-en', 'en', 'classic', agentsWaiting],
+  ['agents-waiting-tr', 'tr', 'classic', agentsWaiting],
 ]
 
 const stored = existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : {}

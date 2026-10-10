@@ -2,7 +2,9 @@
 //
 // A project waits in two ways (contract v2.6):
 // - 'permission': its session has an open permission prompt (the plugin's stats.waiting).
-// - 'done': the manager was working, its turn ended and the user hasn't looked at that project yet.
+// - 'done': the manager was working, its turn ended with none of its agents still running, and the user hasn't
+//   looked at that project yet. A turn that ends while background agents run is the boss waiting for its agents,
+//   not for the user: the project stays busy until the boss is idle and no agent of it runs.
 // Looking = the window is focused and the project is active. A looked-at project gets no notification, and 'done' clears.
 //
 // Tabs (contract v3.0): all of a project's tabs (same folder or git worktree) are that project.
@@ -24,7 +26,8 @@ function nextAttention(prev, projects, office, seenId, aliases = null) {
   for (const proj of projects) {
     const p = byName.get(proj.name);
     const isSeen = proj.id === seenId;
-    const busy = Boolean(p?.isBossBusy);
+    // busy = the boss works or any of its agents (running subagents) still does
+    const busy = Boolean(p?.isBossBusy) || (p?.working || 0) > 0;
     const wait = p?.waiting ? `${p.waiting.tool}@${p.waiting.since}` : '';
     const wasBusy = prev.busy.get(proj.id);
     const prevWait = prev.waits.get(proj.id);

@@ -5,6 +5,7 @@
 // ?langs=en,tr,de → languages in the picker (a browser cannot list the folder; main reads locales/*.json). Default en,tr.
 // ?platform=linux → Linux title bar and Ctrl+Shift shortcuts (platform.js).
 // ?asking → second project awaits approval (sign, ✋), third is done (●).
+// ?agentsWaiting → no boss is busy but agents still work (sign and boss panel: waiting on agents).
 // ?select=<worker id | @boss | shell:<id>> → clicks that bot/rack slot after a few seconds (agent panel test;
 // e.g. ?select=m-1, ?select=shell:sh-1). ?noShells → old data (no shells field).
 // ?tabs → three tabs in the first project (main, same folder, git worktree) with the worktree tab open (contract v3.0);
@@ -352,7 +353,7 @@ setInterval(() => {
     name: p.name,
     working: workers.filter((w) => w.project === p.name && w.doneAt == null).length,
     delivered: i * 2 + 1,
-    isBossBusy: i === 1,
+    isBossBusy: !q.has('agentsWaiting') && i === 1,
     waiting: q.has('asking') && i === 1 ? { tool: 'Bash', since: Date.now() - 8000 } : null,
   }));
   ev.office.emit({

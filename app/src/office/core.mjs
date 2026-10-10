@@ -22,12 +22,12 @@ export function setPartyMinutes(minutes) {
 // Text inside the office (same as the plugin's viewer); the app picks it with setLanguage, Turkish by default.
 const STRINGS = {
   tr: {
-    office: 'OFİS', boss: 'MÜDÜR', working: 'ÇALIŞIYOR', waiting: 'BEKLİYOR', asking: 'ONAY BEKLİYOR', thinking: 'DÜŞÜNÜYOR',
+    office: 'OFİS', boss: 'MÜDÜR', working: 'ÇALIŞIYOR', waiting: 'BEKLİYOR', agents: 'AJANLARI BEKLİYOR', asking: 'ONAY BEKLİYOR', thinking: 'DÜŞÜNÜYOR',
     today: 'BUGÜN', delivered: n => `${n} TESLİM`, demoProject: 'gösteri',
     types: { 'general-purpose': 'GENEL', Explore: 'KEŞİF', Plan: 'PLAN', 'claude-code-guide': 'REHBER' },
   },
   en: {
-    office: 'OFFICE', boss: 'BOSS', working: 'WORKING', waiting: 'WAITING', asking: 'NEEDS YOU', thinking: 'THINKING',
+    office: 'OFFICE', boss: 'BOSS', working: 'WORKING', waiting: 'WAITING', agents: 'WAITING ON AGENTS', asking: 'NEEDS YOU', thinking: 'THINKING',
     today: 'TODAY', delivered: n => `${n} DONE`, demoProject: 'demo',
     types: { 'general-purpose': 'GENERAL', Explore: 'EXPLORE', Plan: 'PLAN', 'claude-code-guide': 'GUIDE' },
   },
@@ -1614,15 +1614,19 @@ function renderFrame(now, data, focus = '', selected = null) {
     const tb = tag([[shortType(w.type), C.white], [fit(tool, 8), C.yellow]], cx, top, pr ? pr.color : C.ol)
     hits.push({ id: w.id, ...tb })
   }
-  // when a permission dialog is open (contract v2.6) the sign blinks and says which project it is in
+  // the sign, in order: a permission dialog is open (contract v2.6: blinks and says which project) → the boss works →
+  // its turn ended but agents still run (it waits for them, not for the user) → it waits for the user
   const isAsking = Boolean(data.isBossAsking)
+  const running = new Set(data.workers.filter(w => w && w.doneAt == null).map(w => slugOf(w.project ?? '')))
+  const hasAgents = p => p.working > 0 || running.has(slugOf(p.name))
+  const isAgents = !isAsking && !data.isBossBusy && running.size > 0
   const status = isAsking
     ? [T.asking, Math.floor(now / 500) % 2 ? C.yellow : C.white]
-    : [data.isBossBusy ? T.working : T.waiting, C.dim]
+    : [data.isBossBusy ? T.working : isAgents ? T.agents : T.waiting, C.dim]
   const bossLines = [[T.boss, C.accent], status]
-  if (isMulti && (isAsking || data.isBossBusy)) {
-    // projects waiting for approval or working: at most two names, the rest +n
-    const busy = projs.filter(p => (isAsking ? p.waiting : p.isBossBusy))
+  if (isMulti && (isAsking || data.isBossBusy || isAgents)) {
+    // projects waiting for approval, working or with agents working: at most two names, the rest +n
+    const busy = projs.filter(p => (isAsking ? p.waiting : data.isBossBusy ? p.isBossBusy : hasAgents(p)))
     busy.slice(0, 2).forEach(p => bossLines.push([short.get(p.name), projColor(p.name)]))
     if (busy.length > 2) bossLines.push([`+${busy.length - 2}`, C.dim])
   }

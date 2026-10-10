@@ -627,6 +627,7 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
 .ap-status.busy .ap-dot, .ap-dot.on { background: var(--accent); opacity: 1; box-shadow: 0 0 4px var(--accent); }
 .ap-status.busy .ap-dot { animation: ap-blink 1s steps(2) infinite; }
 .ap-status.ok .ap-dot { background: #7bc47f; opacity: 1; }
+.ap-status.agents .ap-dot { background: var(--accent); opacity: 1; }
 .ap-status.bad { color: #e06c5a; }
 .ap-status.bad .ap-dot { background: #e06c5a; opacity: 1; }
 @keyframes ap-blink { 50% { opacity: .35; } }

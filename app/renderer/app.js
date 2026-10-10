@@ -78,7 +78,8 @@ function setStats(d) {
   const working = Array.isArray(list)
     ? list.reduce((n, p) => n + (p.working || 0), 0)
     : (d?.workers || []).filter((w) => w.doneAt == null).length;
-  const busy = d?.isBossBusy ? t('app.bossBusy') : '';
+  // the boss's turn ended but its agents still run: it waits for them, not for the user
+  const busy = d?.isBossBusy ? t('app.bossBusy') : working > 0 ? t('app.bossAgents') : '';
   $('stats').textContent = t('app.stats', { working, delivered: d?.delivered ?? 0, busy });
   $('stats').title = t('app.statsTitle');
   const warn = $('warn');

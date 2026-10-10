@@ -255,7 +255,9 @@ export function mountAgentPanel(el, { onClose, onSelect, onOpenProject, loadToda
     const d = data || {};
     const workers = (Array.isArray(d.workers) ? d.workers : []).filter((w) => w && num(w.doneAt) == null);
     const projects = Array.isArray(d.projects) ? d.projects : [];
-    let html = `<div class="ap-status ${d.isBossBusy ? 'busy' : 'ok'}"><span class="ap-dot"></span>${d.isBossBusy ? t('panel.working') : t('panel.waiting')}<span class="ap-dim">${t('panel.todayDelivered', { n: num(d.delivered) ?? 0 })}</span></div>`;
+    // busy → working; idle with agents still running → waiting on its agents; otherwise waiting for the user
+    const [cls, status] = d.isBossBusy ? ['busy', t('panel.working')] : workers.length ? ['agents', t('panel.waitingAgents')] : ['ok', t('panel.waiting')];
+    let html = `<div class="ap-status ${cls}"><span class="ap-dot"></span>${status}<span class="ap-dim">${t('panel.todayDelivered', { n: num(d.delivered) ?? 0 })}</span></div>`;
     if (projects.length) {
       html += `<section class="ap-sec"><div class="ap-label">${t('panel.projects')}</div><ul class="ap-projs">${projects.map((p) =>
         `<li><span class="ap-dot ${p.isBossBusy ? 'on' : ''}" title="${p.isBossBusy ? esc(t('panel.bossOnProject')) : ''}"></span><span class="ap-pname">${esc(p.name)}</span><span class="ap-dim">${t('panel.projStats', { working: num(p.working) ?? 0, delivered: num(p.delivered) ?? 0 })}</span></li>`).join('')}</ul></section>`;

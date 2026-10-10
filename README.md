@@ -12,7 +12,7 @@ Agent Office is a macOS and Linux app (and a Claude Code plugin that powers it).
 - **One boss over every project.** All projects' agents share the office. Desks carry a colored project tag, the whiteboard counts today's deliveries per project, and the boss's sign shows which projects keep it busy.
 - **See what an agent is doing.** Click any worker to open a live panel: its task, the command or file it is on right now (`Bash: npm test`, `Edit: src/app.ts`), its last 20 tool calls and, once done, its result. Click the boss for a summary of every project.
 - **Several Claude accounts.** Add accounts in the sidebar, log in with one click, and pick which account each project uses. Each account has its own Claude Code config folder, so logins never mix.
-- **Knows when Claude needs you.** A project waiting for your approval, or one that just finished while you were looking elsewhere, raises a desktop notification, shows on the Dock badge (macOS) and gets a mark on its row; the boss's sign says NEEDS YOU. Click the notification to jump there.
+- **Knows when Claude needs you.** A project waiting for your approval, or one that just finished (its background agents too) while you were looking elsewhere, raises a desktop notification, shows on the Dock badge (macOS) and gets a mark on its row; the boss's sign says NEEDS YOU (and WAITING ON AGENTS while its turn is over but its agents still work). Click the notification to jump there.
 - **Plan usage per account.** Under each account, the 5-hour and weekly usage of its Claude plan (Pro/Max) and when each one resets, taken from that account's last Claude session, with a notification at 80% and 95%.
 - **Local only.** No server, no telemetry. Everything stays on your computer.
 
