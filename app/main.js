@@ -104,7 +104,7 @@ function saveState() {
   } catch {}
 }
 
-const send = (ch, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...args); };
+const send = (ch, ...args) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(ch, ...args); };
 const snapshot = () => ({
   projects: state.projects,
   activeId: state.activeId,
@@ -282,6 +282,9 @@ function killPty(id) {
   mcpPrint.delete(id);
   ptyStart.delete(id);
   ptyLimit.delete(id);
+  // dispose every onData/onExit listener before the kill: nothing is left to fire from a dying pty
+  try { t._onData._listeners.length = 0; t._onExit._listeners.length = 0; } catch {}
+  if (quitting && t.pid) dying.push(t.pid);   // will-quit waits for these (≤ 1 s)
   try { t.kill(); } catch {}
 }
 // Quitting (window closed, Quit, the updater's quitAndInstall): one last look at which tabs are mid-turn, so they
@@ -296,6 +299,12 @@ function killAll() {
 
 // --- interrupted work (see src/resume.js): state.interrupted = { ptyId: sessionId | '' } for tabs mid-turn
 let quitting = false;
+// onData/onExit of killed ptys can still fire while quitting or during teardown (node-pty's exit TSFN,
+// microsoft/node-pty#904/#951): deliver nothing then, and keep a stray throw from becoming an uncaught one
+// (an uncaught throw surface in a dying environment is what turns into the SIGABRT on quit)
+function guarded(f) { return (...a) => { if (quitting) return; try { f(...a); } catch (e) { console.error('pty callback:', e.message); } }; }
+// pids of ptys killed while quitting; will-quit waits up to 1 s for their onExit callbacks to deliver
+const dying = [];
 const marks = () => state?.interrupted || {};
 // saved at once (no broadcast: the renderer does not show it), so an ungraceful end still finds it
 function setMarks(next) {
@@ -521,13 +530,13 @@ function startLogin(accountId) {
     return;
   }
   logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
+  t.onData(guarded((d) => { if (logins.get(id) === t) send('pty:data', id, d); }));
+  t.onExit(guarded(({ exitCode }) => {
     if (logins.get(id) !== t) return; // killed on purpose: silent
     logins.delete(id);
     send('pty:exit', id, exitCode);
     checkAuth(accountId, { showChecking: true });
-  });
+  }));
 }
 
 // v3.34 remote login relay (src/login-relay.js): `claude auth login` for an existing account of this machine, asked
@@ -546,8 +555,8 @@ function spawnRelayLogin(account, relayId, devicePub) {
   }
   /** @type {any} */ (t).accountId = account.id;
   relays.set(id, t);
-  t.onExit(() => { if (relays.get(id) === t) relays.delete(id); });
-  return { onData: (f) => t.onData(f), onExit: (f) => t.onExit(f), write: (x) => t.write(x), kill: () => { if (relays.get(id) === t) relays.delete(id); try { t.kill(); } catch {} } };
+  t.onExit(guarded(() => { if (relays.get(id) === t) relays.delete(id); }));
+  return { onData: (f) => t.onData(guarded(f)), onExit: (f) => t.onExit(guarded(f)), write: (x) => t.write(x), kill: () => { if (relays.get(id) === t) relays.delete(id); try { t.kill(); } catch {} } };
 }
 const relayAccounts = () => state.accounts.map((a) => { const s = auths.get(a.id); return { id: a.id, label: a.label || a.id, state: s?.state || 'unknown', ...(s?.state === 'in' && s.email ? { email: s.email } : {}) }; });
 
@@ -613,13 +622,13 @@ function startAgyLogin() {
     return;
   }
   logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
+  t.onData(guarded((d) => { if (logins.get(id) === t) send('pty:data', id, d); }));
+  t.onExit(guarded(({ exitCode }) => {
     if (logins.get(id) !== t) return;
     logins.delete(id);
     send('pty:exit', id, exitCode);
     checkAgyAuth();
-  });
+  }));
 }
 
 // --- Command Code login (contract v3.30, src/cmd-auth.js): one login per user (`cmd login`, ~/.commandcode/auth.json).
@@ -668,13 +677,13 @@ function startCmdLogin() {
     return;
   }
   logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
+  t.onData(guarded((d) => { if (logins.get(id) === t) send('pty:data', id, d); }));
+  t.onExit(guarded(({ exitCode }) => {
     if (logins.get(id) !== t) return;
     logins.delete(id);
     send('pty:exit', id, exitCode);
     checkCmdAuth();
-  });
+  }));
 }
 
 // --- OpenCode login (contract v3.40, src/oc-auth.js): providers, not one account. `opencode providers login` / `logout`
@@ -727,13 +736,13 @@ function startOcLogin(mode) {
     return;
   }
   logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
+  t.onData(guarded((d) => { if (logins.get(id) === t) send('pty:data', id, d); }));
+  t.onExit(guarded(({ exitCode }) => {
     if (logins.get(id) !== t) return;
     logins.delete(id);
     send('pty:exit', id, exitCode);
     checkOcAuth();
-  });
+  }));
 }
 
 // --- account quota (see src/usage.js)
@@ -1056,14 +1065,14 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   ptyStart.set(id, startedAt);
   ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0 });
   if (sessionId) lastSid.set(id, sessionId); else lastSid.delete(id);
-  t.onData((d) => {
+  t.onData(guarded((d) => {
     if (terms.get(id) !== t) return;
     const a = activity.get(id);
     if (a) a.at = Date.now();
     watchLimit(id, d, startedAt);
     send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
+  }));
+  t.onExit(guarded(({ exitCode }) => {
     if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
     terms.delete(id);
     mcpPrint.delete(id);
@@ -1082,7 +1091,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     activity.delete(id);
     send('pty:exit', id, exitCode);
     broadcast();
-  });
+  }));
   broadcast();
 }
 
@@ -1123,14 +1132,14 @@ function startAgy(id, { tab, dir: cwd, project }, { resume = false, prompt = '' 
   lastSid.delete(id);
   retireAgy(id);
   agyWatch.set(id, { watch: AW.createAgyWatch(startedAt), cursor: null, key: `agy-${id.replace(/[^\w-]/g, '_')}-${++agySeq}` });
-  t.onData((d) => {
+  t.onData(guarded((d) => {
     if (terms.get(id) !== t) return;
     const a = activity.get(id);
     if (a) a.at = Date.now();
     agyWatch.get(id)?.watch.output(d);
     send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
+  }));
+  t.onExit(guarded(({ exitCode }) => {
     if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
     retireAgy(id);
     terms.delete(id);
@@ -1148,7 +1157,7 @@ function startAgy(id, { tab, dir: cwd, project }, { resume = false, prompt = '' 
     activity.delete(id);
     send('pty:exit', id, exitCode);
     broadcast();
-  });
+  }));
   broadcast();
 }
 
@@ -1255,14 +1264,14 @@ function startCommandCode(id, { project, tab, dir: cwd }, { resume = false, prom
   agyWatch.set(id, { watch: AW.createAgyWatch(startedAt, { engine: 'commandcode', label: 'Command Code' }), cursor: null, key: `cmd-${id.replace(/[^\w-]/g, '_')}-${++agySeq}` });
   if (withMod) cmdSpool.set(id, { file: path.join(spoolDir, CS.SPOOL_FILE), cursor: null });
   else cmdSpool.delete(id);
-  t.onData((d) => {
+  t.onData(guarded((d) => {
     if (terms.get(id) !== t) return;
     const a = activity.get(id);
     if (a) a.at = Date.now();
     agyWatch.get(id)?.watch.output(d);
     send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
+  }));
+  t.onExit(guarded(({ exitCode }) => {
     if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
     retireAgy(id);
     terms.delete(id);
@@ -1277,7 +1286,7 @@ function startCommandCode(id, { project, tab, dir: cwd }, { resume = false, prom
     activity.delete(id);
     send('pty:exit', id, exitCode);
     broadcast();
-  });
+  }));
   broadcast();
 }
 
@@ -1314,14 +1323,14 @@ function startOpenCode(id, { project, tab, dir: cwd }, { resume = false, prompt 
   lastSid.delete(id);
   retireAgy(id);
   agyWatch.set(id, { watch: AW.createAgyWatch(startedAt, { engine: 'opencode', label: 'OpenCode' }), cursor: null, key: `oc-${id.replace(/[^\w-]/g, '_')}-${++agySeq}` });
-  t.onData((d) => {
+  t.onData(guarded((d) => {
     if (terms.get(id) !== t) return;
     const a = activity.get(id);
     if (a) a.at = Date.now();
     agyWatch.get(id)?.watch.output(d);
     send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
+  }));
+  t.onExit(guarded(({ exitCode }) => {
     if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
     retireAgy(id);
     terms.delete(id);
@@ -1332,7 +1341,7 @@ function startOpenCode(id, { project, tab, dir: cwd }, { resume = false, prompt 
     activity.delete(id);
     send('pty:exit', id, exitCode);
     broadcast();
-  });
+  }));
   broadcast();
 }
 
@@ -1759,13 +1768,26 @@ async function handOffProject(projectId, device) {
   const r = await linkHost.handOff(device.id, projectId);
   if (!r.ok) dialog.showMessageBox(win, { type: 'warning', message: T('main.handoffFailed', { project: p.name, device: device.name }), detail: T(`main.handoffReason.${r.reason}`) });
 }
-// close the link before exiting so paired devices see this one go offline at once, not after the heartbeat (≤ 1 s)
+// close the link before exiting so paired devices see this one go offline at once, not after the heartbeat (≤ 1 s),
+// and wait a moment for the killed ptys' onExit callbacks (exit TSFNs can still deliver while the environment dies)
 let linkClosed = false;
+let exitWaited = false;
 app.on('will-quit', (e) => {
-  if (!linkHost || linkClosed) return;
-  linkClosed = true;
+  if ((exitWaited || !dying.length) && (!linkHost || linkClosed)) return;   // nothing left to settle: quit at once
   e.preventDefault();
-  Promise.race([Promise.resolve(linkHost.destroy()).catch(() => {}), new Promise((r) => setTimeout(r, 1000))]).finally(() => app.quit());
+  const waits = [];
+  if (linkHost && !linkClosed) { linkClosed = true; waits.push(Promise.resolve(linkHost.destroy()).catch(() => {})); }
+  if (dying.length && !exitWaited) {
+    exitWaited = true;   // waited once only: the next will-quit passes through (the ≤ 1 s cap holds)
+    // gone: the pid has been reaped, so its node-pty kqueue thread ran and its exit callback has fired
+    waits.push(Promise.resolve().then(async () => {
+      while (dying.length) {
+        for (let i = dying.length - 1; i >= 0; i--) { try { process.kill(dying[i], 0); } catch { dying.splice(i, 1); } }
+        if (dying.length) await new Promise((r) => setTimeout(r, 20));
+      }
+    }));
+  }
+  Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, 1000))]).catch(() => {}).finally(() => app.quit());
 });
 
 /** @returns {{ resumed: { id: string, name: string }[], skipped: { id: string, name: string }[] }} */
