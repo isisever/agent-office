@@ -3820,21 +3820,36 @@ test('OpenCode proje dosyaları (v3.38, v3.40): hiçbir dosya yazılmaz', () => 
 test('OpenCode girişi (v3.40): giriş yok normal durum; yalnız sağlayıcı adı ve türü okunur, anahtar asla', () => {
   const OA = require('../src/oc-auth.js');
   assert.deepEqual(OA.ocAuthState({ path: null }, '{"openai":{"type":"oauth"}}'), { installed: false, state: 'missing' });
-  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, ''), { installed: true, state: 'out' });
-  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, '{}'), { installed: true, state: 'out' });
-  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, 'broken{'), { installed: true, state: 'out' });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, ''), { installed: true, state: 'out', major: null });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode', major: 2 }, '{}'), { installed: true, state: 'out', major: 2 });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, 'broken{'), { installed: true, state: 'out', major: null });
   const secret = 'sk-SECRET-VALUE';
-  const st = OA.ocAuthState({ path: '/b/opencode' }, JSON.stringify({ openai: { type: 'oauth', access: secret, refresh: secret }, google: { type: 'api', key: secret }, 'bad id!': { type: 'api' }, odd: { type: 'x' }, str: 'text' }));
-  assert.deepEqual(st, { installed: true, state: 'in', providers: [{ id: 'openai', type: 'oauth' }, { id: 'google', type: 'api' }, { id: 'odd', type: 'other' }] });
+  const st = OA.ocAuthState({ path: '/b/opencode', major: 1 }, JSON.stringify({ openai: { type: 'oauth', access: secret, refresh: secret }, google: { type: 'api', key: secret }, 'bad id!': { type: 'api' }, odd: { type: 'x' }, str: 'text' }));
+  assert.deepEqual(st, { installed: true, state: 'in', major: 1, providers: [{ id: 'openai', type: 'oauth' }, { id: 'google', type: 'api' }, { id: 'odd', type: 'other' }] });
   assert.equal(JSON.stringify(st).includes(secret), false);
   assert.deepEqual(OA.parseOcCredentials('[1,2]'), []);
   assert.equal(OA.parseOcStatus('rc noise\n/opt/homebrew/bin/opencode\n').path, '/opt/homebrew/bin/opencode');
   assert.equal(OA.parseOcStatus('opencode: aliased to x').path, null);
+  assert.equal(OA.parseOcVersion('1.19.3'), 1);
+  assert.equal(OA.parseOcVersion('v2.0.0'), 2);
+  assert.equal(OA.parseOcVersion('opencode v2.1.2'), 2);
+  assert.equal(OA.parseOcVersion('rc noise\n2.1.0\n'), 2);
+  assert.equal(OA.parseOcVersion('opencode 1.2.3 (build)'), null); // not alone on its line: not a version we trust
+  assert.equal(OA.parseOcStatus('rc noise\n1.19.3\n').major, 1);
+  assert.equal(OA.parseOcStatus('no version here\n').major, null);
   assert.equal(OA.ocAuthFile('/h'), require('node:path').join('/h', '.local', 'share', 'opencode', 'auth.json'));
   assert.equal(OA.ocAuthFile('/h', '/data'), require('node:path').join('/data', 'opencode', 'auth.json'));
   assert.equal(OA.ocAuthFile('/h', 'relative'), require('node:path').join('/h', '.local', 'share', 'opencode', 'auth.json'));
-  assert.deepEqual(OA.OC_LOGIN_ARGS, ['auth', 'login']);
-  assert.deepEqual(OA.OC_LOGOUT_ARGS, ['auth', 'logout']);
+  assert.deepEqual(OA.OC_LOGIN_ARGS, ['console', 'login']);
+  assert.deepEqual(OA.OC_LOGOUT_ARGS, ['console', 'logout']);
+  assert.deepEqual(OA.OC_V2_LOGIN_ARGS, ['auth', 'login', 'opencode']);
+  assert.deepEqual(OA.OC_V2_LOGOUT_ARGS, ['auth', 'logout', 'opencode']);
+  assert.deepEqual(OA.ocLoginArgs('console', null), OA.OC_LOGIN_ARGS);      // v1 / unknown: the chooser ways
+  assert.deepEqual(OA.ocLoginArgs('auth', null), OA.OC_PROVIDER_LOGIN_ARGS);
+  assert.deepEqual(OA.ocLoginArgs('logout', null), OA.OC_LOGOUT_ARGS);
+  assert.deepEqual(OA.ocLoginArgs('console', 2), OA.OC_V2_LOGIN_ARGS);      // v2.x: one login, named provider
+  assert.deepEqual(OA.ocLoginArgs('auth', 2), OA.OC_V2_LOGIN_ARGS);
+  assert.deepEqual(OA.ocLoginArgs('logout', 2), OA.OC_V2_LOGOUT_ARGS);
 });
 
 test('startOpenCode: ortam yalnız ocEnv; Claude Code ve ofis hiçbir şey vermez; transkript okunmaz (v3.40)', () => {

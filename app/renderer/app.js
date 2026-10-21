@@ -535,7 +535,7 @@ sidebar = mountSidebar($('sidebar'), {
   agyLogout: () => openAgy('logout'),
   agyRefresh: () => api.agy?.auth(true).then(setAgyAuth, (e) => console.error(e)),
   cmdLogin: () => openCmd(),
-  ocLogin: () => openOc('login'),
+  ocLogin: (mode) => openOc(mode || 'console'),
   ocLogout: () => openOc('logout'),
   ocRefresh: () => api.oc?.auth(true).then(setOcAuth, (e) => console.error(e)),
   cmdRefresh: () => api.cmd?.auth(true).then(setCmdAuth, (e) => console.error(e)),
@@ -589,8 +589,8 @@ function openCmd() {
 api.cmd?.onAuth(setCmdAuth);
 api.cmd?.auth().then(setCmdAuth, (e) => console.error(e));
 
-// OpenCode's logins (contract v3.40): providers, added or removed in the 'login:oc' pty (`opencode auth login` /
-// `logout`, which ask which provider). Not logged in is normal: its free models need no login.
+// OpenCode's logins (contract v3.40): 'console' (device code) or 'auth' (one provider) in the 'login:oc' pty, first
+// asked of the user (the login chooser menu), and 'logout'. Not logged in is normal: its free models need no login.
 function setOcAuth(a) { if (a) sidebar.setOcAuth(a); }
 function openOc(mode) {
   if (!api.oc) return;

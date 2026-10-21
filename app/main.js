@@ -677,16 +677,29 @@ function startCmdLogin() {
   });
 }
 
-// --- OpenCode login (contract v3.40, src/oc-auth.js): providers, not one account. `opencode auth login` / `logout`
-// run in a login pty (they ask which provider and how). Logged in = auth.json holds a provider (only ids and types are
+// --- OpenCode login (contract v3.40, src/oc-auth.js): providers, not one account. v1 CLI: login runs
+// `opencode console login` (normal: the device code flow of opencode.ai/console) or `opencode auth login`
+// (one provider, OAuth or API key), chosen by the user (the login chooser in the sidebar); v2.x has only
+// `opencode auth login opencode` (`ocLoginArgs(major)` decides). Logout: v1 `opencode console logout`, v2 `auth logout opencode`.
+// All run in a login pty. Logged in = auth.json holds a provider (only ids and types are
 // read, never the secrets). Not logged in is a normal state: OpenCode's free models need no login.
 // The check and the login pty get only ocEnv's allowlist: nothing of Claude Code or the office reaches OpenCode.
 const OC_LOGIN = 'login:oc';
 let ocAuth = /** @type {any} */ ({ installed: false, state: 'checking' });
+let ocMajor = null; // opencode's CLI major version (v2.x has one login), from the status check
 let ocChecking = null;
 const sendOcAuth = () => send('oc:auth', ocAuth);
 function ocStatus(env) {
-  if (IS_WIN) return Promise.resolve({ path: OS.findOpenCode(env, isFile) });
+  if (IS_WIN) {
+    const path = OS.findOpenCode(env, isFile);
+    if (!path) return Promise.resolve({ path: null, major: null });
+    return new Promise((resolve) => {
+      const child = execFile(path, ['--version'], { timeout: 15000 },
+        (_err, stdout) => resolve({ path, major: OCA.parseOcVersion(String(stdout || '')) }));
+      child.on('error', () => resolve({ path, major: null }));
+      try { child.stdin?.end(); } catch {}
+    });
+  }
   return new Promise((resolve) => {
     const child = execFile(shell(), ['-l', '-i', '-c', OCA.OC_STATUS_COMMAND], { env, timeout: 15000, cwd: app.getPath('home') },
       (_err, stdout) => resolve(OCA.parseOcStatus(String(stdout || ''))));
@@ -698,6 +711,7 @@ function checkOcAuth() {
   ocChecking = (async () => {
     const env = EN.ocEnv(process.env);
     const status = await ocStatus(env);
+    ocMajor = status.major ?? null;
     let text = '';
     try { text = fs.readFileSync(OCA.ocAuthFile(env.HOME || env.USERPROFILE || app.getPath('home'), env.XDG_DATA_HOME), 'utf8'); } catch {}
     ocAuth = OCA.ocAuthState(status, text);
@@ -705,7 +719,9 @@ function checkOcAuth() {
   })().catch((e) => console.error('oc auth:', e.message)).finally(() => { ocChecking = null; });
   return ocChecking;
 }
-// "Giriş yap" / "Çıkış yap": `opencode auth login` / `logout` in a login pty. Same channel and replace rules as agy's.
+// "Giriş yap" / "Çıkış yap": the args come from ocLoginArgs(mode, ocMajor) — v1: `opencode console login` (normal),
+// `opencode auth login` (one provider), `console logout`; v2.x: `auth login opencode` / `auth logout opencode`.
+// Same channel and replace rules as agy's.
 function startOcLogin(mode) {
   if (!win) return;
   const id = OC_LOGIN;
@@ -713,7 +729,7 @@ function startOcLogin(mode) {
   if (old) { logins.delete(id); try { old.kill(); } catch {} }
   const { cols, rows } = sizes.get(id) || lastSize;
   const env = EN.ocEnv(process.env);
-  const args = mode === 'logout' ? OCA.OC_LOGOUT_ARGS : OCA.OC_LOGIN_ARGS;
+  const args = OCA.ocLoginArgs(mode, ocMajor);
   let t;
   try {
     const win32 = IS_WIN ? windowsOpenCode(args, env) : null;
