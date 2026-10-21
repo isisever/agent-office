@@ -3817,24 +3817,35 @@ test('OpenCode proje dosyaları (v3.38, v3.40): hiçbir dosya yazılmaz', () => 
   assert.deepEqual(PF.desiredFiles({ engine: 'opencode', enabled: true, manager: true, agentModel: 'opus' }), []);
 });
 
-test('OpenCode girişi (v3.40): giriş yok normal durum; yalnız sağlayıcı adı ve türü okunur, anahtar asla', () => {
+test('OpenCode girişi (v3.40): giriş yok normal durum; yalnız entegrasyon adı ve yöntemi okunur, anahtar asla', () => {
   const OA = require('../src/oc-auth.js');
-  assert.deepEqual(OA.ocAuthState({ path: null }, '{"openai":{"type":"oauth"}}'), { installed: false, state: 'missing' });
-  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, ''), { installed: true, state: 'out', major: null });
-  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode', major: 2 }, '{}'), { installed: true, state: 'out', major: 2 });
+  assert.deepEqual(OA.ocAuthState({ path: null }, '[{"id":"opencode","connections":[{}]}]'), { installed: false, state: 'missing' });
+  // the CLI's own list (`opencode auth list --format json`, rc noise allowed around it): the console login lives in the db
+  const list = 'rc banner\nopencode v2.1.2\n[\n { "id": "opencode", "name": "OpenCode Console", "connections": [ { "type": "credential", "id": "cred_1", "label": "Default", "method": "oauth" } ] },\n { "id": "openai", "connections": [] }\n]\n';
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode', major: 2, raw: list }, list), {
+    installed: true, state: 'in', major: 2, providers: [{ id: 'opencode', type: 'oauth' }],
+  });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, '[ { "id": "opencode", "connections": [] } ]'), { installed: true, state: 'out', major: null });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, 'not json at all'), { installed: true, state: 'out', major: null });
+  // legacy: an older CLI without `--format json`, credentials in auth.json
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, 'no array here', '{"openai":{"type":"oauth"}}'), { installed: true, state: 'in', major: null, providers: [{ id: 'openai', type: 'oauth' }] });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, '', '{}'), { installed: true, state: 'out', major: null });
   assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, 'broken{'), { installed: true, state: 'out', major: null });
   const secret = 'sk-SECRET-VALUE';
-  const st = OA.ocAuthState({ path: '/b/opencode', major: 1 }, JSON.stringify({ openai: { type: 'oauth', access: secret, refresh: secret }, google: { type: 'api', key: secret }, 'bad id!': { type: 'api' }, odd: { type: 'x' }, str: 'text' }));
-  assert.deepEqual(st, { installed: true, state: 'in', major: 1, providers: [{ id: 'openai', type: 'oauth' }, { id: 'google', type: 'api' }, { id: 'odd', type: 'other' }] });
+  const st = OA.ocAuthState({ path: '/b/opencode', major: 1 }, JSON.stringify([{
+    id: 'openai', name: 'OpenAI', connections: [{ method: 'api', apiKey: secret, refresh: secret }, 'bad'],
+  }]), JSON.stringify({ google: { type: 'api', key: secret }, 'bad id!': { type: 'api' } }));
+  assert.deepEqual(st, { installed: true, state: 'in', major: 1, providers: [{ id: 'openai', type: 'api' }] });
   assert.equal(JSON.stringify(st).includes(secret), false);
-  assert.deepEqual(OA.parseOcCredentials('[1,2]'), []);
+  assert.deepEqual(OA.parseOcCredentials('rc noise\n[1,2]\n'), []);
   assert.equal(OA.parseOcStatus('rc noise\n/opt/homebrew/bin/opencode\n').path, '/opt/homebrew/bin/opencode');
   assert.equal(OA.parseOcStatus('opencode: aliased to x').path, null);
   assert.equal(OA.parseOcVersion('1.19.3'), 1);
   assert.equal(OA.parseOcVersion('v2.0.0'), 2);
   assert.equal(OA.parseOcVersion('opencode v2.1.2'), 2);
+  assert.equal(OA.parseOcVersion('opencode 1.2.3 (build)'), 1); // any wording of a version line is caught
   assert.equal(OA.parseOcVersion('rc noise\n2.1.0\n'), 2);
-  assert.equal(OA.parseOcVersion('opencode 1.2.3 (build)'), null); // not alone on its line: not a version we trust
+  assert.equal(OA.parseOcVersion('rc noise\noptFor 1.0\n'), null); // rc noise without an opencode line: unknown
   assert.equal(OA.parseOcStatus('rc noise\n1.19.3\n').major, 1);
   assert.equal(OA.parseOcStatus('no version here\n').major, null);
   assert.equal(OA.ocAuthFile('/h'), require('node:path').join('/h', '.local', 'share', 'opencode', 'auth.json'));

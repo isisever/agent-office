@@ -237,7 +237,7 @@
     "ocInstallTitle": "Install command from opencode.ai/docs (run it yourself in a terminal)",
     "ocFree": "No login · free models",
     "ocFreeTitle": "Not logged in to any provider. OpenCode's free models work without a login; sign in to use your own providers.",
-    "ocInTitle": "Logged in to: {providers}. The app only reads the provider names from OpenCode's login file, never the keys.",
+    "ocInTitle": "Logged in to: {providers}. The app reads only the names from OpenCode's own list (opencode auth list), never the keys.",
     "ocLoginTitle": "Choose how to log in (device code; or one provider with OAuth in the browser, or an API key)",
     "ocLoginV2": "Run opencode auth login opencode",
     "ocNormalLogin": "Normal login (device code)",

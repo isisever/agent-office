@@ -236,7 +236,7 @@
     "ocInstallTitle": "opencode.ai/docs'taki kurulum komutu (terminalde kendin çalıştır)",
     "ocFree": "Giriş yok · ücretsiz modeller",
     "ocFreeTitle": "Hiçbir sağlayıcıya giriş yapılmamış. OpenCode'un ücretsiz modelleri girişsiz çalışır; kendi sağlayıcılarını kullanmak için giriş yap.",
-    "ocInTitle": "Giriş yapılan: {providers}. Uygulama OpenCode'un giriş dosyasından yalnızca sağlayıcı adlarını okur, anahtarları asla.",
+    "ocInTitle": "Giriş yapılan: {providers}. Uygulama OpenCode'un kendi listesinden (opencode auth list) yalnızca adları okur, anahtarları asla.",
     "ocLoginTitle": "Nasıl giriş yapılacağını seç (cihaz kodu; ya da tarayıcıda OAuth veya API anahtarı ile bir sağlayıcı)",
     "ocLoginV2": "opencode auth login opencode'i çalıştır",
     "ocNormalLogin": "Normal giriş (cihaz kodu)",

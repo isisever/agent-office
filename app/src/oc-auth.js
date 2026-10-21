@@ -1,10 +1,12 @@
 // OpenCode login in the Accounts section (contract v3.40). Pure functions (no Electron; tested with node --test).
-// What OpenCode's CLI offers (`opencode console --help`, opencode 1.19): `opencode console login` signs in to the
-// OpenCode Console with a device code (opencode.ai/console/device), `opencode console logout` signs out;
-// `opencode auth list` shows the credentials; they are stored in <data dir>/opencode/auth.json ({ "<provider>": { type: 'oauth' |
-// 'api' | 'wellknown', ...secrets } }). OpenCode needs NO login to work: its free models (the `opencode/` provider,
-// OpenCode Zen) run without credentials and it picks one itself. So here "not logged in" is a normal state, never a
-// blocker. Only the provider names and types of auth.json are read; its secrets never leave the parser.
+// What OpenCode's CLI offers (`opencode console --help`): `opencode console login` signs in to the OpenCode
+// Console with a device code (opencode.ai/console/device), `opencode console logout` signs out;
+// `opencode auth list` shows the credentials. The console login lives in OpenCode's own database
+// (<data dir>/opencode/opencode.db, `auth.json` is not written), so the state is read from the CLI itself:
+// `opencode auth list --format json` lists the logged in integrations ({ id, name, connections: [{ method, ... }] }).
+// OpenCode needs NO login to work: its free models (the `opencode/` provider, OpenCode Zen) run without
+// credentials and it picks one itself. So here "not logged in" is a normal state, never a blocker. Only
+// integration ids and connection methods are read; the secrets never reach the parser.
 const path = require('node:path');
 
 // The documented install line; shown as a hint, never run by the app.
@@ -33,17 +35,25 @@ function ocLoginArgs(mode, major) {
   return OC_LOGIN_ARGS;
 }
 
-// The status check run by the user's login shell with ocEnv (so PATH and rc files apply as for an OpenCode tab).
-// `opencode --version` decides the login spelling: v2.x has one login (`opencode auth login opencode`), v1 has two.
-const OC_STATUS_COMMAND = 'command -v opencode; opencode --version; true';
+// The status check runs in the user's login shell with ocEnv (so PATH, rc files and 1.19+ apply as for an OpenCode
+// tab): where opencode is, its major version (v2.x has one login, `opencode auth login opencode`), and the CLI's own
+// list of logged in integrations. rc noise around it is tolerated.
+const OC_STATUS_COMMAND = 'command -v opencode; opencode --version; opencode auth list --format json; true';
 
 /**
- * The CLI's major version: a full line like '1.19.3', 'v2.0.0' or 'opencode v2.1.2' → its number, else null
- * (unknown → v1 ways). @param {string} text @returns {number | null}
+ * The CLI's major version, whatever its line looks like: a line that is (or starts with) the version itself
+ * — '1.19.3', 'v2.0.0', 'opencode v2.1.2', 'opencode 1.2.3 (build)' — gives its number; anything else (rc noise,
+ * an alias line) is null (unknown → the v1 ways). Not tied to one release's exact wording.
+ * @param {string} text @returns {number | null}
  */
 function parseOcVersion(text) {
-  const m = String(text || '').match(/^(?:opencode\s+)?[vV]?(\d+)\.\d+(?:\.\d+)?\s*$/im);
-  return m ? Number(m[1]) : null;
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const l = line.trim();
+    const v = l.match(/^(?:opencode\s*)?[vV]?(\d+)\.\d+(?:\.\d+)?(?:\s|$)/i)
+      || (/^opencode\b/i.test(l) && l.match(/\b[vV]?(\d+)\.\d+(?:\.\d+)?(?![\w.])/));
+    if (v) return Number(v[1]);
+  }
+  return null;
 }
 
 /**
@@ -62,18 +72,38 @@ function parseOcStatus(stdout) {
  */
 const ocAuthFile = (home, xdgData) => path.join(xdgData && path.isAbsolute(xdgData) ? xdgData : path.join(home, '.local', 'share'), 'opencode', 'auth.json');
 
-// OpenCode's provider ids are short slugs ('openai', 'github-copilot', 'google'); anything else is not shown.
+// OpenCode's integration ids are short slugs ('opencode', 'openai', 'github-copilot'); anything else is not shown.
 const PROVIDER_ID = /^[\w.-]{1,60}$/;
 const TYPES = ['oauth', 'api', 'wellknown'];
 
 /**
- * The providers an auth.json text holds: [{ id, type }] (type 'oauth' | 'api' | 'wellknown' | 'other'), in file
- * order; broken text or a non-object is []. Nothing but ids and types is returned.
- * @param {string} text @returns {{ id: string, type: string }[]}
+ * The CLI's own list (`opencode auth list --format json`, possibly with rc noise around it) → the logged in
+ * integrations as [{ id, type }] (type = the first connection's method, or 'other'), in integration order;
+ * an integration without a connection is not logged in. If the text holds no JSON array (an older CLI without
+ * `--format`), the legacy auth.json form ({ "<provider>": { type: 'oauth' | 'api' | 'wellknown', ...secrets } })
+ * of `legacyText` is parsed instead; broken text is []. Nothing but ids and methods is returned.
+ * @param {string} text the status run's stdout (version output with the auth list, rc noise allowed)
+ * @param {string} [legacyText] an older CLI's auth.json @returns {{ id: string, type: string }[]}
  */
-function parseOcCredentials(text) {
+function parseOcCredentials(text, legacyText = '') {
+  const s = String(text || '');
+  const start = s.indexOf('[');
+  let a = null;
+  if (start !== -1) {
+    try { a = JSON.parse(s.slice(start, s.lastIndexOf(']') + 1)); } catch { a = null; }
+  }
+  if (Array.isArray(a)) {
+    const out = [];
+    for (const e of a) {
+      const cs = e && typeof e === 'object' ? e.connections : null;
+      if (!e || !PROVIDER_ID.test(e.id) || !Array.isArray(cs)) continue;
+      const c = cs.find((c) => c && typeof c === 'object');
+      if (c) out.push({ id: e.id, type: TYPES.includes(c.method) ? c.method : 'other' });
+    }
+    return out;
+  }
   let d;
-  try { d = JSON.parse(String(text || '')); } catch { return []; }
+  try { d = JSON.parse(String(legacyText || '')); } catch { return []; }
   if (!d || typeof d !== 'object' || Array.isArray(d)) return [];
   return Object.entries(d)
     .filter(([id, v]) => PROVIDER_ID.test(id) && v && typeof v === 'object')
@@ -82,13 +112,15 @@ function parseOcCredentials(text) {
 
 /**
  * @typedef {{ installed: boolean, state: 'in' | 'out' | 'missing', major?: number | null, providers?: { id: string, type: string }[] }} OcAuth
- * OpenCode's state: 'missing' (not installed), 'in' (at least one provider logged in; `providers` lists them) or 'out'
- * (none: the free models still work); `major` is opencode's CLI version (null when it could not be read). @param {{ path: string | null, major?: number | null }} status @param {string} credentialsText '' if none
+ * OpenCode's state: 'missing' (not installed), 'in' (at least one integration logged in; `providers` lists them) or
+ * 'out' (none: the free models still work); `major` is opencode's CLI version (null when it could not be read).
+ * @param {{ path: string | null, major?: number | null, raw?: string }} status
+ * @param {string} [credentialsText] the status run's stdout @param {string} [legacyText] an older CLI's auth.json
  * @returns {OcAuth}
  */
-function ocAuthState(status, credentialsText) {
+function ocAuthState(status, credentialsText = '', legacyText = '') {
   if (!status.path) return { installed: false, state: 'missing' };
-  const providers = parseOcCredentials(credentialsText);
+  const providers = parseOcCredentials(credentialsText, legacyText);
   const major = typeof status.major === 'number' ? status.major : null;
   return providers.length
     ? { installed: true, state: 'in', major, providers }

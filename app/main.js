@@ -681,8 +681,9 @@ function startCmdLogin() {
 // `opencode console login` (normal: the device code flow of opencode.ai/console) or `opencode auth login`
 // (one provider, OAuth or API key), chosen by the user (the login chooser in the sidebar); v2.x has only
 // `opencode auth login opencode` (`ocLoginArgs(major)` decides). Logout: v1 `opencode console logout`, v2 `auth logout opencode`.
-// All run in a login pty. Logged in = auth.json holds a provider (only ids and types are
-// read, never the secrets). Not logged in is a normal state: OpenCode's free models need no login.
+// All run in a login pty. Logged in = the CLI's own `opencode auth list --format json` shows a connection (the
+// console login lives in OpenCode's own database; auth.json is read only for older CLIs — main and the check read
+// never the secrets). Not logged in is a normal state: OpenCode's free models need no login.
 // The check and the login pty get only ocEnv's allowlist: nothing of Claude Code or the office reaches OpenCode.
 const OC_LOGIN = 'login:oc';
 let ocAuth = /** @type {any} */ ({ installed: false, state: 'checking' });
@@ -692,17 +693,21 @@ const sendOcAuth = () => send('oc:auth', ocAuth);
 function ocStatus(env) {
   if (IS_WIN) {
     const path = OS.findOpenCode(env, isFile);
-    if (!path) return Promise.resolve({ path: null, major: null });
-    return new Promise((resolve) => {
-      const child = execFile(path, ['--version'], { timeout: 15000 },
-        (_err, stdout) => resolve({ path, major: OCA.parseOcVersion(String(stdout || '')) }));
-      child.on('error', () => resolve({ path, major: null }));
+    if (!path) return Promise.resolve({ path: null, major: null, raw: '' });
+    const run = (args) => new Promise((resolve) => {
+      const child = execFile(path, args, { timeout: 15000 }, (_err, stdout) => resolve(String(stdout || '')));
+      child.on('error', () => resolve(''));
       try { child.stdin?.end(); } catch {}
     });
+    return Promise.all([run(['--version']), run(['auth', 'list', '--format', 'json'])])
+      .then(([ver, raw]) => ({ path, major: OCA.parseOcVersion(ver), raw }));
   }
   return new Promise((resolve) => {
     const child = execFile(shell(), ['-l', '-i', '-c', OCA.OC_STATUS_COMMAND], { env, timeout: 15000, cwd: app.getPath('home') },
-      (_err, stdout) => resolve(OCA.parseOcStatus(String(stdout || ''))));
+      (_err, stdout) => {
+        const out = String(stdout || '');
+        resolve({ ...OCA.parseOcStatus(out), raw: out });
+      });
     try { child.stdin?.end(); } catch {}
   });
 }
@@ -712,9 +717,10 @@ function checkOcAuth() {
     const env = EN.ocEnv(process.env);
     const status = await ocStatus(env);
     ocMajor = status.major ?? null;
-    let text = '';
-    try { text = fs.readFileSync(OCA.ocAuthFile(env.HOME || env.USERPROFILE || app.getPath('home'), env.XDG_DATA_HOME), 'utf8'); } catch {}
-    ocAuth = OCA.ocAuthState(status, text);
+    let legacy = '';
+    // older CLIs (no `auth list --format json`) keep credentials in auth.json, which `console login` does not write
+    try { legacy = fs.readFileSync(OCA.ocAuthFile(env.HOME || env.USERPROFILE || app.getPath('home'), env.XDG_DATA_HOME), 'utf8'); } catch {}
+    ocAuth = OCA.ocAuthState(status, status.raw, legacy);
     sendOcAuth();
   })().catch((e) => console.error('oc auth:', e.message)).finally(() => { ocChecking = null; });
   return ocChecking;
