@@ -58,7 +58,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onAuth: listen('cmd:auth'),
   },
   // v3.40: OpenCode's logins in the Accounts section (OcAuth of src/oc-auth.js); the pty is 'login:oc'.
-  // login(mode): 'login' (providers login, the default) or 'logout' (providers logout). Not logged in is normal: free models need none.
+  // login(mode): 'login' (auth login, the default) or 'logout' (auth logout). Not logged in is normal: free models need none.
   oc: {
     auth: (refresh) => ipcRenderer.invoke('oc:auth', refresh),   // { installed, state: 'in' | 'out' | 'missing', providers?: [{ id, type }] }
     login: (mode) => ipcRenderer.invoke('oc:login', mode),

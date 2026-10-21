@@ -664,7 +664,7 @@ export function mountSidebar(el, on) {
   }
 
   /** OpenCode's logins (contract v3.40): the providers it is logged in to, with Giriş yap (add one) / Çıkış yap; or that
-   *  the free models work without any login. Giriş yap runs `opencode providers login` (it asks which provider). */
+   *  the free models work without any login. Giriş yap runs `opencode auth login` (it asks which provider). */
   function ocRow() {
     if (!ocShown()) return null;
     const state = ocAuth?.state || 'checking';

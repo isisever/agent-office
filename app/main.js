@@ -677,7 +677,7 @@ function startCmdLogin() {
   });
 }
 
-// --- OpenCode login (contract v3.40, src/oc-auth.js): providers, not one account. `opencode providers login` / `logout`
+// --- OpenCode login (contract v3.40, src/oc-auth.js): providers, not one account. `opencode auth login` / `logout`
 // run in a login pty (they ask which provider and how). Logged in = auth.json holds a provider (only ids and types are
 // read, never the secrets). Not logged in is a normal state: OpenCode's free models need no login.
 // The check and the login pty get only ocEnv's allowlist: nothing of Claude Code or the office reaches OpenCode.
@@ -705,7 +705,7 @@ function checkOcAuth() {
   })().catch((e) => console.error('oc auth:', e.message)).finally(() => { ocChecking = null; });
   return ocChecking;
 }
-// "Giriş yap" / "Çıkış yap": `opencode providers login` / `logout` in a login pty. Same channel and replace rules as agy's.
+// "Giriş yap" / "Çıkış yap": `opencode auth login` / `logout` in a login pty. Same channel and replace rules as agy's.
 function startOcLogin(mode) {
   if (!win) return;
   const id = OC_LOGIN;

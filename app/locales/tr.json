@@ -237,9 +237,9 @@
     "ocFree": "Giriş yok · ücretsiz modeller",
     "ocFreeTitle": "Hiçbir sağlayıcıya giriş yapılmamış. OpenCode'un ücretsiz modelleri girişsiz çalışır; kendi sağlayıcılarını kullanmak için giriş yap.",
     "ocInTitle": "Giriş yapılan: {providers}. Uygulama OpenCode'un giriş dosyasından yalnızca sağlayıcı adlarını okur, anahtarları asla.",
-    "ocLoginTitle": "opencode providers login'i burada çalıştır: bir sağlayıcı seç ve giriş yap",
-    "ocAddTitle": "Başka bir sağlayıcı ekle (opencode providers login)",
-    "ocLogoutTitle": "Bir sağlayıcının girişini kaldır (opencode providers logout)",
+    "ocLoginTitle": "opencode auth login'i burada çalıştır: bir sağlayıcı seç ve giriş yap",
+    "ocAddTitle": "Başka bir sağlayıcı ekle (opencode auth login)",
+    "ocLogoutTitle": "Bir sağlayıcının girişini kaldır (opencode auth logout)",
     "na": {
       "agyContextCap": "Antigravity konuşmasını kendisi özetler; boyut ayarı yok.",
       "agySavings": "Antigravity'nin belgelenmiş bir çıktı sınırı ya da adım bütçesi yok.",

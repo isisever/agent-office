@@ -589,7 +589,7 @@ function openCmd() {
 api.cmd?.onAuth(setCmdAuth);
 api.cmd?.auth().then(setCmdAuth, (e) => console.error(e));
 
-// OpenCode's logins (contract v3.40): providers, added or removed in the 'login:oc' pty (`opencode providers login` /
+// OpenCode's logins (contract v3.40): providers, added or removed in the 'login:oc' pty (`opencode auth login` /
 // `logout`, which ask which provider). Not logged in is normal: its free models need no login.
 function setOcAuth(a) { if (a) sidebar.setOcAuth(a); }
 function openOc(mode) {

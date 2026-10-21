@@ -238,9 +238,9 @@
     "ocFree": "No login · free models",
     "ocFreeTitle": "Not logged in to any provider. OpenCode's free models work without a login; sign in to use your own providers.",
     "ocInTitle": "Logged in to: {providers}. The app only reads the provider names from OpenCode's login file, never the keys.",
-    "ocLoginTitle": "Run opencode providers login here: pick a provider and sign in",
-    "ocAddTitle": "Add another provider (opencode providers login)",
-    "ocLogoutTitle": "Remove a provider's login (opencode providers logout)",
+    "ocLoginTitle": "Run opencode auth login here: pick a provider and sign in",
+    "ocAddTitle": "Add another provider (opencode auth login)",
+    "ocLogoutTitle": "Remove a provider's login (opencode auth logout)",
     "na": {
       "agyContextCap": "Antigravity compacts its conversation automatically; it has no size setting.",
       "agySavings": "Antigravity has no documented output caps or step budget.",

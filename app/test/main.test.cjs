@@ -3833,8 +3833,8 @@ test('OpenCode girişi (v3.40): giriş yok normal durum; yalnız sağlayıcı ad
   assert.equal(OA.ocAuthFile('/h'), require('node:path').join('/h', '.local', 'share', 'opencode', 'auth.json'));
   assert.equal(OA.ocAuthFile('/h', '/data'), require('node:path').join('/data', 'opencode', 'auth.json'));
   assert.equal(OA.ocAuthFile('/h', 'relative'), require('node:path').join('/h', '.local', 'share', 'opencode', 'auth.json'));
-  assert.deepEqual(OA.OC_LOGIN_ARGS, ['providers', 'login']);
-  assert.deepEqual(OA.OC_LOGOUT_ARGS, ['providers', 'logout']);
+  assert.deepEqual(OA.OC_LOGIN_ARGS, ['auth', 'login']);
+  assert.deepEqual(OA.OC_LOGOUT_ARGS, ['auth', 'logout']);
 });
 
 test('startOpenCode: ortam yalnız ocEnv; Claude Code ve ofis hiçbir şey vermez; transkript okunmaz (v3.40)', () => {

@@ -1,7 +1,7 @@
 // OpenCode login in the Accounts section (contract v3.40). Pure functions (no Electron; tested with node --test).
-// What OpenCode's CLI offers (opencode.ai/docs/cli, `opencode providers --help`): `opencode providers login` adds a
-// provider's credentials (OAuth in the browser or an API key, it asks which), `providers logout` removes one,
-// `providers list` shows them; they are stored in <data dir>/opencode/auth.json ({ "<provider>": { type: 'oauth' |
+// What OpenCode's CLI offers (opencode.ai/docs/cli, `opencode auth --help`): `opencode auth login` adds a
+// provider's credentials (OAuth in the browser or an API key, it asks which), `auth logout` removes one,
+// `auth list` shows them; they are stored in <data dir>/opencode/auth.json ({ "<provider>": { type: 'oauth' |
 // 'api' | 'wellknown', ...secrets } }). OpenCode needs NO login to work: its free models (the `opencode/` provider,
 // OpenCode Zen) run without credentials and it picks one itself. So here "not logged in" is a normal state, never a
 // blocker. Only the provider names and types of auth.json are read; its secrets never leave the parser.
@@ -11,9 +11,9 @@ const path = require('node:path');
 const OC_INSTALL = 'curl -fsSL https://opencode.ai/install | bash';
 const OC_INSTALL_WIN = 'npm i -g opencode-ai';
 
-// The login and logout subcommands (opencode 1.18: `providers`, alias `auth`).
-const OC_LOGIN_ARGS = ['providers', 'login'];
-const OC_LOGOUT_ARGS = ['providers', 'logout'];
+// The login and logout subcommands (the CLI's `auth` group: it asks which provider and how).
+const OC_LOGIN_ARGS = ['auth', 'login'];
+const OC_LOGOUT_ARGS = ['auth', 'logout'];
 
 // The status check run by the user's login shell with ocEnv (so PATH and rc files apply as for an OpenCode tab).
 const OC_STATUS_COMMAND = 'command -v opencode; true';

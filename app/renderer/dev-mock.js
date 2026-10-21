@@ -299,7 +299,7 @@ window.agentOffice = {
     const lis = listeners();
     return {
       auth: async () => ({ ...auth }),
-      login: async (mode) => { setTimeout(() => { ev.data.emit('login:oc', `opencode providers ${mode || 'login'} (mock)…\r\n`); ev.exit.emit('login:oc', 0); auth = mode === 'logout' ? { installed: true, state: 'out' } : { installed: true, state: 'in', providers: [{ id: 'openai', type: 'oauth' }] }; lis.emit({ ...auth }); }, 600); },
+      login: async (mode) => { setTimeout(() => { ev.data.emit('login:oc', `opencode auth ${mode || 'login'} (mock)…\r\n`); ev.exit.emit('login:oc', 0); auth = mode === 'logout' ? { installed: true, state: 'out' } : { installed: true, state: 'in', providers: [{ id: 'openai', type: 'oauth' }] }; lis.emit({ ...auth }); }, 600); },
       onAuth: (cb) => lis.add(cb),
     };
   })(),

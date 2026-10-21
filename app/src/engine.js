@@ -154,7 +154,7 @@ function cmdEnv(base, opts = {}, platform = process.platform) {
 }
 
 // --- OpenCode (contract v3.40). The same rules again: an env allowlist, nothing of Claude Code or the office. The binary
-// is `opencode`. It keeps its own providers and logins (`opencode providers`, ~/.local/share/opencode/auth.json) and
+// is `opencode`. It keeps its own providers and logins (`opencode auth list`, ~/.local/share/opencode/auth.json) and
 // works without any login: its free models (the `opencode/` provider) need none, and it picks one by itself.
 const OC = {
   bin: 'opencode',
