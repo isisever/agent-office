@@ -548,13 +548,11 @@ test('Command Code modu (v3.37): yalnız spool\'a yazar; yönetici özeti statik
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-mod-'));
   try {
     const flags = { 'ao-spool': dir, 'ao-manager': 'true', 'ao-step-budget': '4', 'ao-step-cap': 'true' };
-    const h = { on: {}, prompt: [], before: null, perm: null };
+    const h = { on: {}, prompt: [], before: null };
     const d = { dispose() {} };
     mod.default({
       addFlag: () => d, getFlag: (n) => flags[n],
-      appendSystemPrompt: (f) => { h.prompt.push(f); return d; },
-      beforeToolCall: (f) => { h.before = f; return d; },
-      onPermissionRequest: (f) => { h.perm = f; return d; },
+      hooks: (hs) => { if (hs.appendSystemPrompt) h.prompt.push(hs.appendSystemPrompt); if (hs.beforeToolCall) h.before = hs.beforeToolCall; return d; },
       on: (ev, f) => { h.on[ev] = f; return d; },
     });
     assert.equal(h.prompt[0]({}), mod.MANAGER_BRIEF);
@@ -564,13 +562,14 @@ test('Command Code modu (v3.37): yalnız spool\'a yazar; yönetici özeti statik
     assert.equal(res[2], undefined);
     assert.match(res[3].additionalContext, /Wrap up/);
     assert.equal(res[8].block, true);
-    assert.equal(h.perm({ toolName: 'bash', input: { cmd: 'cat secret' }, description: 'secret-desc' }), undefined);
+    h.on.turn_start({ turnNumber: 2 }); // reset the counter: the no-leak call stays cap-free below the budget
+    assert.equal(h.before({ toolName: 'bash', input: { cmd: 'cat secret' }, description: 'secret-desc' }), undefined);
     h.on.subagent_start({ toolCallId: 'c9', subagentType: 'general' });
     h.on.turn_end({ turnNumber: 1, usage: { inputTokens: 5 } });
     const text = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8');
     assert.equal(text.includes('secret'), false);
     const evs = text.trim().split('\n').map((l) => CS_parse(l));
-    assert.deepEqual(evs.map((e) => e && e.t), ['cap', 'permission', 'subagent_start', 'turn_end']);
+    assert.deepEqual(evs.map((e) => e && e.t), ['cap', 'subagent_start', 'turn_end']);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 const CS_parse = (l) => require('../src/cmd-spool.js').parseSpoolLine(l);
