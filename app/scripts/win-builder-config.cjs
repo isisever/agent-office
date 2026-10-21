@@ -16,5 +16,32 @@ const WIN_ONLY = [
 ];
 
 for (const p of [NO_WIN32, LINK_MAC]) if (!build.files.includes(p)) throw new Error(`package.json build.files no longer has ${p}`);
-// only config keys here: electron-builder rejects anything else
-module.exports = { ...build, files: [...build.files.filter((f) => f !== NO_WIN32 && f !== LINK_MAC), ...WIN_ONLY, LINK_WIN] };
+
+// Code signing is opt-in by environment at build time, and no secret lives in this file (it stays in the release
+// workflow's secrets):
+// - a CSC_LINK (the path or URL of a .pfx) with CSC_KEY_PASSWORD: electron-builder reads those env names itself and
+//   signs through signtool, so this config needs nothing;
+// - Azure Trusted Signing (https://aka.ms/trustedsigning): when all four identifiers below are in the environment
+//   (plus the Entra credentials the sign manager reads, AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET),
+//   win gains azureSignOptions and the signing goes over the Trusted Signing service;
+// - GitHub Actions makes an undefined secret empty (''), and electron-builder would then try to sign with an empty
+//   link or a half-set Trusted Signing account — so empty signing envs are dropped here;
+// - with nothing set, the build stays unsigned exactly as it is today (SmartScreen stops it; see README → Windows).
+const AZURE = {
+  publisherName: process.env.AZURE_SIGNING_PUBLISHER_NAME,
+  endpoint: process.env.AZURE_SIGNING_ENDPOINT,
+  certificateProfileName: process.env.AZURE_SIGNING_PROFILE,
+  codeSigningAccountName: process.env.AZURE_SIGNING_ACCOUNT,
+};
+const SIGNING_ENVS = ['CSC_LINK', 'CSC_KEY_PASSWORD', ...Object.keys(AZURE), 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'];
+for (const name of SIGNING_ENVS) if (process.env[name] === '') delete process.env[name];
+const azureSet = Object.values(AZURE).filter(Boolean);
+if (azureSet.length && azureSet.length < 4) {
+  throw new Error('Azure Trusted Signing needs its four envs together: AZURE_SIGNING_PUBLISHER_NAME, AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_PROFILE, AZURE_SIGNING_ACCOUNT');
+}
+
+module.exports = {
+  ...build,
+  ...(azureSet.length === 4 ? { win: { ...build.win, azureSignOptions: AZURE } } : {}),
+  files: [...build.files.filter((f) => f !== NO_WIN32 && f !== LINK_MAC), ...WIN_ONLY, LINK_WIN],
+};

@@ -43,9 +43,9 @@ export default [
       'no-unused-vars': ['error', { argsIgnorePattern: '^_', ignoreRestSiblings: true }],
     },
   },
-  // Electron main, preload, main-process logic and its tests: CommonJS, Node
+  // Electron main, preload, main-process logic and its tests: CommonJS, Node (the .cjs builder configs too)
   {
-    files: ['app/main.js', 'app/preload.js', 'app/src/**/*.js', 'app/test/**/*.cjs'],
+    files: ['app/main.js', 'app/preload.js', 'app/src/**/*.js', 'app/test/**/*.cjs', 'app/scripts/**/*.cjs'],
     languageOptions: { sourceType: 'commonjs', globals: { ...node, ...commonjs } },
   },
   // UI: ES modules in the browser
