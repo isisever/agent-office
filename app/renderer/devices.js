@@ -22,6 +22,22 @@ const val = (e) => /** @type {HTMLInputElement} */ (e.target).value;
 /** Incoming handoff ids already answered from this window (a second click must not open a second folder picker). */
 const hoClicked = new Set();
 
+/** A small popup (the .sb-modal look of sidebar.js): title, body, one Close button; Escape or a click outside closes. */
+function popup(/** @type {string} */ title, /** @type {HTMLElement[]} */ body) {
+  const close = () => back.remove();
+  const back = h('div', {
+    class: 'sb-modal-backdrop',
+    onmousedown: (/** @type {Event} */ e) => { if (e.target === back) close(); },
+    onkeydown: (/** @type {KeyboardEvent} */ e) => { e.stopPropagation(); if (e.key === 'Escape') close(); },
+  },
+  h('div', { class: 'sb-modal sb-modal-global', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+    h('div', { class: 'sb-modal-head' }, h('span', {}, title), h('button', { class: 'sb-x', title: t('sidebar.close'), onclick: close }, '×')),
+    h('div', { class: 'sb-modal-body' }, body),
+    h('div', { class: 'sb-modal-foot' }, h('button', { class: 'sb-btn primary', onclick: close }, t('sidebar.close')))));
+  document.body.append(back);
+  /** @type {HTMLElement | null} */ (back.querySelector('input, button.primary'))?.focus();
+}
+
 /**
  * @param {HTMLElement} sidebarEl the #sidebar element (already mounted by sidebar.js)
  * @param {any} api window.agentOffice
@@ -35,35 +51,35 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
   let editing = /** @type {string | null} */ (null);
   const drafts = new Map(); // "<device>/<project>" → unsent text
 
-  const section = h('details', { class: 'sb-devices', id: 'sb-devices' });
+  const section = h('details', { class: 'sb-devices sb-panel', id: 'sb-devices' });   // a panel like the sidebar's others (v3.43)
+  try { /** @type {HTMLDetailsElement} */ (section).open = localStorage.getItem('ao.panel.devices') === '1'; } catch {}
+  section.addEventListener('toggle', () => { try { localStorage.setItem('ao.panel.devices', /** @type {HTMLDetailsElement} */ (section).open ? '1' : '0'); } catch {} });
   const remoteGroup = h('details', { class: 'sb-remote', id: 'sb-remote', open: true });
-  sidebarEl.querySelector('#sb-bottom .sb-accounts')?.after(section);
+  sidebarEl.querySelector('.sb-accounts')?.after(section);
   sidebarEl.querySelector('#sb-top')?.append(remoteGroup);
 
   function renderDevices() {
     const wasOpen = /** @type {HTMLDetailsElement} */ (section).open;
+    // The four opt-ins per device live in a popup (the row shows how many are on); every one is off by default.
+    const perms = (/** @type {any} */ d) => [
+      ['allow', 'allowCommands', 'setAllow', ''], ['allowHandoff', 'allowHandoff', 'setAllowHandoff', 'sb-dev-handoff'],
+      ['allowManage', 'allowManage', 'setAllowManage', 'sb-dev-manage'], ['allowAccounts', 'allowAccounts', 'setAllowAccounts', 'sb-dev-accounts'],
+    ].map(([label, field, call, cls]) => ({ label, field, call, cls, on: Boolean(d[field]) }));
+    const openPerms = (/** @type {any} */ d) => popup(t('devices.permissions', { name: d.name }),
+      perms(d).map((x) => h('label', { class: 'sb-botcolor sb-langrow' },
+        h('span', {}, t(`devices.${x.label}`)),
+        h('input', { type: 'checkbox', class: 'sb-check ' + x.cls, checked: x.on, onchange: (/** @type {Event} */ e) => apply(api.link[x.call](d.id, /** @type {HTMLInputElement} */ (e.target).checked)) }))));
     const list = view.devices.map((/** @type {any} */ d) => h('li', { class: 'sb-dev' + (d.online ? ' online' : '') },
       h('div', { class: 'sb-dev-top' },
         h('span', { class: 'sb-adot', title: t(d.online ? 'devices.online' : 'devices.offline') }),
         editing === d.id
           ? h('input', { class: 'sb-dev-name', value: d.name, maxlength: 40, onchange: (/** @type {Event} */ e) => { editing = null; apply(api.link.rename(d.id, val(e))); }, onblur: () => { editing = null; render(); } })
           : h('span', { class: 'sb-name', title: `${t(d.online ? 'devices.online' : 'devices.offline')} · ${new Date(d.addedAt).toLocaleDateString()}` }, d.name),
+        h('button', { class: 'sb-x sb-gear', title: t('devices.permissionsTitle'), onclick: () => openPerms(d) }, '⚙'),
         h('button', { class: 'sb-x', title: t('devices.rename'), onclick: () => { editing = d.id; render(); } }, '✎'),
         h('button', { class: 'sb-x', title: t('devices.remove'), onclick: () => { if (confirm(t('devices.removeConfirm', { name: d.name }))) apply(api.link.remove(d.id)); } }, '×'),
       ),
-      h('label', { class: 'sb-check sb-dev-allow' },
-        h('input', { type: 'checkbox', checked: d.allowCommands, onchange: (/** @type {Event} */ e) => apply(api.link.setAllow(d.id, /** @type {HTMLInputElement} */ (e.target).checked)) }),
-        t('devices.allow')),
-      h('label', { class: 'sb-check sb-dev-allow' },
-        h('input', { type: 'checkbox', class: 'sb-dev-handoff', checked: d.allowHandoff, onchange: (/** @type {Event} */ e) => apply(api.link.setAllowHandoff(d.id, /** @type {HTMLInputElement} */ (e.target).checked)) }),
-        t('devices.allowHandoff')),
-      // v3.31 opt-ins, both off by default: the catalog (and later project actions), later account sign-in
-      h('label', { class: 'sb-check sb-dev-allow' },
-        h('input', { type: 'checkbox', class: 'sb-dev-manage', checked: d.allowManage, onchange: (/** @type {Event} */ e) => apply(api.link.setAllowManage(d.id, /** @type {HTMLInputElement} */ (e.target).checked)) }),
-        t('devices.allowManage')),
-      h('label', { class: 'sb-check sb-dev-allow' },
-        h('input', { type: 'checkbox', class: 'sb-dev-accounts', checked: d.allowAccounts, onchange: (/** @type {Event} */ e) => apply(api.link.setAllowAccounts(d.id, /** @type {HTMLInputElement} */ (e.target).checked)) }),
-        t('devices.allowAccounts')),
+      h('div', { class: 'sb-dev-sub' }, t(d.online ? 'devices.online' : 'devices.offline'), ' · ', t('devices.permCount', { n: perms(d).filter((x) => x.on).length, total: 4 })),
       d.online && d.v === 1 ? h('div', { class: 'sb-note warn' }, t('devices.updateThere', { device: d.name })) : null,
     ));
     // v3.29 handoffs: offers waiting for an answer, transfers in progress, projects handed off from here
@@ -113,14 +129,13 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
     section.replaceChildren(...[
       h('summary', { class: 'sb-head' }, t('devices.title'), view.devices.length ? ` (${view.devices.filter((/** @type {any} */ d) => d.online).length}/${view.devices.length})` : ''),
       view.error && view.error !== 'off' ? h('div', { class: 'sb-note warn' }, t(`devices.error.${view.error}`)) : null,
-      h('label', { class: 'sb-row' }, t('devices.thisDevice'),
+      h('label', { class: 'sb-row sb-dev-self' }, h('span', {}, t('devices.thisDevice')),
         h('input', { class: 'sb-dev-name', value: view.name, maxlength: 40, onchange: (/** @type {Event} */ e) => apply(api.link.setName(val(e))) })),
       view.devices.length ? h('ul', { class: 'sb-list' }, list) : h('div', { class: 'sb-note' }, t('devices.none')),
       view.devices.length ? h('button', { class: 'sb-x sb-machines', id: 'sb-machines', onclick: () => onMachines() }, t('devices.machines')) : null,
       ...incoming, ...outgoing,
       owners.length ? h('div', { class: 'sb-sub' }, t('devices.handedOffTitle')) : null, ...owners,
-      pairing,
-      p?.code ? null : join,
+      h('div', { class: 'sb-dev-pair' }, pairing, p?.code ? null : join),
       joinState.error ? h('div', { class: 'sb-note warn' }, t('devices.pairFailed', { error: joinState.error })) : null,
     ].filter((c) => c != null));                   // replaceChildren would show a null as the text "null"
     /** @type {HTMLDetailsElement} */ (section).open = wasOpen || Boolean(p) || joinState.busy || ho.in.length > 0;

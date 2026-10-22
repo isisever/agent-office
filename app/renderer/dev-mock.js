@@ -96,7 +96,8 @@ const running = new Map(projects.flatMap((p, i) => tabIds(p).map((id) => [id, i 
 let activeId = projects[0]?.id ?? null;
 
 const snapshot = () => ({
-  projects: projects.map((p) => ({ ...p })),
+  // like main's P.forRenderer (v3.43): a connection's address only through connectors.get
+  projects: projects.map((p) => (p.mcp ? { ...p, mcp: { label: p.mcp.label, hasUrl: true } } : { ...p })),
   activeId,
   status: projects.map((p, i) => ({
     id: p.id, isRunning: !!running.get(p.id), attention: q.has('asking') ? [null, 'permission', 'done'][i] ?? null : null,
@@ -171,6 +172,7 @@ window.agentOffice = {
       changed();
     },
     setActive: async (id) => { activeId = id; changed(); },
+    openFolder: async () => true,
     menu: async () => {},
     setAccount: async (id, accountId) => {
       const p = projects.find((x) => x.id === id);
@@ -208,10 +210,34 @@ window.agentOffice = {
     },
     setEngine: async (id, value) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === id));
+      if (p?.mcp && value) return { restarted: [], refused: 'connector' }; // v3.43: a connection runs only Claude Code
       if (p) { if (value === 'agy' || value === 'commandcode' || value === 'opencode') p.engine = value; else delete p.engine; changed(); }
       return { restarted: [] };
     },
     onChange: ev.projects.add,
+  },
+  // contract v3.43: connectors are projects with an `mcp` field (the token is never kept in the mock)
+  connectors: {
+    get: async (id) => { const p = projects.find((x) => x.id === id); return p?.mcp ? { ...p.mcp, dir: p.dir, hasToken: true } : null; },
+    pickDir: async () => '/Users/me/Connectors/picked',
+    add: async (f) => {
+      if (!String(f?.label || '').trim()) return { ok: false, error: 'name' };
+      if (!/^https?:\/\//.test(String(f?.url || ''))) return { ok: false, error: 'url' };
+      const p = { id: rid(), dir: f.dir || `/Users/me/Library/Agent Office/connectors/${f.label.trim().toLowerCase()}`, name: f.label.trim().toLowerCase(), accountId: 'default', mcp: { label: f.label.trim(), url: f.url } };
+      projects.push(p);
+      activeId = p.id;
+      boot(p.id);
+      return { ok: true, project: { ...p, mcp: { label: p.mcp.label, hasUrl: true } } };
+    },
+    update: async (id, f) => {
+      const p = projects.find((x) => x.id === id);
+      if (!p?.mcp) return { ok: false, error: 'unknown' };
+      if (!String(f?.label || '').trim()) return { ok: false, error: 'name' };
+      if (!/^https?:\/\//.test(String(f?.url || ''))) return { ok: false, error: 'url' };
+      p.mcp = { label: f.label.trim(), url: f.url };
+      changed();
+      return { ok: true, restarted: [] };
+    },
   },
   tabs: {
     add: async (projectId, mode) => {

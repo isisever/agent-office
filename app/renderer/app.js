@@ -203,15 +203,15 @@ function tabButton(p, tab, active, running) {
   const dir = tab?.dir || p.dir;
   const b = document.createElement('div');
   const sleeping = !running && isAsleep(tabPtyId(p.id, n));
-  b.className = 'tab' + (n === active ? ' active' : '') + (running ? '' : sleeping ? ' asleep' : ' stopped') + (tab?.worktree ? ' worktree' : '');
+  b.className = 'tab' + (n === active ? ' active' : '') + (running ? '' : sleeping ? ' asleep' : ' stopped') + (tab?.worktree ? ' worktree' : '') + (tab?.shell ? ' shell' : '');
   b.dataset.n = String(n);
-  b.title = (tab?.worktree ? t('app.worktreeTab', { branch: tab.worktree.branch, dir }) : n === MAIN_TAB ? t('app.mainTab', { dir }) : t('app.sameTab', { dir })) + (running ? '' : sleeping ? t('app.asleep') : t('app.stopped'));
+  b.title = (tab?.shell ? t('app.shellTab', { dir }) : tab?.worktree ? t('app.worktreeTab', { branch: tab.worktree.branch, dir }) : n === MAIN_TAB ? t('app.mainTab', { dir }) : t('app.sameTab', { dir })) + (running ? '' : sleeping ? t('app.asleep') : t('app.stopped'));
   const num = document.createElement('span');
   num.className = 'tab-n';
   num.textContent = String(n);
   const label = document.createElement('span');
   label.className = 'tab-label';
-  label.textContent = tab?.worktree ? `⎇ ${tab.worktree.branch}` : baseName(dir);
+  label.textContent = tab?.shell ? `› ${baseName(dir)}` : tab?.worktree ? `⎇ ${tab.worktree.branch}` : baseName(dir);
   b.append(num, label);
   b.addEventListener('click', () => selectTab(p.id, n));
   if (tab) {
@@ -349,6 +349,23 @@ async function addProject() {
     const p = await api.projects.add();
     if (p) applyProjects(await api.projects.list());
   } catch (e) { console.error(e); }
+}
+
+// Connectors (v3.43): remote MCP servers, each a project with its own folder and sessions.
+async function addConnector(form) {
+  try {
+    const r = await api.connectors.add(form);
+    if (r?.ok) applyProjects(await api.projects.list());
+    return r;
+  } catch (e) { console.error(e); return { ok: false, error: 'failed' }; }
+}
+async function updateConnector(id, form) {
+  try {
+    const r = await api.connectors.update(id, form);
+    for (const pid of r?.restarted || []) panes.get(pid)?.term.reset({ restarting: true }); // idle sessions restarted in their conversation
+    if (r?.ok) applyProjects(await api.projects.list());
+    return r;
+  } catch (e) { console.error(e); return { ok: false, error: 'failed' }; }
 }
 
 function selectProject(id) {
@@ -514,6 +531,7 @@ sidebar = mountSidebar($('sidebar'), {
   addProject,
   setBotColor,
   removeProject,
+  openFolder: (p) => api.projects.openFolder?.(p.id).catch((e) => console.error(e)),
   projectMenu: (p) => api.projects.menu?.(p.id).catch((e) => console.error(e)),
   setAccount,
   setProjectManager,
@@ -556,10 +574,8 @@ sidebar = mountSidebar($('sidebar'), {
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
   setTheme: setThemeSetting,
   openUsage: (p) => usagePanel?.show(p),
-  // v3.18: the projects/accounts split, stored on this computer like the terminal height
-  setSplit: (px) => store.set('accountsHeight', px == null ? '' : Math.round(px)),
+  connector: { get: (id) => api.connectors.get(id), pickDir: () => api.connectors.pickDir(), add: addConnector, update: updateConnector },
 });
-sidebar.setSplit(store.get('accountsHeight') || null);
 
 login = mountLogin(document.body, { getTheme: () => theme, onClose: () => focusActive() });
 
@@ -745,7 +761,7 @@ document.addEventListener('mouseup', (e) => {
     div.setPointerCapture(e.pointerId);
     document.body.classList.add('dragging');
     const move = (ev) => {
-      const max = window.innerHeight * 0.45;
+      const max = window.innerHeight * 0.8;
       const h = Math.round(Math.min(max, Math.max(120, window.innerHeight - ev.clientY - 8)));
       root.style.setProperty('--term-h', h + 'px');
       store.set('termHeight', h);

@@ -2,6 +2,7 @@
 // State: { projects: Project[], accounts: Account[], activeId: string | null } (see CONTRACT.md).
 const path = require('path');
 const crypto = require('crypto');
+const { withMcp } = require('./connectors.js');
 const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT } = require('./accounts.js');
 
 const newId = () => crypto.randomBytes(6).toString('hex');
@@ -28,8 +29,9 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withAgentModel(p.agentModel),
       ...withContextCap(p.contextCap),
       ...withSavings(p.savings),
-      ...withEngine(p.engine),
+      ...(withMcp(p.mcp).mcp ? {} : withEngine(p.engine)), // a connection runs only Claude Code (v3.43)
       ...withProjectFiles(p.projectFiles),
+      ...withMcp(p.mcp), // a connector (contract v3.43)
       ...withBackup(p.backupAccount, known),
       ...withHome(p.homeAccount, known, known.has(p.accountId) ? p.accountId : DEFAULT_ID),
       ...withTabs(normalizeTabs(p.tabs)),
@@ -56,12 +58,16 @@ function normalizeTabs(list) {
   const seen = new Set();
   for (const t of Array.isArray(list) ? list : []) {
     if (!isObj(t) || !Number.isInteger(t.n) || t.n <= MAIN_TAB || seen.has(t.n)) continue;
+    if (t.shell === true && !(isStr(t.dir) && t.dir)) continue; // a shell tab needs its folder: never turn into a Claude tab
     seen.add(t.n);
     const tab = { n: t.n };
     const w = t.worktree;
     if (isStr(t.dir) && isObj(w) && isStr(w.root) && isStr(w.repo) && isStr(w.branch)) {
       tab.dir = t.dir;
       tab.worktree = { root: w.root, repo: w.repo, branch: w.branch };
+    } else if (t.shell === true && isStr(t.dir) && t.dir) { // a plain terminal tab (contract v3.42): the shell, no engine
+      tab.dir = t.dir;
+      tab.shell = true;
     }
     out.push(tab);
   }
@@ -81,8 +87,10 @@ function parsePtyId(id) {
   const n = Number(m[2]);
   return n > MAIN_TAB ? { projectId: m[1], n } : null;
 }
-/** All of the project's pty ids: main tab first. */
-const ptyIdsOf = (project) => [project.id, ...tabsOf(project).map((t) => tabPtyId(project.id, t.n))];
+/** The project's engine pty ids (main tab first); plain terminal tabs are left out: no restart, sleep or account logic applies to a shell. */
+const ptyIdsOf = (project) => [project.id, ...tabsOf(project).filter((t) => !t.shell).map((t) => tabPtyId(project.id, t.n))];
+/** Every pty id of the project, plain terminal tabs included (starting at launch, killing on removal). */
+const allPtyIdsOf = (project) => [project.id, ...tabsOf(project).map((t) => tabPtyId(project.id, t.n))];
 /** The folder the tab runs in. */
 const tabDir = (project, tab) => tab?.dir || project.dir;
 /** Project and tab from a pty id (tab is null for the main tab); unknown → null. */
@@ -146,6 +154,7 @@ function sessionAliases(projects) {
   const out = {};
   for (const p of projects) {
     for (const t of tabsOf(p)) {
+      if (t.shell) continue; // a plain terminal runs no session
       const name = path.basename(tabDir(p, t));
       if (name && !names.has(name) && !(name in out)) out[name] = p.name;
     }
@@ -176,6 +185,21 @@ function addProject(state, dir, { id = newId, accountId = DEFAULT_ID, now = Date
   const acc = state.accounts.some((a) => a.id === accountId) ? accountId : DEFAULT_ID;
   const project = { id: id(), dir, name: projectName(dir), accountId: acc, addedAt: now() };
   return { state: { ...state, projects: [...state.projects, project], activeId: project.id }, project, isNew: true };
+}
+
+/** A connector (contract v3.43): a project in `dir` with `mcp: { label, url }`. null when the folder is already a project. */
+function addConnector(state, dir, mcp, opts = {}) {
+  if (findByDir(state, dir)) return null;
+  const r = addProject(state, dir, opts);
+  const project = { ...r.project, ...withMcp(mcp) };
+  return { state: { ...r.state, projects: r.state.projects.map((p) => (p.id === project.id ? project : p)) }, project };
+}
+/** Changes a connector's label and address; its id and folder (the session history) stay. Same state when nothing changes. */
+function setConnector(state, id, mcp) {
+  const p = findProject(state, id);
+  const next = withMcp(mcp).mcp;
+  if (!p?.mcp || !next || (next.label === p.mcp.label && next.url === p.mcp.url)) return state;
+  return { ...state, projects: state.projects.map((x) => (x.id === id ? { ...x, mcp: next } : x)) };
 }
 
 // If the active project is deleted, its neighbor (the next one, else the previous) takes its place.
@@ -338,11 +362,17 @@ const ENGINES = ['claude', 'agy', 'commandcode', 'opencode'];
 const engineValue = (v) => (v === 'agy' || v === 'commandcode' || v === 'opencode' ? v : null);
 const withEngine = (v) => (engineValue(v) ? { engine: v } : {});
 
-/** value: 'agy' | 'commandcode' | 'opencode' | 'claude' | null (both: Claude Code). Same state when nothing changes. */
+/** True when the project may not run `value`: a connector (contract v3.43) reaches only Claude Code. */
+const engineRefused = (project, value) => Boolean(project?.mcp) && engineValue(value) !== null;
+
+/**
+ * value: 'agy' | 'commandcode' | 'opencode' | 'claude' | null (both: Claude Code). Same state when nothing changes,
+ * and for a connector asked for another engine than Claude Code (its MCP server reaches only claude; v3.43).
+ */
 function setProjectEngine(state, id, value) {
   const p = findProject(state, id);
   const v = engineValue(value);
-  if (!p || engineValue(p.engine) === v) return state;
+  if (!p || engineValue(p.engine) === v || engineRefused(p, v)) return state;
   return { ...state, projects: state.projects.map((x) => {
     if (x.id !== id) return x;
     const { engine: _, ...rest } = x;
@@ -424,17 +454,22 @@ function returnHome(state, id) {
 const historyDir = (projectDir, configDir, home) =>
   path.join(configDir || path.join(home, '.claude'), 'projects', String(projectDir).replace(/[^a-zA-Z0-9]/g, '-'));
 
+/** The projects as the renderer gets them (contract v3.43): a connection's address stays in main (`connectors:get`
+ *  gives it to the edit form only); the page sees `mcp: { label, hasUrl }`. */
+const forRenderer = (projects) => projects.map((p) => (p.mcp ? { ...p, mcp: { label: p.mcp.label, hasUrl: Boolean(p.mcp.url) } } : p));
+
 module.exports = {
+  forRenderer,
   historyDir,
-  MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, tabDir, resolvePty,
+  MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty,
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,
   newId, projectName, normalizeState, findProject, findByDir,
-  addProject, removeProject, setActive, setProjectAccount, setProjectManager, managerOf,
+  addProject, addConnector, setConnector, removeProject, setActive, setProjectAccount, setProjectManager, managerOf,
   BOSS_MODELS, BOSS_MODELS_BY_ENGINE, setProjectBossModel, bossModelOf, bossModelArgs,
   AGENT_MODELS, setProjectAgentModel, agentModelOf,
   CONTEXT_CAPS, setProjectContextCap, contextCapOf,
   setProjectSavings, savingsOf,
-  ENGINES, setProjectEngine, engineOf,
+  ENGINES, setProjectEngine, engineOf, engineRefused,
   setProjectFiles, projectFilesOf,
   setProjectBackup, backupOf, fallbackTo, returnHome,
 };

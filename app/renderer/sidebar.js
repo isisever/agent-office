@@ -1,10 +1,9 @@
-// Left sidebar: PROJECTS (one project per row) and ACCOUNTS.
+// Left sidebar: collapsible panels PROJECTS (one project per row), ACCOUNTS, DEVICES (devices.js) and CONNECTIONS (v3.43).
 // The structure is rebuilt only when the project/account list changes; office stats update in place
 // (so an open <select> or a name being typed is not disrupted by 500 ms data). A language change redraws everything.
 import { hasText, locale, onLang, t } from './i18n.js';
 import { modLabel, platform } from './platform.js';
 import { isBossHere, projectStatus } from '../src/project-status.mjs';
-import { clampSplit } from '../src/layout.mjs';
 import { bossModelChoices, cap } from '../src/engine-caps.mjs';
 
 function h(tag, props = {}, ...children) {
@@ -130,6 +129,7 @@ export function mountSidebar(el, on) {
   const sleepRow = h('div', { class: 'sb-botcolor sb-langrow' }, sleepLabel, sleepSelect);
   const projHead = h('span', {});
   const acctHead = h('span', {});
+  const settingsBtn = h('button', { class: 'sb-x sb-gear sb-gear-head', id: 'sb-settings', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openSettings(); } }, '⚙'); // inside <summary>: must not toggle the panel
   const addProjectBtn = h('button', { class: 'sb-add', id: 'sb-add-project', onclick: () => on.addProject() });
   // "Resume unfinished work" (v3.8): main checks every tab; the result shows under the button for a while
   const resumeAllBtn = h('button', { class: 'sb-add sb-resume-all', id: 'sb-resume-all', onclick: () => on.resumeUnfinished?.() });
@@ -137,43 +137,33 @@ export function mountSidebar(el, on) {
   let noteTimer = null;
   const projList = h('ul', { class: 'sb-list', id: 'sb-projects' });
   const acctList = h('ul', { class: 'sb-list', id: 'sb-accounts' });
-  // v3.18: PROJECTS on top, ACCOUNTS and settings below; the line between them is a splitter (drag, double-click resets)
-  // and the lower part scrolls on its own.
-  const splitter = h('div', { class: 'sb-split', id: 'sb-split', role: 'separator', 'aria-orientation': 'horizontal' });
-  const bottom = h('div', { class: 'sb-bottom', id: 'sb-bottom' });
+  // v3.43: collapsible panels (open/closed is remembered on this computer): PROJECTS, ACCOUNTS, DEVICES (devices.js adds
+  // its own after ACCOUNTS) and CONNECTIONS. The whole sidebar scrolls.
+  const connList = h('ul', { class: 'sb-list', id: 'sb-connectors' });
+  const connHead = h('span', {});
+  const addConnBtn = h('button', { class: 'sb-add', id: 'sb-add-connector', onclick: () => openConnectorForm(null) });
+  function panel(id, head, body, cls = '') {
+    let open = true;
+    try { open = localStorage.getItem(`ao.panel.${id}`) !== '0'; } catch {}
+    const d = h('details', { class: `sb-panel ${cls}`, id: `sb-panel-${id}`, open }, h('summary', { class: 'sb-head sb-head-row' }, head), body);
+    d.addEventListener('toggle', () => { try { localStorage.setItem(`ao.panel.${id}`, d.open ? '1' : '0'); } catch {} });
+    return d;
+  }
   el.append(
-    h('div', { class: 'sb-top', id: 'sb-top' },
-      h('div', { class: 'sb-head' }, projHead),
-      projList,
-      addProjectBtn,
-      resumeAllBtn,
-      resumeNote,
-    ),
-    splitter,
-    bottom,
-  );
-  bottom.append(
-    h('div', { class: 'sb-accounts' },
-      h('div', { class: 'sb-head' }, acctHead),
-      acctList,
-    ),
-    resumeRow,
-    resumeWorkRow,
-    managerRow,
-    shareMcpRow,
-    reloadMcpRow,
-    fallbackRow,
-    sleepRow,
-    langRow,
-    themeRow,
-    botRow,
+    panel('projects', [projHead], h('div', { class: 'sb-top', id: 'sb-top' }, projList, addProjectBtn, resumeAllBtn, resumeNote)),
+    panel('accounts', [acctHead, settingsBtn], h('div', { class: 'sb-panel-body' }, acctList), 'sb-accounts'),
+    panel('connections', [connHead], h('div', { class: 'sb-panel-body' }, connList, addConnBtn), 'sb-connections'),
   );
 
   /** Text of the persistent elements (headings, buttons, sublines). */
   function renderChrome() {
     projHead.textContent = t('sidebar.projects');
-    splitter.title = t('sidebar.splitTitle');
     acctHead.textContent = t('sidebar.accounts');
+    connHead.textContent = t('sidebar.connections');
+    addConnBtn.textContent = t('sidebar.connAdd');
+    addConnBtn.title = t('sidebar.connAddTitle');
+    settingsBtn.title = t('sidebar.settingsTitle');
+    settingsBtn.setAttribute('aria-label', t('sidebar.settings'));
     addProjectBtn.textContent = t('sidebar.addProject');
     addProjectBtn.title = t('sidebar.addProjectTitle', { mod: modLabel });
     resumeAllBtn.textContent = t('sidebar.resumeUnfinished');
@@ -231,6 +221,12 @@ export function mountSidebar(el, on) {
   }
   renderChrome();
 
+  // Settings popups: the project popup collects its changes as a draft and applies them on Save (account first, it
+  // may restart the tabs); Cancel / Escape / a click outside discards. The global popup applies each change at once.
+  /** @type {Map<string, () => unknown> | null} */
+  let draft = null;
+  const queue = (key, fn) => draft?.set(key, fn);
+
   const engineOfRow = (p) => (p.engine === 'agy' || p.engine === 'commandcode' || p.engine === 'opencode' ? p.engine : 'claude');
   /**
    * A row control with its label (contract v3.36): every engine shows it; one the engine can't honour (src/engine-caps.mjs)
@@ -259,45 +255,57 @@ export function mountSidebar(el, on) {
       class: 'sb-acct',
       title: t('sidebar.accountTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: async (e) => {
+      onchange: (e) => {
         const v = e.target.value;
-        if (v === NEW_ACCOUNT) {
+        if (v === NEW_ACCOUNT) { // the type menu lives in the ACCOUNTS list: close the popup, open the menu there
           e.target.value = now;
+          closeModal();
           addMenu = true; addFor = p.id;
           renderAccounts();
           acctList.querySelector('.sb-add-menu')?.scrollIntoView?.({ block: 'nearest' });
           return;
         }
-        const eng = Object.keys(ENGINE_OPT).find((k) => ENGINE_OPT[k] === v) || null;
-        // leaving agy/cmd for another Claude account: the account first, so the restarted tabs use it
-        const leaving = !eng && engine !== 'claude';
-        if (leaving && v !== p.accountId) await on.setAccount(p.id, v);
-        if (eng || engine !== 'claude') {
-          const r = await on.setEngine?.(p.id, eng);
-          if (!r || r.refused) { // failed: put the select back (and the old account, if it was already moved)
-            e.target.value = now;
-            if (leaving && v !== p.accountId) await on.setAccount(p.id, p.accountId);
-            return;
+        queue('account', async () => {
+          const eng = Object.keys(ENGINE_OPT).find((k) => ENGINE_OPT[k] === v) || null;
+          // leaving agy/cmd for another Claude account: the account first, so the restarted tabs use it
+          const leaving = !eng && engine !== 'claude';
+          if (leaving && v !== p.accountId) await on.setAccount(p.id, v);
+          if (eng || engine !== 'claude') {
+            const r = await on.setEngine?.(p.id, eng);
+            if (!r || r.refused) { // failed: the old account again, if it was already moved
+              if (leaving && v !== p.accountId) await on.setAccount(p.id, p.accountId);
+              return;
+            }
           }
-        }
-        if (!eng && !leaving && v !== p.accountId) on.setAccount(p.id, v);
+          if (!eng && !leaving && v !== p.accountId) on.setAccount(p.id, v);
+        });
       },
     }, accounts.map((a) => h('option', { value: a.id, selected: now === a.id }, labelOf(a))));
     if (!accounts.some((a) => a.id === p.accountId)) {
       sel.append(h('option', { value: p.accountId, selected: now === p.accountId }, '?'));
     }
-    if (agyShown() || engine === 'agy') {
-      sel.append(h('option', { value: ENGINE_OPT.agy, selected: engine === 'agy' },
-        t('sidebar.engineAgy') + (agyAuth?.email ? ` · ${agyAuth.email}` : '')));
+    // a connection (contract v3.43) reaches only Claude Code: the other engines are shown, disabled with the reason
+    const connOnly = Boolean(p.mcp);
+    const connReason = connOnly ? t('sidebar.connClaudeOnly') : '';
+    const engineOpt = (value, selected, label) => h('option', { value, selected, disabled: connOnly && !selected, title: connReason || null }, label);
+    if (agyShown() || engine === 'agy' || connOnly) {
+      sel.append(engineOpt(ENGINE_OPT.agy, engine === 'agy', t('sidebar.engineAgy') + (agyAuth?.email ? ` · ${agyAuth.email}` : '')));
     }
-    if (cmdShown() || engine === 'commandcode') {
-      sel.append(h('option', { value: ENGINE_OPT.commandcode, selected: engine === 'commandcode' }, t('sidebar.engineCommandcode')));
+    if (cmdShown() || engine === 'commandcode' || connOnly) {
+      sel.append(engineOpt(ENGINE_OPT.commandcode, engine === 'commandcode', t('sidebar.engineCommandcode')));
     }
-    if (ocShown() || engine === 'opencode') { // contract v3.40
-      sel.append(h('option', { value: ENGINE_OPT.opencode, selected: engine === 'opencode' }, t('sidebar.engineOpencode')));
+    if (ocShown() || engine === 'opencode' || connOnly) { // contract v3.40
+      sel.append(engineOpt(ENGINE_OPT.opencode, engine === 'opencode', t('sidebar.engineOpencode')));
     }
     sel.append(h('option', { value: NEW_ACCOUNT }, t('sidebar.newAccount')));
-    return control(p, 'account', t('sidebar.account'), sel);
+    const row = control(p, 'account', t('sidebar.account'), sel);
+    if (connReason && !row.querySelector('.sb-na')) {
+      row.classList.add('sb-na-wrap', 'sb-conn-only');
+      row.title = connReason;
+      row.tabIndex = 0;
+      row.append(h('span', { class: 'sb-na', role: 'note' }, connReason));
+    }
+    return row;
   }
 
   // How the project's boss works (contract v3.10): the global setting, delegates (manager mode) or does it itself.
@@ -309,7 +317,7 @@ export function mountSidebar(el, on) {
       class: 'sb-acct sb-mode',
       title: t('sidebar.projectManagerTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: (e) => on.setProjectManager?.(p.id, MANAGER_VALUES[e.target.value] ?? null),
+      onchange: (e) => queue('manager', () => on.setProjectManager?.(p.id, MANAGER_VALUES[e.target.value] ?? null)),
     },
     h('option', { value: 'default', selected: now === 'default' }, t('sidebar.projectManagerDefault')),
     h('option', { value: 'on', selected: now === 'on' }, t('sidebar.projectManagerOn')),
@@ -328,7 +336,7 @@ export function mountSidebar(el, on) {
       class: 'sb-acct sb-mode',
       title: t('sidebar.bossModelTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: (e) => on.setBossModel?.(p.id, e.target.value === 'auto' ? null : e.target.value),
+      onchange: (e) => queue('bossModel', () => on.setBossModel?.(p.id, e.target.value === 'auto' ? null : e.target.value)),
     },
     opt('auto', t('sidebar.bossModelAuto')), ...choices.map((c) => opt(c.value, claudeModelLabel(c.value) || c.label)));
     return control(p, 'bossModel', t('sidebar.bossModel'), sel);
@@ -339,7 +347,7 @@ export function mountSidebar(el, on) {
     const box = h('input', {
       type: 'checkbox', class: 'sb-files', checked: p.projectFiles === true, title: t('sidebar.projectFilesTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: (e) => on.setProjectFiles?.(p.id, e.target.checked),
+      onchange: (e) => queue('projectFiles', () => on.setProjectFiles?.(p.id, e.target.checked)),
     });
     return control(p, 'projectFiles', t('sidebar.projectFiles'), box);
   }
@@ -353,7 +361,7 @@ export function mountSidebar(el, on) {
       class: 'sb-acct sb-mode',
       title: t('sidebar.agentModelTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: (e) => on.setAgentModel?.(p.id, e.target.value === 'auto' ? null : e.target.value),
+      onchange: (e) => queue('agentModel', () => on.setAgentModel?.(p.id, e.target.value === 'auto' ? null : e.target.value)),
     },
     opt('auto', t('sidebar.agentModelAuto')), opt('sonnet', t('sidebar.agentModelSonnet')),
     opt('haiku', t('sidebar.agentModelHaiku')), opt('opus', t('sidebar.agentModelOpus')));
@@ -369,7 +377,7 @@ export function mountSidebar(el, on) {
       class: 'sb-acct sb-mode',
       title: t('sidebar.contextCapTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: (e) => on.setContextCap?.(p.id, e.target.value === 'auto' ? null : Number(e.target.value)),
+      onchange: (e) => queue('contextCap', () => on.setContextCap?.(p.id, e.target.value === 'auto' ? null : Number(e.target.value))),
     },
     opt('auto', t('sidebar.contextCapAuto')), opt('200000', '200K'), opt('400000', '400K'));
     return control(p, 'contextCap', t('sidebar.contextCap'), sel);
@@ -384,7 +392,7 @@ export function mountSidebar(el, on) {
       class: 'sb-acct sb-mode',
       title: t('sidebar.savingsTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: (e) => on.setSavings?.(p.id, e.target.value),
+      onchange: (e) => queue('savings', () => on.setSavings?.(p.id, e.target.value)),
     },
     opt('off', t('sidebar.savingsOff')), opt('normal', t('sidebar.savingsNormal')), opt('strict', t('sidebar.savingsStrict')));
     return control(p, 'savings', t('sidebar.savings'), sel);
@@ -410,7 +418,7 @@ export function mountSidebar(el, on) {
       class: 'sb-acct sb-mode sb-backup',
       title: t('sidebar.backupTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: (e) => on.setBackup?.(p.id, e.target.value === 'none' ? null : e.target.value),
+      onchange: (e) => queue('backup', () => on.setBackup?.(p.id, e.target.value === 'none' ? null : e.target.value)),
     },
     opt('none', t('sidebar.backupNone')), opt('auto', t('sidebar.backupAuto')),
     ...accounts.filter((a) => a.id !== p.accountId || a.id === now).map((a) => opt(a.id, labelOf(a))));
@@ -450,8 +458,99 @@ export function mountSidebar(el, on) {
     }, t('sidebar.noLogin'));
   }
 
+  // ---- Settings popups ----
+  let modal = null;
+  function closeModal() {
+    modal?.remove();
+    modal = null;
+    draft = null;
+  }
+  /** One popup at a time: a title, a body and buttons; Escape and a click on the backdrop close it. */
+  function openModal(title, body, buttons, cls = '') {
+    closeModal();
+    const backdrop = h('div', {
+      class: 'sb-modal-backdrop',
+      onmousedown: (e) => { if (e.target === backdrop) closeModal(); },
+      onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Escape') closeModal(); },
+    },
+    h('div', { class: 'sb-modal ' + cls, role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+      h('div', { class: 'sb-modal-head' }, h('span', {}, title),
+        h('button', { class: 'sb-x', title: t('sidebar.cancel'), onclick: () => closeModal() }, '×')),
+      h('div', { class: 'sb-modal-body' }, body),
+      h('div', { class: 'sb-modal-foot' }, buttons)));
+    modal = backdrop;
+    document.body.append(backdrop);
+    backdrop.querySelector('select, input, button.primary')?.focus();
+  }
+
+  /** The project's popup (contract v3.42): every per-project setting; Save applies what changed. */
+  function openProjectSettings(p) {
+    const map = new Map();
+    const body = [
+      accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p),
+      contextCapSelect(p), savingsSelect(p), backupSelect(p),
+    ];
+    const save = h('button', {
+      class: 'sb-btn primary', onclick: async () => {
+        const fns = [...map.entries()].sort((a, b) => (a[0] === 'account' ? -1 : 0) - (b[0] === 'account' ? -1 : 0)).map((x) => x[1]);
+        closeModal();
+        for (const fn of fns) { try { await fn(); } catch (e) { console.error(e); } }
+      },
+    }, t('sidebar.save'));
+    openModal(`${t('sidebar.projectSettings')} · ${p.name}`, body,
+      [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save]);
+    draft = map; // after openModal (its closeModal clears the previous draft); controls read it when they change
+  }
+
+  /** Add or edit a connector (contract v3.43). Editing keeps the folder, so the sessions and their history stay;
+   *  an empty token field keeps the saved token (it is never sent back to the page). */
+  async function openConnectorForm(p) {
+    const editing = Boolean(p);
+    const cur = editing ? await on.connector?.get(p.id) : null;
+    const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
+    const name = h('input', { value: cur?.label || '', maxLength: 60, placeholder: t('sidebar.connNamePh') });
+    const url = h('input', { type: 'url', value: cur?.url || '', placeholder: 'https://…', spellcheck: false });
+    const token = h('input', { type: 'password', autocomplete: 'off', spellcheck: false, placeholder: cur?.hasToken ? t('sidebar.connTokenKeep') : t('sidebar.connTokenPh') });
+    const clear = cur?.hasToken ? h('input', { type: 'checkbox', class: 'sb-check' }) : null;
+    let dir = cur?.dir || '';
+    const dirInput = h('input', { readOnly: true, value: dir, placeholder: t('sidebar.connDirDefault') });
+    const pick = editing ? null : h('button', {
+      class: 'sb-btn', type: 'button',
+      onclick: async () => { const d = await on.connector?.pickDir(); if (d) { dir = d; dirInput.value = d; } },
+    }, t('sidebar.connDirPick'));
+    const err = h('div', { class: 'sb-note warn', hidden: true });
+    const save = h('button', {
+      class: 'sb-btn primary',
+      onclick: async () => {
+        save.disabled = true;
+        err.hidden = true;
+        const form = { label: name.value, url: url.value, token: token.value, ...(editing ? { clearToken: Boolean(clear?.checked) } : { dir }) };
+        const r = editing ? await on.connector?.update(p.id, form) : await on.connector?.add(form);
+        if (r?.ok) return closeModal();
+        save.disabled = false;
+        err.textContent = t(`sidebar.connError.${{ 'dir-used': 'dirUsed' }[r?.error] || r?.error || 'failed'}`);
+        err.hidden = false;
+      },
+    }, t('sidebar.save'));
+    openModal(editing ? t('sidebar.connEditTitle', { name: cur?.label || p.name }) : t('sidebar.connAddTitle'), [
+      field(t('sidebar.connName'), name),
+      field(t('sidebar.connUrl'), url),
+      field(t('sidebar.connToken'), token, t('sidebar.connTokenHint')),
+      clear ? h('label', { class: 'sb-botcolor sb-langrow' }, h('span', {}, t('sidebar.connTokenClear')), clear) : null,
+      field(t('sidebar.connDir'), h('div', { class: 'sb-field-row' }, dirInput, pick), editing ? t('sidebar.connDirLocked') : t('sidebar.connDirHint')),
+      err,
+    ].filter(Boolean), [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
+  }
+
+  /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
+  function openSettings() {
+    openModal(t('sidebar.settings'),
+      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, themeRow, botRow],
+      [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
+  }
+
   function renderProjects() {
-    projList.replaceChildren(...projects.map((p, i) => {
+    const rowOf = (p, i) => {
       const s = stats.get(p.name);
       const live = status.get(p.id);
       const sleeping = !live && asleep.has(p.id);
@@ -470,24 +569,23 @@ export function mountSidebar(el, on) {
         oncontextmenu: (e) => { e.preventDefault(); on.projectMenu?.(p); },
       },
         h('span', { class: 'sb-dot' + (live ? ' live' : sleeping ? ' asleep' : ''), title: dotTitle }),
-        h('span', { class: 'sb-name' }, p.name),
-        attn.get(p.id) === 'permission'
-          ? h('span', { class: 'sb-attn permission', title: t('sidebar.attnPermission') }, '✋')
-          : attn.get(p.id) === 'done' ? h('span', { class: 'sb-attn done', title: t('sidebar.attnDone') }, '●') : null,
-        h('span', { class: 'sb-boss', hidden: !isBossHere(s), title: t('sidebar.bossBusy') }, '★'),
-        h('button', {
-          class: 'sb-x', title: t('sidebar.removeFromList'),
-          onclick: (e) => { e.stopPropagation(); on.removeProject(p); },
-        }, '×'),
+        h('span', { class: 'sb-name' }, p.mcp ? p.mcp.label : p.name),
+        h('span', { class: 'sb-icons' },
+          attn.get(p.id) === 'permission'
+            ? h('span', { class: 'sb-attn permission', title: t('sidebar.attnPermission') }, '✋')
+            : attn.get(p.id) === 'done' ? h('span', { class: 'sb-attn done', title: t('sidebar.attnDone') }, '●') : null,
+          h('span', { class: 'sb-boss', hidden: !isBossHere(s), title: t('sidebar.bossBusy') }, '★'),
+          h('button', { class: 'sb-x sb-folder', title: t('sidebar.openFolderTitle', { dir: p.dir }), 'aria-label': t('sidebar.openFolder'), onclick: (e) => { e.stopPropagation(); on.openFolder?.(p); } }, '📁'),
+          p.mcp ? h('button', { class: 'sb-x', title: t('sidebar.connEdit'), onclick: (e) => { e.stopPropagation(); openConnectorForm(p); } }, '✎') : null,
+          h('button', {
+            class: 'sb-x sb-gear', title: t('sidebar.projectSettingsTitle'), 'aria-label': t('sidebar.projectSettings'),
+            onclick: (e) => { e.stopPropagation(); openProjectSettings(p); },
+          }, '⚙'),
+          h('button', {
+            class: 'sb-x', title: t('sidebar.removeFromList'),
+            onclick: (e) => { e.stopPropagation(); on.removeProject(p); },
+          }, '×')),
         h('div', { class: 'sb-meta' },
-          accountSelect(p),
-          managerSelect(p),
-          bossModelSelect(p),
-          agentModelSelect(p),
-          projectFilesToggle(p),
-          contextCapSelect(p),
-          savingsSelect(p),
-          backupSelect(p),
           claude ? onBackupTag(p) : null,
           loginBadge(p),
           engineTag(p),
@@ -498,8 +596,12 @@ export function mountSidebar(el, on) {
           onclick: (e) => { e.stopPropagation(); on.openUsage?.(p); },
         }, costText(briefs.get(p.id))),
       );
-    }));
-    if (!projects.length) projList.append(h('li', { class: 'sb-empty' }, t('sidebar.noProjects')));
+    };
+    // connectors (v3.43) are projects with an `mcp` field: they have their own panel
+    projList.replaceChildren(...projects.map((p, i) => (p.mcp ? null : rowOf(p, i))).filter(Boolean));
+    connList.replaceChildren(...projects.map((p, i) => (p.mcp ? rowOf(p, i) : null)).filter(Boolean));
+    if (!projects.some((p) => !p.mcp)) projList.append(h('li', { class: 'sb-empty' }, t('sidebar.noProjects')));
+    if (!projects.some((p) => p.mcp)) connList.append(h('li', { class: 'sb-empty' }, t('sidebar.connNone')));
   }
 
   function nameInput(initial, done) {
@@ -797,50 +899,7 @@ export function mountSidebar(el, on) {
     if (!editing) renderAccounts();
   });
 
-  // ---- Splitter (v3.18): the lower part's height in px, null = default share (style.css --accounts-h) ----
-  let splitH = null;
-  function applySplit() {
-    if (splitH == null) { el.style.removeProperty('--accounts-h'); return; }
-    const total = el.clientHeight;
-    // hidden (sidebar collapsed) or not laid out yet: keep the wanted height as it is
-    el.style.setProperty('--accounts-h', (total ? clampSplit(splitH, total, splitter.offsetHeight) : splitH) + 'px');
-  }
-  splitter.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    splitter.setPointerCapture(e.pointerId);
-    document.body.classList.add('dragging-split');
-    const grab = e.clientY - splitter.getBoundingClientRect().top; // keep the line under the pointer
-    const move = (ev) => {
-      const r = el.getBoundingClientRect();
-      splitH = clampSplit(r.bottom - el.clientTop - (ev.clientY - grab) - splitter.offsetHeight, el.clientHeight, splitter.offsetHeight);
-      applySplit();
-    };
-    const up = () => {
-      if (!document.body.classList.contains('dragging-split')) return;
-      splitter.removeEventListener('pointermove', move);
-      document.body.classList.remove('dragging-split');
-      if (splitH != null) on.setSplit?.(splitH);
-    };
-    splitter.addEventListener('pointermove', move);
-    splitter.addEventListener('pointerup', up, { once: true });
-    splitter.addEventListener('lostpointercapture', up, { once: true });
-  });
-  splitter.addEventListener('dblclick', () => {
-    splitH = null;
-    applySplit();
-    on.setSplit?.(null);
-  });
-  // the window got shorter or taller: the saved height is clamped again (the saved value itself is kept)
-  new ResizeObserver(() => applySplit()).observe(el);
-
   return {
-    /** Lower part's height in px (saved by the app), or null for the default share. */
-    setSplit(px) {
-      const n = Number(px);
-      splitH = px != null && Number.isFinite(n) && n > 0 ? n : null;
-      applySplit();
-    },
     /** Language setting, active language and languages: { setting: 'auto' | code, lang, languages: [{ code, name }] }. */
     setLanguage(li) {
       if (!li) return;
@@ -935,7 +994,7 @@ export function mountSidebar(el, on) {
     /** Today's token usage per project: [{ id, usd, total, pct }] (contract v3.13); the line opens the usage panel. */
     setTokenBriefs(list) {
       briefs = new Map((Array.isArray(list) ? list : []).filter((b) => b && b.id).map((b) => [b.id, b]));
-      for (const li of projList.querySelectorAll('.sb-proj')) {
+      for (const li of el.querySelectorAll('.sb-proj')) {
         const btn = li.querySelector('.sb-cost');
         if (!btn) continue;
         const b = briefs.get(li.dataset.id);
@@ -947,7 +1006,7 @@ export function mountSidebar(el, on) {
     /** OfficeData.projects: working / delivered / boss by project name. */
     setStats(list) {
       stats = new Map((list || []).map((s) => [s.name, s]));
-      for (const li of projList.querySelectorAll('.sb-proj')) {
+      for (const li of el.querySelectorAll('.sb-proj')) {
         const p = projects.find((x) => x.id === li.dataset.id);
         const s = p && stats.get(p.name);
         const t = statsText(s);

@@ -26,8 +26,15 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setBackup: (id, value) => ipcRenderer.invoke('projects:setBackup', id, value), // null (none) | 'auto' | account id (v3.17)
     setEngine: (id, value) => ipcRenderer.invoke('projects:setEngine', id, value), // 'agy' | 'commandcode' | null (Claude Code); { restarted: pty ids }, every tab fresh, or { restarted: [], refused } when a tab is working (v3.22, v3.25)
     setProjectFiles: (id, value) => ipcRenderer.invoke('projects:setProjectFiles', id, value), // true | false; { restarted, written, removed, refused } (v3.38)
+    openFolder: (id) => ipcRenderer.invoke('projects:openFolder', id),   // opens the project's folder in the file manager → boolean
     menu: (id) => ipcRenderer.invoke('projects:menu', id),   // right click: native menu (move the session to another computer, v3.4)
     onChange: listen('projects:changed'),
+  },
+  connectors: {   // contract v3.43
+    get: (id) => ipcRenderer.invoke('connectors:get', id),   // { label, url, dir, hasToken } | null (the token itself never leaves main)
+    pickDir: () => ipcRenderer.invoke('connectors:pickDir'),
+    add: (form) => ipcRenderer.invoke('connectors:add', form),   // { label, url, token?, dir? } → { ok, project } | { ok: false, error }
+    update: (id, form) => ipcRenderer.invoke('connectors:update', id, form),   // { label, url, token? (empty = keep), clearToken? } → { ok, restarted } | { ok: false, error }
   },
   tabs: {
     add: (projectId, mode) => ipcRenderer.invoke('tabs:add', projectId, mode),   // mode: 'same' | 'worktree' | undefined (menu)

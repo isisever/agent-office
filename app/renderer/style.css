@@ -6,7 +6,7 @@
   --status-text: #f3ead8;
   --term-h: 260px;
   --pad: 8px;
-  --sidebar-w: 236px;
+  --sidebar-w: 300px;
   --ok: #8cc26a;   /* logged in */
   --err: #e5615a;  /* login error */
   color-scheme: dark;
@@ -103,8 +103,11 @@ button { font: inherit; color: inherit; }
   flex-direction: column;
   background: var(--status-bg);
   border: 2px solid var(--accent);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
+#sidebar::-webkit-scrollbar { width: 6px; }
+#sidebar::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 3px; }
 body.sidebar-collapsed #sidebar { display: none; }
 
 .sb-head {
@@ -114,41 +117,21 @@ body.sidebar-collapsed #sidebar { display: none; }
   letter-spacing: 2px;
 }
 .sb-list { list-style: none; margin: 0; padding: 0; }
-#sb-projects { flex: 0 1 auto; overflow-y: auto; min-height: 0; }
-#sb-projects::-webkit-scrollbar, .sb-bottom::-webkit-scrollbar { width: 6px; }
-#sb-projects::-webkit-scrollbar-thumb, .sb-bottom::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 3px; }
 
-/* Split (v3.18): PROJECTS on top takes the rest; ACCOUNTS + settings below has a draggable height (sidebar.js sets
-   --accounts-h in px, default a share of the sidebar) and scrolls on its own. Minimums match src/layout.mjs. */
-.sb-top {
-  flex: 1 1 0;
-  min-height: 150px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.sb-split {
-  flex: 0 0 2px;
-  position: relative;
-  background: var(--accent);
-  cursor: row-resize;
-  z-index: 1;
-}
-/* a wider grab area than the 2 px line */
-.sb-split::before { content: ''; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; }
-.sb-split:hover, body.dragging-split .sb-split { box-shadow: 0 0 0 1px var(--accent); filter: brightness(1.25); }
-body.dragging-split, body.dragging-split * { cursor: row-resize !important; user-select: none; }
-.sb-bottom {
-  flex: 0 1 var(--accounts-h, 38%);
-  min-height: 96px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding-bottom: 8px;
-}
+/* Panels (v3.43): PROJECTS, ACCOUNTS, DEVICES, CONNECTIONS are collapsible; the whole sidebar scrolls. */
+.sb-panel { flex: 0 0 auto; border-top: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.sb-panel:first-child { border-top: 0; }
+.sb-panel > summary { cursor: pointer; list-style: none; user-select: none; }
+.sb-panel > summary::-webkit-details-marker { display: none; }
+.sb-panel > summary::before { content: '▸'; display: inline-block; width: 12px; margin-right: 2px; color: var(--accent); letter-spacing: 0; }
+.sb-panel[open] > summary::before { content: '▾'; }
+.sb-panel > summary:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.sb-panel > summary > span:first-of-type { flex: 1; }
+.sb-top, .sb-panel-body { padding-bottom: 6px; }
 
 .sb-proj {
   display: grid;
-  grid-template-columns: 10px 1fr auto auto;
+  grid-template-columns: 12px 1fr auto;
   grid-template-rows: auto auto;
   align-items: center;
   column-gap: 6px;
@@ -165,16 +148,16 @@ body.dragging-split, body.dragging-split * { cursor: row-resize !important; user
 .sb-proj.active .sb-name { font-weight: bold; }
 .sb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.2; }
 .sb-dot {
-  width: 8px; height: 8px;
+  width: 10px; height: 10px;
   background: var(--status-text);
   opacity: .25;
 }
 .sb-dot.live { background: var(--accent); opacity: 1; box-shadow: 0 0 4px var(--accent); }
 /* asleep (src/sleep.js): a hollow dot, starts again when the project is opened */
 .sb-dot.asleep { background: transparent; box-shadow: inset 0 0 0 1px var(--status-text); opacity: .6; }
-.sb-boss { color: var(--accent); }
+.sb-boss { color: var(--accent); font-size: 15px; }
 /* project waiting on you: approval (hand, blinking) or done (dot) */
-.sb-attn { flex-shrink: 0; font-size: 11px; line-height: 1; cursor: help; }
+.sb-attn { flex-shrink: 0; font-size: 15px; line-height: 1; cursor: help; }
 .sb-attn.permission { animation: sb-blink 1s steps(2, jump-none) infinite; }
 .sb-attn.done { color: #f2c14e; }
 .sb-meta {
@@ -222,6 +205,7 @@ body.dragging-split, body.dragging-split * { cursor: row-resize !important; user
   opacity: 0;
   cursor: pointer;
   line-height: 1;
+  font-size: 16px;
 }
 .sb-proj:hover .sb-x, .sb-acc:hover .sb-x { opacity: .6; }
 .sb-x:hover { opacity: 1 !important; color: var(--accent); }
@@ -276,8 +260,8 @@ body.dragging-split, body.dragging-split * { cursor: row-resize !important; user
 
 /* Account login state: square pixel dot + subline (email / state / button). */
 .sb-adot {
-  flex: 0 0 6px;
-  width: 6px; height: 6px;
+  flex: 0 0 8px;
+  width: 8px; height: 8px;
   background: var(--status-text);
   opacity: .3;
 }
@@ -382,7 +366,7 @@ body.dragging-split, body.dragging-split * { cursor: row-resize !important; user
 
 #office {
   flex: 1 1 0;
-  min-height: 55%;
+  min-height: 120px; /* the terminal may take up to 80% (app.js) */
   width: 100%;
   display: block;
   background: var(--status-bg);
@@ -405,7 +389,7 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
   box-sizing: content-box;
   flex: 0 0 var(--term-h);
   min-height: 120px;
-  max-height: 45%;
+  max-height: 80%;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -629,7 +613,7 @@ body.no-office #terminal { flex: 1 1 auto; max-height: none; border-top: 2px sol
   position: absolute;
   top: 2px;
   right: 2px;
-  bottom: calc(max(120px, min(var(--term-h), 45%)) + 9px); /* fallback without a JS anchor */
+  bottom: calc(max(120px, min(var(--term-h), 80%)) + 9px); /* fallback without a JS anchor */
   z-index: 5;
   width: min(360px, 46%);
   min-width: 240px;
@@ -937,11 +921,11 @@ label.sb-langrow { cursor: pointer; }
 .sb-agy-install { display: block; width: 100%; margin-top: 2px; font-size: 10px; opacity: .75; user-select: all; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Device link (v3.28, renderer/devices.js): Devices section and remote projects */
-.sb-devices, .sb-remote { margin-top: 8px; }
-.sb-devices > summary, .sb-remote > summary { cursor: pointer; list-style: none; }
-.sb-devices > summary::-webkit-details-marker, .sb-remote > summary::-webkit-details-marker { display: none; }
-.sb-devices > summary::before, .sb-remote > summary::before { content: '▸ '; }
-.sb-devices[open] > summary::before, .sb-remote[open] > summary::before { content: '▾ '; }
+.sb-remote { margin-top: 8px; }
+.sb-remote > summary { cursor: pointer; list-style: none; }
+.sb-remote > summary::-webkit-details-marker { display: none; }
+.sb-remote > summary::before { content: '▸ '; }
+.sb-remote[open] > summary::before { content: '▾ '; }
 .sb-dev, .sb-rproj { padding: 3px 6px; }
 .sb-dev-top, .sb-rproj-top { display: flex; align-items: center; gap: 6px; }
 .sb-dev .sb-adot { background: var(--status-text); opacity: .35; }
@@ -1002,3 +986,71 @@ label.sb-langrow { cursor: pointer; }
 .sb-na { display: none; flex-basis: 100%; font-size: 10px; line-height: 1.3; opacity: .7; white-space: normal; max-width: 220px; }
 .sb-na-wrap:hover .sb-na, .sb-na-wrap:focus-within .sb-na, .sb-na-wrap:focus .sb-na { display: block; }
 .sb-na-wrap:focus { outline: 1px dotted currentColor; outline-offset: 1px; }
+
+/* ---- Settings popups (sidebar.js, contract v3.42): per project (Save / Cancel) and global ---- */
+.sb-icons { display: inline-flex; align-items: center; gap: 6px; }
+.sb-gear { font-size: 17px; opacity: .55; }
+.sb-folder { font-size: 14px; opacity: .55; }
+.sb-head-row { display: flex; align-items: center; }
+.sb-gear-head { opacity: .7; color: var(--accent); }
+.sb-modal-backdrop {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .55);
+}
+.sb-modal {
+  box-sizing: border-box;
+  width: min(420px, 92vw);
+  max-height: 88vh;
+  display: flex; flex-direction: column;
+  background: var(--status-bg); color: var(--status-text);
+  border: 2px solid var(--accent);
+  font-size: 12px;
+}
+.sb-modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 12px; color: var(--accent); font-weight: bold; letter-spacing: 1px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.sb-modal-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-modal-head .sb-x { opacity: .7; font-size: 16px; }
+.sb-modal-body { padding: 8px 12px; overflow-y: auto; }
+.sb-modal-foot {
+  display: flex; justify-content: flex-end; gap: 8px; padding: 8px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.sb-modal .sb-acct-wrap { display: flex; justify-content: space-between; flex-wrap: wrap; padding: 5px 0; font-size: 12px; }
+.sb-modal .sb-acct { font-size: 12px; max-width: 220px; min-width: 150px; padding-top: 3px; padding-bottom: 3px; }
+.sb-modal .sb-na { display: block; max-width: none; }
+.sb-modal .sb-files { width: 14px; height: 14px; }
+.sb-modal-global .sb-botcolor { padding: 7px 0; font-size: 12px; opacity: 1; }
+.sb-modal-global .sb-lang, .sb-modal-global .sb-theme { max-width: 200px; font-size: 12px; }
+
+/* Devices section tidied (contract v3.42): list rows with a sub line, permissions in a popup, add/pair as one group */
+.sb-devices { margin-top: 0; padding: 0 0 8px; }
+.sb-devices > :not(summary) { margin-left: 10px; margin-right: 10px; }
+.sb-devices > .sb-note, .sb-devices > .sb-row { margin: 4px 0; }
+.sb-dev-self { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.sb-dev-self span { flex: 0 0 auto; opacity: .7; }
+.sb-devices .sb-list { margin: 4px 0; }
+.sb-dev { padding: 5px 6px; border-left: 3px solid transparent; }
+.sb-dev:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.sb-dev.online { border-left-color: #3fb950; }
+.sb-dev .sb-x { opacity: .6; }
+.sb-dev .sb-gear { font-size: 15px; }
+.sb-dev-sub { padding-left: 14px; font-size: 10px; opacity: .55; }
+.sb-dev-pair { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding: 8px; border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent); }
+.sb-dev-pair .sb-add { margin: 0; width: 100%; }
+.sb-dev-pair .sb-join, .sb-dev-pair .sb-pair { margin: 0; }
+.sb-devices .sb-machines { display: block; width: calc(100% - 12px); margin: 6px; padding: 4px 6px; opacity: .8; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.sb-devices .sb-machines:hover { opacity: 1; border-color: var(--accent); }
+
+/* Connector form (sidebar.js openConnectorForm, contract v3.43) */
+.sb-modal-form .sb-field { display: flex; flex-direction: column; gap: 3px; padding: 5px 0; }
+.sb-field-label { opacity: .75; letter-spacing: 1px; font-size: 11px; }
+.sb-field-hint { font-size: 10px; opacity: .55; line-height: 1.3; }
+.sb-field-row { display: flex; gap: 6px; }
+.sb-modal-form .sb-field input:not([type=checkbox]) { flex: 1; min-width: 0; font: inherit; font-size: 12px; background: transparent; color: var(--status-text); border: 1px solid var(--accent); padding: 4px 6px; }
+.sb-modal-form .sb-field input[readonly] { opacity: .7; }
+.sb-modal-form .sb-botcolor { padding: 4px 0; font-size: 12px; opacity: 1; }
+.sb-connections .sb-empty { padding: 4px 12px; }

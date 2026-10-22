@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const P = require('./src/projects.js');
+const C = require('./src/connectors.js');
 const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
 const N = require('./src/attention.js');
@@ -108,7 +109,7 @@ function saveState() {
 
 const send = (ch, ...args) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(ch, ...args); };
 const snapshot = () => ({
-  projects: state.projects,
+  projects: P.forRenderer(state.projects), // v3.43: no connection address here (connectors:get gives it to the edit form)
   activeId: state.activeId,
   status: state.projects.map((p) => ({
     id: p.id, isRunning: terms.has(p.id), isAsleep: asleep.has(p.id), attention: attention.get(p.id) || null,
@@ -265,6 +266,16 @@ function pluginDir() {
 // Its office directory (contract v3.9, src/office-directory.js) lives as long, in userData/directory/<tab>.json.
 const mcpDir = () => path.join(app.getPath('userData'), 'mcp');
 const directoryDir = () => path.join(app.getPath('userData'), 'directory');
+
+// --- connectors (contract v3.43, src/connectors.js): the token is kept per project id, encrypted with safeStorage
+// (a 0600 plain file only where the OS has no keyring); it reaches claude only inside the tab's 0600 MCP file.
+const connectorsRoot = () => path.join(app.getPath('userData'), 'connectors');
+const tokenDir = () => path.join(app.getPath('userData'), 'connector-tokens');
+const tokens = () => C.tokenStore(tokenDir(), safeStorage);
+const saveConnectorToken = (id, token) => tokens().save(id, token);
+const loadConnectorToken = (id) => tokens().load(id);
+const hasConnectorToken = (id) => tokens().has(id);
+const deleteConnectorToken = (id) => tokens().remove(id);
 function removeMcpFile(id) {
   officeSock?.remove(id);   // v3.35 its office_* token stops working with it
   try { fs.rmSync(path.join(mcpDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
@@ -901,7 +912,7 @@ function tokenFolders(p) {
     : path.join(A.accountOf(state, p).configDir || path.join(app.getPath('home'), '.claude'), 'projects');
   let names = [];
   try { names = fs.readdirSync(root); } catch {}
-  const dirs = [p.dir, ...P.tabsOf(p).map((t) => t.dir).filter(Boolean)];
+  const dirs = [p.dir, ...P.tabsOf(p).filter((t) => !t.shell).map((t) => t.dir).filter(Boolean)];
   const others = state.projects.filter((x) => x.id !== p.id).map((x) => x.dir);
   return TU.projectFolders(names, dirs, others, engine === 'commandcode' ? TU.ccSlugOf : undefined).map((n) => path.join(root, n));
 }
@@ -1001,6 +1012,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const r = P.resolvePty(state, id);
   if (!r || !win || !isLoaded) return broadcast();
   asleep.delete(id);
+  if (r.tab?.shell) return startShell(id, r); // a plain terminal tab (contract v3.42): the user's shell, no engine
   if (isAgy(r.project)) return startAgy(id, r, { resume, prompt });
   if (isCmd(r.project)) return startCommandCode(id, r, { resume, prompt });
   if (isOc(r.project)) return startOpenCode(id, r, { resume, prompt });
@@ -1023,7 +1035,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // --mcp-config <file>; see shared-config.js) and the office directory naming them (contract v3.9)
   // v3.35 one boss: a manager-mode boss tab (the main tab) gets the agent-office MCP server; its token only in that file
   const bossMcp = officeServerFor(id, project);
-  const prepared = sharedConfig(account, project, cwd, usageKey(id), bossMcp);
+  const connMcp = C.serverFor(project, loadConnectorToken(project.id)); // a connector's server joins this tab's MCP file (v3.43)
+  const prepared = sharedConfig(account, project, cwd, usageKey(id), bossMcp || connMcp ? { ...bossMcp, ...connMcp } : null);
   const shared = SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
   const print = mcpFingerprintOf(account, project, cwd);
@@ -1299,6 +1312,40 @@ function startCommandCode(id, { project, tab, dir: cwd }, { resume = false, prom
 // launch line drops what rc files set), and an env from an allowlist (engine.js ocEnv). resume: --continue, only for
 // a tab that continues (main tab, worktree tab); with no session in the folder it simply starts a new one, so no history check. prompt only when resuming.
 // The app watches it one way like agy (src/agy-watch.js, engine 'opencode'), with no transcript. It needs no login: its free models work without one.
+/**
+ * A plain terminal tab (contract v3.42): the user's login shell in the tab's folder. No claude, no plugin, no
+ * office session: the env is the user's own minus the variables of Claude Code and of this app; nothing observes it.
+ */
+function startShell(id, { dir: cwd }) {
+  const { cols, rows } = sizes.get(id) || lastSize;
+  const env = A.shellEnv(process.env);
+  let t;
+  try {
+    t = pty.spawn(shell(), IS_WIN ? [] : ['-l', '-i'], {
+      name: 'xterm-256color',
+      cols, rows,
+      cwd: isDir(cwd) ? cwd : app.getPath('home'),
+      env,
+    });
+  } catch (e) {
+    console.error('pty başlatılamadı:', e.message);
+    send('pty:exit', id, -1);
+    return broadcast();
+  }
+  terms.set(id, t);
+  activity.set(id, { at: Date.now(), draft: false });
+  attachPty(terms, id, t, {
+    onData: (d) => send('pty:data', id, d),
+    onExit: ({ exitCode }) => {   // killed on purpose: silent (the id guard)
+      terms.delete(id);
+      activity.delete(id);
+      send('pty:exit', id, exitCode);
+      broadcast();
+    },
+  });
+  broadcast();
+}
+
 function startOpenCode(id, { project, tab, dir: cwd }, { resume = false, prompt = '' } = {}) {
   removeMcpFile(id); // no MCP or office directory file of an earlier Claude Code start stays behind for this tab
   const { cols, rows } = sizes.get(id) || lastSize;
@@ -1361,9 +1408,9 @@ function startMissing() {
     setMarks(R.clearInterrupted(marks(), Object.keys(at)));
   }
   for (const p of state.projects) {
-    for (const id of P.ptyIdsOf(p)) {
+    for (const id of P.allPtyIdsOf(p)) {
       if (terms.has(id) || asleep.has(id)) continue;
-      if (sleepMinutes()) asleep.set(id, { resume: true });
+      if (sleepMinutes() && !P.resolvePty(state, id)?.tab?.shell) asleep.set(id, { resume: true }); // a shell never sleeps
       else startPty(id, { resume: state.resume !== false });
     }
   }
@@ -1705,7 +1752,7 @@ function handoffDeps() {
         if (sid && !sessionIds.includes(sid)) sessionIds.push(sid);
       }
       return {
-        name: p.name, dir: p.dir, engine: P.engineOf(p), root: PD.claudeRoot(configDir, home), sessionIds,
+        name: p.name, dir: p.dir, engine: P.engineOf(p), connection: Boolean(p.mcp), root: PD.claudeRoot(configDir, home), sessionIds,
         busy: ids.some((id) => {
           const t = terms.get(id);
           if (!t) return false;
@@ -1721,7 +1768,8 @@ function handoffDeps() {
       handoffLocks.delete(projectId);
       const p = P.findProject(state, projectId);
       if (!p) return;
-      for (const pid of P.ptyIdsOf(p)) { killPty(pid); asleep.delete(pid); sizes.delete(pid); }
+      for (const pid of P.allPtyIdsOf(p)) { killPty(pid); asleep.delete(pid); sizes.delete(pid); }
+      if (p.mcp) deleteConnectorToken(p.id); // never happens (a connection is refused, v3.43), but a token never outlives its project
       commit(P.removeProject(state, projectId));
     },
     target(dir) {
@@ -1820,7 +1868,7 @@ function sleepIdle() {
   let slept = false;
   for (const [id, t] of [...terms]) {
     const r = P.resolvePty(state, id);
-    if (!r) continue;
+    if (!r || r.tab?.shell) continue; // a shell has no idle to detect: it never sleeps
     const { configDir } = A.accountOf(state, r.project);
     const a = activity.get(id) || { at: now, draft: false };
     const base = { now, idleMs: minutes * 60000, lastActivityAt: a.at, hasDraft: a.draft, isActive: r.project.id === state.activeId };
@@ -1878,7 +1926,7 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
   try {
     PD.moveProjectData({
       from: from.configDir || null, to: to.configDir || null, home,
-      dirs: [p.dir, ...P.tabsOf(p).map((t) => t.dir).filter(Boolean)],
+      dirs: [p.dir, ...P.tabsOf(p).filter((t) => !t.shell).map((t) => t.dir).filter(Boolean)],
       otherDirs: state.projects.filter((x) => x.id !== p.id).map((x) => x.dir),
     });
   } catch (e) { console.error('proje verisi taşınamadı:', e.message); }
@@ -2079,11 +2127,61 @@ ipcMain.handle('projects:add', async () => {
   const dir = await pickFolder();
   return dir ? addDir(dir) : null;
 });
+// --- connectors (v3.43): add, edit (address, name, token; the folder and so the history stay), pick a folder
+ipcMain.handle('connectors:get', (_e, id) => {
+  const p = P.findProject(state, id);
+  return p?.mcp ? { label: p.mcp.label, url: p.mcp.url, dir: p.dir, hasToken: hasConnectorToken(p.id) } : null;
+});
+ipcMain.handle('connectors:pickDir', () => pickFolder());
+ipcMain.handle('connectors:add', (_e, f) => {
+  const mcp = { label: String(f?.label || '').trim(), url: String(f?.url || '').trim() };
+  const bad = C.validate(mcp);
+  if (bad) return { ok: false, error: bad };
+  const url = C.cleanUrl(mcp.url);
+  let dir = typeof f?.dir === 'string' ? f.dir.trim() : '';
+  if (dir && !isDir(dir)) return { ok: false, error: 'dir' };
+  if (!dir) {
+    dir = C.defaultDir(connectorsRoot(), mcp.label, (d) => Boolean(P.findByDir(state, d)));
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { return { ok: false, error: 'dir' }; }
+  }
+  const r = P.addConnector(state, dir, { label: mcp.label, url });
+  if (!r) return { ok: false, error: 'dir-used' };
+  if (!saveConnectorToken(r.project.id, C.cleanToken(f?.token))) return { ok: false, error: 'token' }; // nothing added
+  commit(r.state);
+  startPty(r.project.id);
+  return { ok: true, project: P.forRenderer([r.project])[0] };
+});
+ipcMain.handle('connectors:update', (_e, id, f) => {
+  const p = P.findProject(state, id);
+  if (!p?.mcp) return { ok: false, error: 'unknown' };
+  const mcp = { label: String(f?.label || '').trim(), url: String(f?.url || '').trim() };
+  const bad = C.validate(mcp);
+  if (bad) return { ok: false, error: bad };
+  const token = C.cleanToken(f?.token);
+  const clear = f?.clearToken === true;
+  const next = P.setConnector(state, id, { label: mcp.label, url: C.cleanUrl(mcp.url) });
+  if (next === state && !token && !clear) return { ok: true, restarted: [] };
+  // the token first: when it cannot be saved nothing changes (the old token and address stay)
+  if ((token || clear) && !saveConnectorToken(id, token)) return { ok: false, error: 'token' };
+  if (next !== state) commit(next);
+  const now = P.findProject(state, id);
+  // sessions started afterwards use the new address and token; idle ones restart in their conversation now
+  return { ok: true, restarted: restartIdle(now) };
+});
+
+// Opens the project's (or connection's) folder in the file manager; only a folder of a listed project.
+ipcMain.handle('projects:openFolder', async (_e, id) => {
+  const p = P.findProject(state, id);
+  if (!p || !isDir(p.dir)) return false;
+  return (await eShell.openPath(p.dir)) === ''; // '' = opened, else an error text
+});
+
 // Removing a project closes all its tabs; worktree folders are left untouched (like the project folder).
 ipcMain.handle('projects:remove', (_e, id) => {
   const p = P.findProject(state, id);
   if (p && P.projectFilesOf(p)) syncProjectFiles(p, { gone: true }); // our files leave with the project (v3.38)
-  for (const pid of p ? P.ptyIdsOf(p) : [id]) {
+  if (p?.mcp) deleteConnectorToken(p.id); // the connector's folder (session history) is left, like a project's
+  for (const pid of p ? P.allPtyIdsOf(p) : [id]) {
     killPty(pid);
     asleep.delete(pid);
     sizes.delete(pid);
@@ -2165,6 +2263,7 @@ ipcMain.handle('projects:setSavings', (_e, id, value) => {
 // Returns the restarted pty ids, plus refused: the blocker or 'cancelled' when nothing changed for that reason.
 ipcMain.handle('projects:setEngine', async (_e, id, value) => {
   const p = P.findProject(state, id);
+  if (P.engineRefused(p, value)) return { restarted: [], refused: 'connector' }; // v3.43: a connection runs only Claude Code
   if (!p || P.setProjectEngine(state, id, value) === state) return { restarted: [] };
   const running = P.ptyIdsOf(p).filter((pid) => terms.has(pid));
   if (P.engineOf(p) === 'claude') {
@@ -2292,15 +2391,34 @@ async function gitTop(dir) {
   return r.ok && r.stdout.trim() ? r.stdout.trim() : null;
 }
 
-// "+" menu: same folder or new worktree (asked only in a git repo). null if nothing is chosen.
-function pickTabMode() {
+// "+" menu: a new Claude Code tab in the same folder, a new worktree (git repos only), or a plain terminal (contract
+// v3.42) in the folder of any project or one picked from disk. → 'same' | 'worktree' | { shell: dir } | null (cancelled)
+function pickTabMode({ git: inRepo = false } = {}) {
   return new Promise((resolve) => {
-    const menu = Menu.buildFromTemplate([
-      { label: T('main.tabSame'), click: () => resolve('same') },
-      { label: T('main.tabWorktree'), click: () => resolve('worktree') },
-    ]);
-    // the click arrives shortly after the menu closes; if it doesn't, the user cancelled
-    menu.popup({ window: win, callback: () => setTimeout(() => resolve(null), 300) });
+    let done = false;
+    let folderPicking = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    /** @type {Electron.MenuItemConstructorOptions[]} */
+    const items = [{ label: T('main.tabSame'), click: () => finish('same') }];
+    if (inRepo) items.push({ label: T('main.tabWorktree'), click: () => finish('worktree') });
+    items.push({ type: 'separator' }, {
+      label: T('main.tabShell'),
+      submenu: [
+        ...state.projects.map((p) => ({ label: p.name, sublabel: p.dir, click: () => finish({ shell: p.dir }) })),
+        { type: 'separator' },
+        {
+          label: T('main.tabShellFolder'),
+          click: async () => {
+            folderPicking = true;
+            const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
+            finish(!r.canceled && r.filePaths[0] ? { shell: r.filePaths[0] } : null);
+          },
+        },
+      ],
+    });
+    const menu = Menu.buildFromTemplate(items);
+    // a click arrives shortly after the menu closes; a folder dialog may take long, so it settles `done` itself
+    menu.popup({ window: win, callback: () => setTimeout(() => { if (!folderPicking) finish(null); }, 300) });
   });
 }
 
@@ -2344,9 +2462,10 @@ ipcMain.handle('tabs:add', async (_e, projectId, mode) => {
   const p = P.findProject(state, projectId);
   if (!p || !win) return null;
   let m = mode === 'same' || mode === 'worktree' ? mode : null;
-  if (!m) m = (await gitTop(p.dir)) ? await pickTabMode() : 'same';
+  if (!m) m = await pickTabMode({ git: Boolean(await gitTop(p.dir)) }); // always asks since v3.42: the menu has the terminal entry
   if (m === 'worktree') return addWorktreeTab(p);
   const now = P.findProject(state, projectId);
+  if (m && typeof m === 'object' && m.shell && now) return openTab(now.id, { n: P.nextTabNumber(now), dir: m.shell, shell: true });
   if (m === 'same' && now) return openTab(now.id, { n: P.nextTabNumber(now) });
   return null;
 });
@@ -2629,6 +2748,7 @@ function handoffMenu(p) {
   }
   const devices = linkHost?.devices() || [];
   if (!devices.length) return [];
+  if (p.mcp) return []; // a connection stays on this machine (v3.43): its token never crosses
   const claude = P.engineOf(p) === 'claude';
   return [{
     label: T('main.handoffTo'), enabled: claude, ...(claude ? {} : { toolTip: T('main.handoffClaudeOnly'), sublabel: T('main.handoffClaudeOnly') }),

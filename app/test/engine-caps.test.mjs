@@ -104,7 +104,7 @@ test('OpenCode in the sidebar (contract v3.36, v3.40): an Account entry, a read-
   const sb = readFileSync(new URL('../renderer/sidebar.js', import.meta.url), 'utf8')
   assert.match(sb, /opencode: '__engine:opencode'/)
   assert.match(sb, /const engineOfRow = \(p\) => \([^\n]*p\.engine === 'opencode'/)
-  assert.match(sb, /if \(ocShown\(\) \|\| engine === 'opencode'\) \{[^\n]*\n\s*sel\.append\(h\('option', \{ value: ENGINE_OPT\.opencode/)
+  assert.match(sb, /if \(ocShown\(\) \|\| engine === 'opencode' \|\| connOnly\) \{[^\n]*\n\s*sel\.append\(engineOpt\(ENGINE_OPT\.opencode/) // v3.43: shown disabled for a connection
   assert.equal(sb.includes('function engineSelect'), false) // the Engine select is gone since v3.36
   const badge = sb.slice(sb.indexOf('function loginBadge'), sb.indexOf('function renderProjects'))
   assert.match(badge, /engine === 'opencode'\) \{[^\n]*\n\s*if \(ocAuth\?\.state !== 'missing'\) return null;/)
