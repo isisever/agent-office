@@ -4294,7 +4294,7 @@ test('bağlantı: renderer anlık görüntüsünde adres yok; adres yalnız conn
   assert.equal(out.find((p) => p.id === 'x'), st.projects.find((p) => p.id === 'x')); // other projects untouched
   assert.ok(st.projects.find((p) => p.mcp).mcp.url); // state itself keeps it
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
-  assert.match(src, /const snapshot = \(\) => \(\{\n  projects: P\.forRenderer\(state\.projects\)/);
+  assert.match(src, /const snapshot = \(\) => \(\{\n {2}projects: P\.forRenderer\(state\.projects\)/);
   assert.match(src, /ipcMain\.handle\('connectors:get'[\s\S]{0,200}url: p\.mcp\.url/);
 });
 test('bağlantı: devredilmez (v3.29 nedeni connection, en+tr); normalizeState motoru düşürür (v3.43)', () => {
