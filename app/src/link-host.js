@@ -203,7 +203,7 @@ function setupLink(d) {
     const info = d.handoff.describe(projectId);
     if (!info) return { ok: false, reason: 'unknown-project' };
     const isGit = Boolean(H.gitInfo(info.dir));
-    const why = H.refusal({ connection: info.connection, engine: info.engine, busy: info.busy, git: isGit, subfolder: isGit && !H.isRepoRoot(info.dir), online: l.conns.has(pub) });
+    const why = H.refusal({ engine: info.engine, busy: info.busy, git: isGit, subfolder: isGit && !H.isRepoRoot(info.dir), online: l.conns.has(pub) });
     if (why) { hlog({ dir: 'out', device: dev.name, project: info.name, outcome: `refused:${why}` }); return { ok: false, reason: why }; }
     // no prompts (typed or remote) reach the project's tabs from the snapshot until the outcome is known
     d.handoff.lock(projectId, true);

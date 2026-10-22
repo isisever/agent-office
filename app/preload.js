@@ -30,11 +30,10 @@ contextBridge.exposeInMainWorld('agentOffice', {
     menu: (id) => ipcRenderer.invoke('projects:menu', id),   // right click: native menu (move the session to another computer, v3.4)
     onChange: listen('projects:changed'),
   },
-  connectors: {   // contract v3.43
-    get: (id) => ipcRenderer.invoke('connectors:get', id),   // { label, url, dir, hasToken } | null (the token itself never leaves main)
-    pickDir: () => ipcRenderer.invoke('connectors:pickDir'),
-    add: (form) => ipcRenderer.invoke('connectors:add', form),   // { label, url, token?, dir? } → { ok, project } | { ok: false, error }
-    update: (id, form) => ipcRenderer.invoke('connectors:update', id, form),   // { label, url, token? (empty = keep), clearToken? } → { ok, restarted } | { ok: false, error }
+  mcp: {   // contract v3.44: one MCP list; the token goes in, never out
+    list: (projectId) => ipcRenderer.invoke('mcp:list', projectId),   // { servers: [{ name, source, type, host, readOnly, id?, scope?, hasToken?, approved?, shadowed? }] }
+    add: (form) => ipcRenderer.invoke('mcp:add', form),   // { name, url, type: 'http' | 'sse', token?, scope: 'all' | projectId } → { ok, restarted } | { ok: false, error }
+    remove: (id) => ipcRenderer.invoke('mcp:remove', id),   // → { ok, restarted } | { ok: false, error: 'unknown' }
   },
   tabs: {
     add: (projectId, mode) => ipcRenderer.invoke('tabs:add', projectId, mode),   // mode: 'same' | 'worktree' | undefined (menu)

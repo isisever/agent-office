@@ -94,10 +94,11 @@ if (q.has('tabs') && projects[0]) {
 const tabIds = (p) => [p.id, ...(p.tabs || []).map((t) => `${p.id}:${t.n}`)];
 const running = new Map(projects.flatMap((p, i) => tabIds(p).map((id) => [id, i !== 2])));
 let activeId = projects[0]?.id ?? null;
+/** @type {any[]} */
+const mockMcp = [];
 
 const snapshot = () => ({
-  // like main's P.forRenderer (v3.43): a connection's address only through connectors.get
-  projects: projects.map((p) => (p.mcp ? { ...p, mcp: { label: p.mcp.label, hasUrl: true } } : { ...p })),
+  projects: projects.map((p) => ({ ...p })),
   activeId,
   status: projects.map((p, i) => ({
     id: p.id, isRunning: !!running.get(p.id), attention: q.has('asking') ? [null, 'permission', 'done'][i] ?? null : null,
@@ -210,35 +211,28 @@ window.agentOffice = {
     },
     setEngine: async (id, value) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === id));
-      if (p?.mcp && value) return { restarted: [], refused: 'connector' }; // v3.43: a connection runs only Claude Code
       if (p) { if (value === 'agy' || value === 'commandcode' || value === 'opencode') p.engine = value; else delete p.engine; changed(); }
       return { restarted: [] };
     },
     onChange: ev.projects.add,
   },
-  // contract v3.43: connectors are projects with an `mcp` field (the token is never kept in the mock)
-  connectors: {
-    get: async (id) => { const p = projects.find((x) => x.id === id); return p?.mcp ? { ...p.mcp, dir: p.dir, hasToken: true } : null; },
-    pickDir: async () => '/Users/me/Connectors/picked',
+  // contract v3.44: one MCP list per project (names, source, type, host only; the token is never kept in the mock)
+  mcp: {
+    list: async () => ({ servers: [
+      { name: 'github', source: 'user', type: 'http', host: 'api.githubcopilot.com', readOnly: true },
+      { name: 'files', source: 'project', type: 'stdio', host: '', readOnly: true, approved: true },
+      ...mockMcp.map((s) => ({ ...s, source: 'app', readOnly: false, hasToken: true })),
+    ] }),
     add: async (f) => {
-      if (!String(f?.label || '').trim()) return { ok: false, error: 'name' };
+      if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
       if (!/^https?:\/\//.test(String(f?.url || ''))) return { ok: false, error: 'url' };
-      const p = { id: rid(), dir: f.dir || `/Users/me/Library/Agent Office/connectors/${f.label.trim().toLowerCase()}`, name: f.label.trim().toLowerCase(), accountId: 'default', mcp: { label: f.label.trim(), url: f.url } };
-      projects.push(p);
-      activeId = p.id;
-      boot(p.id);
-      return { ok: true, project: { ...p, mcp: { label: p.mcp.label, hasUrl: true } } };
-    },
-    update: async (id, f) => {
-      const p = projects.find((x) => x.id === id);
-      if (!p?.mcp) return { ok: false, error: 'unknown' };
-      if (!String(f?.label || '').trim()) return { ok: false, error: 'name' };
-      if (!/^https?:\/\//.test(String(f?.url || ''))) return { ok: false, error: 'url' };
-      p.mcp = { label: f.label.trim(), url: f.url };
-      changed();
+      let host = ''; try { host = new URL(f.url).host; } catch {}
+      mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: f.type === 'sse' ? 'sse' : 'http', host, scope: f.scope === 'all' ? 'all' : 'project' });
       return { ok: true, restarted: [] };
     },
+    remove: async (id) => { const i = mockMcp.findIndex((s) => s.id === id); if (i >= 0) mockMcp.splice(i, 1); return { ok: i >= 0, restarted: [] }; },
   },
+
   tabs: {
     add: async (projectId, mode) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === projectId));

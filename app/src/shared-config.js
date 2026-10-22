@@ -496,8 +496,11 @@ const mcpFingerprint = (plan) =>
  * project's servers by the names this session sees; the current project's own ones under `current`)
  * extra (contract v3.35): servers the app adds itself (the boss tab's `agent-office` server), after mcpPlan: never part
  * of the MCP fingerprint (mcpFingerprint reads mcpPlan only) and never in the office directory.
+ * app (contract v3.44, src/mcp-servers.js): servers added in Agent Office. One is added only when no server of its
+ * name reaches the session already (the account's user and local servers, the project's .mcp.json, Default's shared
+ * ones, other projects', `extra`): what Claude Code's own files define wins. → also appShadowed (only when some): the names left out.
  */
-function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, platform = process.platform, extra = null }) {
+function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, platform = process.platform, extra = null, app = null }) {
   const configDir = account?.configDir;
   const claudeDir = path.join(home, '.claude');
   const isDefault = !configDir || samePath(configDir, claudeDir);
@@ -507,8 +510,13 @@ function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, 
     syncLinks(configDir, on ? linkPlan(listClaudeDir(claudeDir), claudeDir) : [], { platform });
     if (on) pluginDirs = sharedPluginDirs({ claudeDir, configDir, stageRoot, platform });
   }
-  const { servers: planned, mcpNames } = mcpPlan({ account, home, cwd, office });
+  const { servers: planned, mcpNames, own } = mcpPlan({ account, home, cwd, office });
   const servers = { ...planned, ...(extra || {}) };
+  const taken = new Set([...Object.keys(servers), ...keysOf(own.user), ...keysOf(own.local), ...keysOf(own.project)]);
+  const appShadowed = [];
+  for (const [name, server] of Object.entries(isObj(app) ? app : {})) {
+    if (taken.has(name)) appShadowed.push(name); else { servers[name] = server; taken.add(name); }
+  }
   let mcpConfig = null;
   try {
     if (Object.keys(servers).length) {
@@ -519,7 +527,7 @@ function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, 
       mcpConfig = mcpFile;
     } else fs.rmSync(mcpFile, { force: true });
   } catch {}
-  return { pluginDirs, mcpConfig, mcpNames };
+  return { pluginDirs, mcpConfig, mcpNames, ...(appShadowed.length ? { appShadowed } : {}) };
 }
 
 // ---- the per-tab MCP files hold tokens: each lives only while its tab's claude runs

@@ -307,12 +307,11 @@ function writeSession(pack, o) {
 /**
  * Why this project cannot be handed off now, or null. Claude Code projects only, the top folder of a git repository
  * (a subfolder of a larger repository is refused), no busy tab, the device online.
- * A connection (contract v3.43, a project with `mcp`) is refused: its token and address stay on this machine.
- * @param {{ connection?: boolean, engine?: string, busy?: boolean, git?: boolean, subfolder?: boolean, online?: boolean }} o
+ * MCP servers added in Agent Office (v3.44) never refuse it: their tokens stay here (names may be mentioned).
+ * @param {{ engine?: string, busy?: boolean, git?: boolean, subfolder?: boolean, online?: boolean }} o
  */
 function refusal(o) {
   if (o.online === false) return 'offline';
-  if (o.connection) return 'connection';
   if (o.engine !== 'claude') return 'engine';
   if (!o.git) return 'not-git';
   if (o.subfolder) return 'subfolder';
