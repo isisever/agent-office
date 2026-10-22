@@ -3817,24 +3817,114 @@ test('OpenCode proje dosyaları (v3.38, v3.40): hiçbir dosya yazılmaz', () => 
   assert.deepEqual(PF.desiredFiles({ engine: 'opencode', enabled: true, manager: true, agentModel: 'opus' }), []);
 });
 
-test('OpenCode girişi (v3.40): giriş yok normal durum; yalnız sağlayıcı adı ve türü okunur, anahtar asla', () => {
+test('OpenCode girişi (v3.40): giriş yok normal durum; yalnız entegrasyon adı ve yöntemi okunur, anahtar asla', () => {
   const OA = require('../src/oc-auth.js');
-  assert.deepEqual(OA.ocAuthState({ path: null }, '{"openai":{"type":"oauth"}}'), { installed: false, state: 'missing' });
-  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, ''), { installed: true, state: 'out' });
-  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, '{}'), { installed: true, state: 'out' });
-  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, 'broken{'), { installed: true, state: 'out' });
+  assert.deepEqual(OA.ocAuthState({ path: null }, '[{"id":"opencode","connections":[{}]}]'), { installed: false, state: 'missing' });
+  // the CLI's own list (`opencode auth list --format json`, rc noise allowed around it): the console login lives in the db
+  const list = 'rc banner\nopencode v2.1.2\n[\n { "id": "opencode", "name": "OpenCode Console", "connections": [ { "type": "credential", "id": "cred_1", "label": "Default", "method": "oauth" } ] },\n { "id": "openai", "connections": [] }\n]\n';
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode', major: 2, raw: list }, list), {
+    installed: true, state: 'in', major: 2, providers: [{ id: 'opencode', type: 'oauth' }],
+  });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, '[ { "id": "opencode", "connections": [] } ]'), { installed: true, state: 'out', major: null });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, 'not json at all'), { installed: true, state: 'out', major: null });
+  // legacy: an older CLI without `--format json`, credentials in auth.json
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, 'no array here', '{"openai":{"type":"oauth"}}'), { installed: true, state: 'in', major: null, providers: [{ id: 'openai', type: 'oauth' }] });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, '', '{}'), { installed: true, state: 'out', major: null });
+  assert.deepEqual(OA.ocAuthState({ path: '/b/opencode' }, 'broken{'), { installed: true, state: 'out', major: null });
   const secret = 'sk-SECRET-VALUE';
-  const st = OA.ocAuthState({ path: '/b/opencode' }, JSON.stringify({ openai: { type: 'oauth', access: secret, refresh: secret }, google: { type: 'api', key: secret }, 'bad id!': { type: 'api' }, odd: { type: 'x' }, str: 'text' }));
-  assert.deepEqual(st, { installed: true, state: 'in', providers: [{ id: 'openai', type: 'oauth' }, { id: 'google', type: 'api' }, { id: 'odd', type: 'other' }] });
+  const st = OA.ocAuthState({ path: '/b/opencode', major: 1 }, JSON.stringify([{
+    id: 'openai', name: 'OpenAI', connections: [{ method: 'api', apiKey: secret, refresh: secret }, 'bad'],
+  }]), JSON.stringify({ google: { type: 'api', key: secret }, 'bad id!': { type: 'api' } }));
+  assert.deepEqual(st, { installed: true, state: 'in', major: 1, providers: [{ id: 'openai', type: 'api' }] });
   assert.equal(JSON.stringify(st).includes(secret), false);
-  assert.deepEqual(OA.parseOcCredentials('[1,2]'), []);
+  assert.deepEqual(OA.parseOcCredentials('rc noise\n[1,2]\n'), []);
   assert.equal(OA.parseOcStatus('rc noise\n/opt/homebrew/bin/opencode\n').path, '/opt/homebrew/bin/opencode');
   assert.equal(OA.parseOcStatus('opencode: aliased to x').path, null);
+  assert.equal(OA.parseOcVersion('1.19.3'), 1);
+  assert.equal(OA.parseOcVersion('v2.0.0'), 2);
+  assert.equal(OA.parseOcVersion('opencode v2.1.2'), 2);
+  assert.equal(OA.parseOcVersion('opencode 1.2.3 (build)'), 1); // any wording of a version line is caught
+  assert.equal(OA.parseOcVersion('rc noise\n2.1.0\n'), 2);
+  assert.equal(OA.parseOcVersion('rc noise\noptFor 1.0\n'), null); // rc noise without an opencode line: unknown
+  assert.equal(OA.parseOcStatus('rc noise\n1.19.3\n').major, 1);
+  assert.equal(OA.parseOcStatus('no version here\n').major, null);
   assert.equal(OA.ocAuthFile('/h'), require('node:path').join('/h', '.local', 'share', 'opencode', 'auth.json'));
   assert.equal(OA.ocAuthFile('/h', '/data'), require('node:path').join('/data', 'opencode', 'auth.json'));
   assert.equal(OA.ocAuthFile('/h', 'relative'), require('node:path').join('/h', '.local', 'share', 'opencode', 'auth.json'));
-  assert.deepEqual(OA.OC_LOGIN_ARGS, ['providers', 'login']);
-  assert.deepEqual(OA.OC_LOGOUT_ARGS, ['providers', 'logout']);
+  assert.deepEqual(OA.OC_LOGIN_ARGS, ['console', 'login']);
+  assert.deepEqual(OA.OC_LOGOUT_ARGS, ['console', 'logout']);
+  assert.deepEqual(OA.OC_V2_LOGIN_ARGS, ['auth', 'login', 'opencode']);
+  assert.deepEqual(OA.OC_V2_LOGOUT_ARGS, ['auth', 'logout', 'opencode']);
+  assert.deepEqual(OA.ocLoginArgs('console', null), OA.OC_LOGIN_ARGS);      // v1 / unknown: the chooser ways
+  assert.deepEqual(OA.ocLoginArgs('auth', null), OA.OC_PROVIDER_LOGIN_ARGS);
+  assert.deepEqual(OA.ocLoginArgs('logout', null), OA.OC_LOGOUT_ARGS);
+  assert.deepEqual(OA.ocLoginArgs('console', 2), OA.OC_V2_LOGIN_ARGS);      // v2.x: one login, named provider
+  assert.deepEqual(OA.ocLoginArgs('auth', 2), OA.OC_V2_LOGIN_ARGS);
+  assert.deepEqual(OA.ocLoginArgs('logout', 2), OA.OC_V2_LOGOUT_ARGS);
+});
+
+test('OpenCode durum komutu (v3.41): rc-unset, Windows windowsCommand + ocEnv, işaretli ayrıştırma, mod listesi, çıkış seçimi', () => {
+  const OA = require('../src/oc-auth.js');
+  const EN = require('../src/engine.js');
+  const OS = require('../src/platform.js');
+  const cp = require('node:child_process'), fs = require('node:fs'), path = require('node:path'), os = require('node:os');
+  // D2: the same prelude as OC_COMMAND, before the first opencode call
+  const cmd = OA.OC_STATUS_COMMAND;
+  assert.ok(EN.OC_COMMAND.startsWith(EN.UNSET_OFFICE_CLAUDE_ENV));
+  assert.ok(cmd.indexOf(EN.UNSET_OFFICE_CLAUDE_ENV) !== -1 && cmd.indexOf(EN.UNSET_OFFICE_CLAUDE_ENV) < cmd.indexOf('opencode --version'));
+  assert.equal(cmd.slice(0, cmd.indexOf(EN.UNSET_OFFICE_CLAUDE_ENV)).includes('opencode '), false);
+  if (process.platform !== 'win32') {
+    // run it for real with a fake opencode that prints its env: the rc-set Claude/office variables never reach it
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-oc-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'opencode'), '#!/bin/sh\nif [ "$1" = "--version" ]; then printf "\\033[?1034h1.19.3\\n"; else env; echo \'[{"id":"opencode","connections":[{"method":"oauth"}]}]\'; echo "[done]"; fi\n', { mode: 0o755 });
+      const out = cp.execFileSync('/bin/sh', ['-c', 'printf "\\033[?1034h[oh-my-zsh] banner\\n"; export ANTHROPIC_API_KEY=a CLAUDE_CONFIG_DIR=c CLAUDECODE=1 AGENT_OFFICE_X=o OPENAI_API_KEY=k; ' + cmd],
+        { env: { PATH: `${dir}:/usr/bin:/bin` } }).toString();
+      assert.equal(/^(ANTHROPIC_|CLAUDE|AGENT_OFFICE_)/m.test(out), false); assert.match(out, /^OPENAI_API_KEY=k$/m);
+      const st = { ...OA.parseOcStatus(out), raw: out };
+      assert.equal(st.path, path.join(dir, 'opencode')); assert.equal(st.major, 1);
+      assert.deepEqual(OA.ocAuthState(st, out), { installed: true, state: 'in', major: 1, providers: [{ id: 'opencode', type: 'oauth' }] });
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+  // D4: rc noise with brackets before or after the answer, with and without markers
+  const json = '[{"id":"opencode","connections":[{"method":"oauth"}]}]';
+  const want = [{ id: 'opencode', type: 'oauth' }];
+  assert.deepEqual(OA.parseOcCredentials('\x1b[?1034h' + json), want);
+  assert.deepEqual(OA.parseOcCredentials(json + '\n[done]\n'), want);
+  assert.deepEqual(OA.parseOcCredentials('\x1b[?1034h[oh-my-zsh] hi\n' + json + '\n[done]\n'), want);
+  assert.deepEqual(OA.parseOcCredentials(`[x] noise\n${OA.OC_AUTH_MARK}\n\x1b[1m${json}\x1b[0m\n[done]`), want);
+  assert.deepEqual(OA.parseOcCredentials(`${OA.OC_AUTH_MARK}\n[\n {"id":"openai","connections":[{"method":"api"}]}\n]\n`), [{ id: 'openai', type: 'api' }]);
+  assert.equal(OA.parseOcVersion('\x1b[?1034h1.19.3'), 1);
+  assert.equal(OA.parseOcVersion(`noise 9.9.9\n${OA.OC_VERSION_MARK}\n\x1b[?1034hopencode v2.1.2\n${OA.OC_AUTH_MARK}\n3.0.0\n`), 2);
+  assert.equal(OA.parseOcStatus('\x1b[?1034h/usr/local/bin/opencode\n').path, '/usr/local/bin/opencode');
+  // D1: Windows runs go through windowsCommand (npm's opencode.cmd needs cmd.exe) with ocEnv's env only
+  const env = EN.ocEnv({ Path: 'C:\\b', ComSpec: 'C:\\Windows\\cmd.exe', ANTHROPIC_API_KEY: 'x', CLAUDE_CONFIG_DIR: 'c', AGENT_OFFICE_X: 'o' }, 'win32');
+  const runs = OA.ocWindowsStatusRuns('C:\\npm\\opencode.cmd', env, OS.windowsCommand);
+  assert.equal(runs.length, 2);
+  for (const r of runs) {
+    assert.equal(r.file, 'C:\\Windows\\cmd.exe'); assert.deepEqual(r.args.slice(0, 3), ['/d', '/s', '/c']);
+    assert.equal(r.options.env, env); assert.equal(r.options.windowsVerbatimArguments, true); assert.equal(r.options.windowsHide, true);
+    assert.equal(Object.keys(r.options.env).some((k) => /^(ANTHROPIC|CLAUDE|AGENT_OFFICE)/i.test(k)), false);
+  }
+  assert.match(runs[0].args[3], /opencode\.cmd.*--version/); assert.match(runs[1].args[3], /auth list --format json/);
+  const exe = OA.ocWindowsStatusRuns('C:\\oc\\opencode.exe', env, OS.windowsCommand);
+  assert.deepEqual(exe.map((r) => [r.file, r.args, r.options.windowsVerbatimArguments]), [['C:\\oc\\opencode.exe', ['--version'], false], ['C:\\oc\\opencode.exe', ['auth', 'list', '--format', 'json'], false]]);
+  // D3: the IPC mode allowlist
+  assert.equal(OA.ocLoginMode('console'), 'console'); assert.equal(OA.ocLoginMode('auth'), 'auth'); assert.equal(OA.ocLoginMode('logout'), 'logout');
+  for (const bad of ['login', undefined, null, '', 'auth; rm -rf /', ['auth'], { mode: 'auth' }, 'AUTH']) assert.equal(OA.ocLoginMode(bad), 'console');
+  assert.deepEqual(OA.ocLoginArgs('auth', 1), ['auth', 'login']); // the "Provider or API key" item really runs auth login
+  assert.deepEqual(OA.ocLoginArgs('whatever', 1), ['console', 'login']);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /ipcMain\.handle\('oc:login', \(_e, mode\) => \{ startOcLogin\(OCA\.ocLoginMode\(mode\)\); \}\);/);
+  assert.match(src, /OCA\.ocWindowsStatusRuns\(path, env, OS\.windowsCommand\)/);
+  // D5: logout removes what is logged in: the OpenCode entry first, else a provider (auth logout asks which)
+  const con = [{ id: 'opencode', type: 'oauth' }], prov = [{ id: 'openai', type: 'api' }];
+  assert.deepEqual(OA.ocLoginArgs('logout', 1, con), ['console', 'logout']);
+  assert.deepEqual(OA.ocLoginArgs('logout', 1, [...prov, ...con]), ['console', 'logout']);
+  assert.deepEqual(OA.ocLoginArgs('logout', 1, prov), ['auth', 'logout']);
+  assert.deepEqual(OA.ocLoginArgs('logout', 2, con), ['auth', 'logout', 'opencode']);
+  assert.deepEqual(OA.ocLoginArgs('logout', 2, prov), ['auth', 'logout']);
+  assert.deepEqual(OA.ocLoginArgs('logout', null, []), ['console', 'logout']); // nothing known: as before
 });
 
 test('startOpenCode: ortam yalnız ocEnv; Claude Code ve ofis hiçbir şey vermez; transkript okunmaz (v3.40)', () => {
