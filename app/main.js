@@ -293,7 +293,7 @@ function killAll() {
   if (!quitting && state) checkTurns();
   quitting = true;
   for (const id of [...terms.keys(), ...logins.keys()]) killPty(id);
-  for (const t of relays.values()) { release(t); try { t.kill(); } catch {} }
+  for (const t of relays.values()) { release(t); if (t.pid) dying.push(t.pid); try { t.kill(); } catch {} }
   relays.clear();
 }
 

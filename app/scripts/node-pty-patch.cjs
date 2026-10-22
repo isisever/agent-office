@@ -72,7 +72,9 @@ function buildPatched({ appDir, platform = process.platform, arch, exec = execFi
   const ptyDir = path.join(appDir, 'node_modules', 'node-pty');
   patchBindingGyp(ptyDir);
   const build = path.join(ptyDir, 'build');
-  fs.rmSync(build, { recursive: true, force: true });
+  // macOS falls back to the prebuilds if the rebuild fails, so a stale build/ goes first; Linux has no prebuilds:
+  // its current build/ stays until the rebuild replaces it (-f forces the rebuild anyway)
+  if (platform === 'darwin') fs.rmSync(build, { recursive: true, force: true });
   // node-gyp/electron-rebuild leftovers outside build/: bin/<platform-arch-abi>/ (electron-rebuild's copy of the
   // module) and node-addon-api/*.mk (gyp output of the dependency targets); removed below when this build made them
   const strays = ['bin', 'node-addon-api'].map((d) => path.join(ptyDir, d)).filter((d) => !fs.existsSync(d));

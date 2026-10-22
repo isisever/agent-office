@@ -98,6 +98,15 @@ test('Linux: rebuilt with the define, build/Release stays where the loader finds
   assert.deepEqual(calls, []);
 });
 
+test('Linux: a failed rebuild leaves the existing build/ in place (no prebuilds to fall back on)', () => {
+  const { appDir, pty } = fakeApp();
+  fs.mkdirSync(path.join(pty, 'build', 'Release'), { recursive: true });
+  fs.writeFileSync(path.join(pty, 'build', 'Release', 'pty.node'), 'unpatched x64');
+  const fail = () => { throw new Error('no headers'); };
+  assert.throws(() => NP.buildPatched({ appDir, platform: 'linux', arch: 'x64', exec: fail, log: () => {} }), /no headers/);
+  assert.equal(fs.readFileSync(path.join(pty, 'build', 'Release', 'pty.node'), 'utf8'), 'unpatched x64');
+});
+
 test('beforePack: the packed arch is ensured, strictly; Windows and unknown arches', async () => {
   const { appDir, pty } = fakeApp();
   const seen = [];
