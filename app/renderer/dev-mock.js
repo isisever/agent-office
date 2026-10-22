@@ -209,12 +209,13 @@ window.agentOffice = {
     },
     setEngine: async (id, value) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === id));
+      if (p?.mcp && value) return { restarted: [], refused: 'connector' }; // v3.43: a connection runs only Claude Code
       if (p) { if (value === 'agy' || value === 'commandcode' || value === 'opencode') p.engine = value; else delete p.engine; changed(); }
       return { restarted: [] };
     },
     onChange: ev.projects.add,
   },
-  // contract v3.42: connectors are projects with an `mcp` field (the token is never kept in the mock)
+  // contract v3.43: connectors are projects with an `mcp` field (the token is never kept in the mock)
   connectors: {
     get: async (id) => { const p = projects.find((x) => x.id === id); return p?.mcp ? { ...p.mcp, dir: p.dir, hasToken: true } : null; },
     pickDir: async () => '/Users/me/Connectors/picked',

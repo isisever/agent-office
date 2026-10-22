@@ -51,7 +51,7 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
   let editing = /** @type {string | null} */ (null);
   const drafts = new Map(); // "<device>/<project>" → unsent text
 
-  const section = h('details', { class: 'sb-devices sb-panel', id: 'sb-devices' });   // a panel like the sidebar's others (v3.42)
+  const section = h('details', { class: 'sb-devices sb-panel', id: 'sb-devices' });   // a panel like the sidebar's others (v3.43)
   try { /** @type {HTMLDetailsElement} */ (section).open = localStorage.getItem('ao.panel.devices') === '1'; } catch {}
   section.addEventListener('toggle', () => { try { localStorage.setItem('ao.panel.devices', /** @type {HTMLDetailsElement} */ (section).open ? '1' : '0'); } catch {} });
   const remoteGroup = h('details', { class: 'sb-remote', id: 'sb-remote', open: true });

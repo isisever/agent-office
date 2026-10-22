@@ -351,7 +351,7 @@ async function addProject() {
   } catch (e) { console.error(e); }
 }
 
-// Connectors (v3.42): remote MCP servers, each a project with its own folder and sessions.
+// Connectors (v3.43): remote MCP servers, each a project with its own folder and sessions.
 async function addConnector(form) {
   try {
     const r = await api.connectors.add(form);

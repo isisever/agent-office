@@ -3644,7 +3644,7 @@ test('müdür modeli: kenar çubuğunda her motorda, Ajan modelinden önce (v3.2
   const sb = fs.readFileSync(path.join(__dirname, '../renderer/sidebar.js'), 'utf8');
   const boss = sb.indexOf('bossModelSelect(p), agentModelSelect(p)');
   const agent = sb.indexOf('agentModelSelect(p)', boss);
-  assert.ok(boss > 0 && agent > boss, 'Boss model dropdown must be in the project popup for every engine, right before Agent model (v3.41)');
+  assert.ok(boss > 0 && agent > boss, 'Boss model dropdown must be in the project popup for every engine, right before Agent model (v3.42)');
   assert.doesNotMatch(sb, /claude \? (account|manager|bossModel|agentModel|contextCap|savings|backup)Select\(p\) : null/, 'no control is hidden for another engine (v3.36)');
   const main = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
   assert.match(main, /R\.claudeArgs\(\[\.\.\.P\.bossModelArgs\(project\)/);
@@ -4040,8 +4040,8 @@ test('review fixes: bossModel survives another engine, exclude merge, secret fil
   assert.deepEqual(fs2.readdirSync(out2), []); assert.ok(r2.warnings.includes('.agents'));
 });
 
-// --- plain terminal tab (contract v3.41)
-test('düz terminal sekmesi: shell:true + dir saklanır, motor id\'lerinde yok, allPtyIdsOf\'ta var (v3.41)', () => {
+// --- plain terminal tab (contract v3.42)
+test('düz terminal sekmesi: shell:true + dir saklanır, motor id\'lerinde yok, allPtyIdsOf\'ta var (v3.42)', () => {
   const P = require('../src/projects.js');
   const tabs = P.normalizeTabs([{ n: 2, dir: '/x/y', shell: true }, { n: 3, shell: true }, { n: 4 }]);
   assert.deepEqual(tabs, [{ n: 2, dir: '/x/y', shell: true }, { n: 4 }]); // a shell without a folder is dropped
@@ -4051,15 +4051,15 @@ test('düz terminal sekmesi: shell:true + dir saklanır, motor id\'lerinde yok, 
   assert.equal(P.resolvePty({ projects: [p] }, 'p1:2').dir, '/x/y');
   assert.deepEqual(P.sessionAliases([{ ...p, tabs: [{ n: 2, dir: '/other/zed', shell: true }] }]), {});
 });
-test('düz terminal sekmesi: main.js başlatır, uyutmaz, motor mantığına sokmaz (v3.41)', () => {
+test('düz terminal sekmesi: main.js başlatır, uyutmaz, motor mantığına sokmaz (v3.42)', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
   assert.match(src, /if \(r\.tab\?\.shell\) return startShell\(id, r\)/);
   assert.match(src, /function startShell[\s\S]{0,900}AGENT_OFFICE_/);
   assert.doesNotMatch(src.slice(src.indexOf('function startShell'), src.indexOf('function startOpenCode')), /sessionEnv|claudeArgs|plugin/);
 });
 
-// --- connectors (contract v3.42)
-test('bağlantı: adres ve ad doğrulanır, sunucu girdisi bearer başlığı taşır, token dosyada yok (v3.42)', () => {
+// --- connectors (contract v3.43)
+test('bağlantı: adres ve ad doğrulanır, sunucu girdisi bearer başlığı taşır, token dosyada yok (v3.43)', () => {
   const C = require('../src/connectors.js');
   assert.equal(C.validate({ label: '', url: 'https://x.io/mcp' }), 'name');
   assert.equal(C.validate({ label: 'N', url: 'ftp://x' }), 'url');
@@ -4068,9 +4068,63 @@ test('bağlantı: adres ve ad doğrulanır, sunucu girdisi bearer başlığı ta
   assert.deepEqual(s, { 'conn-my-notion': { type: 'http', url: 'https://x.io/mcp', headers: { Authorization: 'Bearer tok' } } });
   assert.equal(C.serverFor({}, 'tok'), null);
   assert.deepEqual(C.serverFor({ mcp: { label: 'A', url: 'https://x.io/' } }, '')['conn-a'], { type: 'http', url: 'https://x.io/' });
-  assert.ok(!C.metaOf({ label: 'A', url: 'https://x.io/' }).includes('token'));
 });
-test('bağlantı: varsayılan klasör kararlı, başkasının klasörünü almaz; düzenleme klasörü (geçmişi) korur (v3.42)', () => {
+test('bağlantı: Türkçe harfler klasör adında korunur, "Bearer " ile yapıştırılan token tek Bearer olur (v3.43)', () => {
+  const C = require('../src/connectors.js');
+  assert.equal(C.slug('Kişisel Notlar'), 'kisisel-notlar');
+  assert.equal(C.slug('IŞIK Ğüzöç Çay'), 'isik-guzoc-cay');
+  assert.equal(C.defaultDir('/r', 'Şirket Ağı', () => false), '/r/sirket-agi');
+  assert.equal(C.serverName('Müşteri'), 'conn-musteri');
+  assert.equal(C.cleanToken('  Bearer abc123 '), 'abc123');
+  assert.equal(C.cleanToken('bearer   abc'), 'abc');
+  assert.equal(C.cleanToken('abc'), 'abc');
+  assert.equal(C.cleanToken(undefined), '');
+  const s = C.serverFor({ mcp: { label: 'A', url: 'https://x.io/' } }, C.cleanToken('Bearer tok'));
+  assert.equal(s['conn-a'].headers.Authorization, 'Bearer tok');
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
+  assert.equal((src.match(/C\.cleanToken\(f\?\.token\)/g) || []).length, 2, 'connectors:add and connectors:update clean the token');
+});
+test('bağlantı: yalnız Claude Code; başka motor reddedilir, seçicide gösterilir ama kapalı (v3.43)', () => {
+  const P = require('../src/projects.js');
+  const st = { projects: [{ id: 'p', dir: '/r/p', name: 'p', accountId: 'default' }], accounts: [{ id: 'default', label: 'V' }], activeId: 'p' };
+  const a = P.addConnector(st, '/r/conn', { label: 'Notion', url: 'https://x.io/mcp' });
+  for (const eng of ['agy', 'commandcode', 'opencode']) {
+    assert.equal(P.engineRefused(a.project, eng), true);
+    assert.equal(P.setProjectEngine(a.state, a.project.id, eng), a.state, `a connector must not switch to ${eng}`);
+    assert.equal(P.engineRefused(P.findProject(a.state, 'p'), eng), false);
+    assert.equal(P.engineOf(P.findProject(P.setProjectEngine(a.state, 'p', eng), 'p')), eng); // a plain project still can
+  }
+  assert.equal(P.engineRefused(a.project, null), false);
+  assert.equal(P.engineRefused(a.project, 'claude'), false);
+  const fs = require('node:fs'); const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
+  assert.match(src, /projects:setEngine'[\s\S]{0,200}P\.engineRefused\(p, value\)\) return \{ restarted: \[\], refused: 'connector' \}/);
+  const sb = fs.readFileSync(path.join(__dirname, '../renderer/sidebar.js'), 'utf8');
+  assert.match(sb, /const connOnly = Boolean\(p\.mcp\)/);
+  assert.match(sb, /disabled: connOnly && !selected/);
+  for (const l of ['en', 'tr']) assert.ok(require(`../locales/${l}.json`).sidebar.connClaudeOnly, `${l}: sidebar.connClaudeOnly`);
+});
+test('bağlantı: adres proje klasörüne yazılmaz; sunucu yalnız userData altındaki 0600 sekme MCP dosyasında (v3.43)', () => {
+  const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os');
+  const C = require('../src/connectors.js');
+  const SC = require('../src/shared-config.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-conn-'));
+  try {
+    const home = path.join(root, 'home'); const cwd = path.join(root, 'repo'); const userData = path.join(root, 'userData');
+    fs.mkdirSync(home); fs.mkdirSync(cwd);
+    const mcpFile = path.join(userData, 'mcp', SC.mcpFileName('k1'));
+    const extra = C.serverFor({ mcp: { label: 'Notion', url: 'https://x.io/s/secret/mcp' } }, 'tok');
+    const r = SC.prepareShared({ account: { id: 'default' }, home, cwd, stageRoot: path.join(userData, 'stage'), mcpFile, extra });
+    assert.equal(r.mcpConfig, mcpFile);
+    assert.deepEqual(JSON.parse(fs.readFileSync(mcpFile, 'utf8')).mcpServers['conn-notion'].url, 'https://x.io/s/secret/mcp');
+    if (process.platform !== 'win32') assert.equal(fs.statSync(mcpFile).mode & 0o777, 0o600);
+    assert.deepEqual(fs.readdirSync(cwd), [], 'nothing is written into the project folder');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  assert.equal(C.META_FILE, undefined);
+  const src = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
+  assert.doesNotMatch(src, /writeConnectorMeta|agent-office-mcp\.json|META_FILE/);
+});
+test('bağlantı: varsayılan klasör kararlı, başkasının klasörünü almaz; düzenleme klasörü (geçmişi) korur (v3.43)', () => {
   const C = require('../src/connectors.js');
   const P = require('../src/projects.js');
   assert.equal(C.defaultDir('/r', 'My Notion', () => false), '/r/my-notion');
@@ -4086,7 +4140,7 @@ test('bağlantı: varsayılan klasör kararlı, başkasının klasörünü almaz
   const n = P.normalizeState({ projects: [{ id: 'a', dir: '/r/my-notion', mcp: { label: 'N', url: 'javascript:1' } }] });
   assert.equal(n.projects[0].mcp, undefined); // a bad address is dropped
 });
-test('bağlantı: token main.js\'te şifreli saklanır, yalnız oturumun MCP dosyasına girer, kaldırılınca silinir (v3.42)', () => {
+test('bağlantı: token main.js\'te şifreli saklanır, yalnız oturumun MCP dosyasına girer, kaldırılınca silinir (v3.43)', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
   assert.match(src, /safeStorage\.encryptString\(token\)/);
   assert.match(src, /C\.serverFor\(project, loadConnectorToken\(project\.id\)\)/);

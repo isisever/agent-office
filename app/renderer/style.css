@@ -118,7 +118,7 @@ body.sidebar-collapsed #sidebar { display: none; }
 }
 .sb-list { list-style: none; margin: 0; padding: 0; }
 
-/* Panels (v3.42): PROJECTS, ACCOUNTS, DEVICES, CONNECTIONS are collapsible; the whole sidebar scrolls. */
+/* Panels (v3.43): PROJECTS, ACCOUNTS, DEVICES, CONNECTIONS are collapsible; the whole sidebar scrolls. */
 .sb-panel { flex: 0 0 auto; border-top: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 .sb-panel:first-child { border-top: 0; }
 .sb-panel > summary { cursor: pointer; list-style: none; user-select: none; }
@@ -987,7 +987,7 @@ label.sb-langrow { cursor: pointer; }
 .sb-na-wrap:hover .sb-na, .sb-na-wrap:focus-within .sb-na, .sb-na-wrap:focus .sb-na { display: block; }
 .sb-na-wrap:focus { outline: 1px dotted currentColor; outline-offset: 1px; }
 
-/* ---- Settings popups (sidebar.js, contract v3.41): per project (Save / Cancel) and global ---- */
+/* ---- Settings popups (sidebar.js, contract v3.42): per project (Save / Cancel) and global ---- */
 .sb-icons { display: inline-flex; align-items: center; gap: 6px; }
 .sb-gear { font-size: 17px; opacity: .55; }
 .sb-folder { font-size: 14px; opacity: .55; }
@@ -1026,7 +1026,7 @@ label.sb-langrow { cursor: pointer; }
 .sb-modal-global .sb-botcolor { padding: 7px 0; font-size: 12px; opacity: 1; }
 .sb-modal-global .sb-lang, .sb-modal-global .sb-theme { max-width: 200px; font-size: 12px; }
 
-/* Devices section tidied (contract v3.41): list rows with a sub line, permissions in a popup, add/pair as one group */
+/* Devices section tidied (contract v3.42): list rows with a sub line, permissions in a popup, add/pair as one group */
 .sb-devices { margin-top: 0; padding: 0 0 8px; }
 .sb-devices > :not(summary) { margin-left: 10px; margin-right: 10px; }
 .sb-devices > .sb-note, .sb-devices > .sb-row { margin: 4px 0; }
@@ -1045,7 +1045,7 @@ label.sb-langrow { cursor: pointer; }
 .sb-devices .sb-machines { display: block; width: calc(100% - 12px); margin: 6px; padding: 4px 6px; opacity: .8; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
 .sb-devices .sb-machines:hover { opacity: 1; border-color: var(--accent); }
 
-/* Connector form (sidebar.js openConnectorForm, contract v3.42) */
+/* Connector form (sidebar.js openConnectorForm, contract v3.43) */
 .sb-modal-form .sb-field { display: flex; flex-direction: column; gap: 3px; padding: 5px 0; }
 .sb-field-label { opacity: .75; letter-spacing: 1px; font-size: 11px; }
 .sb-field-hint { font-size: 10px; opacity: .55; line-height: 1.3; }

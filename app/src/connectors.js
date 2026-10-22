@@ -1,10 +1,12 @@
-// Connectors (contract v3.42): a remote MCP server (address + token) the user works with in its own Claude Code session.
+// Connectors (contract v3.43): a remote MCP server (address + token) the user works with in its own Claude Code session.
 // A connector is a project (src/projects.js) with an `mcp: { label, url }` field, so it gets the boss, tabs, accounts,
 // sleep, resume and the office like any project. Pure helpers (no Electron); main.js keeps the token (safeStorage).
 const path = require('path');
 
-/** A folder-safe name: 'My Notion!' → 'my-notion'. */
-const slug = (s) => String(s || '').normalize('NFKD').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).toLowerCase() || 'connector';
+// Turkish letters NFKD does not decompose (ı, İ) or that should read as their base letter: 'Kişisel' → 'kisisel'.
+const TR = { ı: 'i', İ: 'I', ş: 's', Ş: 'S', ğ: 'g', Ğ: 'G', ü: 'u', Ü: 'U', ö: 'o', Ö: 'O', ç: 'c', Ç: 'C' };
+/** A folder-safe name: 'My Notion!' → 'my-notion', 'Kişisel Notlar' → 'kisisel-notlar'. */
+const slug = (s) => String(s || '').replace(/[ıİşŞğĞüÜöÖçÇ]/g, (c) => TR[/** @type {keyof typeof TR} */ (c)]).normalize('NFKD').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).toLowerCase() || 'connector';
 
 /** The address when it is a usable http(s) URL, else ''. */
 function cleanUrl(v) {
@@ -14,7 +16,10 @@ function cleanUrl(v) {
   } catch { return ''; }
 }
 
-/** state.json field: { label, url } or nothing (→ {}). */
+/**
+ * state.json field: { label, url } or nothing (→ {}).
+ * @returns {{ mcp?: { label: string, url: string } }}
+ */
 function withMcp(v) {
   const url = cleanUrl(v?.url);
   const label = typeof v?.label === 'string' ? v.label.trim().slice(0, 60) : '';
@@ -27,6 +32,9 @@ function validate({ label, url }) {
   if (!cleanUrl(url)) return 'url';
   return null;
 }
+
+/** The token as typed: trimmed, a pasted leading 'Bearer ' dropped (the header adds it; no 'Bearer Bearer x'). */
+const cleanToken = (v) => (typeof v === 'string' ? v.trim().replace(/^bearer\s+/i, '').trim() : '');
 
 /** The server's name inside the session (`/mcp` lists it by this). */
 const serverName = (label) => `conn-${slug(label)}`;
@@ -56,8 +64,4 @@ function defaultDir(root, label, taken) {
   return path.join(root, `${base}-${Date.now()}`);
 }
 
-const META_FILE = '.agent-office-mcp.json';
-/** The connector's settings kept in its folder (never the token). */
-const metaOf = ({ label, url }) => JSON.stringify({ label, url, server: serverName(label) }, null, 2) + '\n';
-
-module.exports = { slug, cleanUrl, withMcp, validate, serverName, serverConfig, serverFor, defaultDir, META_FILE, metaOf };
+module.exports = { slug, cleanUrl, withMcp, validate, serverName, serverConfig, serverFor, defaultDir, cleanToken };

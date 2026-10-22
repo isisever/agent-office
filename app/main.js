@@ -265,7 +265,7 @@ function pluginDir() {
 const mcpDir = () => path.join(app.getPath('userData'), 'mcp');
 const directoryDir = () => path.join(app.getPath('userData'), 'directory');
 
-// --- connectors (contract v3.42, src/connectors.js): the token is kept per project id, encrypted with safeStorage
+// --- connectors (contract v3.43, src/connectors.js): the token is kept per project id, encrypted with safeStorage
 // (a 0600 plain file only where the OS has no keyring); it reaches claude only inside the tab's 0600 MCP file.
 const connectorsRoot = () => path.join(app.getPath('userData'), 'connectors');
 const tokenDir = () => path.join(app.getPath('userData'), 'connector-tokens');
@@ -285,10 +285,6 @@ function loadConnectorToken(id) {
 const hasConnectorToken = (id) => fs.existsSync(tokenFile(id, 'bin')) || fs.existsSync(tokenFile(id, 'txt'));
 function deleteConnectorToken(id) {
   for (const ext of ['bin', 'txt']) try { fs.rmSync(tokenFile(id, ext), { force: true }); } catch {}
-}
-/** The connector's own folder keeps its settings (no token); written on every add and edit. */
-function writeConnectorMeta(p) {
-  try { fs.writeFileSync(path.join(p.dir, C.META_FILE), C.metaOf(p.mcp)); } catch {}
 }
 function removeMcpFile(id) {
   officeSock?.remove(id);   // v3.35 its office_* token stops working with it
@@ -1013,7 +1009,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const r = P.resolvePty(state, id);
   if (!r || !win || !isLoaded) return broadcast();
   asleep.delete(id);
-  if (r.tab?.shell) return startShell(id, r); // a plain terminal tab (contract v3.41): the user's shell, no engine
+  if (r.tab?.shell) return startShell(id, r); // a plain terminal tab (contract v3.42): the user's shell, no engine
   if (isAgy(r.project)) return startAgy(id, r, { resume, prompt });
   if (isCmd(r.project)) return startCommandCode(id, r, { resume, prompt });
   if (isOc(r.project)) return startOpenCode(id, r, { resume, prompt });
@@ -1036,7 +1032,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // --mcp-config <file>; see shared-config.js) and the office directory naming them (contract v3.9)
   // v3.35 one boss: a manager-mode boss tab (the main tab) gets the agent-office MCP server; its token only in that file
   const bossMcp = officeServerFor(id, project);
-  const connMcp = C.serverFor(project, loadConnectorToken(project.id)); // a connector's server joins this tab's MCP file (v3.42)
+  const connMcp = C.serverFor(project, loadConnectorToken(project.id)); // a connector's server joins this tab's MCP file (v3.43)
   const prepared = sharedConfig(account, project, cwd, usageKey(id), bossMcp || connMcp ? { ...bossMcp, ...connMcp } : null);
   const shared = SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
@@ -1316,7 +1312,7 @@ function startCommandCode(id, { project, tab, dir: cwd }, { resume = false, prom
 // a tab that continues (main tab, worktree tab); with no session in the folder it simply starts a new one, so no history check. prompt only when resuming.
 // The app watches it one way like agy (src/agy-watch.js, engine 'opencode'), with no transcript. It needs no login: its free models work without one.
 /**
- * A plain terminal tab (contract v3.41): the user's login shell in the tab's folder. No claude, no plugin, no
+ * A plain terminal tab (contract v3.42): the user's login shell in the tab's folder. No claude, no plugin, no
  * office session: the env is the user's own minus the variables of Claude Code and of this app; nothing observes it.
  */
 function startShell(id, { dir: cwd }) {
@@ -2129,7 +2125,7 @@ ipcMain.handle('projects:add', async () => {
   const dir = await pickFolder();
   return dir ? addDir(dir) : null;
 });
-// --- connectors (v3.42): add, edit (address, name, token; the folder and so the history stay), pick a folder
+// --- connectors (v3.43): add, edit (address, name, token; the folder and so the history stay), pick a folder
 ipcMain.handle('connectors:get', (_e, id) => {
   const p = P.findProject(state, id);
   return p?.mcp ? { label: p.mcp.label, url: p.mcp.url, dir: p.dir, hasToken: hasConnectorToken(p.id) } : null;
@@ -2149,8 +2145,7 @@ ipcMain.handle('connectors:add', (_e, f) => {
   const r = P.addConnector(state, dir, { label: mcp.label, url });
   if (!r) return { ok: false, error: 'dir-used' };
   commit(r.state);
-  try { saveConnectorToken(r.project.id, String(f?.token || '').trim()); } catch (e) { console.error('bağlantı anahtarı saklanamadı:', e.message); }
-  writeConnectorMeta(r.project);
+  try { saveConnectorToken(r.project.id, C.cleanToken(f?.token)); } catch (e) { console.error('bağlantı anahtarı saklanamadı:', e.message); }
   startPty(r.project.id);
   return { ok: true, project: r.project };
 });
@@ -2160,14 +2155,13 @@ ipcMain.handle('connectors:update', (_e, id, f) => {
   const mcp = { label: String(f?.label || '').trim(), url: String(f?.url || '').trim() };
   const bad = C.validate(mcp);
   if (bad) return { ok: false, error: bad };
-  const token = typeof f?.token === 'string' ? f.token.trim() : '';
+  const token = C.cleanToken(f?.token);
   const clear = f?.clearToken === true;
   const next = P.setConnector(state, id, { label: mcp.label, url: C.cleanUrl(mcp.url) });
   if (next === state && !token && !clear) return { ok: true, restarted: [] };
   if (next !== state) commit(next);
   if (token || clear) try { saveConnectorToken(id, token); } catch (e) { console.error('bağlantı anahtarı saklanamadı:', e.message); }
   const now = P.findProject(state, id);
-  writeConnectorMeta(now);
   // sessions started afterwards use the new address and token; idle ones restart in their conversation now
   return { ok: true, restarted: restartIdle(now) };
 });
@@ -2266,6 +2260,7 @@ ipcMain.handle('projects:setSavings', (_e, id, value) => {
 // Returns the restarted pty ids, plus refused: the blocker or 'cancelled' when nothing changed for that reason.
 ipcMain.handle('projects:setEngine', async (_e, id, value) => {
   const p = P.findProject(state, id);
+  if (P.engineRefused(p, value)) return { restarted: [], refused: 'connector' }; // v3.43: a connection runs only Claude Code
   if (!p || P.setProjectEngine(state, id, value) === state) return { restarted: [] };
   const running = P.ptyIdsOf(p).filter((pid) => terms.has(pid));
   if (P.engineOf(p) === 'claude') {
@@ -2393,12 +2388,13 @@ async function gitTop(dir) {
 }
 
 // "+" menu: a new Claude Code tab in the same folder, a new worktree (git repos only), or a plain terminal (contract
-// v3.41) in the folder of any project or one picked from disk. → 'same' | 'worktree' | { shell: dir } | null (cancelled)
+// v3.42) in the folder of any project or one picked from disk. → 'same' | 'worktree' | { shell: dir } | null (cancelled)
 function pickTabMode({ git: inRepo = false } = {}) {
   return new Promise((resolve) => {
     let done = false;
     let folderPicking = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    /** @type {Electron.MenuItemConstructorOptions[]} */
     const items = [{ label: T('main.tabSame'), click: () => finish('same') }];
     if (inRepo) items.push({ label: T('main.tabWorktree'), click: () => finish('worktree') });
     items.push({ type: 'separator' }, {
@@ -2462,7 +2458,7 @@ ipcMain.handle('tabs:add', async (_e, projectId, mode) => {
   const p = P.findProject(state, projectId);
   if (!p || !win) return null;
   let m = mode === 'same' || mode === 'worktree' ? mode : null;
-  if (!m) m = await pickTabMode({ git: Boolean(await gitTop(p.dir)) }); // always asks since v3.41: the menu has the terminal entry
+  if (!m) m = await pickTabMode({ git: Boolean(await gitTop(p.dir)) }); // always asks since v3.42: the menu has the terminal entry
   if (m === 'worktree') return addWorktreeTab(p);
   const now = P.findProject(state, projectId);
   if (m && typeof m === 'object' && m.shell && now) return openTab(now.id, { n: P.nextTabNumber(now), dir: m.shell, shell: true });

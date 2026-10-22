@@ -1,4 +1,4 @@
-// Left sidebar: collapsible panels PROJECTS (one project per row), ACCOUNTS, DEVICES (devices.js) and CONNECTIONS (v3.42).
+// Left sidebar: collapsible panels PROJECTS (one project per row), ACCOUNTS, DEVICES (devices.js) and CONNECTIONS (v3.43).
 // The structure is rebuilt only when the project/account list changes; office stats update in place
 // (so an open <select> or a name being typed is not disrupted by 500 ms data). A language change redraws everything.
 import { hasText, locale, onLang, t } from './i18n.js';
@@ -136,7 +136,7 @@ export function mountSidebar(el, on) {
   let noteTimer = null;
   const projList = h('ul', { class: 'sb-list', id: 'sb-projects' });
   const acctList = h('ul', { class: 'sb-list', id: 'sb-accounts' });
-  // v3.42: collapsible panels (open/closed is remembered on this computer): PROJECTS, ACCOUNTS, DEVICES (devices.js adds
+  // v3.43: collapsible panels (open/closed is remembered on this computer): PROJECTS, ACCOUNTS, DEVICES (devices.js adds
   // its own after ACCOUNTS) and CONNECTIONS. The whole sidebar scrolls.
   const connList = h('ul', { class: 'sb-list', id: 'sb-connectors' });
   const connHead = h('span', {});
@@ -283,18 +283,28 @@ export function mountSidebar(el, on) {
     if (!accounts.some((a) => a.id === p.accountId)) {
       sel.append(h('option', { value: p.accountId, selected: now === p.accountId }, '?'));
     }
-    if (agyShown() || engine === 'agy') {
-      sel.append(h('option', { value: ENGINE_OPT.agy, selected: engine === 'agy' },
-        t('sidebar.engineAgy') + (agyAuth?.email ? ` · ${agyAuth.email}` : '')));
+    // a connection (contract v3.43) reaches only Claude Code: the other engines are shown, disabled with the reason
+    const connOnly = Boolean(p.mcp);
+    const connReason = connOnly ? t('sidebar.connClaudeOnly') : '';
+    const engineOpt = (value, selected, label) => h('option', { value, selected, disabled: connOnly && !selected, title: connReason || null }, label);
+    if (agyShown() || engine === 'agy' || connOnly) {
+      sel.append(engineOpt(ENGINE_OPT.agy, engine === 'agy', t('sidebar.engineAgy') + (agyAuth?.email ? ` · ${agyAuth.email}` : '')));
     }
-    if (cmdShown() || engine === 'commandcode') {
-      sel.append(h('option', { value: ENGINE_OPT.commandcode, selected: engine === 'commandcode' }, t('sidebar.engineCommandcode')));
+    if (cmdShown() || engine === 'commandcode' || connOnly) {
+      sel.append(engineOpt(ENGINE_OPT.commandcode, engine === 'commandcode', t('sidebar.engineCommandcode')));
     }
-    if (ocShown() || engine === 'opencode') { // contract v3.40
-      sel.append(h('option', { value: ENGINE_OPT.opencode, selected: engine === 'opencode' }, t('sidebar.engineOpencode')));
+    if (ocShown() || engine === 'opencode' || connOnly) { // contract v3.40
+      sel.append(engineOpt(ENGINE_OPT.opencode, engine === 'opencode', t('sidebar.engineOpencode')));
     }
     sel.append(h('option', { value: NEW_ACCOUNT }, t('sidebar.newAccount')));
-    return control(p, 'account', t('sidebar.account'), sel);
+    const row = control(p, 'account', t('sidebar.account'), sel);
+    if (connReason && !row.querySelector('.sb-na')) {
+      row.classList.add('sb-na-wrap', 'sb-conn-only');
+      row.title = connReason;
+      row.tabIndex = 0;
+      row.append(h('span', { class: 'sb-na', role: 'note' }, connReason));
+    }
+    return row;
   }
 
   // How the project's boss works (contract v3.10): the global setting, delegates (manager mode) or does it itself.
@@ -472,7 +482,7 @@ export function mountSidebar(el, on) {
     backdrop.querySelector('select, input, button.primary')?.focus();
   }
 
-  /** The project's popup (contract v3.41): every per-project setting; Save applies what changed. */
+  /** The project's popup (contract v3.42): every per-project setting; Save applies what changed. */
   function openProjectSettings(p) {
     const map = new Map();
     const body = [
@@ -491,7 +501,7 @@ export function mountSidebar(el, on) {
     draft = map; // after openModal (its closeModal clears the previous draft); controls read it when they change
   }
 
-  /** Add or edit a connector (contract v3.42). Editing keeps the folder, so the sessions and their history stay;
+  /** Add or edit a connector (contract v3.43). Editing keeps the folder, so the sessions and their history stay;
    *  an empty token field keeps the saved token (it is never sent back to the page). */
   async function openConnectorForm(p) {
     const editing = Boolean(p);
@@ -531,7 +541,7 @@ export function mountSidebar(el, on) {
     ].filter(Boolean), [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
   }
 
-  /** The global popup (contract v3.41): the rows that used to sit under ACCOUNTS; each change applies at once. */
+  /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
       [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, themeRow, botRow],
@@ -586,7 +596,7 @@ export function mountSidebar(el, on) {
         }, costText(briefs.get(p.id))),
       );
     };
-    // connectors (v3.42) are projects with an `mcp` field: they have their own panel
+    // connectors (v3.43) are projects with an `mcp` field: they have their own panel
     projList.replaceChildren(...projects.map((p, i) => (p.mcp ? null : rowOf(p, i))).filter(Boolean));
     connList.replaceChildren(...projects.map((p, i) => (p.mcp ? rowOf(p, i) : null)).filter(Boolean));
     if (!projects.some((p) => !p.mcp)) projList.append(h('li', { class: 'sb-empty' }, t('sidebar.noProjects')));

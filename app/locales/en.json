@@ -119,6 +119,7 @@
     "connDirPick": "Choose…",
     "connDirHint": "Settings and the files made while working with this connection go here. Empty: Agent Office keeps them itself.",
     "connDirLocked": "The folder holds the sessions and their history, so it cannot change.",
+    "connClaudeOnly": "A connection reaches only Claude Code: its MCP server is not given to Antigravity, Command Code or OpenCode.",
     "connError": {
       "name": "Enter a name.",
       "url": "Enter a valid http(s) address.",

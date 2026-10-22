@@ -31,7 +31,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withSavings(p.savings),
       ...withEngine(p.engine),
       ...withProjectFiles(p.projectFiles),
-      ...withMcp(p.mcp), // a connector (contract v3.42)
+      ...withMcp(p.mcp), // a connector (contract v3.43)
       ...withBackup(p.backupAccount, known),
       ...withHome(p.homeAccount, known, known.has(p.accountId) ? p.accountId : DEFAULT_ID),
       ...withTabs(normalizeTabs(p.tabs)),
@@ -65,7 +65,7 @@ function normalizeTabs(list) {
     if (isStr(t.dir) && isObj(w) && isStr(w.root) && isStr(w.repo) && isStr(w.branch)) {
       tab.dir = t.dir;
       tab.worktree = { root: w.root, repo: w.repo, branch: w.branch };
-    } else if (t.shell === true && isStr(t.dir) && t.dir) { // a plain terminal tab (contract v3.41): the shell, no engine
+    } else if (t.shell === true && isStr(t.dir) && t.dir) { // a plain terminal tab (contract v3.42): the shell, no engine
       tab.dir = t.dir;
       tab.shell = true;
     }
@@ -187,7 +187,7 @@ function addProject(state, dir, { id = newId, accountId = DEFAULT_ID, now = Date
   return { state: { ...state, projects: [...state.projects, project], activeId: project.id }, project, isNew: true };
 }
 
-/** A connector (contract v3.42): a project in `dir` with `mcp: { label, url }`. null when the folder is already a project. */
+/** A connector (contract v3.43): a project in `dir` with `mcp: { label, url }`. null when the folder is already a project. */
 function addConnector(state, dir, mcp, opts = {}) {
   if (findByDir(state, dir)) return null;
   const r = addProject(state, dir, opts);
@@ -362,11 +362,17 @@ const ENGINES = ['claude', 'agy', 'commandcode', 'opencode'];
 const engineValue = (v) => (v === 'agy' || v === 'commandcode' || v === 'opencode' ? v : null);
 const withEngine = (v) => (engineValue(v) ? { engine: v } : {});
 
-/** value: 'agy' | 'commandcode' | 'opencode' | 'claude' | null (both: Claude Code). Same state when nothing changes. */
+/** True when the project may not run `value`: a connector (contract v3.43) reaches only Claude Code. */
+const engineRefused = (project, value) => Boolean(project?.mcp) && engineValue(value) !== null;
+
+/**
+ * value: 'agy' | 'commandcode' | 'opencode' | 'claude' | null (both: Claude Code). Same state when nothing changes,
+ * and for a connector asked for another engine than Claude Code (its MCP server reaches only claude; v3.43).
+ */
 function setProjectEngine(state, id, value) {
   const p = findProject(state, id);
   const v = engineValue(value);
-  if (!p || engineValue(p.engine) === v) return state;
+  if (!p || engineValue(p.engine) === v || engineRefused(p, v)) return state;
   return { ...state, projects: state.projects.map((x) => {
     if (x.id !== id) return x;
     const { engine: _, ...rest } = x;
@@ -458,7 +464,7 @@ module.exports = {
   AGENT_MODELS, setProjectAgentModel, agentModelOf,
   CONTEXT_CAPS, setProjectContextCap, contextCapOf,
   setProjectSavings, savingsOf,
-  ENGINES, setProjectEngine, engineOf,
+  ENGINES, setProjectEngine, engineOf, engineRefused,
   setProjectFiles, projectFilesOf,
   setProjectBackup, backupOf, fallbackTo, returnHome,
 };

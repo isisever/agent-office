@@ -118,6 +118,7 @@
     "connDirPick": "Seç…",
     "connDirHint": "Bu bağlantıyla çalışırken üretilen ayarlar ve dosyalar buraya yazılır. Boşsa Agent Office kendisi saklar.",
     "connDirLocked": "Klasör oturumları ve geçmişlerini tutar, bu yüzden değiştirilemez.",
+    "connClaudeOnly": "Bağlantı yalnızca Claude Code'a ulaşır: MCP sunucusu Antigravity, Command Code veya OpenCode'a verilmez.",
     "connError": {
       "name": "Bir ad gir.",
       "url": "Geçerli bir http(s) adresi gir.",

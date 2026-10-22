@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     menu: (id) => ipcRenderer.invoke('projects:menu', id),   // right click: native menu (move the session to another computer, v3.4)
     onChange: listen('projects:changed'),
   },
-  connectors: {   // contract v3.42
+  connectors: {   // contract v3.43
     get: (id) => ipcRenderer.invoke('connectors:get', id),   // { label, url, dir, hasToken } | null (the token itself never leaves main)
     pickDir: () => ipcRenderer.invoke('connectors:pickDir'),
     add: (form) => ipcRenderer.invoke('connectors:add', form),   // { label, url, token?, dir? } → { ok, project } | { ok: false, error }
