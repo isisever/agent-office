@@ -100,6 +100,17 @@ function ptyEnv(base, configDir = null) {
   return env;
 }
 
+/**
+ * The env of a plain terminal tab (contract v3.42): the user's own minus every variable of Claude Code, of Anthropic's
+ * API and of this app (CLAUDE*, ANTHROPIC_*, AGENT_OFFICE_*), so a shell started in the app is a clean shell.
+ * @param {Record<string, string | undefined>} base
+ */
+function shellEnv(base) {
+  const env = ptyEnv(base);
+  for (const k of Object.keys(env)) if (/^(CLAUDE|ANTHROPIC_|AGENT_OFFICE_)/.test(k)) delete env[k];
+  return env;
+}
+
 // Savings per project (contract v3.20): every value of the levels lives here. stepBudget: tool calls before a subagent
 // is told to wrap up (again every stepBudget/2); stepCap: calls past 2 × stepBudget are refused; bashOutput: characters
 // of a Bash result Claude reads inline; mcpOutput: tokens of an MCP tool result. Off (null) changes nothing. The
@@ -260,7 +271,7 @@ const loginAccountId = (ptyId) =>
   typeof ptyId === 'string' && ptyId.startsWith(LOGIN_PREFIX) ? ptyId.slice(LOGIN_PREFIX.length) : null;
 
 module.exports = {
-  DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, setAccountShare, removeAccount, accountOf, ptyEnv, sessionEnv,
+  shellEnv, DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, setAccountShare, removeAccount, accountOf, ptyEnv, sessionEnv,
   SAVINGS, SAVINGS_LEVELS, SAVINGS_DEFAULT,
   lastJsonObject, authFromStatus, authFromRun, localizeAuth, claudeCommand, withAuth, loginPtyId, loginAccountId,
 };

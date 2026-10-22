@@ -120,6 +120,7 @@
     "connDirLocked": "Klasör oturumları ve geçmişlerini tutar, bu yüzden değiştirilemez.",
     "connClaudeOnly": "Bağlantı yalnızca Claude Code'a ulaşır: MCP sunucusu Antigravity, Command Code veya OpenCode'a verilmez.",
     "connError": {
+      "token": "Anahtar kaydedilemedi; hiçbir şey değişmedi. Yeniden deneyin.",
       "name": "Bir ad gir.",
       "url": "Geçerli bir http(s) adresi gir.",
       "dir": "Bu klasör kullanılamıyor.",
@@ -590,6 +591,7 @@
     "handoffDetail": "Kaydedilmemiş değişiklikler yeni bir agent-office/handoff-… dalına gider (dalınız ve dosyalarınız olduğu gibi kalır), uzak depoya gönderilir ya da doğrudan aktarılır. Oturumlar, hafıza ve ayarlar da gider. Proje bundan sonra diğer cihazda çalışır; burada kapanır ve uzak proje olarak görünür.",
     "handoffFailed": "{project}, {device} cihazına devredilemedi",
     "handoffReason": {
+      "connection": "bağlantı bu makinede kalır: anahtarı ve adresi devredilmez",
       "declined": "reddetti",
       "not-allowed": "orada bu cihazdan devir kapalı",
       "busy": "projenin bir sekmesi çalışıyor: bekleyin ya da durdurun",

@@ -29,7 +29,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withAgentModel(p.agentModel),
       ...withContextCap(p.contextCap),
       ...withSavings(p.savings),
-      ...withEngine(p.engine),
+      ...(withMcp(p.mcp).mcp ? {} : withEngine(p.engine)), // a connection runs only Claude Code (v3.43)
       ...withProjectFiles(p.projectFiles),
       ...withMcp(p.mcp), // a connector (contract v3.43)
       ...withBackup(p.backupAccount, known),
@@ -454,7 +454,12 @@ function returnHome(state, id) {
 const historyDir = (projectDir, configDir, home) =>
   path.join(configDir || path.join(home, '.claude'), 'projects', String(projectDir).replace(/[^a-zA-Z0-9]/g, '-'));
 
+/** The projects as the renderer gets them (contract v3.43): a connection's address stays in main (`connectors:get`
+ *  gives it to the edit form only); the page sees `mcp: { label, hasUrl }`. */
+const forRenderer = (projects) => projects.map((p) => (p.mcp ? { ...p, mcp: { label: p.mcp.label, hasUrl: Boolean(p.mcp.url) } } : p));
+
 module.exports = {
+  forRenderer,
   historyDir,
   MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty,
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,

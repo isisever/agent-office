@@ -96,7 +96,8 @@ const running = new Map(projects.flatMap((p, i) => tabIds(p).map((id) => [id, i 
 let activeId = projects[0]?.id ?? null;
 
 const snapshot = () => ({
-  projects: projects.map((p) => ({ ...p })),
+  // like main's P.forRenderer (v3.43): a connection's address only through connectors.get
+  projects: projects.map((p) => (p.mcp ? { ...p, mcp: { label: p.mcp.label, hasUrl: true } } : { ...p })),
   activeId,
   status: projects.map((p, i) => ({
     id: p.id, isRunning: !!running.get(p.id), attention: q.has('asking') ? [null, 'permission', 'done'][i] ?? null : null,
@@ -226,7 +227,7 @@ window.agentOffice = {
       projects.push(p);
       activeId = p.id;
       boot(p.id);
-      return { ok: true, project: { ...p } };
+      return { ok: true, project: { ...p, mcp: { label: p.mcp.label, hasUrl: true } } };
     },
     update: async (id, f) => {
       const p = projects.find((x) => x.id === id);

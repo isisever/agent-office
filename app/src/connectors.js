@@ -1,6 +1,7 @@
 // Connectors (contract v3.43): a remote MCP server (address + token) the user works with in its own Claude Code session.
 // A connector is a project (src/projects.js) with an `mcp: { label, url }` field, so it gets the boss, tabs, accounts,
 // sleep, resume and the office like any project. Pure helpers (no Electron); main.js keeps the token (safeStorage).
+const fs = require('fs');
 const path = require('path');
 
 // Turkish letters NFKD does not decompose (ı, İ) or that should read as their base letter: 'Kişisel' → 'kisisel'.
@@ -64,4 +65,39 @@ function defaultDir(root, label, taken) {
   return path.join(root, `${base}-${Date.now()}`);
 }
 
-module.exports = { slug, cleanUrl, withMcp, validate, serverName, serverConfig, serverFor, defaultDir, cleanToken };
+/**
+ * The token store (contract v3.43): one file per project id under `dir`, encrypted with `safe` (Electron safeStorage);
+ * a 0600 plain file only where no keyring exists. `save` returns false when the token could not be written: the old
+ * token (if any) is then kept, and the caller does not change the connection.
+ * @param {string} dir
+ * @param {{ isEncryptionAvailable(): boolean, encryptString(s: string): Buffer, decryptString(b: Buffer): string }} safe
+ * @param {typeof fs} [fsx]
+ */
+function tokenStore(dir, safe, fsx = fs) {
+  const file = (/** @type {string} */ id, /** @type {string} */ ext) => path.join(dir, `${String(id).replace(/[^\w-]/g, '_')}.${ext}`);
+  const remove = (/** @type {string} */ id, exts = ['bin', 'txt']) => { for (const ext of exts) try { fsx.rmSync(file(id, ext), { force: true }); } catch {} };
+  return {
+    /** @param {string} id @param {string} token */
+    save(id, token) {
+      if (!token) { remove(id); return true; }
+      try {
+        fsx.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        const enc = safe.isEncryptionAvailable();
+        fsx.writeFileSync(file(id, enc ? 'bin' : 'txt'), enc ? safe.encryptString(token) : token, { mode: 0o600 });
+        remove(id, [enc ? 'txt' : 'bin']);
+        return true;
+      } catch { return false; }
+    },
+    /** @param {string} id */
+    load(id) {
+      try { return safe.decryptString(fsx.readFileSync(file(id, 'bin'))); } catch {}
+      try { return fsx.readFileSync(file(id, 'txt'), 'utf8'); } catch {}
+      return '';
+    },
+    /** @param {string} id */
+    has: (id) => fsx.existsSync(file(id, 'bin')) || fsx.existsSync(file(id, 'txt')),
+    remove,
+  };
+}
+
+module.exports = { tokenStore, slug, cleanUrl, withMcp, validate, serverName, serverConfig, serverFor, defaultDir, cleanToken };

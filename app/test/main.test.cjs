@@ -4144,8 +4144,21 @@ test('düz terminal sekmesi: shell:true + dir saklanır, motor id\'lerinde yok, 
 test('düz terminal sekmesi: main.js başlatır, uyutmaz, motor mantığına sokmaz (v3.42)', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
   assert.match(src, /if \(r\.tab\?\.shell\) return startShell\(id, r\)/);
-  assert.match(src, /function startShell[\s\S]{0,900}AGENT_OFFICE_/);
-  assert.doesNotMatch(src.slice(src.indexOf('function startShell'), src.indexOf('function startOpenCode')), /sessionEnv|claudeArgs|plugin/);
+  const body = src.slice(src.indexOf('function startShell'), src.indexOf('function startOpenCode'));
+  assert.match(body, /const env = A\.shellEnv\(process\.env\)/); // the env builder tested below is the one it uses
+  assert.doesNotMatch(body, /sessionEnv|claudeArgs|plugin/);
+});
+test('düz terminal sekmesi: ortamdan CLAUDE*/ANTHROPIC_*/AGENT_OFFICE_* düşer, kullanıcınınki kalır (v3.42)', () => {
+  const base = {
+    PATH: '/usr/bin', HOME: '/h', OPENAI_API_KEY: 'k', LANG: 'tr_TR.UTF-8', MY_CLAUDE_NOTE: 'x',
+    CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CONFIG_DIR: '/c', CLAUDE_PID: '9', CLAUDE_FOO: 'y',
+    ANTHROPIC_API_KEY: 'a', ANTHROPIC_BASE_URL: 'u', AGENT_OFFICE_CONFIG_DIR: '/c', AGENT_OFFICE_TOKEN: 't',
+  };
+  const env = A.shellEnv(base);
+  assert.deepEqual(Object.keys(env).filter((k) => /^(CLAUDE|ANTHROPIC_|AGENT_OFFICE_)/.test(k)), []);
+  for (const k of ['PATH', 'HOME', 'OPENAI_API_KEY', 'LANG', 'MY_CLAUDE_NOTE']) assert.equal(env[k], base[k], k);
+  assert.equal(env.TERM, 'xterm-256color');
+  assert.equal(base.CLAUDECODE, '1'); // the input is not changed
 });
 
 // --- connectors (contract v3.43)
@@ -4230,10 +4243,73 @@ test('bağlantı: varsayılan klasör kararlı, başkasının klasörünü almaz
   const n = P.normalizeState({ projects: [{ id: 'a', dir: '/r/my-notion', mcp: { label: 'N', url: 'javascript:1' } }] });
   assert.equal(n.projects[0].mcp, undefined); // a bad address is dropped
 });
-test('bağlantı: token main.js\'te şifreli saklanır, yalnız oturumun MCP dosyasına girer, kaldırılınca silinir (v3.43)', () => {
+test('bağlantı: token şifreli saklanır, yazılamazsa eskisi kalır ve false döner; kaldırılınca silinir (v3.43)', () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const C = require('../src/connectors.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-tok-'));
+  try {
+    const dir = path.join(root, 'connector-tokens');
+    const safe = { isEncryptionAvailable: () => true, encryptString: (t) => Buffer.from(`enc:${t}`), decryptString: (b) => String(b).replace(/^enc:/, '') };
+    const st = C.tokenStore(dir, safe);
+    assert.equal(st.has('p1'), false);
+    assert.equal(st.save('p1', 'sekret-1'), true);
+    assert.equal(st.has('p1'), true); assert.equal(st.load('p1'), 'sekret-1');
+    assert.doesNotMatch(fs.readFileSync(path.join(dir, 'p1.bin'), 'utf8'), /^sekret/); // the stored bytes are the encrypted form
+    if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(dir, 'p1.bin')).mode & 0o777, 0o600);
+    // the write fails: false, the old token stays
+    const failing = C.tokenStore(dir, safe, { ...fs, writeFileSync: () => { throw new Error('disk full'); } });
+    assert.equal(failing.save('p1', 'sekret-2'), false);
+    assert.equal(st.load('p1'), 'sekret-1');
+    // encryption itself fails: false too
+    assert.equal(C.tokenStore(dir, { ...safe, encryptString: () => { throw new Error('keyring locked'); } }).save('p1', 'x'), false);
+    assert.equal(st.load('p1'), 'sekret-1');
+    // no keyring: a 0600 plain file; the old encrypted one goes
+    const plain = C.tokenStore(dir, { ...safe, isEncryptionAvailable: () => false });
+    assert.equal(plain.save('p1', 'sekret-3'), true);
+    assert.equal(fs.existsSync(path.join(dir, 'p1.bin')), false); assert.equal(plain.load('p1'), 'sekret-3');
+    assert.equal(st.save('p1', ''), true); assert.equal(st.has('p1'), false); // empty = cleared
+    st.save('p2', 'z'); st.remove('p2'); assert.equal(st.has('p2'), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+test('bağlantı: main.js anahtarı kaydedemezse hiçbir şeyi değiştirmez; her kaldırma yolu anahtarı siler (v3.43)', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
-  assert.match(src, /safeStorage\.encryptString\(token\)/);
+  assert.match(src, /const tokens = \(\) => C\.tokenStore\(tokenDir\(\), safeStorage\)/);
   assert.match(src, /C\.serverFor\(project, loadConnectorToken\(project\.id\)\)/);
-  assert.match(src, /if \(p\?\.mcp\) deleteConnectorToken\(p\.id\)/);
+  const add = src.slice(src.indexOf("ipcMain.handle('connectors:add'"), src.indexOf("ipcMain.handle('connectors:update'"));
+  assert.ok(add.indexOf("error: 'token'") > 0 && add.indexOf("error: 'token'") < add.indexOf('commit(r.state)'));
+  const upd = src.slice(src.indexOf("ipcMain.handle('connectors:update'"), src.indexOf("ipcMain.handle('projects:openFolder'"));
+  assert.ok(upd.indexOf("error: 'token'") > 0 && upd.indexOf("error: 'token'") < upd.indexOf('commit(next)'));
+  // every path that removes a project: projects:remove and the handoff release
+  const removals = src.split('commit(P.removeProject(').length - 1;
+  assert.equal(removals, 2);
+  assert.equal((src.match(/if \(p\??\.mcp\) deleteConnectorToken\(p\.id\)/g) || []).length, 2);
   assert.doesNotMatch(require('node:fs').readFileSync(require('node:path').join(__dirname, '../preload.js'), 'utf8'), /loadConnectorToken|token\s*:\s*\(/);
+});
+test('bağlantı: renderer anlık görüntüsünde adres yok; adres yalnız connectors:get ile (v3.43)', () => {
+  const st = P.addConnector({ projects: [{ id: 'x', dir: '/x', name: 'x', accountId: 'default' }], accounts: [{ id: 'default', label: 'D' }], activeId: 'x' }, '/r/n', { label: 'N', url: 'https://srv.example/s/KEY123/mcp' }).state;
+  const out = P.forRenderer(st.projects);
+  assert.doesNotMatch(JSON.stringify(out), /srv\.example|KEY123|"url"/);
+  const c = out.find((p) => p.mcp);
+  assert.deepEqual(c.mcp, { label: 'N', hasUrl: true });
+  assert.equal(out.find((p) => p.id === 'x'), st.projects.find((p) => p.id === 'x')); // other projects untouched
+  assert.ok(st.projects.find((p) => p.mcp).mcp.url); // state itself keeps it
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
+  assert.match(src, /const snapshot = \(\) => \(\{\n  projects: P\.forRenderer\(state\.projects\)/);
+  assert.match(src, /ipcMain\.handle\('connectors:get'[\s\S]{0,200}url: p\.mcp\.url/);
+});
+test('bağlantı: devredilmez (v3.29 nedeni connection, en+tr); normalizeState motoru düşürür (v3.43)', () => {
+  const H = require('../src/handoff.js');
+  assert.equal(H.refusal({ connection: true, engine: 'claude', git: true, online: true }), 'connection');
+  assert.equal(H.refusal({ connection: false, engine: 'claude', git: true, online: true }), null);
+  assert.equal(H.refusal({ connection: true, engine: 'claude', git: true, online: false }), 'offline');
+  for (const l of ['en', 'tr']) {
+    const j = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, `../locales/${l}.json`), 'utf8'));
+    const reasons = Object.values(j).find((v) => v && typeof v === 'object' && v.handoffReason)?.handoffReason;
+    assert.ok(reasons?.connection, l);
+  }
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/link-host.js'), 'utf8');
+  assert.match(src, /H\.refusal\(\{ connection: info\.connection,/);
+  const n = P.normalizeState({ projects: [{ id: 'a', dir: '/c', engine: 'opencode', mcp: { label: 'N', url: 'https://x.io/mcp' } }, { id: 'b', dir: '/d', engine: 'opencode' }] });
+  assert.equal(n.projects[0].engine, undefined); assert.ok(n.projects[0].mcp);
+  assert.equal(n.projects[1].engine, 'opencode');
 });

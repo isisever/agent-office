@@ -107,7 +107,7 @@ function saveState() {
 
 const send = (ch, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...args); };
 const snapshot = () => ({
-  projects: state.projects,
+  projects: P.forRenderer(state.projects), // v3.43: no connection address here (connectors:get gives it to the edit form)
   activeId: state.activeId,
   status: state.projects.map((p) => ({
     id: p.id, isRunning: terms.has(p.id), isAsleep: asleep.has(p.id), attention: attention.get(p.id) || null,
@@ -269,23 +269,11 @@ const directoryDir = () => path.join(app.getPath('userData'), 'directory');
 // (a 0600 plain file only where the OS has no keyring); it reaches claude only inside the tab's 0600 MCP file.
 const connectorsRoot = () => path.join(app.getPath('userData'), 'connectors');
 const tokenDir = () => path.join(app.getPath('userData'), 'connector-tokens');
-const tokenFile = (id, ext) => path.join(tokenDir(), `${String(id).replace(/[^\w-]/g, '_')}.${ext}`);
-function saveConnectorToken(id, token) {
-  fs.mkdirSync(tokenDir(), { recursive: true, mode: 0o700 });
-  deleteConnectorToken(id);
-  if (!token) return;
-  const enc = safeStorage.isEncryptionAvailable();
-  fs.writeFileSync(tokenFile(id, enc ? 'bin' : 'txt'), enc ? safeStorage.encryptString(token) : token, { mode: 0o600 });
-}
-function loadConnectorToken(id) {
-  try { return safeStorage.decryptString(fs.readFileSync(tokenFile(id, 'bin'))); } catch {}
-  try { return fs.readFileSync(tokenFile(id, 'txt'), 'utf8'); } catch {}
-  return '';
-}
-const hasConnectorToken = (id) => fs.existsSync(tokenFile(id, 'bin')) || fs.existsSync(tokenFile(id, 'txt'));
-function deleteConnectorToken(id) {
-  for (const ext of ['bin', 'txt']) try { fs.rmSync(tokenFile(id, ext), { force: true }); } catch {}
-}
+const tokens = () => C.tokenStore(tokenDir(), safeStorage);
+const saveConnectorToken = (id, token) => tokens().save(id, token);
+const loadConnectorToken = (id) => tokens().load(id);
+const hasConnectorToken = (id) => tokens().has(id);
+const deleteConnectorToken = (id) => tokens().remove(id);
 function removeMcpFile(id) {
   officeSock?.remove(id);   // v3.35 its office_* token stops working with it
   try { fs.rmSync(path.join(mcpDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
@@ -1343,8 +1331,7 @@ function startCommandCode(id, { project, tab, dir: cwd }, { resume = false, prom
  */
 function startShell(id, { dir: cwd }) {
   const { cols, rows } = sizes.get(id) || lastSize;
-  const env = A.ptyEnv(process.env);
-  for (const k of Object.keys(env)) if (/^AGENT_OFFICE_/.test(k)) delete env[k];
+  const env = A.shellEnv(process.env);
   let t;
   try {
     t = pty.spawn(shell(), IS_WIN ? [] : ['-l', '-i'], {
@@ -1785,7 +1772,7 @@ function handoffDeps() {
         if (sid && !sessionIds.includes(sid)) sessionIds.push(sid);
       }
       return {
-        name: p.name, dir: p.dir, engine: P.engineOf(p), root: PD.claudeRoot(configDir, home), sessionIds,
+        name: p.name, dir: p.dir, engine: P.engineOf(p), connection: Boolean(p.mcp), root: PD.claudeRoot(configDir, home), sessionIds,
         busy: ids.some((id) => {
           const t = terms.get(id);
           if (!t) return false;
@@ -1802,6 +1789,7 @@ function handoffDeps() {
       const p = P.findProject(state, projectId);
       if (!p) return;
       for (const pid of P.allPtyIdsOf(p)) { killPty(pid); asleep.delete(pid); sizes.delete(pid); }
+      if (p.mcp) deleteConnectorToken(p.id); // never happens (a connection is refused, v3.43), but a token never outlives its project
       commit(P.removeProject(state, projectId));
     },
     target(dir) {
@@ -2170,10 +2158,10 @@ ipcMain.handle('connectors:add', (_e, f) => {
   }
   const r = P.addConnector(state, dir, { label: mcp.label, url });
   if (!r) return { ok: false, error: 'dir-used' };
+  if (!saveConnectorToken(r.project.id, C.cleanToken(f?.token))) return { ok: false, error: 'token' }; // nothing added
   commit(r.state);
-  try { saveConnectorToken(r.project.id, C.cleanToken(f?.token)); } catch (e) { console.error('bağlantı anahtarı saklanamadı:', e.message); }
   startPty(r.project.id);
-  return { ok: true, project: r.project };
+  return { ok: true, project: P.forRenderer([r.project])[0] };
 });
 ipcMain.handle('connectors:update', (_e, id, f) => {
   const p = P.findProject(state, id);
@@ -2185,8 +2173,9 @@ ipcMain.handle('connectors:update', (_e, id, f) => {
   const clear = f?.clearToken === true;
   const next = P.setConnector(state, id, { label: mcp.label, url: C.cleanUrl(mcp.url) });
   if (next === state && !token && !clear) return { ok: true, restarted: [] };
+  // the token first: when it cannot be saved nothing changes (the old token and address stay)
+  if ((token || clear) && !saveConnectorToken(id, token)) return { ok: false, error: 'token' };
   if (next !== state) commit(next);
-  if (token || clear) try { saveConnectorToken(id, token); } catch (e) { console.error('bağlantı anahtarı saklanamadı:', e.message); }
   const now = P.findProject(state, id);
   // sessions started afterwards use the new address and token; idle ones restart in their conversation now
   return { ok: true, restarted: restartIdle(now) };
@@ -2771,6 +2760,7 @@ function handoffMenu(p) {
   }
   const devices = linkHost?.devices() || [];
   if (!devices.length) return [];
+  if (p.mcp) return []; // a connection stays on this machine (v3.43): its token never crosses
   const claude = P.engineOf(p) === 'claude';
   return [{
     label: T('main.handoffTo'), enabled: claude, ...(claude ? {} : { toolTip: T('main.handoffClaudeOnly'), sublabel: T('main.handoffClaudeOnly') }),

@@ -121,6 +121,7 @@
     "connDirLocked": "The folder holds the sessions and their history, so it cannot change.",
     "connClaudeOnly": "A connection reaches only Claude Code: its MCP server is not given to Antigravity, Command Code or OpenCode.",
     "connError": {
+      "token": "The token could not be saved; nothing was changed. Try again.",
       "name": "Enter a name.",
       "url": "Enter a valid http(s) address.",
       "dir": "That folder cannot be used.",
@@ -609,6 +610,7 @@
     "handoffDetail": "Uncommitted changes go on a new branch agent-office/handoff-… (your branch and files stay as they are), pushed to the remote or sent directly. The sessions, memory and settings go with it. The project then runs on the other device; here it closes and shows as a remote project.",
     "handoffFailed": "{project} was not handed off to {device}",
     "handoffReason": {
+      "connection": "a connection stays on this machine: its token and address are not handed off",
       "declined": "they declined",
       "not-allowed": "handoffs from this device are off there",
       "busy": "a tab of the project is working: wait or stop it first",
