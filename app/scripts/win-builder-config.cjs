@@ -27,14 +27,16 @@ for (const p of [NO_WIN32, LINK_MAC]) if (!build.files.includes(p)) throw new Er
 // - GitHub Actions makes an undefined secret empty (''), and electron-builder would then try to sign with an empty
 //   link or a half-set Trusted Signing account — so empty signing envs are dropped here;
 // - with nothing set, the build stays unsigned exactly as it is today (SmartScreen stops it; see README → Windows).
-const AZURE = {
-  publisherName: process.env.AZURE_SIGNING_PUBLISHER_NAME,
-  endpoint: process.env.AZURE_SIGNING_ENDPOINT,
-  certificateProfileName: process.env.AZURE_SIGNING_PROFILE,
-  codeSigningAccountName: process.env.AZURE_SIGNING_ACCOUNT,
+const AZURE_ENV = {
+  publisherName: 'AZURE_SIGNING_PUBLISHER_NAME',
+  endpoint: 'AZURE_SIGNING_ENDPOINT',
+  certificateProfileName: 'AZURE_SIGNING_PROFILE',
+  codeSigningAccountName: 'AZURE_SIGNING_ACCOUNT',
 };
-const SIGNING_ENVS = ['CSC_LINK', 'CSC_KEY_PASSWORD', ...Object.keys(AZURE), 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'];
+const SIGNING_ENVS = ['CSC_LINK', 'CSC_KEY_PASSWORD', ...Object.values(AZURE_ENV), 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'];
 for (const name of SIGNING_ENVS) if (process.env[name] === '') delete process.env[name];
+// read after the empty ones are gone
+const AZURE = Object.fromEntries(Object.entries(AZURE_ENV).map(([field, name]) => [field, process.env[name]]));
 const azureSet = Object.values(AZURE).filter(Boolean);
 if (azureSet.length && azureSet.length < 4) {
   throw new Error('Azure Trusted Signing needs its four envs together: AZURE_SIGNING_PUBLISHER_NAME, AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_PROFILE, AZURE_SIGNING_ACCOUNT');

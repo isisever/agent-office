@@ -1,8 +1,9 @@
 name: release-windows
 
 # The macOS release is published by hand (README → Releasing); every published release gets the Windows installer
-# here: the NSIS Setup .exe (x64, not code-signed), its blockmap, and latest.yml for the in-app updater. Only these
-# files are uploaded, so latest-mac.yml and latest-linux.yml are left alone.
+# here: the NSIS Setup .exe (x64, code-signed only when signing secrets exist), its blockmap, latest.yml for the
+# in-app updater, and a Windows-only SHA256SUMS. Only these files are uploaded, so latest-mac.yml and
+# latest-linux.yml are left alone.
 on:
   release:
     types: [published]
@@ -18,23 +19,34 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    # Signing secrets live in this GitHub Environment, whose deployment rule allows only v* tags (README →
+    # Releasing → Windows signing). A manual run from a branch is refused by that rule before any secret is read.
+    environment: windows-signing
     defaults:
       run:
         shell: bash
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      # The tag must already exist as a v<semver> tag: checkout would otherwise accept a branch name here.
+      - name: Check the tag is an existing release tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a v<major>.<minor>.<patch> tag: $TAG"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --silent || { echo "no tag $TAG in $GITHUB_REPOSITORY"; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ env.TAG }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Check the version matches the tag
         run: |
           v=$(node -p "require('./app/package.json').version")
           [ "v$v" = "$TAG" ] || [ "$v" = "$TAG" ] || { echo "app/package.json $v, tag $TAG"; exit 1; }
-      # not npm ci: the lock file was made on macOS (see test.yml → linux-build)
+      # not npm ci: the lock file was made on macOS (see test.yml → linux-build). No secrets in this step: dependency
+      # install scripts run here; only the electron-builder step below receives the signing secrets.
       - name: Install app dependencies
         working-directory: app
         run: npm install --no-audit --no-fund
@@ -63,19 +75,20 @@ jobs:
           test -f "release/AgentOffice-$v-Setup.exe"
           test -f "release/AgentOffice-$v-Setup.exe.blockmap"
           grep -q "AgentOffice-$v-Setup.exe" release/latest.yml
-      # SHA256SUMS for the uploaded installer files: verify a download with `sha256sum -c` (README → Windows) before
+      # Windows-only SHA256SUMS for the uploaded installer files (not the macOS or Linux assets): verify a download
+      # (README → Windows) before
       # clicking through SmartScreen.
       - name: Write the SHA256SUMS
         working-directory: app
         run: |
           v=$(node -p "require('./package.json').version")
           cd release
-          sha256sum "AgentOffice-$v-Setup.exe" "AgentOffice-$v-Setup.exe.blockmap" latest.yml > "AgentOffice-$v-SHA256SUMS"
-          cat "AgentOffice-$v-SHA256SUMS"
+          sha256sum "AgentOffice-$v-Setup.exe" "AgentOffice-$v-Setup.exe.blockmap" latest.yml > "AgentOffice-$v-windows-SHA256SUMS"
+          cat "AgentOffice-$v-windows-SHA256SUMS"
       - name: Upload to the release
         working-directory: app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           v=$(node -p "require('./package.json').version")
-          gh release upload "$TAG" "release/AgentOffice-$v-Setup.exe" "release/AgentOffice-$v-Setup.exe.blockmap" release/latest.yml "release/AgentOffice-$v-SHA256SUMS" --clobber
+          gh release upload "$TAG" "release/AgentOffice-$v-Setup.exe" "release/AgentOffice-$v-Setup.exe.blockmap" release/latest.yml "release/AgentOffice-$v-windows-SHA256SUMS" --clobber
