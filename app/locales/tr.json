@@ -245,6 +245,8 @@
     "ocApiKeyLoginTitle": "opencode auth login'i çalıştırır: bir sağlayıcı sorar, sonra tarayıcı açılır ya da API anahtarı girilir",
     "ocAddTitle": "Tekrar giriş yap (nasıl olduğunu seç)",
     "ocLogoutTitle": "Çıkış yap (opencode console logout)",
+    "ocLogoutV2": "Çıkış yap (opencode auth logout opencode)",
+    "ocLogoutAuth": "Bir sağlayıcıdan çıkış yap (opencode auth logout: hangisi olduğunu sorar)",
     "na": {
       "agyContextCap": "Antigravity konuşmasını kendisi özetler; boyut ayarı yok.",
       "agySavings": "Antigravity'nin belgelenmiş bir çıktı sınırı ya da adım bütçesi yok.",

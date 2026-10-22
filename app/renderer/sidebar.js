@@ -672,7 +672,11 @@ export function mountSidebar(el, on) {
     if (!ocShown()) return null;
     const state = ocAuth?.state || 'checking';
     const v2 = (ocAuth?.major ?? 0) >= 2;
+    // v2.x ignores the mode for login (one login, `auth login opencode`); 'console' is the allowlisted default (v3.41)
     const v2Login = () => on.ocLogin?.('console');
+    // which logout main runs (ocLoginArgs, v3.41): the OpenCode entry when it is logged in, else `auth logout` (asks which)
+    const consoleIn = (ocAuth?.providers || []).some((x) => x.id === 'opencode');
+    const logoutTitle = t(!consoleIn ? 'sidebar.ocLogoutAuth' : v2 ? 'sidebar.ocLogoutV2' : 'sidebar.ocLogoutTitle');
     const text = (s, title = '') => h('span', { class: 'sb-auth-text' + (state === 'in' ? ' sb-email' : ''), title }, s);
     let auth;
     if (state === 'missing') {
@@ -683,7 +687,7 @@ export function mountSidebar(el, on) {
       const names = (ocAuth.providers || []).map((x) => x.id).join(', ');
       auth = h('div', { class: 'sb-auth' }, text(names || t('sidebar.loggedIn'), t('sidebar.ocInTitle', { providers: names })),
         rowBtn('', t('sidebar.login'), t(v2 ? 'sidebar.ocLoginV2' : 'sidebar.ocAddTitle'), v2 ? v2Login : toggle),
-        rowBtn('', t('sidebar.logout'), t('sidebar.ocLogoutTitle'), () => on.ocLogout?.()));
+        rowBtn('', t('sidebar.logout'), logoutTitle, () => on.ocLogout?.()));
     } else if (state === 'out') {
       auth = h('div', { class: 'sb-auth' }, text(t('sidebar.ocFree'), t('sidebar.ocFreeTitle')),
         rowBtn('primary', t('sidebar.login'), t(v2 ? 'sidebar.ocLoginV2' : 'sidebar.ocLoginTitle'), v2 ? v2Login : toggle));
