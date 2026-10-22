@@ -1053,4 +1053,10 @@ label.sb-langrow { cursor: pointer; }
 .sb-modal-form .sb-field input:not([type=checkbox]) { flex: 1; min-width: 0; font: inherit; font-size: 12px; background: transparent; color: var(--status-text); border: 1px solid var(--accent); padding: 4px 6px; }
 .sb-modal-form .sb-field input[readonly] { opacity: .7; }
 .sb-modal-form .sb-botcolor { padding: 4px 0; font-size: 12px; opacity: 1; }
-.sb-connections .sb-empty { padding: 4px 12px; }
+.sb-mcp-panel .sb-empty { padding: 4px 12px; }
+.sb-mcp-row { display: flex; align-items: baseline; gap: 6px; padding: 3px 12px; font-size: 12px; }
+.sb-mcp-row .sb-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-mcp-row .sb-mcp-src { flex: 1; min-width: 0; opacity: .6; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-mcp-row.shadowed .sb-name { text-decoration: line-through; opacity: .6; }
+.sb-mcp-row.away .sb-name { font-style: italic; opacity: .6; }
+#sb-mcp-note { padding: 2px 12px; font-size: 10px; }

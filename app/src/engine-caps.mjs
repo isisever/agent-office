@@ -5,7 +5,7 @@
 export const ENGINES = ['claude', 'agy', 'commandcode', 'opencode'];
 
 /** The features of a project row, in the order the sidebar shows them. */
-export const FEATURES = ['account', 'login', 'manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'backup', 'workers', 'approvals', 'cost', 'projectFiles'];
+export const FEATURES = ['account', 'login', 'manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'backup', 'workers', 'approvals', 'cost', 'projectFiles', 'appMcp'];
 
 const OK = Object.freeze({ ok: true });
 const no = (reason) => Object.freeze({ ok: false, reason });
@@ -21,9 +21,11 @@ const TABLE = {
     backup: no('agyBackup'),
     workers: no('agyWorkers'),
     cost: no('agyCost'),
+    appMcp: no('claudeOnlyMcp'),
   },
   commandcode: {
     backup: no('cmdBackup'),
+    appMcp: no('claudeOnlyMcp'),
   },
   // OpenCode (contract v3.40): observed from its terminal only; no launch config or files from the app, no token counts.
   opencode: {
@@ -35,6 +37,7 @@ const TABLE = {
     workers: no('ocWorkers'),
     cost: no('ocCost'),
     projectFiles: no('ocProjectFiles'),
+    appMcp: no('claudeOnlyMcp'),
   },
 };
 
@@ -42,6 +45,8 @@ const TABLE = {
 // files in the project; off, they are disabled with the reason "turn on Agent Office files".
 const WITH_FILES = { agy: ['manager', 'agentModel'], commandcode: ['agentModel'] };
 
+// MCP servers added in Agent Office (contract v3.44, src/mcp-servers.js) and their tokens go only to Claude Code
+// sessions: the other engines get no token and no office data (the leak rule). The MCP panel says "Claude Code only".
 const engineOf = (e) => (ENGINES.includes(e) ? e : 'claude');
 
 /**

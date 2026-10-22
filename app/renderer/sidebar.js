@@ -138,10 +138,12 @@ export function mountSidebar(el, on) {
   const projList = h('ul', { class: 'sb-list', id: 'sb-projects' });
   const acctList = h('ul', { class: 'sb-list', id: 'sb-accounts' });
   // v3.43: collapsible panels (open/closed is remembered on this computer): PROJECTS, ACCOUNTS, DEVICES (devices.js adds
-  // its own after ACCOUNTS) and CONNECTIONS. The whole sidebar scrolls.
-  const connList = h('ul', { class: 'sb-list', id: 'sb-connectors' });
-  const connHead = h('span', {});
-  const addConnBtn = h('button', { class: 'sb-add', id: 'sb-add-connector', onclick: () => openConnectorForm(null) });
+  // its own after ACCOUNTS) and MCP (v3.44: every server the active project's sessions get). The whole sidebar scrolls.
+  const mcpList = h('ul', { class: 'sb-list', id: 'sb-mcp' });
+  const mcpHead = h('span', {});
+  const mcpNote = h('div', { class: 'sb-note', id: 'sb-mcp-note', hidden: true });
+  const addMcpBtn = h('button', { class: 'sb-add', id: 'sb-add-mcp', onclick: () => openMcpForm() });
+  let mcpKey = null;
   function panel(id, head, body, cls = '') {
     let open = true;
     try { open = localStorage.getItem(`ao.panel.${id}`) !== '0'; } catch {}
@@ -152,16 +154,17 @@ export function mountSidebar(el, on) {
   el.append(
     panel('projects', [projHead], h('div', { class: 'sb-top', id: 'sb-top' }, projList, addProjectBtn, resumeAllBtn, resumeNote)),
     panel('accounts', [acctHead, settingsBtn], h('div', { class: 'sb-panel-body' }, acctList), 'sb-accounts'),
-    panel('connections', [connHead], h('div', { class: 'sb-panel-body' }, connList, addConnBtn), 'sb-connections'),
+    panel('mcp', [mcpHead], h('div', { class: 'sb-panel-body' }, mcpNote, mcpList, addMcpBtn), 'sb-mcp-panel'),
   );
+  el.querySelector('#sb-panel-mcp')?.addEventListener('toggle', () => renderMcp(true)); // re-read Claude Code's files
 
   /** Text of the persistent elements (headings, buttons, sublines). */
   function renderChrome() {
     projHead.textContent = t('sidebar.projects');
     acctHead.textContent = t('sidebar.accounts');
-    connHead.textContent = t('sidebar.connections');
-    addConnBtn.textContent = t('sidebar.connAdd');
-    addConnBtn.title = t('sidebar.connAddTitle');
+    mcpHead.textContent = t('sidebar.mcp');
+    addMcpBtn.textContent = t('sidebar.mcpAdd');
+    addMcpBtn.title = t('sidebar.mcpAddTitle');
     settingsBtn.title = t('sidebar.settingsTitle');
     settingsBtn.setAttribute('aria-label', t('sidebar.settings'));
     addProjectBtn.textContent = t('sidebar.addProject');
@@ -284,28 +287,18 @@ export function mountSidebar(el, on) {
     if (!accounts.some((a) => a.id === p.accountId)) {
       sel.append(h('option', { value: p.accountId, selected: now === p.accountId }, '?'));
     }
-    // a connection (contract v3.43) reaches only Claude Code: the other engines are shown, disabled with the reason
-    const connOnly = Boolean(p.mcp);
-    const connReason = connOnly ? t('sidebar.connClaudeOnly') : '';
-    const engineOpt = (value, selected, label) => h('option', { value, selected, disabled: connOnly && !selected, title: connReason || null }, label);
-    if (agyShown() || engine === 'agy' || connOnly) {
+    const engineOpt = (value, selected, label) => h('option', { value, selected }, label);
+    if (agyShown() || engine === 'agy') {
       sel.append(engineOpt(ENGINE_OPT.agy, engine === 'agy', t('sidebar.engineAgy') + (agyAuth?.email ? ` · ${agyAuth.email}` : '')));
     }
-    if (cmdShown() || engine === 'commandcode' || connOnly) {
+    if (cmdShown() || engine === 'commandcode') {
       sel.append(engineOpt(ENGINE_OPT.commandcode, engine === 'commandcode', t('sidebar.engineCommandcode')));
     }
-    if (ocShown() || engine === 'opencode' || connOnly) { // contract v3.40
+    if (ocShown() || engine === 'opencode') { // contract v3.40
       sel.append(engineOpt(ENGINE_OPT.opencode, engine === 'opencode', t('sidebar.engineOpencode')));
     }
     sel.append(h('option', { value: NEW_ACCOUNT }, t('sidebar.newAccount')));
-    const row = control(p, 'account', t('sidebar.account'), sel);
-    if (connReason && !row.querySelector('.sb-na')) {
-      row.classList.add('sb-na-wrap', 'sb-conn-only');
-      row.title = connReason;
-      row.tabIndex = 0;
-      row.append(h('span', { class: 'sb-na', role: 'note' }, connReason));
-    }
-    return row;
+    return control(p, 'account', t('sidebar.account'), sel);
   }
 
   // How the project's boss works (contract v3.10): the global setting, delegates (manager mode) or does it itself.
@@ -502,44 +495,77 @@ export function mountSidebar(el, on) {
     draft = map; // after openModal (its closeModal clears the previous draft); controls read it when they change
   }
 
-  /** Add or edit a connector (contract v3.43). Editing keeps the folder, so the sessions and their history stay;
-   *  an empty token field keeps the saved token (it is never sent back to the page). */
-  async function openConnectorForm(p) {
-    const editing = Boolean(p);
-    const cur = editing ? await on.connector?.get(p.id) : null;
+  /** The MCP panel (contract v3.44): the active project's servers, read-only ones labelled with where they come from.
+   *  Main sends names, transport, source and host only (never a URL path, header or token). */
+  async function renderMcp(force = false) {
+    const p = projects.find((x) => x.id === activeId);
+    const key = JSON.stringify([activeId, p ? engineOfRow(p) : null, p?.accountId]);
+    if (!force && key === mcpKey) return;
+    mcpKey = key;
+    const r = p ? await on.mcp?.list(p.id) : null;
+    if (mcpKey !== key) return; // the active project changed meanwhile
+    const list = r?.servers || [];
+    const gate = p ? cap(engineOfRow(p), 'appMcp') : { ok: true };
+    mcpNote.hidden = gate.ok;
+    mcpNote.textContent = gate.ok ? '' : t('sidebar.na.claudeOnlyMcp');
+    const where = (s) => [
+      t(`sidebar.mcpSrc.${s.source}`) + (s.source === 'app' ? ` · ${s.away ? t('sidebar.mcpAway', { folder: s.folder || '' }) : s.scope === 'all' ? t('sidebar.mcpScopeAll') : t('sidebar.mcpScopeOne')}` : ''),
+      s.host || '',
+    ].filter(Boolean).join(' · ');
+    const hint = (s) => [
+      s.readOnly ? t('sidebar.mcpReadOnly') : null,
+      s.source === 'project' && s.approved === false ? t('sidebar.mcpUnapproved') : null,
+      s.shadowed ? t('sidebar.mcpShadowed') : null,
+      s.bossShadowed ? t('sidebar.mcpBossShadowed') : null,
+      s.away ? t('sidebar.mcpAwayHint', { folder: s.folder || '' }) : null,
+      s.source === 'app' && !s.away && !gate.ok ? t('sidebar.na.claudeOnlyMcp') : null,
+    ].filter(Boolean).join('\n');
+    mcpList.replaceChildren(...list.map((s) => h('li', { class: 'sb-mcp-row' + (s.shadowed ? ' shadowed' : '') + (s.away ? ' away' : '') + (s.readOnly ? ' ro' : ''), title: hint(s) || null },
+      h('span', { class: 'sb-name' }, s.name),
+      h('span', { class: 'sb-tag' }, s.type),
+      h('span', { class: 'sb-mcp-src' }, where(s)),
+      s.readOnly ? null : h('button', {
+        class: 'sb-x', title: t('sidebar.mcpRemove'),
+        onclick: async () => {
+          if (!confirm(t('sidebar.mcpRemoveConfirm', { name: s.name }))) return;
+          const r = await on.mcp?.remove(s.id);
+          if (!r?.ok) alert(t('sidebar.mcpRemoveFailed', { name: s.name }));
+          renderMcp(true);
+        },
+      }, '×'))));
+    if (!list.length) mcpList.append(h('li', { class: 'sb-empty' }, p ? t('sidebar.mcpNone') : t('sidebar.mcpNoProject')));
+  }
+
+  /** Add a remote MCP server (v3.44) for all projects or one; the token goes to main only (stored encrypted there). */
+  function openMcpForm() {
     const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
-    const name = h('input', { value: cur?.label || '', maxLength: 60, placeholder: t('sidebar.connNamePh') });
-    const url = h('input', { type: 'url', value: cur?.url || '', placeholder: 'https://…', spellcheck: false });
-    const token = h('input', { type: 'password', autocomplete: 'off', spellcheck: false, placeholder: cur?.hasToken ? t('sidebar.connTokenKeep') : t('sidebar.connTokenPh') });
-    const clear = cur?.hasToken ? h('input', { type: 'checkbox', class: 'sb-check' }) : null;
-    let dir = cur?.dir || '';
-    const dirInput = h('input', { readOnly: true, value: dir, placeholder: t('sidebar.connDirDefault') });
-    const pick = editing ? null : h('button', {
-      class: 'sb-btn', type: 'button',
-      onclick: async () => { const d = await on.connector?.pickDir(); if (d) { dir = d; dirInput.value = d; } },
-    }, t('sidebar.connDirPick'));
+    const name = h('input', { maxLength: 48, placeholder: t('sidebar.mcpNamePh') });
+    const url = h('input', { type: 'url', placeholder: 'https://…', spellcheck: false });
+    const type = h('select', {}, h('option', { value: 'http' }, 'HTTP'), h('option', { value: 'sse' }, 'SSE'));
+    const token = h('input', { type: 'password', autocomplete: 'off', spellcheck: false, placeholder: t('sidebar.mcpTokenPh') });
+    const scope = h('select', {}, h('option', { value: 'all' }, t('sidebar.mcpScopeAll')),
+      ...projects.map((p) => h('option', { value: p.id, selected: p.id === activeId }, p.name)));
     const err = h('div', { class: 'sb-note warn', hidden: true });
     const save = h('button', {
       class: 'sb-btn primary',
       onclick: async () => {
         save.disabled = true;
         err.hidden = true;
-        const form = { label: name.value, url: url.value, token: token.value, ...(editing ? { clearToken: Boolean(clear?.checked) } : { dir }) };
-        const r = editing ? await on.connector?.update(p.id, form) : await on.connector?.add(form);
-        if (r?.ok) return closeModal();
+        const r = await on.mcp?.add({ name: name.value, url: url.value, type: type.value, token: token.value, scope: scope.value });
+        if (r?.ok) { closeModal(); renderMcp(true); return; }
         save.disabled = false;
-        err.textContent = t(`sidebar.connError.${{ 'dir-used': 'dirUsed' }[r?.error] || r?.error || 'failed'}`);
+        err.textContent = t(`sidebar.mcpError.${{ 'name-used': 'nameUsed', 'url-http': 'urlHttp', 'url-secret': 'urlSecret' }[r?.error] || r?.error || 'failed'}`);
         err.hidden = false;
       },
     }, t('sidebar.save'));
-    openModal(editing ? t('sidebar.connEditTitle', { name: cur?.label || p.name }) : t('sidebar.connAddTitle'), [
-      field(t('sidebar.connName'), name),
-      field(t('sidebar.connUrl'), url),
-      field(t('sidebar.connToken'), token, t('sidebar.connTokenHint')),
-      clear ? h('label', { class: 'sb-botcolor sb-langrow' }, h('span', {}, t('sidebar.connTokenClear')), clear) : null,
-      field(t('sidebar.connDir'), h('div', { class: 'sb-field-row' }, dirInput, pick), editing ? t('sidebar.connDirLocked') : t('sidebar.connDirHint')),
+    openModal(t('sidebar.mcpAddTitle'), [
+      field(t('sidebar.mcpName'), name),
+      field(t('sidebar.mcpUrl'), url, t('sidebar.mcpUrlHint')),
+      field(t('sidebar.mcpType'), type),
+      field(t('sidebar.mcpToken'), token, t('sidebar.mcpTokenHint')),
+      field(t('sidebar.mcpScope'), scope, t('sidebar.mcpScopeHint')),
       err,
-    ].filter(Boolean), [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
+    ], [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
   }
 
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
@@ -569,14 +595,13 @@ export function mountSidebar(el, on) {
         oncontextmenu: (e) => { e.preventDefault(); on.projectMenu?.(p); },
       },
         h('span', { class: 'sb-dot' + (live ? ' live' : sleeping ? ' asleep' : ''), title: dotTitle }),
-        h('span', { class: 'sb-name' }, p.mcp ? p.mcp.label : p.name),
+        h('span', { class: 'sb-name' }, p.name),
         h('span', { class: 'sb-icons' },
           attn.get(p.id) === 'permission'
             ? h('span', { class: 'sb-attn permission', title: t('sidebar.attnPermission') }, '✋')
             : attn.get(p.id) === 'done' ? h('span', { class: 'sb-attn done', title: t('sidebar.attnDone') }, '●') : null,
           h('span', { class: 'sb-boss', hidden: !isBossHere(s), title: t('sidebar.bossBusy') }, '★'),
           h('button', { class: 'sb-x sb-folder', title: t('sidebar.openFolderTitle', { dir: p.dir }), 'aria-label': t('sidebar.openFolder'), onclick: (e) => { e.stopPropagation(); on.openFolder?.(p); } }, '📁'),
-          p.mcp ? h('button', { class: 'sb-x', title: t('sidebar.connEdit'), onclick: (e) => { e.stopPropagation(); openConnectorForm(p); } }, '✎') : null,
           h('button', {
             class: 'sb-x sb-gear', title: t('sidebar.projectSettingsTitle'), 'aria-label': t('sidebar.projectSettings'),
             onclick: (e) => { e.stopPropagation(); openProjectSettings(p); },
@@ -597,11 +622,9 @@ export function mountSidebar(el, on) {
         }, costText(briefs.get(p.id))),
       );
     };
-    // connectors (v3.43) are projects with an `mcp` field: they have their own panel
-    projList.replaceChildren(...projects.map((p, i) => (p.mcp ? null : rowOf(p, i))).filter(Boolean));
-    connList.replaceChildren(...projects.map((p, i) => (p.mcp ? rowOf(p, i) : null)).filter(Boolean));
-    if (!projects.some((p) => !p.mcp)) projList.append(h('li', { class: 'sb-empty' }, t('sidebar.noProjects')));
-    if (!projects.some((p) => p.mcp)) connList.append(h('li', { class: 'sb-empty' }, t('sidebar.connNone')));
+    projList.replaceChildren(...projects.map((p, i) => rowOf(p, i)));
+    if (!projects.length) projList.append(h('li', { class: 'sb-empty' }, t('sidebar.noProjects')));
+    renderMcp();
   }
 
   function nameInput(initial, done) {

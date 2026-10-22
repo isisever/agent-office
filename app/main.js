@@ -5,7 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const P = require('./src/projects.js');
-const C = require('./src/connectors.js');
+const MS = require('./src/mcp-servers.js');
+const SF = require('./src/state-file.js');
 const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
 const N = require('./src/attention.js');
@@ -95,21 +96,19 @@ function office() {
 const statePath = () => path.join(app.getPath('userData'), 'state.json');
 const accountsRoot = () => path.join(app.getPath('userData'), 'accounts');
 const usageRoot = () => path.join(app.getPath('userData'), 'usage');
-function loadState() {
-  try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')); } catch { return {}; }
-}
+// v3.44 a state.json that does not parse reads as {} (a copy is kept, src/state-file.js); saves are atomic
+const loadState = () => SF.readState(statePath()).raw;
 // Unknown keys are kept; the old `lastProject` is dropped after migration.
+// v3.44 a state.json that is there but could not be read at start (EACCES, EBUSY, EIO) is never saved over this run
+let stateWritable = true;
 function saveState() {
-  try {
-    const { lastProject, ...rest } = loadState();
-    fs.mkdirSync(path.dirname(statePath()), { recursive: true });
-    fs.writeFileSync(statePath(), JSON.stringify({ ...rest, ...state }, null, 2));
-  } catch {}
+  if (!stateWritable) return;
+  try { SF.writeAtomic(statePath(), JSON.stringify(P.stateFile(loadState(), state), null, 2)); } catch {}
 }
 
 const send = (ch, ...args) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(ch, ...args); };
 const snapshot = () => ({
-  projects: P.forRenderer(state.projects), // v3.43: no connection address here (connectors:get gives it to the edit form)
+  projects: P.forRenderer(state.projects),
   activeId: state.activeId,
   status: state.projects.map((p) => ({
     id: p.id, isRunning: terms.has(p.id), isAsleep: asleep.has(p.id), attention: attention.get(p.id) || null,
@@ -267,15 +266,20 @@ function pluginDir() {
 const mcpDir = () => path.join(app.getPath('userData'), 'mcp');
 const directoryDir = () => path.join(app.getPath('userData'), 'directory');
 
-// --- connectors (contract v3.43, src/connectors.js): the token is kept per project id, encrypted with safeStorage
-// (a 0600 plain file only where the OS has no keyring); it reaches claude only inside the tab's 0600 MCP file.
-const connectorsRoot = () => path.join(app.getPath('userData'), 'connectors');
-const tokenDir = () => path.join(app.getPath('userData'), 'connector-tokens');
-const tokens = () => C.tokenStore(tokenDir(), safeStorage);
-const saveConnectorToken = (id, token) => tokens().save(id, token);
-const loadConnectorToken = (id) => tokens().load(id);
-const hasConnectorToken = (id) => tokens().has(id);
-const deleteConnectorToken = (id) => tokens().remove(id);
+// --- MCP servers added in Agent Office (contract v3.44, src/mcp-servers.js): state.mcpServers holds no token; each
+// token is kept per server id in userData/mcp-tokens, encrypted with safeStorage (a 0600 plain file only where the OS
+// has no keyring). It reaches claude only inside the tab's 0600 MCP file (userData/mcp), removed when that claude ends.
+const tokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'mcp-tokens'), safeStorage);
+const oldTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'connector-tokens'), safeStorage); // v3.43, migration only
+const appServers = () => state.mcpServers || [];
+/** A project is removed from this machine: its own servers and their tokens go; ones for all stay. (A handed-off
+ *  project keeps them here, held for its folder: release / adopt, MS.holdProject / MS.adoptHeld.) */
+function dropProjectServers(projectId) {
+  const r = MS.dropProject(appServers(), projectId);
+  if (!r.gone.length) return;
+  for (const sid of r.gone) tokens().remove(sid);
+  state = { ...state, mcpServers: r.servers };
+}
 function removeMcpFile(id) {
   officeSock?.remove(id);   // v3.35 its office_* token stops working with it
   try { fs.rmSync(path.join(mcpDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
@@ -965,13 +969,13 @@ const officeInput = (project) => ({
     return { name: p.name, dir: p.dir, configDir: a.configDir || null, share: SC.shareEnabled(a) };
   }),
 });
-function sharedConfig(account, project, cwd, key, extra = null) {
+function sharedConfig(account, project, cwd, key, extra = null, appMcp = null) {
   const office = officeInput(project);
   try {
     return SC.prepareShared({
       account, home: app.getPath('home'), cwd: isDir(cwd) ? cwd : null, office,
       stageRoot: path.join(app.getPath('userData'), 'shared-plugins'),
-      mcpFile: path.join(mcpDir(), SC.mcpFileName(key)), extra,
+      mcpFile: path.join(mcpDir(), SC.mcpFileName(key)), extra, app: appMcp,
     });
   } catch (e) {
     console.error('varsayılan hesabın ayarları paylaşılamadı:', e.message);
@@ -1035,8 +1039,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // --mcp-config <file>; see shared-config.js) and the office directory naming them (contract v3.9)
   // v3.35 one boss: a manager-mode boss tab (the main tab) gets the agent-office MCP server; its token only in that file
   const bossMcp = officeServerFor(id, project);
-  const connMcp = C.serverFor(project, loadConnectorToken(project.id)); // a connector's server joins this tab's MCP file (v3.43)
-  const prepared = sharedConfig(account, project, cwd, usageKey(id), bossMcp || connMcp ? { ...bossMcp, ...connMcp } : null);
+  // v3.44 servers added in Agent Office, Claude Code only: into this tab's 0600 MCP file, unless the name is taken
+  const appMcp = MS.sessionServers(P.engineOf(project), appServers(), project.id, (sid) => tokens().load(sid));
+  const prepared = sharedConfig(account, project, cwd, usageKey(id), bossMcp, appMcp);
   const shared = SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
   const print = mcpFingerprintOf(account, project, cwd);
@@ -1752,7 +1757,7 @@ function handoffDeps() {
         if (sid && !sessionIds.includes(sid)) sessionIds.push(sid);
       }
       return {
-        name: p.name, dir: p.dir, engine: P.engineOf(p), connection: Boolean(p.mcp), root: PD.claudeRoot(configDir, home), sessionIds,
+        name: p.name, dir: p.dir, engine: P.engineOf(p), root: PD.claudeRoot(configDir, home), sessionIds,
         busy: ids.some((id) => {
           const t = terms.get(id);
           if (!t) return false;
@@ -1769,7 +1774,8 @@ function handoffDeps() {
       const p = P.findProject(state, projectId);
       if (!p) return;
       for (const pid of P.allPtyIdsOf(p)) { killPty(pid); asleep.delete(pid); sizes.delete(pid); }
-      if (p.mcp) deleteConnectorToken(p.id); // never happens (a connection is refused, v3.43), but a token never outlives its project
+      // v3.44: its own servers and their tokens stay on this machine (never sent), held for its folder until it is back
+      state = { ...state, mcpServers: MS.holdProject(appServers(), p.id, p.dir) };
       commit(P.removeProject(state, projectId));
     },
     target(dir) {
@@ -1783,6 +1789,7 @@ function handoffDeps() {
       const r = P.addProject(state, dir, accountId ? { accountId } : {});
       let next = { ...r.state, projects: r.state.projects.map((x) => (x.id === r.project.id ? { ...x, ...settings } : x)) };
       next = { ...next, ...P.normalizeState(next) };
+      next = { ...next, mcpServers: MS.adoptHeld(next.mcpServers || [], r.project.dir, r.project.id) }; // v3.44 its servers again
       const tabs = [];
       // the main tab already running (an existing project): the first session also opens in a new tab
       const mainRunning = terms.has(r.project.id);
@@ -2116,7 +2123,8 @@ function startPolling() {
 // A folder already in the list is only activated (its claude starts if it is stopped).
 function addDir(dir) {
   const r = P.addProject(state, dir);
-  commit(r.state);
+  // v3.44 the folder of a project handed off from here: the servers held for it are its own again
+  commit({ ...r.state, mcpServers: MS.adoptHeld(r.state.mcpServers || [], r.project.dir, r.project.id) });
   if (!terms.has(r.project.id)) startPty(r.project.id);
   return r.project;
 }
@@ -2127,49 +2135,37 @@ ipcMain.handle('projects:add', async () => {
   const dir = await pickFolder();
   return dir ? addDir(dir) : null;
 });
-// --- connectors (v3.43): add, edit (address, name, token; the folder and so the history stay), pick a folder
-ipcMain.handle('connectors:get', (_e, id) => {
-  const p = P.findProject(state, id);
-  return p?.mcp ? { label: p.mcp.label, url: p.mcp.url, dir: p.dir, hasToken: hasConnectorToken(p.id) } : null;
+// --- one MCP panel (contract v3.44): every server a project's Claude Code sessions get (read-only from Claude
+// Code's own files) and the remote ones added here, for all projects or one. No URL path, header or token leaves main.
+ipcMain.handle('mcp:list', (_e, projectId) => {
+  const p = P.findProject(state, projectId);
+  if (!p) return { servers: [] };
+  try {
+    return { servers: MS.listing({ account: A.accountOf(state, p), home: app.getPath('home'), cwd: isDir(p.dir) ? p.dir : null, office: officeInput(p), servers: appServers(), projectId: p.id, boss: P.managerOf(state, p), hasToken: (sid) => tokens().has(sid) }) };
+  } catch (e) { console.error('mcp:list', e.message); return { servers: [] }; }
 });
-ipcMain.handle('connectors:pickDir', () => pickFolder());
-ipcMain.handle('connectors:add', (_e, f) => {
-  const mcp = { label: String(f?.label || '').trim(), url: String(f?.url || '').trim() };
-  const bad = C.validate(mcp);
+/** Idle Claude Code sessions the change reaches restart in their conversation; busy ones take it at their next start. */
+const restartFor = (scope) => state.projects.filter((p) => P.engineOf(p) === 'claude' && (scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));
+ipcMain.handle('mcp:add', (_e, f) => {
+  const form = { name: String(f?.name || ''), url: String(f?.url || '').trim(), type: f?.type === 'sse' ? 'sse' : 'http', scope: f?.scope };
+  if (!stateWritable) return { ok: false, error: 'state' }; // it could not be saved: the next start would sweep its token
+  const bad = MS.validate(form, state.projects.map((p) => p.id));
   if (bad) return { ok: false, error: bad };
-  const url = C.cleanUrl(mcp.url);
-  let dir = typeof f?.dir === 'string' ? f.dir.trim() : '';
-  if (dir && !isDir(dir)) return { ok: false, error: 'dir' };
-  if (!dir) {
-    dir = C.defaultDir(connectorsRoot(), mcp.label, (d) => Boolean(P.findByDir(state, d)));
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { return { ok: false, error: 'dir' }; }
-  }
-  const r = P.addConnector(state, dir, { label: mcp.label, url });
-  if (!r) return { ok: false, error: 'dir-used' };
-  if (!saveConnectorToken(r.project.id, C.cleanToken(f?.token))) return { ok: false, error: 'token' }; // nothing added
-  commit(r.state);
-  startPty(r.project.id);
-  return { ok: true, project: P.forRenderer([r.project])[0] };
+  const r = MS.addServer(appServers(), form, `m-${crypto.randomUUID()}`);
+  if (!r.servers) return { ok: false, error: r.error };
+  if (!tokens().save(r.server.id, MS.cleanToken(f?.token))) return { ok: false, error: 'token' }; // nothing added
+  commit({ ...state, mcpServers: r.servers });
+  return { ok: true, restarted: restartFor(r.server.scope) };
 });
-ipcMain.handle('connectors:update', (_e, id, f) => {
-  const p = P.findProject(state, id);
-  if (!p?.mcp) return { ok: false, error: 'unknown' };
-  const mcp = { label: String(f?.label || '').trim(), url: String(f?.url || '').trim() };
-  const bad = C.validate(mcp);
-  if (bad) return { ok: false, error: bad };
-  const token = C.cleanToken(f?.token);
-  const clear = f?.clearToken === true;
-  const next = P.setConnector(state, id, { label: mcp.label, url: C.cleanUrl(mcp.url) });
-  if (next === state && !token && !clear) return { ok: true, restarted: [] };
-  // the token first: when it cannot be saved nothing changes (the old token and address stay)
-  if ((token || clear) && !saveConnectorToken(id, token)) return { ok: false, error: 'token' };
-  if (next !== state) commit(next);
-  const now = P.findProject(state, id);
-  // sessions started afterwards use the new address and token; idle ones restart in their conversation now
-  return { ok: true, restarted: restartIdle(now) };
+ipcMain.handle('mcp:remove', (_e, sid) => {
+  const s = appServers().find((x) => x.id === sid);
+  if (!s) return { ok: false, error: 'unknown' };
+  commit({ ...state, mcpServers: MS.removeServer(appServers(), sid) });
+  tokens().remove(sid);
+  return { ok: true, restarted: restartFor(s.scope) };
 });
 
-// Opens the project's (or connection's) folder in the file manager; only a folder of a listed project.
+// Opens the project's folder in the file manager; only a folder of a listed project.
 ipcMain.handle('projects:openFolder', async (_e, id) => {
   const p = P.findProject(state, id);
   if (!p || !isDir(p.dir)) return false;
@@ -2180,7 +2176,7 @@ ipcMain.handle('projects:openFolder', async (_e, id) => {
 ipcMain.handle('projects:remove', (_e, id) => {
   const p = P.findProject(state, id);
   if (p && P.projectFilesOf(p)) syncProjectFiles(p, { gone: true }); // our files leave with the project (v3.38)
-  if (p?.mcp) deleteConnectorToken(p.id); // the connector's folder (session history) is left, like a project's
+  if (p) dropProjectServers(p.id); // v3.44: the project's own MCP servers and their tokens go with it
   for (const pid of p ? P.allPtyIdsOf(p) : [id]) {
     killPty(pid);
     asleep.delete(pid);
@@ -2263,7 +2259,6 @@ ipcMain.handle('projects:setSavings', (_e, id, value) => {
 // Returns the restarted pty ids, plus refused: the blocker or 'cancelled' when nothing changed for that reason.
 ipcMain.handle('projects:setEngine', async (_e, id, value) => {
   const p = P.findProject(state, id);
-  if (P.engineRefused(p, value)) return { restarted: [], refused: 'connector' }; // v3.43: a connection runs only Claude Code
   if (!p || P.setProjectEngine(state, id, value) === state) return { restarted: [] };
   const running = P.ptyIdsOf(p).filter((pid) => terms.has(pid));
   if (P.engineOf(p) === 'claude') {
@@ -2748,7 +2743,6 @@ function handoffMenu(p) {
   }
   const devices = linkHost?.devices() || [];
   if (!devices.length) return [];
-  if (p.mcp) return []; // a connection stays on this machine (v3.43): its token never crosses
   const claude = P.engineOf(p) === 'claude';
   return [{
     label: T('main.handoffTo'), enabled: claude, ...(claude ? {} : { toolTip: T('main.handoffClaudeOnly'), sublabel: T('main.handoffClaudeOnly') }),
@@ -3118,9 +3112,21 @@ app.on('open-file', (e, file) => {
 if (!isSecondInstance) app.whenReady().then(async () => {
   await loadI18n();
   await loadThemesLib();
-  const raw = loadState();
-  const base = P.normalizeState(raw);
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), sleepMinutes: Z.normalizeSleep(raw.sleepMinutes) };
+  const read = SF.readState(statePath());
+  const raw = read.raw;
+  if (read.corrupt) console.error(`state.json could not be read; a copy is kept at ${SF.corruptPath(statePath())}`);
+  if (read.unreadable) { stateWritable = false; console.error('state.json is there but could not be read; it is left as it is and not saved over this run'); }
+  SF.cleanTemps(statePath()); // temp files of a save a crash cut short
+  // v3.44 migration: a v3.43 connection (a project with `mcp`) stays a normal project; its server becomes one added
+  // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
+  const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
+  const base = P.normalizeState({ ...raw, projects: mig.projects });
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)) };
+  // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
+  // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
+  const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });
+  if (settled.failed) console.error(`mcp: ${settled.failed} connection token(s) could not be moved (not readable now, or not saved); kept, retried at the next start`);
+  if (settled.dropped) console.error(`mcp: ${settled.dropped} connection token(s) were stored empty; dropped`);
   app.setAboutPanelOptions({ applicationName: app.getName(), applicationVersion: app.getVersion() });
   buildMenu();
   setupUpdates();

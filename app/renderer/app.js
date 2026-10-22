@@ -351,19 +351,11 @@ async function addProject() {
   } catch (e) { console.error(e); }
 }
 
-// Connectors (v3.43): remote MCP servers, each a project with its own folder and sessions.
-async function addConnector(form) {
+// MCP servers (contract v3.44): one list per project; the ones added here restart the idle sessions they reach.
+async function mcpChange(call) {
   try {
-    const r = await api.connectors.add(form);
-    if (r?.ok) applyProjects(await api.projects.list());
-    return r;
-  } catch (e) { console.error(e); return { ok: false, error: 'failed' }; }
-}
-async function updateConnector(id, form) {
-  try {
-    const r = await api.connectors.update(id, form);
-    for (const pid of r?.restarted || []) panes.get(pid)?.term.reset({ restarting: true }); // idle sessions restarted in their conversation
-    if (r?.ok) applyProjects(await api.projects.list());
+    const r = await call();
+    for (const pid of r?.restarted || []) panes.get(pid)?.term.reset({ restarting: true });
     return r;
   } catch (e) { console.error(e); return { ok: false, error: 'failed' }; }
 }
@@ -574,7 +566,7 @@ sidebar = mountSidebar($('sidebar'), {
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
   setTheme: setThemeSetting,
   openUsage: (p) => usagePanel?.show(p),
-  connector: { get: (id) => api.connectors.get(id), pickDir: () => api.connectors.pickDir(), add: addConnector, update: updateConnector },
+  mcp: { list: (id) => api.mcp.list(id).catch(() => null), add: (f) => mcpChange(() => api.mcp.add(f)), remove: (id) => mcpChange(() => api.mcp.remove(id)) },
 });
 
 login = mountLogin(document.body, { getTheme: () => theme, onClose: () => focusActive() });
