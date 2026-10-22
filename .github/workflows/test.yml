@@ -49,6 +49,8 @@ jobs:
         run: node --test app/test/link.test.cjs
       - name: node-pty quit-crash patch + pty guard
         run: node --test app/test/node-pty-patch.test.cjs
+      - name: pty wiring (attachPty)
+        run: node --test app/test/pty-attach.test.cjs
 
   plugin:
     runs-on: ubuntu-latest
