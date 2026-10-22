@@ -45,6 +45,8 @@ jobs:
         run: node app/test/visual.test.mjs
       - name: Device link (two devices pair on a local DHT testnet)
         run: node --test app/test/link.test.cjs
+      - name: node-pty quit-crash patch + pty guard
+        run: node --test app/test/node-pty-patch.test.cjs
 
   plugin:
     runs-on: ubuntu-latest
