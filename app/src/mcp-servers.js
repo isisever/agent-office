@@ -104,19 +104,32 @@ function dropProject(servers, projectId) {
 }
 
 /**
+ * One spelling per folder for `held` (v3.44): absolute, no trailing separator, links resolved when it exists, NFC. The
+ * dir saved at handoff and the one a project is added or adopted at compare equal however each was spelled.
+ * @param {string} dir
+ */
+function dirKey(dir) {
+  let d = path.resolve(String(dir || ''));
+  try { d = fs.realpathSync(d); } catch {}
+  d = d.normalize('NFC');
+  return d.length > 1 && /[\\/]$/.test(d) && !/^[A-Za-z]:[\\/]$/.test(d) ? d.replace(/[\\/]+$/, '') : d;
+}
+
+/**
  * A project handed off from here (v3.44): its own servers and their tokens stay on this machine, held for its folder
  * (`held: dir`), and come back to it when a project at that folder is adopted again (`adoptHeld`).
  */
-const holdProject = (servers, projectId, dir) => servers.map((s) => (s.scope === projectId ? { ...s, held: dir } : s));
+const holdProject = (servers, projectId, dir) => servers.map((s) => (s.scope === projectId ? { ...s, held: dirKey(dir) } : s));
 /**
  * A project arrives at `dir` (handed back, or the folder added again): the servers held for that folder are its own
  * again — except one whose name the project already has a server of; that one stays held (the panel lists it as
  * handed off, where it can be removed).
  */
 function adoptHeld(servers, dir, projectId) {
+  const key = dirKey(dir);
   const names = new Set(servers.filter((s) => !s.held && s.scope === projectId).map((s) => s.name));
   return servers.map((s) => {
-    if (s.held !== dir || names.has(s.name)) return s;
+    if (typeof s.held !== 'string' || dirKey(s.held) !== key || names.has(s.name)) return s;
     names.add(s.name);
     const { held, ...rest } = s;
     return { ...rest, scope: projectId };
@@ -186,12 +199,24 @@ function tokenStore(dir, safe, fsx = fs) {
         return true;
       } catch { return false; }
     },
-    /** @param {string} id */
-    load(id) {
-      try { return safe.decryptString(fsx.readFileSync(file(id, 'bin'))); } catch {}
-      try { return fsx.readFileSync(file(id, 'txt'), 'utf8'); } catch {}
-      return '';
+    /**
+     * → { token, failed }: failed = a stored token is there but could not be read now (decrypt threw: the keychain is
+     * locked or access was denied, a re-signed build, a locked keyring, DPAPI; or a read error). Its file is kept.
+     * token '' with failed false = nothing stored, or stored empty.
+     * @param {string} id
+     */
+    read(id) {
+      let buf = null, failed = false;
+      try { buf = fsx.readFileSync(file(id, 'bin')); } catch (e) { if (/** @type {any} */ (e)?.code !== 'ENOENT') failed = true; }
+      if (buf) {
+        if (!buf.length) return { token: '', failed: false };
+        try { return { token: String(safe.decryptString(buf) || ''), failed: false }; } catch { failed = true; }
+      }
+      try { return { token: fsx.readFileSync(file(id, 'txt'), 'utf8'), failed }; } catch (e) { if (/** @type {any} */ (e)?.code !== 'ENOENT') failed = true; }
+      return { token: '', failed };
     },
+    /** The token, or '' (nothing stored, or it cannot be read now). @param {string} id */
+    load(id) { return this.read(id).token; },
     /** @param {string} id */
     has: (id) => fsx.existsSync(file(id, 'bin')) || fsx.existsSync(file(id, 'txt')),
     /** The ids with a stored token (file names, so ids as `save` wrote them). */
@@ -204,11 +229,12 @@ function tokenStore(dir, safe, fsx = fs) {
 
 /**
  * Moves a token between stores (migration). The old one is removed only once the new one is saved. → ok
- * A stored token that cannot be read (it does not decrypt, or is empty) is final: its file goes, and `dropped`
- * (when given) is called, so it is never retried.
+ * A stored token that cannot be read now (decrypt threw, a read error) is kept and the move fails (→ false), so the
+ * next start retries it. Only a token stored empty is final: its file goes, and `dropped` (when given) is called.
  */
 function moveToken(from, to, fromId, toId, dropped = () => {}) {
-  const token = from.load(fromId);
+  const { token, failed } = from.read ? from.read(fromId) : { token: from.load(fromId), failed: false };
+  if (failed) return false;
   if (!token) {
     if (from.has(fromId)) { from.remove(fromId); dropped(); }
     return true;
@@ -225,7 +251,7 @@ const pendingMoves = (servers, from, to) => servers
   .map((s) => ({ from: s.scope, to: s.id }));
 /**
  * At every start (v3.44): retries each token move a previous start could not finish (idempotent; a token that does
- * not decrypt is dropped, not moved), then — with `sweep` (state.json was read whole) — removes the tokens no server
+ * not decrypt now is kept and counted `failed`, retried next start; one stored empty is dropped), then — with `sweep` (state.json was read whole) — removes the tokens no server
  * needs: new-store ids not in `servers`, old-store ids not waiting for a move (a v3.43 connection whose URL was
  * invalid had no server, so its token goes too). → { moved, failed, dropped, removed }
  */
@@ -292,6 +318,6 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
 
 module.exports = {
   TYPES, serverName, cleanUrl, urlProblem, hostOf, cleanToken, typeOf, normalizeServers, validate, serversFor, addServer, removeServer,
-  dropProject, holdProject, adoptHeld, serverConfig, appConfigs, sessionServers, migrateConnections, tokenStore, moveToken,
+  dropProject, dirKey, holdProject, adoptHeld, serverConfig, appConfigs, sessionServers, migrateConnections, tokenStore, moveToken,
   pendingMoves, settleTokens, listing,
 };

@@ -99,7 +99,10 @@ const usageRoot = () => path.join(app.getPath('userData'), 'usage');
 // v3.44 a state.json that does not parse reads as {} (a copy is kept, src/state-file.js); saves are atomic
 const loadState = () => SF.readState(statePath()).raw;
 // Unknown keys are kept; the old `lastProject` is dropped after migration.
+// v3.44 a state.json that is there but could not be read at start (EACCES, EBUSY, EIO) is never saved over this run
+let stateWritable = true;
 function saveState() {
+  if (!stateWritable) return;
   try { SF.writeAtomic(statePath(), JSON.stringify(P.stateFile(loadState(), state), null, 2)); } catch {}
 }
 
@@ -3111,6 +3114,8 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   const read = SF.readState(statePath());
   const raw = read.raw;
   if (read.corrupt) console.error(`state.json could not be read; a copy is kept at ${SF.corruptPath(statePath())}`);
+  if (read.unreadable) { stateWritable = false; console.error('state.json is there but could not be read; it is left as it is and not saved over this run'); }
+  SF.cleanTemps(statePath()); // temp files of a save a crash cut short
   // v3.44 migration: a v3.43 connection (a project with `mcp`) stays a normal project; its server becomes one added
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
@@ -3119,8 +3124,8 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
   const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });
-  if (settled.failed) console.error(`mcp: ${settled.failed} connection token(s) could not be moved; kept, retried at the next start`);
-  if (settled.dropped) console.error(`mcp: ${settled.dropped} connection token(s) could not be decrypted; dropped (add the server's token again)`);
+  if (settled.failed) console.error(`mcp: ${settled.failed} connection token(s) could not be moved (not readable now, or not saved); kept, retried at the next start`);
+  if (settled.dropped) console.error(`mcp: ${settled.dropped} connection token(s) were stored empty; dropped`);
   app.setAboutPanelOptions({ applicationName: app.getName(), applicationVersion: app.getVersion() });
   buildMenu();
   setupUpdates();

@@ -255,7 +255,7 @@ test('MCP: a corrupt or missing state.json never sweeps the tokens; state.json i
   };
   assert.deepEqual(start(), { moved: 0, failed: 0, dropped: 0, removed: 0 }); // missing: nothing removed
   fs.writeFileSync(file, '{"mcpServers": [{"id": "m-1", "na'); // a write cut half-way
-  assert.deepEqual(SF.readState(file), { raw: {}, ok: false, corrupt: true });
+  assert.deepEqual(SF.readState(file), { raw: {}, ok: false, corrupt: true, unreadable: false });
   assert.deepEqual(start(), { moved: 0, failed: 0, dropped: 0, removed: 0 });
   assert.equal(store.load('m-1'), SECRET); assert.equal(old.load('p1'), SECRET);
   assert.ok(fs.readFileSync(SF.corruptPath(file), 'utf8').startsWith('{"mcpServers"')); // the bad copy is kept
@@ -324,18 +324,81 @@ test('MCP: adopting does not re-scope a held server whose name the project alrea
   assert.deepEqual(list.filter((s) => s.away).map((s) => s.id), ['h1', 'h3']);
 });
 
-test('MCP: a v3.43 token that does not decrypt is dropped, not retried forever', () => {
+test('MCP: a v3.43 token that does not decrypt now is kept and retried; one stored empty is dropped', () => {
   const ud = tmp();
   const lockedSafe = { ...fakeSafe, decryptString: () => { throw new Error('no key'); } };
   const oldW = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe);
   oldW.save('p1', SECRET);
   const old = MS.tokenStore(path.join(ud, 'connector-tokens'), lockedSafe), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
   const servers = [{ id: 'c-p1', name: 'notion', type: 'http', url: 'https://n.io', scope: 'p1' }];
+  assert.deepEqual(old.read('p1'), { token: '', failed: true });
   assert.deepEqual(MS.pendingMoves(servers, old, good), [{ from: 'p1', to: 'c-p1' }]);
+  assert.deepEqual(MS.settleTokens(servers, old, good, { sweep: false }), { moved: 0, failed: 1, dropped: 0, removed: 0 });
+  assert.equal(old.has('p1'), true); assert.equal(good.has('c-p1'), false);
+  // with the sweep on too: the file waits for its move, so it is not swept
+  assert.deepEqual(MS.settleTokens(servers, old, good), { moved: 0, failed: 1, dropped: 0, removed: 0 });
+  assert.equal(old.has('p1'), true);
+  // the keychain is open again at a later start: it moves
+  const back = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe);
+  assert.deepEqual(MS.settleTokens(servers, back, good), { moved: 1, failed: 0, dropped: 0, removed: 0 });
+  assert.equal(good.load('c-p1'), SECRET); assert.equal(back.has('p1'), false);
+  const main = src('../main.js').split('\n');
+  for (const k of ['could not be moved', 'stored empty']) {
+    const line = main.find((l) => l.includes(k));
+    assert.ok(line && /\$\{settled\.(failed|dropped)\}/.test(line));
+    assert.ok(line.match(/\$\{[^}]*\}/g).every((x) => /^\$\{settled\.(failed|dropped)\}$/.test(x))); // a count, never a token
+  }
+});
+
+test('MCP: a v3.43 token stored empty is dropped, not retried forever', () => {
+  const ud = tmp(), dir = path.join(ud, 'connector-tokens');
+  fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'p1.bin'), '');
+  const old = MS.tokenStore(dir, fakeSafe), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
+  const servers = [{ id: 'c-p1', name: 'notion', type: 'http', url: 'https://n.io', scope: 'p1' }];
+  assert.deepEqual(old.read('p1'), { token: '', failed: false });
   assert.deepEqual(MS.settleTokens(servers, old, good, { sweep: false }), { moved: 0, failed: 0, dropped: 1, removed: 0 });
-  assert.equal(old.has('p1'), false); assert.equal(good.has('c-p1'), false);
+  assert.equal(old.has('p1'), false);
   assert.deepEqual(MS.pendingMoves(servers, old, good), []); // terminal
-  assert.deepEqual(MS.settleTokens(servers, old, good), { moved: 0, failed: 0, dropped: 0, removed: 0 });
-  const line = src('../main.js').split('\n').find((l) => l.includes('could not be decrypted'));
-  assert.deepEqual(line.match(/\$\{[^}]*\}/g), ['${settled.dropped}']); // the log names a count, never a token
+});
+
+test('MCP: a state.json that is there but cannot be read is not saved over and not swept; crash temps are cleaned', () => {
+  const SF = require('../src/state-file.js');
+  const ud = tmp(), file = path.join(ud, 'state.json');
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: [{ id: 'm-1', name: 'a', type: 'http', url: 'https://a.io', scope: 'all' }] }));
+  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe); store.save('m-1', SECRET);
+  for (const code of ['EACCES', 'EBUSY', 'EIO']) {
+    const busy = { ...fs, readFileSync: (f, ...a) => { if (f === file) throw Object.assign(new Error(code), { code }); return fs.readFileSync(f, ...a); } };
+    const r = SF.readState(file, busy);
+    assert.deepEqual(r, { raw: {}, ok: false, corrupt: false, unreadable: true });
+    assert.equal(SF.trusted(r, file, busy), false);
+    assert.deepEqual(MS.settleTokens([], MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe), store, { sweep: SF.trusted(r, file, busy) }).removed, 0);
+    assert.equal(fs.existsSync(SF.corruptPath(file)), false);
+  }
+  assert.equal(store.load('m-1'), SECRET);
+  assert.equal(SF.readState(path.join(ud, 'none.json')).unreadable, false); // missing is not unreadable
+  // main: an unreadable start turns saving off for the run
+  const main = src('../main.js');
+  assert.ok(/function saveState\(\) \{\n {2}if \(!stateWritable\) return;/.test(main));
+  assert.ok(main.includes('if (read.unreadable) { stateWritable = false;'));
+  // temps a crash left: ours (state.json.<pid>.tmp) go, this process's own and anything else stay
+  for (const f of ['state.json.123.tmp', 'state.json.9.tmp', `state.json.${process.pid}.tmp`, 'other.json.5.tmp', 'state.json.x.tmp', 'state.jsonX7.tmp']) fs.writeFileSync(path.join(ud, f), '');
+  assert.equal(SF.cleanTemps(file), 2);
+  assert.deepEqual(fs.readdirSync(ud).filter((f) => f.endsWith('.tmp')).sort(), ['other.json.5.tmp', `state.json.${process.pid}.tmp`, 'state.json.x.tmp', 'state.jsonX7.tmp'].sort());
+  assert.ok(main.includes('SF.cleanTemps(statePath())'));
+});
+
+test('MCP: the held folder and an added or adopted folder match however each is spelled', () => {
+  const root = fs.realpathSync(tmp()), dir = path.join(root, 'proj');
+  fs.mkdirSync(dir);
+  const link = path.join(root, 'link'); fs.symlinkSync(dir, link);
+  const servers = MS.holdProject([{ id: 's1', name: 'flow', type: 'http', url: 'https://f.io', scope: 'p1' }], 'p1', `${dir}/`);
+  assert.equal(servers[0].held, dir);
+  for (const spelling of [dir, `${dir}/`, `${dir}//`, link, `${root}/x/../proj`]) {
+    assert.equal(MS.serversFor(MS.adoptHeld(servers, spelling, 'p2'), 'p2').length, 1, spelling);
+  }
+  assert.equal(MS.serversFor(MS.adoptHeld(servers, path.join(root, 'other'), 'p2'), 'p2').length, 0);
+  // a held value saved by an older build with a trailing slash still matches
+  assert.equal(MS.serversFor(MS.adoptHeld([{ ...servers[0], held: `${dir}/` }], dir, 'p2'), 'p2').length, 1);
+  // a folder gone (handed off and moved away) still compares by its resolved spelling
+  assert.equal(MS.dirKey('/nope/a/b/'), path.resolve('/nope/a/b'));
 });
