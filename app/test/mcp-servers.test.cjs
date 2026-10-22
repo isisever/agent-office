@@ -361,6 +361,16 @@ test('MCP: a v3.43 token stored empty is dropped, not retried forever', () => {
   assert.deepEqual(MS.pendingMoves(servers, old, good), []); // terminal
 });
 
+test('MCP: an empty .bin next to a real .txt still reads the .txt; adding is refused while state.json cannot be saved', () => {
+  const ud = tmp(), dir = path.join(ud, 'connector-tokens');
+  fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'p1.bin'), ''); fs.writeFileSync(path.join(dir, 'p1.txt'), SECRET);
+  assert.deepEqual(MS.tokenStore(dir, fakeSafe).read('p1'), { token: SECRET, failed: false });
+  const main = src('../main.js');
+  const add = main.slice(main.indexOf("ipcMain.handle('mcp:add'"), main.indexOf("ipcMain.handle('mcp:remove'"));
+  assert.ok(add.indexOf("if (!stateWritable) return { ok: false, error: 'state' }") < add.indexOf('tokens().save('));
+  for (const l of ['en', 'tr']) assert.ok(JSON.parse(src(`../locales/${l}.json`)).sidebar.mcpError.state);
+});
+
 test('MCP: a state.json that is there but cannot be read is not saved over and not swept; crash temps are cleaned', () => {
   const SF = require('../src/state-file.js');
   const ud = tmp(), file = path.join(ud, 'state.json');

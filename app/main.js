@@ -2148,6 +2148,7 @@ ipcMain.handle('mcp:list', (_e, projectId) => {
 const restartFor = (scope) => state.projects.filter((p) => P.engineOf(p) === 'claude' && (scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));
 ipcMain.handle('mcp:add', (_e, f) => {
   const form = { name: String(f?.name || ''), url: String(f?.url || '').trim(), type: f?.type === 'sse' ? 'sse' : 'http', scope: f?.scope };
+  if (!stateWritable) return { ok: false, error: 'state' }; // it could not be saved: the next start would sweep its token
   const bad = MS.validate(form, state.projects.map((p) => p.id));
   if (bad) return { ok: false, error: bad };
   const r = MS.addServer(appServers(), form, `m-${crypto.randomUUID()}`);

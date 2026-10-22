@@ -141,6 +141,7 @@
       "type": "HTTP ya da SSE seçin.",
       "scope": "Tüm projeleri ya da bir projeyi seçin.",
       "nameUsed": "Burada eklenmiş bir sunucu bu projeler için aynı adı taşıyor.",
+      "state": "Agent Office bu çalışmada kayıtlı durumunu okuyamadı, bu yüzden yeni bir şey kaydedilmiyor. Yeniden başlatıp tekrar deneyin.",
       "token": "Token kaydedilemedi; hiçbir şey eklenmedi.",
       "failed": "Sunucu eklenemedi."
     },

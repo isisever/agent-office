@@ -142,6 +142,7 @@
       "type": "Pick HTTP or SSE.",
       "scope": "Pick all projects or one project.",
       "nameUsed": "A server added here already has that name for these projects.",
+      "state": "Agent Office could not read its saved state this run, so nothing new is saved. Restart it and try again.",
       "token": "The token could not be saved; nothing was added.",
       "failed": "Could not add the server."
     },

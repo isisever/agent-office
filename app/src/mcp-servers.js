@@ -209,8 +209,9 @@ function tokenStore(dir, safe, fsx = fs) {
       let buf = null, failed = false;
       try { buf = fsx.readFileSync(file(id, 'bin')); } catch (e) { if (/** @type {any} */ (e)?.code !== 'ENOENT') failed = true; }
       if (buf) {
-        if (!buf.length) return { token: '', failed: false };
-        try { return { token: String(safe.decryptString(buf) || ''), failed: false }; } catch { failed = true; }
+        if (buf.length) {
+          try { return { token: String(safe.decryptString(buf) || ''), failed: false }; } catch { failed = true; }
+        } // empty .bin: a .txt next to it still counts
       }
       try { return { token: fsx.readFileSync(file(id, 'txt'), 'utf8'), failed }; } catch (e) { if (/** @type {any} */ (e)?.code !== 'ENOENT') failed = true; }
       return { token: '', failed };
