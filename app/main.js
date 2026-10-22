@@ -10,6 +10,7 @@ const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
 const N = require('./src/attention.js');
 const OS = require('./src/platform.js');
+const PG = require('./src/pty-guard.js');
 const L = require('./src/locales.js');
 const UP = require('./src/updates.js');
 const M = require('./src/memory.js');
@@ -33,6 +34,7 @@ const OCA = require('./src/oc-auth.js');
 const LH = require('./src/link-host.js');
 const LC = require('./src/link-core.js');
 const OM = require('./src/office-mcp.js');
+const PTY = require('./src/pty-attach.js');
 // dev only: a throwaway profile (two instances side by side for the device link, v3.28); never in the packaged app
 if (!app.isPackaged && process.env.AGENT_OFFICE_USER_DATA) {
   app.setPath('userData', path.resolve(process.env.AGENT_OFFICE_USER_DATA));
@@ -105,7 +107,7 @@ function saveState() {
   } catch {}
 }
 
-const send = (ch, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...args); };
+const send = (ch, ...args) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(ch, ...args); };
 const snapshot = () => ({
   projects: P.forRenderer(state.projects), // v3.43: no connection address here (connectors:get gives it to the edit form)
   activeId: state.activeId,
@@ -293,6 +295,8 @@ function killPty(id) {
   mcpPrint.delete(id);
   ptyStart.delete(id);
   ptyLimit.delete(id);
+  release(t);   // dispose its onData/onExit listeners before the kill: nothing is left to fire from a dying pty
+  if (quitting && t.pid) dying.push(t.pid);   // will-quit waits for these (≤ 1 s)
   try { t.kill(); } catch {}
 }
 // Quitting (window closed, Quit, the updater's quitAndInstall): one last look at which tabs are mid-turn, so they
@@ -301,12 +305,36 @@ function killAll() {
   if (!quitting && state) checkTurns();
   quitting = true;
   for (const id of [...terms.keys(), ...logins.keys()]) killPty(id);
-  for (const t of relays.values()) { try { t.kill(); } catch {} }
+  for (const t of relays.values()) { release(t); if (t.pid) dying.push(t.pid); try { t.kill(); } catch {} }
   relays.clear();
 }
 
 // --- interrupted work (see src/resume.js): state.interrupted = { ptyId: sessionId | '' } for tabs mid-turn
 let quitting = false;
+// onData/onExit of killed ptys can still fire while quitting or during teardown (node-pty's exit TSFN,
+// microsoft/node-pty#904/#951): deliver nothing then, and keep a stray throw from becoming an uncaught one
+// (an uncaught throw in a dying environment is what turns into the SIGABRT on quit). src/pty-guard.js: guarded(f) is
+// the one wrapper for every pty callback; hold(t, …) keeps the disposables t.onData/t.onExit return, release(t)
+// disposes them before a kill. Every onData/onExit registration goes through attachPty (src/pty-attach.js), which
+// adds the id guard and applies guarded() and hold(), so there is one wiring path.
+const ptyGuard = PG.createGuard(() => quitting);
+const { release } = ptyGuard;
+/** @param {Map<string, any> | null} map null: no id guard @param {string} id @param {any} t
+ * @param {{ onData?: (e: any) => void, onExit?: (e: any) => void }} handlers */
+const attachPty = (map, id, t, handlers) => PTY.attachPty(map, id, t, handlers, ptyGuard);
+// pids of ptys killed while quitting; will-quit waits up to 1 s for them to be reaped
+/** @type {number[]} */
+const dying = [];
+// update:install killed everything and set quitting, but quitAndInstall may not quit (it threw, or the updater
+// reported an error while installing): without unquit, quitting would stay true and mute every new tab until a restart
+let appQuitting = false;
+let installing = false;
+function unquit() {
+  installing = false;
+  if (appQuitting || !quitting) return;
+  quitting = false;
+  dying.length = 0;
+}
 const marks = () => state?.interrupted || {};
 // saved at once (no broadcast: the renderer does not show it), so an ungraceful end still finds it
 function setMarks(next) {
@@ -501,6 +529,38 @@ function onFocus() {
   checkOcAuth();
 }
 
+// The engine logins' shared start: end the last login pty for that id (its listeners released before the kill), then
+// start the engine's login line from the same login shell (Windows: through the engine's launcher file, or the
+// engine's no-tool notice) and wire the pane data plus the exit that runs the engine's auth check through attachPty.
+// What differs per engine is passed in: the env, the Windows launcher, the argv, the no-tool notice, the check and,
+// for the log, the failing-start label.
+function startLoginPty({ id, label, env, windowsLauncher, argv, noTool, check }) {
+  const old = logins.get(id);
+  if (old) { logins.delete(id); release(old); try { old.kill(); } catch {} }
+  const { cols, rows } = sizes.get(id) || lastSize;
+  let t;
+  try {
+    const win32 = IS_WIN ? windowsLauncher(env) : null;
+    if (IS_WIN && !win32) return noTool(id);
+    t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', ...argv], {
+      name: 'xterm-256color', cols, rows, cwd: app.getPath('home'), env,
+    });
+  } catch (e) {
+    console.error(`${label}:`, e.message);
+    send('pty:exit', id, -1);
+    return;
+  }
+  logins.set(id, t);
+  attachPty(logins, id, t, {
+    onData: (d) => send('pty:data', id, d),
+    onExit: ({ exitCode }) => {   // killed on purpose: silent (the id guard)
+      logins.delete(id);
+      send('pty:exit', id, exitCode);
+      check();
+    },
+  });
+}
+
 // `claude auth login` pty: same channel as the project ptys, id 'login:<accountId>'. One per account;
 // if reopened, the previous one (left from a closed window) is killed silently so its exit doesn't mix into the new window.
 function startLogin(accountId) {
@@ -508,36 +568,13 @@ function startLogin(accountId) {
   const account = accountById(accountId);
   if (!account || !win) return;
   if ([...relays.values()].some((r) => r.accountId === accountId)) { send('pty:data', id, '\r\n[a remote sign-in for this account is running; try again when it is done]\r\n'); send('pty:exit', id, -1); return; }
-  const old = logins.get(id);
-  if (old) { logins.delete(id); try { old.kill(); } catch {} }
-  const { cols, rows } = sizes.get(id) || lastSize;
-  let t;
-  try {
-    if (IS_WIN) {
-      const env = accountEnv(account);
-      const cmd = windowsClaude(['auth', 'login'], env);
-      if (!cmd) return sendNoClaude(id);
-      t = pty.spawn(cmd.file, ptyArgs(cmd), { name: 'xterm-256color', cols, rows, cwd: app.getPath('home'), env });
-    } else {
-      t = pty.spawn(shell(), ['-l', '-i', '-c', A.claudeCommand('auth login')], {
-        name: 'xterm-256color',
-        cols, rows,
-        cwd: app.getPath('home'),
-        env: accountEnv(account),
-      });
-    }
-  } catch (e) {
-    console.error('giriş pty\'si başlatılamadı:', e.message);
-    send('pty:exit', id, -1);
-    return;
-  }
-  logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
-    if (logins.get(id) !== t) return; // killed on purpose: silent
-    logins.delete(id);
-    send('pty:exit', id, exitCode);
-    checkAuth(accountId, { showChecking: true });
+  startLoginPty({
+    id, label: 'giriş pty\'si başlatılamadı',
+    env: accountEnv(account),
+    windowsLauncher: (env) => windowsClaude(['auth', 'login'], env),
+    argv: [A.claudeCommand('auth login')],
+    noTool: sendNoClaude,
+    check: () => checkAuth(accountId, { showChecking: true }),
   });
 }
 
@@ -557,8 +594,9 @@ function spawnRelayLogin(account, relayId, devicePub) {
   }
   /** @type {any} */ (t).accountId = account.id;
   relays.set(id, t);
-  t.onExit(() => { if (relays.get(id) === t) relays.delete(id); });
-  return { onData: (f) => t.onData(f), onExit: (f) => t.onExit(f), write: (x) => t.write(x), kill: () => { if (relays.get(id) === t) relays.delete(id); try { t.kill(); } catch {} } };
+  attachPty(relays, id, t, { onExit: () => relays.delete(id) });
+  // the caller's listeners: no id guard (its own onExit must still run after the delete above), guarded and held
+  return { onData: (f) => attachPty(null, id, t, { onData: f }), onExit: (f) => attachPty(null, id, t, { onExit: f }), write: (x) => t.write(x), kill: () => { if (relays.get(id) === t) relays.delete(id); release(t); try { t.kill(); } catch {} } };
 }
 const relayAccounts = () => state.accounts.map((a) => { const s = auths.get(a.id); return { id: a.id, label: a.label || a.id, state: s?.state || 'unknown', ...(s?.state === 'in' && s.email ? { email: s.email } : {}) }; });
 
@@ -606,30 +644,13 @@ function checkAgyAuth() {
 // prompt). Same channel and replace rules as `claude auth login`.
 function startAgyLogin() {
   if (!win) return;
-  const id = AGY_LOGIN;
-  const old = logins.get(id);
-  if (old) { logins.delete(id); try { old.kill(); } catch {} }
-  const { cols, rows } = sizes.get(id) || lastSize;
-  const env = EN.agyEnv(process.env);
-  let t;
-  try {
-    const win32 = IS_WIN ? windowsAgy([], env) : null;
-    if (IS_WIN && !win32) return sendNoAgy(id);
-    t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', EN.AGY_COMMAND, 'agy'], {
-      name: 'xterm-256color', cols, rows, cwd: app.getPath('home'), env,
-    });
-  } catch (e) {
-    console.error('agy login pty:', e.message);
-    send('pty:exit', id, -1);
-    return;
-  }
-  logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
-    if (logins.get(id) !== t) return;
-    logins.delete(id);
-    send('pty:exit', id, exitCode);
-    checkAgyAuth();
+  startLoginPty({
+    id: AGY_LOGIN, label: 'agy login pty',
+    env: EN.agyEnv(process.env),
+    windowsLauncher: (env) => windowsAgy([], env),
+    argv: [EN.AGY_COMMAND, 'agy'],
+    noTool: sendNoAgy,
+    check: checkAgyAuth,
   });
 }
 
@@ -661,30 +682,14 @@ function checkCmdAuth() {
 // "Giriş yap": `commandcode login` in a login pty (it opens the browser to authorize). Same channel and replace rules as agy's.
 function startCmdLogin() {
   if (!win) return;
-  const id = CMD_LOGIN;
-  const old = logins.get(id);
-  if (old) { logins.delete(id); try { old.kill(); } catch {} }
-  const { cols, rows } = sizes.get(id) || lastSize;
   const env = EN.cmdEnv(process.env);
-  let t;
-  try {
-    const win32 = IS_WIN ? windowsCommandCode(CA.CMD_LOGIN_ARGS, env) : null;
-    if (IS_WIN && !win32) return sendNoCommandCode(id);
-    t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', EN.CMD_COMMAND, EN.CMD.bin, ...CA.CMD_LOGIN_ARGS], {
-      name: 'xterm-256color', cols, rows, cwd: app.getPath('home'), env,
-    });
-  } catch (e) {
-    console.error('cmd login pty:', e.message);
-    send('pty:exit', id, -1);
-    return;
-  }
-  logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
-    if (logins.get(id) !== t) return;
-    logins.delete(id);
-    send('pty:exit', id, exitCode);
-    checkCmdAuth();
+  startLoginPty({
+    id: CMD_LOGIN, label: 'cmd login pty',
+    env,
+    windowsLauncher: (env) => windowsCommandCode(CA.CMD_LOGIN_ARGS, env),
+    argv: [EN.CMD_COMMAND, EN.CMD.bin, ...CA.CMD_LOGIN_ARGS],
+    noTool: sendNoCommandCode,
+    check: checkCmdAuth,
   });
 }
 
@@ -745,31 +750,15 @@ function checkOcAuth() {
 // Same channel and replace rules as agy's.
 function startOcLogin(mode) {
   if (!win) return;
-  const id = OC_LOGIN;
-  const old = logins.get(id);
-  if (old) { logins.delete(id); try { old.kill(); } catch {} }
-  const { cols, rows } = sizes.get(id) || lastSize;
   const env = EN.ocEnv(process.env);
   const args = OCA.ocLoginArgs(mode, ocMajor, ocProviders);
-  let t;
-  try {
-    const win32 = IS_WIN ? windowsOpenCode(args, env) : null;
-    if (IS_WIN && !win32) return sendNoOpenCode(id);
-    t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', EN.OC_COMMAND, EN.OC.bin, ...args], {
-      name: 'xterm-256color', cols, rows, cwd: app.getPath('home'), env,
-    });
-  } catch (e) {
-    console.error('oc login pty:', e.message);
-    send('pty:exit', id, -1);
-    return;
-  }
-  logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
-    if (logins.get(id) !== t) return;
-    logins.delete(id);
-    send('pty:exit', id, exitCode);
-    checkOcAuth();
+  startLoginPty({
+    id: OC_LOGIN, label: 'oc login pty',
+    env,
+    windowsLauncher: (env) => windowsOpenCode(args, env),
+    argv: [EN.OC_COMMAND, EN.OC.bin, ...args],
+    noTool: sendNoOpenCode,
+    check: checkOcAuth,
   });
 }
 
@@ -1095,35 +1084,43 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   ptyStart.set(id, startedAt);
   ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0 });
   if (sessionId) lastSid.set(id, sessionId); else lastSid.delete(id);
-  t.onData((d) => {
-    if (terms.get(id) !== t) return;
-    const a = activity.get(id);
-    if (a) a.at = Date.now();
-    watchLimit(id, d, startedAt);
-    send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
-    if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
-    terms.delete(id);
-    mcpPrint.delete(id);
-    ptyStart.delete(id);
-    ptyLimit.delete(id);
-    // the session it was in, for Enter-restart: the pid file may still be there, else the last poll's
-    const last = validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId);
-    if (last) lastSid.set(id, last);
-    setMarks(R.clearInterrupted(marks(), [id])); // claude ended while the app runs: nothing to resume later
-    removeMcpFile(id);
-    // the session to resume was not found or could not be opened: start fresh without showing the exit to the user
-    if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) {
-      if (!imported) return startPty(id);
-      importResumeFailed(sessionId, configDir);
-    }
-    activity.delete(id);
-    send('pty:exit', id, exitCode);
-    broadcast();
+  attachPty(terms, id, t, {
+    onData: (d) => {
+      const a = activity.get(id);
+      if (a) a.at = Date.now();
+      watchLimit(id, d, startedAt);
+      send('pty:data', id, d);
+    },
+    onExit: ({ exitCode }) => {   // killed on purpose (restart/removal): silent (the id guard)
+      terms.delete(id);
+      mcpPrint.delete(id);
+      ptyStart.delete(id);
+      ptyLimit.delete(id);
+      // the session it was in, for Enter-restart: the pid file may still be there, else the last poll's
+      const last = validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId);
+      if (last) lastSid.set(id, last);
+      setMarks(R.clearInterrupted(marks(), [id])); // claude ended while the app runs: nothing to resume later
+      removeMcpFile(id);
+      // the session to resume was not found or could not be opened: start fresh without showing the exit to the user
+      if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) {
+        if (!imported) return startPty(id);
+        importResumeFailed(sessionId, configDir);
+      }
+      activity.delete(id);
+      send('pty:exit', id, exitCode);
+      broadcast();
+    },
   });
   broadcast();
 }
+
+/** The tab onData shared by agy, Command Code and OpenCode: activity, the engine's watcher, the pane. */
+const observedOnData = (id, d) => {
+  const a = activity.get(id);
+  if (a) a.at = Date.now();
+  agyWatch.get(id)?.watch.output(d);
+  send('pty:data', id, d);
+};
 
 // A tab of an Antigravity project (contract v3.22): `agy` from the same login shell, with none of Claude Code's setup
 // (plugin, status line, memory, shared config and MCP fingerprint, history check, usage-limit watch) and an env built
@@ -1162,31 +1159,26 @@ function startAgy(id, { tab, dir: cwd, project }, { resume = false, prompt = '' 
   lastSid.delete(id);
   retireAgy(id);
   agyWatch.set(id, { watch: AW.createAgyWatch(startedAt), cursor: null, key: `agy-${id.replace(/[^\w-]/g, '_')}-${++agySeq}` });
-  t.onData((d) => {
-    if (terms.get(id) !== t) return;
-    const a = activity.get(id);
-    if (a) a.at = Date.now();
-    agyWatch.get(id)?.watch.output(d);
-    send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
-    if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
-    retireAgy(id);
-    terms.delete(id);
-    setMarks(R.clearInterrupted(marks(), [id]));
-    removeMcpFile(id);
-    // --model did not take: the same start once without it, with a one-line notice
-    if (withModel && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) {
-      agyNoModel.add(id);
-      send('pty:data', id, `\r\n[Agent Office] agy did not accept --model ${withModel}; starting without it.\r\n`);
-      return startPty(id, { resume, prompt });
-    }
-    agyNoModel.delete(id);
-    // no conversation to continue: start fresh without showing the exit to the user
-    if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) return startPty(id);
-    activity.delete(id);
-    send('pty:exit', id, exitCode);
-    broadcast();
+  attachPty(terms, id, t, {
+    onData: (d) => observedOnData(id, d),
+    onExit: ({ exitCode }) => {   // killed on purpose (restart/removal): silent (the id guard)
+      retireAgy(id);
+      terms.delete(id);
+      setMarks(R.clearInterrupted(marks(), [id]));
+      removeMcpFile(id);
+      // --model did not take: the same start once without it, with a one-line notice
+      if (withModel && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) {
+        agyNoModel.add(id);
+        send('pty:data', id, `\r\n[Agent Office] agy did not accept --model ${withModel}; starting without it.\r\n`);
+        return startPty(id, { resume, prompt });
+      }
+      agyNoModel.delete(id);
+      // no conversation to continue: start fresh without showing the exit to the user
+      if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) return startPty(id);
+      activity.delete(id);
+      send('pty:exit', id, exitCode);
+      broadcast();
+    },
   });
   broadcast();
 }
@@ -1294,28 +1286,23 @@ function startCommandCode(id, { project, tab, dir: cwd }, { resume = false, prom
   agyWatch.set(id, { watch: AW.createAgyWatch(startedAt, { engine: 'commandcode', label: 'Command Code' }), cursor: null, key: `cmd-${id.replace(/[^\w-]/g, '_')}-${++agySeq}` });
   if (withMod) cmdSpool.set(id, { file: path.join(spoolDir, CS.SPOOL_FILE), cursor: null });
   else cmdSpool.delete(id);
-  t.onData((d) => {
-    if (terms.get(id) !== t) return;
-    const a = activity.get(id);
-    if (a) a.at = Date.now();
-    agyWatch.get(id)?.watch.output(d);
-    send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
-    if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
-    retireAgy(id);
-    terms.delete(id);
-    setMarks(R.clearInterrupted(marks(), [id]));
-    removeMcpFile(id);
-    cmdSpool.delete(id);
-    try { fs.rmSync(spoolDir, { recursive: true, force: true }); } catch { /* gone */ }
-    // the mod did not load (or broke the start): the same start again without it, only watched (v3.37)
-    if (withMod && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) { cmdNoMod.add(id); return startPty(id, { resume, prompt }); }
-    // no session to continue: start fresh without showing the exit to the user
-    if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) return startPty(id);
-    activity.delete(id);
-    send('pty:exit', id, exitCode);
-    broadcast();
+  attachPty(terms, id, t, {
+    onData: (d) => observedOnData(id, d),
+    onExit: ({ exitCode }) => {   // killed on purpose (restart/removal): silent (the id guard)
+      retireAgy(id);
+      terms.delete(id);
+      setMarks(R.clearInterrupted(marks(), [id]));
+      removeMcpFile(id);
+      cmdSpool.delete(id);
+      try { fs.rmSync(spoolDir, { recursive: true, force: true }); } catch { /* gone */ }
+      // the mod did not load (or broke the start): the same start again without it, only watched (v3.37)
+      if (withMod && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) { cmdNoMod.add(id); return startPty(id, { resume, prompt }); }
+      // no session to continue: start fresh without showing the exit to the user
+      if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) return startPty(id);
+      activity.delete(id);
+      send('pty:exit', id, exitCode);
+      broadcast();
+    },
   });
   broadcast();
 }
@@ -1389,24 +1376,19 @@ function startOpenCode(id, { project, tab, dir: cwd }, { resume = false, prompt 
   lastSid.delete(id);
   retireAgy(id);
   agyWatch.set(id, { watch: AW.createAgyWatch(startedAt, { engine: 'opencode', label: 'OpenCode' }), cursor: null, key: `oc-${id.replace(/[^\w-]/g, '_')}-${++agySeq}` });
-  t.onData((d) => {
-    if (terms.get(id) !== t) return;
-    const a = activity.get(id);
-    if (a) a.at = Date.now();
-    agyWatch.get(id)?.watch.output(d);
-    send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
-    if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
-    retireAgy(id);
-    terms.delete(id);
-    setMarks(R.clearInterrupted(marks(), [id]));
-    removeMcpFile(id);
-    // no session to continue: start fresh without showing the exit to the user
-    if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) return startPty(id);
-    activity.delete(id);
-    send('pty:exit', id, exitCode);
-    broadcast();
+  attachPty(terms, id, t, {
+    onData: (d) => observedOnData(id, d),
+    onExit: ({ exitCode }) => {   // killed on purpose (restart/removal): silent (the id guard)
+      retireAgy(id);
+      terms.delete(id);
+      setMarks(R.clearInterrupted(marks(), [id]));
+      removeMcpFile(id);
+      // no session to continue: start fresh without showing the exit to the user
+      if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) return startPty(id);
+      activity.delete(id);
+      send('pty:exit', id, exitCode);
+      broadcast();
+    },
   });
   broadcast();
 }
@@ -1835,13 +1817,21 @@ async function handOffProject(projectId, device) {
   const r = await linkHost.handOff(device.id, projectId);
   if (!r.ok) dialog.showMessageBox(win, { type: 'warning', message: T('main.handoffFailed', { project: p.name, device: device.name }), detail: T(`main.handoffReason.${r.reason}`) });
 }
-// close the link before exiting so paired devices see this one go offline at once, not after the heartbeat (≤ 1 s)
+// close the link before exiting so paired devices see this one go offline at once, not after the heartbeat (≤ 1 s),
+// and wait a moment for the killed ptys' onExit callbacks (exit TSFNs can still deliver while the environment dies)
 let linkClosed = false;
+let exitWaited = false;
 app.on('will-quit', (e) => {
-  if (!linkHost || linkClosed) return;
-  linkClosed = true;
+  if ((exitWaited || !dying.length) && (!linkHost || linkClosed)) return;   // nothing left to settle: quit at once
   e.preventDefault();
-  Promise.race([Promise.resolve(linkHost.destroy()).catch(() => {}), new Promise((r) => setTimeout(r, 1000))]).finally(() => app.quit());
+  const waits = [];
+  if (linkHost && !linkClosed) { linkClosed = true; waits.push(Promise.resolve(linkHost.destroy()).catch(() => {})); }
+  if (dying.length && !exitWaited) {
+    exitWaited = true;   // waited once only: the next will-quit passes through (the ≤ 1 s cap holds)
+    // gone: the pid has been reaped, so its node-pty kqueue thread ran and its exit callback has fired
+    waits.push(PG.waitGone(dying, { timeoutMs: 1000 }));
+  }
+  Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, 1000))]).catch(() => {}).finally(() => app.quit());
 });
 
 /** @returns {{ resumed: { id: string, name: string }[], skipped: { id: string, name: string }[] }} */
@@ -2997,7 +2987,7 @@ function setupUpdates() {
   updater.on('update-available', (info) => { if (info?.version !== updateReady) updateDownloading = info?.version || null; });
   updater.on('update-not-available', () => { updateDownloading = null; });
   updater.on('update-downloaded', (info) => { updateDownloading = null; updateReady = info.version; send('update:ready', info.version); });
-  updater.on('error', (e) => { updateDownloading = null; console.error('güncelleme:', e?.message || e); });
+  updater.on('error', (e) => { updateDownloading = null; if (installing) unquit(); console.error('güncelleme:', e?.message || e); });
   setTimeout(backgroundCheck, UP.FIRST_CHECK_MS);
   setInterval(backgroundCheck, UP.UPDATE_EVERY_MS);
 }
@@ -3036,7 +3026,12 @@ async function checkUpdatesNow() {
   dialog.showMessageBox(win, { type: 'warning', message: T('main.updateFailed'), detail: T('main.updateNoAnswer', { version: m.version }) });
 }
 ipcMain.handle('update:state', () => ({ version: app.getVersion(), ready: updateReady }));
-ipcMain.on('update:install', () => { if (updateReady && updater) { killAll(); updater.quitAndInstall(); } });
+ipcMain.on('update:install', () => {
+  if (!updateReady || !updater) return;
+  killAll();
+  installing = true;
+  try { updater.quitAndInstall(); } catch (e) { console.error('update install:', /** @type {any} */ (e)?.message || e); unquit(); }
+});
 
 function buildMenu() {
   const name = app.getName();
@@ -3149,4 +3144,4 @@ if (!isSecondInstance) app.whenReady().then(async () => {
 });
 app.on('activate', () => { if (!win && state) createWindow(); });
 app.on('window-all-closed', () => { killAll(); app.quit(); });
-app.on('before-quit', killAll);
+app.on('before-quit', () => { appQuitting = true; killAll(); });
