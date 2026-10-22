@@ -9,6 +9,7 @@ const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
 const N = require('./src/attention.js');
 const OS = require('./src/platform.js');
+const PG = require('./src/pty-guard.js');
 const L = require('./src/locales.js');
 const UP = require('./src/updates.js');
 const M = require('./src/memory.js');
@@ -104,7 +105,7 @@ function saveState() {
   } catch {}
 }
 
-const send = (ch, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...args); };
+const send = (ch, ...args) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(ch, ...args); };
 const snapshot = () => ({
   projects: state.projects,
   activeId: state.activeId,
@@ -282,6 +283,8 @@ function killPty(id) {
   mcpPrint.delete(id);
   ptyStart.delete(id);
   ptyLimit.delete(id);
+  release(t);   // dispose its onData/onExit listeners before the kill: nothing is left to fire from a dying pty
+  if (quitting && t.pid) dying.push(t.pid);   // will-quit waits for these (≤ 1 s)
   try { t.kill(); } catch {}
 }
 // Quitting (window closed, Quit, the updater's quitAndInstall): one last look at which tabs are mid-turn, so they
@@ -290,12 +293,31 @@ function killAll() {
   if (!quitting && state) checkTurns();
   quitting = true;
   for (const id of [...terms.keys(), ...logins.keys()]) killPty(id);
-  for (const t of relays.values()) { try { t.kill(); } catch {} }
+  for (const t of relays.values()) { release(t); if (t.pid) dying.push(t.pid); try { t.kill(); } catch {} }
   relays.clear();
 }
 
 // --- interrupted work (see src/resume.js): state.interrupted = { ptyId: sessionId | '' } for tabs mid-turn
 let quitting = false;
+// onData/onExit of killed ptys can still fire while quitting or during teardown (node-pty's exit TSFN,
+// microsoft/node-pty#904/#951): deliver nothing then, and keep a stray throw from becoming an uncaught one
+// (an uncaught throw in a dying environment is what turns into the SIGABRT on quit). src/pty-guard.js: guarded(f) is
+// the one wrapper for every pty callback; hold(t, …) keeps the disposables t.onData/t.onExit return, release(t)
+// disposes them before a kill
+const { guarded, hold, release } = PG.createGuard(() => quitting);
+// pids of ptys killed while quitting; will-quit waits up to 1 s for them to be reaped
+/** @type {number[]} */
+const dying = [];
+// update:install killed everything and set quitting, but quitAndInstall may not quit (it threw, or the updater
+// reported an error while installing): without unquit, quitting would stay true and mute every new tab until a restart
+let appQuitting = false;
+let installing = false;
+function unquit() {
+  installing = false;
+  if (appQuitting || !quitting) return;
+  quitting = false;
+  dying.length = 0;
+}
 const marks = () => state?.interrupted || {};
 // saved at once (no broadcast: the renderer does not show it), so an ungraceful end still finds it
 function setMarks(next) {
@@ -498,7 +520,7 @@ function startLogin(accountId) {
   if (!account || !win) return;
   if ([...relays.values()].some((r) => r.accountId === accountId)) { send('pty:data', id, '\r\n[a remote sign-in for this account is running; try again when it is done]\r\n'); send('pty:exit', id, -1); return; }
   const old = logins.get(id);
-  if (old) { logins.delete(id); try { old.kill(); } catch {} }
+  if (old) { logins.delete(id); release(old); try { old.kill(); } catch {} }
   const { cols, rows } = sizes.get(id) || lastSize;
   let t;
   try {
@@ -521,13 +543,13 @@ function startLogin(accountId) {
     return;
   }
   logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
+  hold(t, t.onData(guarded((d) => { if (logins.get(id) === t) send('pty:data', id, d); })));
+  hold(t, t.onExit(guarded(({ exitCode }) => {
     if (logins.get(id) !== t) return; // killed on purpose: silent
     logins.delete(id);
     send('pty:exit', id, exitCode);
     checkAuth(accountId, { showChecking: true });
-  });
+  })));
 }
 
 // v3.34 remote login relay (src/login-relay.js): `claude auth login` for an existing account of this machine, asked
@@ -546,8 +568,9 @@ function spawnRelayLogin(account, relayId, devicePub) {
   }
   /** @type {any} */ (t).accountId = account.id;
   relays.set(id, t);
-  t.onExit(() => { if (relays.get(id) === t) relays.delete(id); });
-  return { onData: (f) => t.onData(f), onExit: (f) => t.onExit(f), write: (x) => t.write(x), kill: () => { if (relays.get(id) === t) relays.delete(id); try { t.kill(); } catch {} } };
+  hold(t, t.onExit(guarded(() => { if (relays.get(id) === t) relays.delete(id); })));
+  const sub = (/** @type {any} */ d) => { hold(t, d); return d; };
+  return { onData: (f) => sub(t.onData(guarded(f))), onExit: (f) => sub(t.onExit(guarded(f))), write: (x) => t.write(x), kill: () => { if (relays.get(id) === t) relays.delete(id); release(t); try { t.kill(); } catch {} } };
 }
 const relayAccounts = () => state.accounts.map((a) => { const s = auths.get(a.id); return { id: a.id, label: a.label || a.id, state: s?.state || 'unknown', ...(s?.state === 'in' && s.email ? { email: s.email } : {}) }; });
 
@@ -597,7 +620,7 @@ function startAgyLogin() {
   if (!win) return;
   const id = AGY_LOGIN;
   const old = logins.get(id);
-  if (old) { logins.delete(id); try { old.kill(); } catch {} }
+  if (old) { logins.delete(id); release(old); try { old.kill(); } catch {} }
   const { cols, rows } = sizes.get(id) || lastSize;
   const env = EN.agyEnv(process.env);
   let t;
@@ -613,13 +636,13 @@ function startAgyLogin() {
     return;
   }
   logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
+  hold(t, t.onData(guarded((d) => { if (logins.get(id) === t) send('pty:data', id, d); })));
+  hold(t, t.onExit(guarded(({ exitCode }) => {
     if (logins.get(id) !== t) return;
     logins.delete(id);
     send('pty:exit', id, exitCode);
     checkAgyAuth();
-  });
+  })));
 }
 
 // --- Command Code login (contract v3.30, src/cmd-auth.js): one login per user (`cmd login`, ~/.commandcode/auth.json).
@@ -652,7 +675,7 @@ function startCmdLogin() {
   if (!win) return;
   const id = CMD_LOGIN;
   const old = logins.get(id);
-  if (old) { logins.delete(id); try { old.kill(); } catch {} }
+  if (old) { logins.delete(id); release(old); try { old.kill(); } catch {} }
   const { cols, rows } = sizes.get(id) || lastSize;
   const env = EN.cmdEnv(process.env);
   let t;
@@ -668,13 +691,13 @@ function startCmdLogin() {
     return;
   }
   logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
+  hold(t, t.onData(guarded((d) => { if (logins.get(id) === t) send('pty:data', id, d); })));
+  hold(t, t.onExit(guarded(({ exitCode }) => {
     if (logins.get(id) !== t) return;
     logins.delete(id);
     send('pty:exit', id, exitCode);
     checkCmdAuth();
-  });
+  })));
 }
 
 // --- OpenCode login (contract v3.40, v3.41, src/oc-auth.js): providers, not one account. v1 CLI: login runs
@@ -736,7 +759,7 @@ function startOcLogin(mode) {
   if (!win) return;
   const id = OC_LOGIN;
   const old = logins.get(id);
-  if (old) { logins.delete(id); try { old.kill(); } catch {} }
+  if (old) { logins.delete(id); release(old); try { old.kill(); } catch {} }
   const { cols, rows } = sizes.get(id) || lastSize;
   const env = EN.ocEnv(process.env);
   const args = OCA.ocLoginArgs(mode, ocMajor, ocProviders);
@@ -753,13 +776,13 @@ function startOcLogin(mode) {
     return;
   }
   logins.set(id, t);
-  t.onData((d) => { if (logins.get(id) === t) send('pty:data', id, d); });
-  t.onExit(({ exitCode }) => {
+  hold(t, t.onData(guarded((d) => { if (logins.get(id) === t) send('pty:data', id, d); })));
+  hold(t, t.onExit(guarded(({ exitCode }) => {
     if (logins.get(id) !== t) return;
     logins.delete(id);
     send('pty:exit', id, exitCode);
     checkOcAuth();
-  });
+  })));
 }
 
 // --- account quota (see src/usage.js)
@@ -1082,14 +1105,14 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   ptyStart.set(id, startedAt);
   ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0 });
   if (sessionId) lastSid.set(id, sessionId); else lastSid.delete(id);
-  t.onData((d) => {
+  hold(t, t.onData(guarded((d) => {
     if (terms.get(id) !== t) return;
     const a = activity.get(id);
     if (a) a.at = Date.now();
     watchLimit(id, d, startedAt);
     send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
+  })));
+  hold(t, t.onExit(guarded(({ exitCode }) => {
     if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
     terms.delete(id);
     mcpPrint.delete(id);
@@ -1108,7 +1131,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     activity.delete(id);
     send('pty:exit', id, exitCode);
     broadcast();
-  });
+  })));
   broadcast();
 }
 
@@ -1149,14 +1172,14 @@ function startAgy(id, { tab, dir: cwd, project }, { resume = false, prompt = '' 
   lastSid.delete(id);
   retireAgy(id);
   agyWatch.set(id, { watch: AW.createAgyWatch(startedAt), cursor: null, key: `agy-${id.replace(/[^\w-]/g, '_')}-${++agySeq}` });
-  t.onData((d) => {
+  hold(t, t.onData(guarded((d) => {
     if (terms.get(id) !== t) return;
     const a = activity.get(id);
     if (a) a.at = Date.now();
     agyWatch.get(id)?.watch.output(d);
     send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
+  })));
+  hold(t, t.onExit(guarded(({ exitCode }) => {
     if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
     retireAgy(id);
     terms.delete(id);
@@ -1174,7 +1197,7 @@ function startAgy(id, { tab, dir: cwd, project }, { resume = false, prompt = '' 
     activity.delete(id);
     send('pty:exit', id, exitCode);
     broadcast();
-  });
+  })));
   broadcast();
 }
 
@@ -1281,14 +1304,14 @@ function startCommandCode(id, { project, tab, dir: cwd }, { resume = false, prom
   agyWatch.set(id, { watch: AW.createAgyWatch(startedAt, { engine: 'commandcode', label: 'Command Code' }), cursor: null, key: `cmd-${id.replace(/[^\w-]/g, '_')}-${++agySeq}` });
   if (withMod) cmdSpool.set(id, { file: path.join(spoolDir, CS.SPOOL_FILE), cursor: null });
   else cmdSpool.delete(id);
-  t.onData((d) => {
+  hold(t, t.onData(guarded((d) => {
     if (terms.get(id) !== t) return;
     const a = activity.get(id);
     if (a) a.at = Date.now();
     agyWatch.get(id)?.watch.output(d);
     send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
+  })));
+  hold(t, t.onExit(guarded(({ exitCode }) => {
     if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
     retireAgy(id);
     terms.delete(id);
@@ -1303,7 +1326,7 @@ function startCommandCode(id, { project, tab, dir: cwd }, { resume = false, prom
     activity.delete(id);
     send('pty:exit', id, exitCode);
     broadcast();
-  });
+  })));
   broadcast();
 }
 
@@ -1340,14 +1363,14 @@ function startOpenCode(id, { project, tab, dir: cwd }, { resume = false, prompt 
   lastSid.delete(id);
   retireAgy(id);
   agyWatch.set(id, { watch: AW.createAgyWatch(startedAt, { engine: 'opencode', label: 'OpenCode' }), cursor: null, key: `oc-${id.replace(/[^\w-]/g, '_')}-${++agySeq}` });
-  t.onData((d) => {
+  hold(t, t.onData(guarded((d) => {
     if (terms.get(id) !== t) return;
     const a = activity.get(id);
     if (a) a.at = Date.now();
     agyWatch.get(id)?.watch.output(d);
     send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
+  })));
+  hold(t, t.onExit(guarded(({ exitCode }) => {
     if (terms.get(id) !== t) return; // killed on purpose (restart/removal): silent
     retireAgy(id);
     terms.delete(id);
@@ -1358,7 +1381,7 @@ function startOpenCode(id, { project, tab, dir: cwd }, { resume = false, prompt 
     activity.delete(id);
     send('pty:exit', id, exitCode);
     broadcast();
-  });
+  })));
   broadcast();
 }
 
@@ -1785,13 +1808,21 @@ async function handOffProject(projectId, device) {
   const r = await linkHost.handOff(device.id, projectId);
   if (!r.ok) dialog.showMessageBox(win, { type: 'warning', message: T('main.handoffFailed', { project: p.name, device: device.name }), detail: T(`main.handoffReason.${r.reason}`) });
 }
-// close the link before exiting so paired devices see this one go offline at once, not after the heartbeat (≤ 1 s)
+// close the link before exiting so paired devices see this one go offline at once, not after the heartbeat (≤ 1 s),
+// and wait a moment for the killed ptys' onExit callbacks (exit TSFNs can still deliver while the environment dies)
 let linkClosed = false;
+let exitWaited = false;
 app.on('will-quit', (e) => {
-  if (!linkHost || linkClosed) return;
-  linkClosed = true;
+  if ((exitWaited || !dying.length) && (!linkHost || linkClosed)) return;   // nothing left to settle: quit at once
   e.preventDefault();
-  Promise.race([Promise.resolve(linkHost.destroy()).catch(() => {}), new Promise((r) => setTimeout(r, 1000))]).finally(() => app.quit());
+  const waits = [];
+  if (linkHost && !linkClosed) { linkClosed = true; waits.push(Promise.resolve(linkHost.destroy()).catch(() => {})); }
+  if (dying.length && !exitWaited) {
+    exitWaited = true;   // waited once only: the next will-quit passes through (the ≤ 1 s cap holds)
+    // gone: the pid has been reaped, so its node-pty kqueue thread ran and its exit callback has fired
+    waits.push(PG.waitGone(dying, { timeoutMs: 1000 }));
+  }
+  Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, 1000))]).catch(() => {}).finally(() => app.quit());
 });
 
 /** @returns {{ resumed: { id: string, name: string }[], skipped: { id: string, name: string }[] }} */
@@ -2875,7 +2906,7 @@ function setupUpdates() {
   updater.on('update-available', (info) => { if (info?.version !== updateReady) updateDownloading = info?.version || null; });
   updater.on('update-not-available', () => { updateDownloading = null; });
   updater.on('update-downloaded', (info) => { updateDownloading = null; updateReady = info.version; send('update:ready', info.version); });
-  updater.on('error', (e) => { updateDownloading = null; console.error('güncelleme:', e?.message || e); });
+  updater.on('error', (e) => { updateDownloading = null; if (installing) unquit(); console.error('güncelleme:', e?.message || e); });
   setTimeout(backgroundCheck, UP.FIRST_CHECK_MS);
   setInterval(backgroundCheck, UP.UPDATE_EVERY_MS);
 }
@@ -2914,7 +2945,12 @@ async function checkUpdatesNow() {
   dialog.showMessageBox(win, { type: 'warning', message: T('main.updateFailed'), detail: T('main.updateNoAnswer', { version: m.version }) });
 }
 ipcMain.handle('update:state', () => ({ version: app.getVersion(), ready: updateReady }));
-ipcMain.on('update:install', () => { if (updateReady && updater) { killAll(); updater.quitAndInstall(); } });
+ipcMain.on('update:install', () => {
+  if (!updateReady || !updater) return;
+  killAll();
+  installing = true;
+  try { updater.quitAndInstall(); } catch (e) { console.error('update install:', /** @type {any} */ (e)?.message || e); unquit(); }
+});
 
 function buildMenu() {
   const name = app.getName();
@@ -3027,4 +3063,4 @@ if (!isSecondInstance) app.whenReady().then(async () => {
 });
 app.on('activate', () => { if (!win && state) createWindow(); });
 app.on('window-all-closed', () => { killAll(); app.quit(); });
-app.on('before-quit', killAll);
+app.on('before-quit', () => { appQuitting = true; killAll(); });
