@@ -61,7 +61,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
   // login(mode): 'console' (normal: device code, the default), 'auth' (one provider, OAuth or API key) or 'logout'.
   // Not logged in is normal: free models need none.
   oc: {
-    auth: (refresh) => ipcRenderer.invoke('oc:auth', refresh),   // { installed, state: 'in' | 'out' | 'missing', providers?: [{ id, type }] }
+    auth: (refresh) => ipcRenderer.invoke('oc:auth', refresh),   // { installed, state: 'in' | 'out' | 'missing', major: number | null, providers?: [{ id, type }] }
     login: (mode) => ipcRenderer.invoke('oc:login', mode),
     onAuth: listen('oc:auth'),
   },
