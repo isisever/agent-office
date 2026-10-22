@@ -1334,16 +1334,14 @@ function startShell(id, { dir: cwd }) {
   }
   terms.set(id, t);
   activity.set(id, { at: Date.now(), draft: false });
-  t.onData((d) => {
-    if (terms.get(id) !== t) return;
-    send('pty:data', id, d);
-  });
-  t.onExit(({ exitCode }) => {
-    if (terms.get(id) !== t) return; // killed on purpose: silent
-    terms.delete(id);
-    activity.delete(id);
-    send('pty:exit', id, exitCode);
-    broadcast();
+  attachPty(terms, id, t, {
+    onData: (d) => send('pty:data', id, d),
+    onExit: ({ exitCode }) => {   // killed on purpose: silent (the id guard)
+      terms.delete(id);
+      activity.delete(id);
+      send('pty:exit', id, exitCode);
+      broadcast();
+    },
   });
   broadcast();
 }

@@ -119,3 +119,21 @@ test('pty-attach: two ptys of the same id do not cross wires', () => {
   t2.emit('data');
   assert.deepEqual(calls, ['t2']);
 });
+
+// Every pty start in main.js (agent tabs, logins, the relay, the plain terminal tab, and any start added later) must
+// register its listeners through attachPty: a direct t.onData( / t.onExit( would skip the id guard, the quit guard
+// and hold(), so release(t) could not drop it before a kill. Comments are left out; the facade's `onData:` keys are
+// property names, not calls.
+test('main.js registers no pty listener outside attachPty', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  // line-wise, so a '/*' inside a string (a git glob) cannot hide code: comment lines and trailing // comments go
+  const code = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8').split('\n')
+    .map((l) => (/^\s*(\/\/|\/\*|\*)/.test(l) ? '' : l.replace(/(^|\s)\/\/.*$/, '')));
+  const direct = code.map((l, i) => [i + 1, l]).filter(([, l]) => /\.\s*on(Data|Exit)\s*\(/.test(l));
+  assert.deepEqual(direct, [], 'direct .onData( / .onExit( calls in main.js: use attachPty');
+  // the helper is the one place that calls them
+  const helper = fs.readFileSync(path.join(__dirname, '..', 'src', 'pty-attach.js'), 'utf8');
+  assert.match(helper, /t\.onData\(/);
+  assert.match(helper, /t\.onExit\(/);
+});
