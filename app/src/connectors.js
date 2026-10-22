@@ -83,7 +83,9 @@ function tokenStore(dir, safe, fsx = fs) {
       try {
         fsx.mkdirSync(dir, { recursive: true, mode: 0o700 });
         const enc = safe.isEncryptionAvailable();
-        fsx.writeFileSync(file(id, enc ? 'bin' : 'txt'), enc ? safe.encryptString(token) : token, { mode: 0o600 });
+        // a temp file, then rename: a write that fails half-way (disk full) never truncates the old token
+        const to = file(id, enc ? 'bin' : 'txt'), tmp = `${to}.tmp`;
+        try { fsx.writeFileSync(tmp, enc ? safe.encryptString(token) : token, { mode: 0o600 }); fsx.renameSync(tmp, to); } catch (e) { try { fsx.rmSync(tmp, { force: true }); } catch {} throw e; }
         remove(id, [enc ? 'txt' : 'bin']);
         return true;
       } catch { return false; }

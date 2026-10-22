@@ -4260,6 +4260,11 @@ test('bağlantı: token şifreli saklanır, yazılamazsa eskisi kalır ve false 
     const failing = C.tokenStore(dir, safe, { ...fs, writeFileSync: () => { throw new Error('disk full'); } });
     assert.equal(failing.save('p1', 'sekret-2'), false);
     assert.equal(st.load('p1'), 'sekret-1');
+    // the write truncates and then fails half-way: the old token still stays (temp file + rename)
+    const half = C.tokenStore(dir, safe, { ...fs, writeFileSync: (f) => { fs.writeFileSync(f, ''); throw new Error('disk full'); } });
+    assert.equal(half.save('p1', 'sekret-3'), false);
+    assert.equal(st.load('p1'), 'sekret-1');
+    assert.equal(fs.readdirSync(dir).some((f) => f.endsWith('.tmp')), false);
     // encryption itself fails: false too
     assert.equal(C.tokenStore(dir, { ...safe, encryptString: () => { throw new Error('keyring locked'); } }).save('p1', 'x'), false);
     assert.equal(st.load('p1'), 'sekret-1');
