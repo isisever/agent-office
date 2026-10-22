@@ -39,6 +39,8 @@ jobs:
         run: node --test app/test/locales.test.mjs
       - name: Engine capabilities
         run: node --test app/test/engine-caps.test.mjs
+      - name: One MCP system (contract v3.44)
+        run: node --test app/test/mcp-servers.test.cjs
       - name: Office renderer and session reading
         run: node app/test/office.test.mjs
       - name: Office pictures (visual regression)
