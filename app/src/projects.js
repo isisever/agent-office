@@ -437,8 +437,21 @@ const historyDir = (projectDir, configDir, home) =>
 /** The projects as the renderer gets them (v3.44: since connections are gone, all of a project's fields). */
 const forRenderer = (projects) => projects.map((p) => ({ ...p }));
 
+/**
+ * What saveState writes to state.json: the file's unknown keys kept, the old `lastProject` dropped, the state on top.
+ * App-added MCP servers (v3.44) keep only their known fields, so a token or header can never be written there.
+ */
+function stateFile(prev, state) {
+  const { lastProject, ...rest } = prev && typeof prev === 'object' ? prev : {};
+  const out = { ...rest, ...state };
+  for (const k of ['mcpServers']) if (Array.isArray(out[k])) {
+    out[k] = out[k].map(({ id, name, type, url, scope, held }) => ({ id, name, type, url, scope, ...(held ? { held } : {}) }));
+  }
+  return out;
+}
+
 module.exports = {
-  forRenderer,
+  forRenderer, stateFile,
   historyDir,
   MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty,
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,

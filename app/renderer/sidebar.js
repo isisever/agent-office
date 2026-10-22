@@ -516,6 +516,7 @@ export function mountSidebar(el, on) {
       s.readOnly ? t('sidebar.mcpReadOnly') : null,
       s.source === 'project' && s.approved === false ? t('sidebar.mcpUnapproved') : null,
       s.shadowed ? t('sidebar.mcpShadowed') : null,
+      s.bossShadowed ? t('sidebar.mcpBossShadowed') : null,
       s.source === 'app' && !gate.ok ? t('sidebar.na.claudeOnlyMcp') : null,
     ].filter(Boolean).join('\n');
     mcpList.replaceChildren(...list.map((s) => h('li', { class: 'sb-mcp-row' + (s.shadowed ? ' shadowed' : '') + (s.readOnly ? ' ro' : ''), title: hint(s) || null },
@@ -524,7 +525,12 @@ export function mountSidebar(el, on) {
       h('span', { class: 'sb-mcp-src' }, where(s)),
       s.readOnly ? null : h('button', {
         class: 'sb-x', title: t('sidebar.mcpRemove'),
-        onclick: async () => { await on.mcp?.remove(s.id); renderMcp(true); },
+        onclick: async () => {
+          if (!confirm(t('sidebar.mcpRemoveConfirm', { name: s.name }))) return;
+          const r = await on.mcp?.remove(s.id);
+          if (!r?.ok) alert(t('sidebar.mcpRemoveFailed', { name: s.name }));
+          renderMcp(true);
+        },
       }, '×'))));
     if (!list.length) mcpList.append(h('li', { class: 'sb-empty' }, p ? t('sidebar.mcpNone') : t('sidebar.mcpNoProject')));
   }
@@ -547,7 +553,7 @@ export function mountSidebar(el, on) {
         const r = await on.mcp?.add({ name: name.value, url: url.value, type: type.value, token: token.value, scope: scope.value });
         if (r?.ok) { closeModal(); renderMcp(true); return; }
         save.disabled = false;
-        err.textContent = t(`sidebar.mcpError.${{ 'name-used': 'nameUsed' }[r?.error] || r?.error || 'failed'}`);
+        err.textContent = t(`sidebar.mcpError.${{ 'name-used': 'nameUsed', 'url-http': 'urlHttp', 'url-secret': 'urlSecret' }[r?.error] || r?.error || 'failed'}`);
         err.hidden = false;
       },
     }, t('sidebar.save'));

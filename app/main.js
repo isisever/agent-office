@@ -101,9 +101,8 @@ function loadState() {
 // Unknown keys are kept; the old `lastProject` is dropped after migration.
 function saveState() {
   try {
-    const { lastProject, ...rest } = loadState();
     fs.mkdirSync(path.dirname(statePath()), { recursive: true });
-    fs.writeFileSync(statePath(), JSON.stringify({ ...rest, ...state }, null, 2));
+    fs.writeFileSync(statePath(), JSON.stringify(P.stateFile(loadState(), state), null, 2));
   } catch {}
 }
 
@@ -273,7 +272,8 @@ const directoryDir = () => path.join(app.getPath('userData'), 'directory');
 const tokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'mcp-tokens'), safeStorage);
 const oldTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'connector-tokens'), safeStorage); // v3.43, migration only
 const appServers = () => state.mcpServers || [];
-/** A project leaves this machine (removed, handed off): its own servers and their tokens go; ones for all stay. */
+/** A project is removed from this machine: its own servers and their tokens go; ones for all stay. (A handed-off
+ *  project keeps them here, held for its folder: release / adopt, MS.holdProject / MS.adoptHeld.) */
 function dropProjectServers(projectId) {
   const r = MS.dropProject(appServers(), projectId);
   if (!r.gone.length) return;
@@ -1040,7 +1040,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // v3.35 one boss: a manager-mode boss tab (the main tab) gets the agent-office MCP server; its token only in that file
   const bossMcp = officeServerFor(id, project);
   // v3.44 servers added in Agent Office, Claude Code only: into this tab's 0600 MCP file, unless the name is taken
-  const appMcp = MS.appConfigs(appServers(), project.id, (sid) => tokens().load(sid));
+  const appMcp = MS.sessionServers(P.engineOf(project), appServers(), project.id, (sid) => tokens().load(sid));
   const prepared = sharedConfig(account, project, cwd, usageKey(id), bossMcp, appMcp);
   const shared = SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
@@ -1774,7 +1774,8 @@ function handoffDeps() {
       const p = P.findProject(state, projectId);
       if (!p) return;
       for (const pid of P.allPtyIdsOf(p)) { killPty(pid); asleep.delete(pid); sizes.delete(pid); }
-      dropProjectServers(p.id); // v3.44: its own servers' tokens never leave this machine
+      // v3.44: its own servers and their tokens stay on this machine (never sent), held for its folder until it is back
+      state = { ...state, mcpServers: MS.holdProject(appServers(), p.id, p.dir) };
       commit(P.removeProject(state, projectId));
     },
     target(dir) {
@@ -1788,6 +1789,7 @@ function handoffDeps() {
       const r = P.addProject(state, dir, accountId ? { accountId } : {});
       let next = { ...r.state, projects: r.state.projects.map((x) => (x.id === r.project.id ? { ...x, ...settings } : x)) };
       next = { ...next, ...P.normalizeState(next) };
+      next = { ...next, mcpServers: MS.adoptHeld(next.mcpServers || [], r.project.dir, r.project.id) }; // v3.44 its servers again
       const tabs = [];
       // the main tab already running (an existing project): the first session also opens in a new tab
       const mainRunning = terms.has(r.project.id);
@@ -2138,7 +2140,7 @@ ipcMain.handle('mcp:list', (_e, projectId) => {
   const p = P.findProject(state, projectId);
   if (!p) return { servers: [] };
   try {
-    return { servers: MS.listing({ account: A.accountOf(state, p), home: app.getPath('home'), cwd: isDir(p.dir) ? p.dir : null, office: officeInput(p), servers: appServers(), projectId: p.id, hasToken: (sid) => tokens().has(sid) }) };
+    return { servers: MS.listing({ account: A.accountOf(state, p), home: app.getPath('home'), cwd: isDir(p.dir) ? p.dir : null, office: officeInput(p), servers: appServers(), projectId: p.id, boss: P.managerOf(state, p), hasToken: (sid) => tokens().has(sid) }) };
   } catch (e) { console.error('mcp:list', e.message); return { servers: [] }; }
 });
 /** Idle Claude Code sessions the change reaches restart in their conversation; busy ones take it at their next start. */
@@ -3114,7 +3116,9 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
   state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)) };
-  for (const m of mig.moved) if (!MS.moveToken(oldTokens(), tokens(), m.from, m.to)) console.error('mcp: a connection token could not be moved; the old one is kept');
+  // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
+  const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens());
+  if (settled.failed) console.error(`mcp: ${settled.failed} connection token(s) could not be moved; kept, retried at the next start`);
   app.setAboutPanelOptions({ applicationName: app.getName(), applicationVersion: app.getVersion() });
   buildMenu();
   setupUpdates();

@@ -27,6 +27,19 @@ function cleanUrl(v) {
     return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : '';
   } catch { return ''; }
 }
+const LOOPBACK = ['localhost', '127.0.0.1', '[::1]'];
+/**
+ * Why an address typed in the add form is refused (v3.44), or null: 'url' (not an http(s) URL), 'url-http' (plain
+ * http other than to this computer), 'url-secret' (a user:password@ part or a query string: a key belongs in the
+ * token field, which is stored encrypted, not in state.json). Stored and migrated servers are only checked by cleanUrl.
+ */
+function urlProblem(v) {
+  if (!cleanUrl(v)) return 'url';
+  const u = new URL(String(v).trim());
+  if (u.username || u.password || u.search) return 'url-secret';
+  if (u.protocol === 'http:' && !LOOPBACK.includes(u.hostname)) return 'url-http';
+  return null;
+}
 /** The host of an address (never its path, query or credentials), or ''. */
 const hostOf = (v) => { try { return new URL(String(v)).host; } catch { return ''; } };
 
@@ -40,7 +53,7 @@ const typeOf = (c) => (isObj(c) && typeof c.type === 'string' && c.type ? c.type
  * state.json `mcpServers` → the valid entries (unknown fields, a token among them, dropped). A server scoped to a
  * project that is not in `projectIds` is dropped; duplicate ids and duplicate names within one scope too.
  * @param {any} list @param {string[]} [projectIds]
- * @returns {{ id: string, name: string, type: 'http' | 'sse', url: string, scope: string }[]}
+ * @returns {{ id: string, name: string, type: 'http' | 'sse', url: string, scope: string, held?: string }[]}
  */
 function normalizeServers(list, projectIds) {
   const known = projectIds ? new Set(projectIds) : null;
@@ -50,10 +63,12 @@ function normalizeServers(list, projectIds) {
     if (!isObj(s) || typeof s.id !== 'string' || !/^[\w-]{1,64}$/.test(s.id) || ids.has(s.id)) continue;
     const name = serverName(s.name), url = cleanUrl(s.url);
     const type = TYPES.includes(s.type) ? s.type : 'http';
-    const scope = s.scope === 'all' || (typeof s.scope === 'string' && s.scope && (!known || known.has(s.scope))) ? s.scope : null;
+    // held: the folder of a project handed off from here (v3.44) — the server waits for it to come back
+    const held = typeof s.held === 'string' && s.held && s.scope !== 'all' && (!known || !known.has(s.scope)) ? s.held : null;
+    const scope = s.scope === 'all' || (typeof s.scope === 'string' && s.scope && (!known || known.has(s.scope) || held)) ? s.scope : null;
     if (!name || !url || !scope || names.has(`${scope}\0${name}`)) continue;
     ids.add(s.id); names.add(`${scope}\0${name}`);
-    out.push({ id: s.id, name, type, url, scope });
+    out.push({ id: s.id, name, type, url, scope, ...(held ? { held } : {}) });
   }
   return out;
 }
@@ -61,7 +76,8 @@ function normalizeServers(list, projectIds) {
 /** Error code for the add form ('name' | 'url' | 'type' | 'scope') or null. */
 function validate(f, projectIds = []) {
   if (!serverName(f?.name)) return 'name';
-  if (!cleanUrl(f?.url)) return 'url';
+  const bad = urlProblem(f?.url);
+  if (bad) return bad;
   if (f?.type !== undefined && !TYPES.includes(f.type)) return 'type';
   if (f?.scope !== 'all' && !projectIds.includes(f?.scope)) return 'scope';
   return null;
@@ -82,10 +98,22 @@ function addServer(servers, f, newId) {
   return clash ? { error: 'name-used' } : { servers: [...servers, server], server };
 }
 const removeServer = (servers, id) => servers.filter((s) => s.id !== id);
-/** The servers of a project that leaves (removed, handed off): → { servers, gone: ids whose token must go } */
+/** The servers of a project removed from this machine: → { servers, gone: ids whose token must go } */
 function dropProject(servers, projectId) {
   return { servers: servers.filter((s) => s.scope !== projectId), gone: servers.filter((s) => s.scope === projectId).map((s) => s.id) };
 }
+
+/**
+ * A project handed off from here (v3.44): its own servers and their tokens stay on this machine, held for its folder
+ * (`held: dir`), and come back to it when a project at that folder is adopted again (`adoptHeld`).
+ */
+const holdProject = (servers, projectId, dir) => servers.map((s) => (s.scope === projectId ? { ...s, held: dir } : s));
+/** A project arrives at `dir` (handed back): the servers held for that folder are its own again. */
+const adoptHeld = (servers, dir, projectId) => servers.map((s) => {
+  if (s.held !== dir) return s;
+  const { held, ...rest } = s;
+  return { ...rest, scope: projectId };
+});
 
 /** The claude MCP entry: a remote server, the token as a bearer header. Lives only in the tab's 0600 MCP file. */
 function serverConfig(s, token) {
@@ -94,9 +122,15 @@ function serverConfig(s, token) {
 /** `{ name: config }` of the app-added servers for a project's Claude Code session (tokenOf(id) → token or ''). */
 function appConfigs(servers, projectId, tokenOf) {
   const out = {};
-  for (const s of serversFor(servers, projectId)) if (!out[s.name]) out[s.name] = serverConfig(s, tokenOf(s.id));
+  for (const s of serversFor(servers.filter((x) => !x.held), projectId)) if (!out[s.name]) out[s.name] = serverConfig(s, tokenOf(s.id));
   return out;
 }
+
+/**
+ * The app-added servers a session of `engine` gets (v3.44, engine-caps `appMcp`): only Claude Code; for any other
+ * engine nothing, and no token is read (leak rule).
+ */
+const sessionServers = (engine, servers, projectId, tokenOf) => (engine === 'claude' ? appConfigs(servers, projectId, tokenOf) : {});
 
 /**
  * Migration (v3.44): a v3.43 connection was a project with `mcp: { label, url }`. It stays a normal project; its
@@ -152,6 +186,10 @@ function tokenStore(dir, safe, fsx = fs) {
     },
     /** @param {string} id */
     has: (id) => fsx.existsSync(file(id, 'bin')) || fsx.existsSync(file(id, 'txt')),
+    /** The ids with a stored token (file names, so ids as `save` wrote them). */
+    ids() {
+      try { return [...new Set(fsx.readdirSync(dir).filter((f) => /\.(bin|txt)$/.test(f)).map((f) => f.replace(/\.(bin|txt)$/, '')))]; } catch { return []; }
+    },
     remove,
   };
 }
@@ -165,17 +203,39 @@ function moveToken(from, to, fromId, toId) {
   return true;
 }
 
+const oldIdOf = (pid) => String(pid).replace(/[^\w-]/g, '_');
+/** Migrated servers (`c-<projectId>`) whose token is still in the v3.43 store and not yet in the new one. */
+const pendingMoves = (servers, from, to) => servers
+  .filter((s) => /^c-/.test(s.id) && s.scope !== 'all' && !to.has(s.id) && from.has(s.scope))
+  .map((s) => ({ from: s.scope, to: s.id }));
+/**
+ * At every start (v3.44): retries each token move a previous start could not finish (idempotent), then removes the
+ * tokens no server needs: new-store ids not in `servers`, old-store ids not waiting for a move (a v3.43 connection
+ * whose URL was invalid had no server, so its token goes too). → { moved, failed, removed }
+ */
+function settleTokens(servers, from, to) {
+  let moved = 0, failed = 0, removed = 0;
+  for (const m of pendingMoves(servers, from, to)) if (moveToken(from, to, m.from, m.to)) moved++; else failed++;
+  const live = new Set(servers.map((s) => s.id));
+  for (const id of to.ids()) if (!live.has(id)) { to.remove(id); removed++; }
+  const waiting = new Set(pendingMoves(servers, from, to).map((m) => oldIdOf(m.from)));
+  for (const id of from.ids()) if (!waiting.has(id)) { from.remove(id); removed++; }
+  return { moved, failed, removed };
+}
+
 /**
  * What the MCP panel lists for one project's Claude Code sessions (v3.44). Names, transport, where each comes from
  * and the host of remote ones; never a URL path, header, env, argument or token.
  * source: 'user' (~/.claude.json mcpServers) | 'local' (~/.claude.json projects[dir]) | 'account' (the account's own
  * .claude.json) | 'project' (.mcp.json; approved: false = Claude Code asks before using it) | 'office' (another
  * project's, v3.9 share) | 'app' (added in Agent Office; scope 'all' | 'project'; shadowed: a server of that name
- * already reaches the session, so this one is not added).
+ * already reaches the session, so this one is not added; the same rule as SC.prepareShared: a .mcp.json server that
+ * is not approved does not count; bossShadowed: named `agent-office`, so the project's boss tab (`boss`, manager
+ * mode) uses Agent Office's own server of that name there, and the other tabs this one).
  * @param {{ account: any, home: string, cwd: string | null, office?: any, servers?: any[], projectId: string,
- *   hasToken?: (id: string) => boolean, read?: (file: string) => any }} o
+ *   boss?: boolean, hasToken?: (id: string) => boolean, read?: (file: string) => any }} o
  */
-function listing({ account, home, cwd, office = null, servers = [], projectId, hasToken = () => false, read }) {
+function listing({ account, home, cwd, office = null, servers = [], projectId, boss = false, hasToken = () => false, read }) {
   const rd = read || ((/** @type {string} */ f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } });
   const plan = SC.mcpPlan({ account, home, cwd, office, read: rd });
   const isDefault = !account?.configDir || path.resolve(account.configDir) === path.resolve(path.join(home, '.claude'));
@@ -184,26 +244,29 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, h
   const host = (c) => (typeOf(c) === 'stdio' ? '' : hostOf(c.url));
   const out = [];
   const seen = new Set();
+  const shown = new Set();
   const push = (name, c, source, more = {}) => {
-    if (seen.has(name)) return;
-    seen.add(name);
+    if (shown.has(name)) return;
+    shown.add(name);
+    if (more.approved !== false) seen.add(name); // an unapproved .mcp.json server never runs: it shadows nothing
     out.push({ name, source, type: typeOf(c), host: host(c), readOnly: true, ...more });
   };
-  const picks = plan.own.approvals.filter(Boolean);
-  const approved = (n) => !picks.some((p) => p.off.includes(n)) && picks.some((p) => p.all || p.on.includes(n));
+  const approved = (n) => SC.isApproved(plan.own.approvals, n);
   for (const [n, c] of Object.entries(plan.own.local)) push(n, c, isDefault ? 'local' : 'account');
   for (const [n, c] of Object.entries(plan.own.project)) push(n, c, 'project', { approved: approved(n) });
   for (const [n, c] of Object.entries(plan.own.user)) push(n, c, isDefault ? 'user' : 'account');
   for (const [n, c] of Object.entries(plan.servers)) push(n, c, isObj(defLocal) && isObj(defLocal[n]) ? 'local' : isObj(defaultConfig?.mcpServers?.[n]) ? 'user' : 'office');
   for (const s of serversFor(servers, projectId)) {
-    const shadowed = seen.has(s.name) || s.name === 'agent-office';
+    const shadowed = seen.has(s.name);
+    const bossShadowed = !shadowed && boss && s.name === 'agent-office';
     if (!shadowed) seen.add(s.name);
-    out.push({ name: s.name, source: 'app', type: s.type, host: hostOf(s.url), readOnly: false, id: s.id, scope: s.scope === 'all' ? 'all' : 'project', hasToken: Boolean(hasToken(s.id)), ...(shadowed ? { shadowed: true } : {}) });
+    out.push({ name: s.name, source: 'app', type: s.type, host: hostOf(s.url), readOnly: false, id: s.id, scope: s.scope === 'all' ? 'all' : 'project', hasToken: Boolean(hasToken(s.id)), ...(shadowed ? { shadowed: true } : {}), ...(bossShadowed ? { bossShadowed: true } : {}) });
   }
   return out;
 }
 
 module.exports = {
-  TYPES, serverName, cleanUrl, hostOf, cleanToken, typeOf, normalizeServers, validate, serversFor, addServer, removeServer,
-  dropProject, serverConfig, appConfigs, migrateConnections, tokenStore, moveToken, listing,
+  TYPES, serverName, cleanUrl, urlProblem, hostOf, cleanToken, typeOf, normalizeServers, validate, serversFor, addServer, removeServer,
+  dropProject, holdProject, adoptHeld, serverConfig, appConfigs, sessionServers, migrateConnections, tokenStore, moveToken,
+  pendingMoves, settleTokens, listing,
 };

@@ -77,7 +77,7 @@ test('MCP: scopes — a server for all projects reaches every project, one for a
 test('MCP: precedence — Claude Code\'s own servers and the boss server win by name; app servers land in the 0600 tab file', () => {
   const home = tmp(), cwd = path.join(home, 'p');
   fs.mkdirSync(cwd, { recursive: true });
-  w(path.join(home, '.claude.json'), { mcpServers: { gh: { command: 'gh-own' } }, projects: { [cwd]: { mcpServers: { loc: { command: 'l' } } } } });
+  w(path.join(home, '.claude.json'), { mcpServers: { gh: { command: 'gh-own' } }, projects: { [cwd]: { mcpServers: { loc: { command: 'l' } }, enabledMcpjsonServers: ['pm'] } } });
   w(path.join(cwd, '.mcp.json'), { mcpServers: { pm: { command: 'pm' } } });
   const mcpFile = path.join(home, 'ud', 'mcp', 't.json');
   const app = { gh: { type: 'http', url: 'https://a' }, loc: { type: 'http', url: 'https://b' }, pm: { type: 'http', url: 'https://c' }, 'agent-office': { type: 'http', url: 'https://d' }, notion: { type: 'http', url: 'https://n', headers: { Authorization: `Bearer ${SECRET}` } } };
@@ -89,14 +89,6 @@ test('MCP: precedence — Claude Code\'s own servers and the boss server win by 
   if (process.platform !== 'win32') assert.equal(fs.statSync(mcpFile).mode & 0o777, 0o600);
   // Claude Code's files are only read
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(cwd, '.mcp.json'), 'utf8')), { mcpServers: { pm: { command: 'pm' } } });
-  // main: the tab file goes when its claude ends; app servers only on the Claude path
-  const main = src('../main.js');
-  assert.match(main, /const appMcp = MS\.appConfigs\(appServers\(\), project\.id, \(sid\) => tokens\(\)\.load\(sid\)\);\n\s*const prepared = sharedConfig\(account, project, cwd, usageKey\(id\), bossMcp, appMcp\);/);
-  assert.equal((main.match(/MS\.appConfigs\(/g) || []).length, 1);
-  for (const fn of ['function startAgy', 'function startCommandCode', 'function startOpenCode']) {
-    const i = main.indexOf(fn); const body = main.slice(i, main.indexOf('\nfunction ', i + 10));
-    assert.ok(i > 0 && !/appServers|tokens\(\)/.test(body), fn);
-  }
 });
 
 test('MCP: migration — a v3.43 connection stays a normal project, its server is scoped to it and its token moves', () => {
@@ -123,15 +115,27 @@ test('MCP: migration — a v3.43 connection stays a normal project, its server i
 });
 
 test('MCP: the token is never in state.json or the renderer payload; Claude Code only (engine caps, en+tr)', async () => {
-  const servers = MS.normalizeServers([{ id: 's', name: 'n', url: 'https://n.io', scope: 'all', token: SECRET, headers: { Authorization: SECRET } }], []);
-  assert.ok(!JSON.stringify(servers).includes(SECRET));
-  const main = src('../main.js');
-  assert.match(main, /commit\(\{ \.\.\.state, mcpServers: r\.servers \}\)/);
-  assert.ok(!/mcpServers: [^\n]*token/.test(main));
-  assert.ok(!/connectors:|connection: Boolean|engineRefused/.test(main));
+  const ud = tmp(), home = tmp();
+  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
+  const r = MS.addServer([], { name: 'n', url: 'https://n.io/mcp', type: 'http', scope: 'all' }, 's1');
+  assert.ok(store.save(r.server.id, MS.cleanToken(`Bearer ${SECRET}`)));
+  // a token smuggled into the state (an old file, a bug) is still never written: the real state.json writer
+  const state = { projects: [{ id: 'p1', dir: home }], mcpServers: [{ ...r.server, token: SECRET, headers: { Authorization: SECRET } }] };
+  const file = JSON.stringify(P.stateFile({ lastProject: 'x', keep: 1 }, state));
+  assert.ok(!file.includes(SECRET) && !file.includes('Authorization') && !file.includes('lastProject') && file.includes('"keep":1'));
+  assert.ok(!JSON.stringify(MS.normalizeServers(state.mcpServers, ['p1'])).includes(SECRET));
+  // the renderer payloads: mcp:list (MS.listing with the real store) and projects:list (P.forRenderer)
+  const payload = JSON.stringify({ servers: MS.listing({ account: {}, home, cwd: home, servers: r.servers, projectId: 'p1', hasToken: (id) => store.has(id) }), projects: P.forRenderer(state.projects) });
+  assert.ok(!payload.includes(SECRET) && payload.includes('"hasToken":true'));
+  // engines: the function the Claude start uses gives app servers to claude only, and reads no token for the others
   const { cap, ENGINES } = await import('../src/engine-caps.mjs');
-  assert.equal(cap('claude', 'appMcp').ok, true);
-  for (const e of ENGINES.filter((x) => x !== 'claude')) assert.deepEqual(cap(e, 'appMcp'), { ok: false, reason: 'claudeOnlyMcp' });
+  for (const e of ENGINES) {
+    let read = 0;
+    const cfg = MS.sessionServers(e, r.servers, 'p1', (id) => { read++; return store.load(id); });
+    assert.equal(cap(e, 'appMcp').ok, e === 'claude', e);
+    if (e === 'claude') assert.equal(cfg.n.headers.Authorization, `Bearer ${SECRET}`);
+    else { assert.deepEqual(cfg, {}, e); assert.equal(read, 0, e); assert.deepEqual(cap(e, 'appMcp'), { ok: false, reason: 'claudeOnlyMcp' }); }
+  }
   for (const l of ['en', 'tr']) {
     const j = JSON.parse(src(`../locales/${l}.json`));
     assert.ok(j.sidebar.na.claudeOnlyMcp && j.sidebar.mcp && j.sidebar.mcpSrc.app, l);
@@ -142,11 +146,98 @@ test('MCP: the token is never in state.json or the renderer payload; Claude Code
   assert.ok(!/p\.mcp\b|openConnectorForm/.test(sb));
 });
 
-test('MCP: handoff — no "connection" refusal any more; a leaving project takes its servers\' tokens with it (deleted here)', () => {
+test('MCP: an unapproved or disabled .mcp.json server shadows nothing (session and panel agree)', () => {
+  const home = tmp(), cwd = path.join(home, 'p');
+  fs.mkdirSync(cwd, { recursive: true });
+  w(path.join(home, '.claude.json'), { projects: { [cwd]: { enabledMcpjsonServers: ['ok', 'off'], disabledMcpjsonServers: ['off'] } } });
+  w(path.join(cwd, '.mcp.json'), { mcpServers: { ok: { command: 'a' }, off: { command: 'b' }, raw: { command: 'c' } } });
+  const app = { ok: { type: 'http', url: 'https://a' }, off: { type: 'http', url: 'https://b' }, raw: { type: 'http', url: 'https://c' } };
+  const r = SC.prepareShared({ account: {}, home, cwd, stageRoot: path.join(home, 'st'), mcpFile: path.join(home, 'ud', 't.json'), app });
+  assert.deepEqual(r.appShadowed, ['ok']);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(home, 'ud', 't.json'), 'utf8')).mcpServers).sort(), ['off', 'raw']);
+  const servers = ['ok', 'off', 'raw'].map((n) => ({ id: `s-${n}`, name: n, type: 'http', url: 'https://x.io', scope: 'p1' }));
+  const list = MS.listing({ account: {}, home, cwd, servers, projectId: 'p1' }).filter((s) => s.source === 'app');
+  assert.deepEqual(list.map((s) => [s.name, Boolean(s.shadowed)]), [['ok', true], ['off', false], ['raw', false]]);
+});
+
+test('MCP: agent-office is shadowed only in the boss tab; the panel says so only with manager mode', () => {
+  const home = tmp(), cwd = path.join(home, 'p');
+  fs.mkdirSync(cwd, { recursive: true });
+  const servers = [{ id: 's', name: 'agent-office', type: 'http', url: 'https://x.io', scope: 'all' }];
+  const plain = MS.listing({ account: {}, home, cwd, servers, projectId: 'p1', boss: false })[0];
+  assert.ok(!plain.shadowed && !plain.bossShadowed);
+  const boss = MS.listing({ account: {}, home, cwd, servers, projectId: 'p1', boss: true })[0];
+  assert.ok(!boss.shadowed && boss.bossShadowed);
+  // the session: only the boss tab has the extra agent-office server, so only there the app one is left out
+  const app = MS.appConfigs(servers, 'p1', () => '');
+  const prep = (extra, f) => SC.prepareShared({ account: {}, home, cwd, stageRoot: path.join(home, 'st'), mcpFile: path.join(home, f), extra, app });
+  assert.deepEqual(prep({ 'agent-office': { command: 'boss' } }, 'b.json').appShadowed, ['agent-office']);
+  assert.equal(prep(null, 'o.json').appShadowed, undefined);
+});
+
+test('MCP: handoff keeps the servers and tokens here, held for the folder; removing the project drops them', () => {
   const H = require('../src/handoff.js');
   assert.equal(H.refusal({ engine: 'claude', git: true, online: true }), null);
-  const main = src('../main.js');
-  assert.match(main, /release\(projectId\) \{[\s\S]{0,400}dropProjectServers\(p\.id\)/);
-  assert.match(main, /'projects:remove'[\s\S]{0,300}dropProjectServers\(p\.id\)/);
   assert.ok(!src('../src/link-host.js').includes('info.connection'));
+  const ud = tmp();
+  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe), old = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe);
+  let servers = [{ id: 'own', name: 'flow', type: 'http', url: 'https://f.io', scope: 'p1' }, { id: 'all', name: 'n', type: 'http', url: 'https://n.io', scope: 'all' }];
+  store.save('own', SECRET); store.save('all', SECRET);
+  // release: handed off, the project leaves the state, its server waits for its folder
+  servers = MS.holdProject(servers, 'p1', '/w/proj');
+  const reloaded = MS.normalizeServers(JSON.parse(JSON.stringify(P.stateFile({}, { mcpServers: servers }))).mcpServers, ['p2']);
+  assert.deepEqual(reloaded.map((s) => [s.id, s.held || null]), [['own', '/w/proj'], ['all', null]]);
+  assert.deepEqual(MS.settleTokens(reloaded, old, store), { moved: 0, failed: 0, removed: 0 }); // the start sweep keeps it
+  assert.equal(store.load('own'), SECRET);
+  assert.equal(MS.appConfigs(reloaded, 'p2', () => '').flow, undefined); // no other project gets it meanwhile
+  // handed back: a project adopted at that folder (a new id) has its server again
+  const back = MS.adoptHeld(reloaded, '/w/proj', 'p3');
+  assert.deepEqual(MS.serversFor(back, 'p3').map((s) => s.id), ['own', 'all']);
+  assert.ok(!back.some((s) => s.held));
+  // projects:remove: the project is really gone here; its server and token go, the one for all stays
+  const d = MS.dropProject(back, 'p3');
+  for (const id of d.gone) store.remove(id);
+  assert.deepEqual(d.servers.map((s) => s.id), ['all']); assert.equal(store.has('own'), false); assert.equal(store.has('all'), true);
+});
+
+test('MCP: a token move that failed is retried at the next start; orphaned tokens are swept', () => {
+  const ud = tmp();
+  const old = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
+  old.save('p1', SECRET); old.save('pbad', 'tok-bad'); old.save('pgone', 'tok-gone');
+  const raw = { projects: [{ id: 'p1', dir: '/a', mcp: { label: 'Notion', url: 'https://n.io/mcp' } }, { id: 'pbad', dir: '/b', mcp: { label: 'x', url: 'not a url' } }] };
+  // first start: the new store cannot write
+  const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
+  const servers = MS.normalizeServers(mig.servers, ['p1', 'pbad']);
+  const broken = { ...good, save: () => false };
+  assert.deepEqual(MS.settleTokens(servers, old, broken), { moved: 0, failed: 1, removed: 2 }); // pbad (invalid URL), pgone
+  assert.equal(old.load('p1'), SECRET); assert.equal(old.has('pbad'), false); assert.equal(old.has('pgone'), false);
+  // the state is saved without `mcp` on the project; the next start finds c-p1 without a token and moves it
+  const saved = JSON.parse(JSON.stringify(P.stateFile({}, { projects: mig.projects, mcpServers: servers })));
+  const again = MS.migrateConnections(saved.projects, saved.mcpServers);
+  assert.equal(again.moved.length, 0);
+  const s2 = MS.normalizeServers(again.servers, ['p1', 'pbad']);
+  good.save('stray', 'tok-stray'); // a server removed by hand from state.json
+  assert.deepEqual(MS.settleTokens(s2, old, good), { moved: 1, failed: 0, removed: 1 });
+  assert.equal(good.load('c-p1'), SECRET); assert.equal(old.has('p1'), false); assert.equal(good.has('stray'), false);
+  assert.deepEqual(MS.settleTokens(s2, old, good), { moved: 0, failed: 0, removed: 0 }); // idempotent
+});
+
+test('MCP: the add form refuses plain http to another host and keys in the address (en+tr); stored ones still load', () => {
+  const v = (url) => MS.validate({ name: 'x', url, scope: 'all' }, []);
+  assert.equal(v('https://a.io/mcp'), null);
+  for (const u of ['http://localhost:3000/mcp', 'http://127.0.0.1/mcp', 'http://[::1]:8080/mcp']) assert.equal(v(u), null, u);
+  assert.equal(v('http://a.io/mcp'), 'url-http');
+  assert.equal(v('https://user:pw@a.io/mcp'), 'url-secret');
+  assert.equal(v('https://a.io/mcp?key=K'), 'url-secret');
+  assert.equal(v('ftp://a.io'), 'url');
+  for (const l of ['en', 'tr']) {
+    const e = JSON.parse(src(`../locales/${l}.json`)).sidebar;
+    assert.ok(e.mcpError.urlHttp && e.mcpError.urlSecret && e.mcpRemoveConfirm.includes('{name}') && e.mcpRemoveFailed && e.mcpBossShadowed, l);
+  }
+  // a v3.43 connection with such an address is migrated as it was (it worked before); the panel shows its host only
+  const mig = MS.migrateConnections([{ id: 'p1', dir: '/a', mcp: { label: 'n', url: 'http://a.io/mcp?key=KEY9' } }], []);
+  const servers = MS.normalizeServers(mig.servers, ['p1']);
+  assert.equal(servers.length, 1);
+  const row = MS.listing({ account: {}, home: tmp(), cwd: null, servers, projectId: 'p1' })[0];
+  assert.ok(row.host === 'a.io' && !JSON.stringify(row).includes('KEY9'));
 });

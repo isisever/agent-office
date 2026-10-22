@@ -82,6 +82,15 @@ function sharedMcpServers({ defaultConfig, accountConfig, cwd, projectMcp }) {
 const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
 
 /**
+ * Whether a .mcp.json server `name` runs, by the approvals mcpPlan's `own.approvals` lists (`{ all, on, off }` or
+ * null each): the rule of approvedProjectServers. Unapproved ones never shadow an app-added server (v3.44).
+ */
+function isApproved(approvals, name) {
+  const picks = (Array.isArray(approvals) ? approvals : []).filter(Boolean);
+  return !picks.some((p) => p.off.includes(name)) && picks.some((p) => p.all || p.on.includes(name));
+}
+
+/**
  * The servers of <folder>/.mcp.json that the folder's own sessions run: approved (by name in
  * enabledMcpjsonServers, or enableAllProjectMcpServers) and not disabled (disabledMcpjsonServers) in any of
  * `sources` (the folder's .claude/settings.local.json, the account's settings.json, its .claude.json projects[dir]).
@@ -498,7 +507,7 @@ const mcpFingerprint = (plan) =>
  * of the MCP fingerprint (mcpFingerprint reads mcpPlan only) and never in the office directory.
  * app (contract v3.44, src/mcp-servers.js): servers added in Agent Office. One is added only when no server of its
  * name reaches the session already (the account's user and local servers, the project's .mcp.json, Default's shared
- * ones, other projects', `extra`): what Claude Code's own files define wins. → also appShadowed (only when some): the names left out.
+ * ones, other projects', `extra`; .mcp.json ones only when approved, SC.isApproved): what Claude Code's own files define wins. → also appShadowed (only when some): the names left out.
  */
 function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, platform = process.platform, extra = null, app = null }) {
   const configDir = account?.configDir;
@@ -512,7 +521,7 @@ function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, 
   }
   const { servers: planned, mcpNames, own } = mcpPlan({ account, home, cwd, office });
   const servers = { ...planned, ...(extra || {}) };
-  const taken = new Set([...Object.keys(servers), ...keysOf(own.user), ...keysOf(own.local), ...keysOf(own.project)]);
+  const taken = new Set([...Object.keys(servers), ...keysOf(own.user), ...keysOf(own.local), ...keysOf(own.project).filter((n) => isApproved(own.approvals, n))]);
   const appShadowed = [];
   for (const [name, server] of Object.entries(isObj(app) ? app : {})) {
     if (taken.has(name)) appShadowed.push(name); else { servers[name] = server; taken.add(name); }
@@ -556,7 +565,7 @@ const sharedArgs = ({ pluginDirs = [], mcpConfig }) => [
 ];
 
 module.exports = {
-  MARKER, shareEnabled, sharedMcpServers, resolveServerPaths, resolveServers, approvedProjectServers, projectServers, officeMcpServers, canonical, slugOf,
+  MARKER, shareEnabled, isApproved, sharedMcpServers, resolveServerPaths, resolveServers, approvedProjectServers, projectServers, officeMcpServers, canonical, slugOf,
   sharedPlugins, pluginManifest, stageName, linkPlan, listClaudeDir,
   syncLinks, stagePlugin, prepareShared, mcpPlan, mcpFingerprint, sharedArgs, mcpFileName, staleMcpFiles, pruneMcpFiles,
 };

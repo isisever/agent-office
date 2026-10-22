@@ -106,6 +106,9 @@
     "mcpNone": "No MCP servers for this project",
     "mcpNoProject": "Pick a project to see its MCP servers",
     "mcpRemove": "Remove this server (added in Agent Office)",
+    "mcpRemoveConfirm": "Remove the MCP server {name}? Its token is deleted from this computer.",
+    "mcpRemoveFailed": "{name} could not be removed.",
+    "mcpBossShadowed": "The boss tab uses Agent Office's own agent-office server; the other tabs use this one.",
     "mcpName": "Name",
     "mcpNamePh": "e.g. notion",
     "mcpUrl": "Address (URL)",
@@ -132,6 +135,8 @@
     "mcpError": {
       "name": "Give it a name.",
       "url": "Enter an http(s) address.",
+      "urlHttp": "Use https. Plain http is allowed only to this computer (localhost, 127.0.0.1, ::1).",
+      "urlSecret": "Leave the key out of the address (no user:password@ and no ?query). Put it in the token field: it is stored encrypted.",
       "type": "Pick HTTP or SSE.",
       "scope": "Pick all projects or one project.",
       "nameUsed": "A server added here already has that name for these projects.",
