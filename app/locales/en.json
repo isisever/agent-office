@@ -120,6 +120,8 @@
     "mcpScope": "For",
     "mcpScopeAll": "all projects",
     "mcpScopeOne": "this project",
+    "mcpAway": "handed off ({folder})",
+    "mcpAwayHint": "Handed off from here: kept on this computer for the folder {folder} and used again when that folder is added back. No session gets it meanwhile.",
     "mcpScopeHint": "A server of the same name already set up in Claude Code (~/.claude.json, the account, .mcp.json) wins.",
     "mcpReadOnly": "From Claude Code's own settings: change it there (Agent Office does not edit them).",
     "mcpUnapproved": "Not approved for this folder yet: Claude Code asks before using it.",

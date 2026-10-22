@@ -509,7 +509,7 @@ export function mountSidebar(el, on) {
     mcpNote.hidden = gate.ok;
     mcpNote.textContent = gate.ok ? '' : t('sidebar.na.claudeOnlyMcp');
     const where = (s) => [
-      t(`sidebar.mcpSrc.${s.source}`) + (s.source === 'app' ? ` · ${s.scope === 'all' ? t('sidebar.mcpScopeAll') : t('sidebar.mcpScopeOne')}` : ''),
+      t(`sidebar.mcpSrc.${s.source}`) + (s.source === 'app' ? ` · ${s.away ? t('sidebar.mcpAway', { folder: s.folder || '' }) : s.scope === 'all' ? t('sidebar.mcpScopeAll') : t('sidebar.mcpScopeOne')}` : ''),
       s.host || '',
     ].filter(Boolean).join(' · ');
     const hint = (s) => [
@@ -517,9 +517,10 @@ export function mountSidebar(el, on) {
       s.source === 'project' && s.approved === false ? t('sidebar.mcpUnapproved') : null,
       s.shadowed ? t('sidebar.mcpShadowed') : null,
       s.bossShadowed ? t('sidebar.mcpBossShadowed') : null,
-      s.source === 'app' && !gate.ok ? t('sidebar.na.claudeOnlyMcp') : null,
+      s.away ? t('sidebar.mcpAwayHint', { folder: s.folder || '' }) : null,
+      s.source === 'app' && !s.away && !gate.ok ? t('sidebar.na.claudeOnlyMcp') : null,
     ].filter(Boolean).join('\n');
-    mcpList.replaceChildren(...list.map((s) => h('li', { class: 'sb-mcp-row' + (s.shadowed ? ' shadowed' : '') + (s.readOnly ? ' ro' : ''), title: hint(s) || null },
+    mcpList.replaceChildren(...list.map((s) => h('li', { class: 'sb-mcp-row' + (s.shadowed ? ' shadowed' : '') + (s.away ? ' away' : '') + (s.readOnly ? ' ro' : ''), title: hint(s) || null },
       h('span', { class: 'sb-name' }, s.name),
       h('span', { class: 'sb-tag' }, s.type),
       h('span', { class: 'sb-mcp-src' }, where(s)),

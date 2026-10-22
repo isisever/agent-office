@@ -6,6 +6,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const P = require('./src/projects.js');
 const MS = require('./src/mcp-servers.js');
+const SF = require('./src/state-file.js');
 const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
 const N = require('./src/attention.js');
@@ -95,15 +96,11 @@ function office() {
 const statePath = () => path.join(app.getPath('userData'), 'state.json');
 const accountsRoot = () => path.join(app.getPath('userData'), 'accounts');
 const usageRoot = () => path.join(app.getPath('userData'), 'usage');
-function loadState() {
-  try { return JSON.parse(fs.readFileSync(statePath(), 'utf8')); } catch { return {}; }
-}
+// v3.44 a state.json that does not parse reads as {} (a copy is kept, src/state-file.js); saves are atomic
+const loadState = () => SF.readState(statePath()).raw;
 // Unknown keys are kept; the old `lastProject` is dropped after migration.
 function saveState() {
-  try {
-    fs.mkdirSync(path.dirname(statePath()), { recursive: true });
-    fs.writeFileSync(statePath(), JSON.stringify(P.stateFile(loadState(), state), null, 2));
-  } catch {}
+  try { SF.writeAtomic(statePath(), JSON.stringify(P.stateFile(loadState(), state), null, 2)); } catch {}
 }
 
 const send = (ch, ...args) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(ch, ...args); };
@@ -2123,7 +2120,8 @@ function startPolling() {
 // A folder already in the list is only activated (its claude starts if it is stopped).
 function addDir(dir) {
   const r = P.addProject(state, dir);
-  commit(r.state);
+  // v3.44 the folder of a project handed off from here: the servers held for it are its own again
+  commit({ ...r.state, mcpServers: MS.adoptHeld(r.state.mcpServers || [], r.project.dir, r.project.id) });
   if (!terms.has(r.project.id)) startPty(r.project.id);
   return r.project;
 }
@@ -3110,15 +3108,19 @@ app.on('open-file', (e, file) => {
 if (!isSecondInstance) app.whenReady().then(async () => {
   await loadI18n();
   await loadThemesLib();
-  const raw = loadState();
+  const read = SF.readState(statePath());
+  const raw = read.raw;
+  if (read.corrupt) console.error(`state.json could not be read; a copy is kept at ${SF.corruptPath(statePath())}`);
   // v3.44 migration: a v3.43 connection (a project with `mcp`) stays a normal project; its server becomes one added
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
   state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
-  const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens());
+  // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
+  const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });
   if (settled.failed) console.error(`mcp: ${settled.failed} connection token(s) could not be moved; kept, retried at the next start`);
+  if (settled.dropped) console.error(`mcp: ${settled.dropped} connection token(s) could not be decrypted; dropped (add the server's token again)`);
   app.setAboutPanelOptions({ applicationName: app.getName(), applicationVersion: app.getVersion() });
   buildMenu();
   setupUpdates();

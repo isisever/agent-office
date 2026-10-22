@@ -119,6 +119,8 @@
     "mcpScope": "Kimin için",
     "mcpScopeAll": "tüm projeler",
     "mcpScopeOne": "bu proje",
+    "mcpAway": "devredildi ({folder})",
+    "mcpAwayHint": "Buradan devredildi: {folder} klasörü için bu bilgisayarda saklanıyor, o klasör yeniden eklenince tekrar kullanılır. Bu arada hiçbir oturum almaz.",
     "mcpScopeHint": "Claude Code'da (~/.claude.json, hesap, .mcp.json) aynı adla tanımlı bir sunucu varsa o geçerli olur.",
     "mcpReadOnly": "Claude Code'un kendi ayarlarından: orada değiştirin (Agent Office onları düzenlemez).",
     "mcpUnapproved": "Bu klasör için henüz onaylanmadı: Claude Code kullanmadan önce sorar.",

@@ -187,7 +187,7 @@ test('MCP: handoff keeps the servers and tokens here, held for the folder; remov
   servers = MS.holdProject(servers, 'p1', '/w/proj');
   const reloaded = MS.normalizeServers(JSON.parse(JSON.stringify(P.stateFile({}, { mcpServers: servers }))).mcpServers, ['p2']);
   assert.deepEqual(reloaded.map((s) => [s.id, s.held || null]), [['own', '/w/proj'], ['all', null]]);
-  assert.deepEqual(MS.settleTokens(reloaded, old, store), { moved: 0, failed: 0, removed: 0 }); // the start sweep keeps it
+  assert.deepEqual(MS.settleTokens(reloaded, old, store), { moved: 0, failed: 0, dropped: 0, removed: 0 }); // the start sweep keeps it
   assert.equal(store.load('own'), SECRET);
   assert.equal(MS.appConfigs(reloaded, 'p2', () => '').flow, undefined); // no other project gets it meanwhile
   // handed back: a project adopted at that folder (a new id) has its server again
@@ -209,7 +209,7 @@ test('MCP: a token move that failed is retried at the next start; orphaned token
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const servers = MS.normalizeServers(mig.servers, ['p1', 'pbad']);
   const broken = { ...good, save: () => false };
-  assert.deepEqual(MS.settleTokens(servers, old, broken), { moved: 0, failed: 1, removed: 2 }); // pbad (invalid URL), pgone
+  assert.deepEqual(MS.settleTokens(servers, old, broken), { moved: 0, failed: 1, dropped: 0, removed: 2 }); // pbad (invalid URL), pgone
   assert.equal(old.load('p1'), SECRET); assert.equal(old.has('pbad'), false); assert.equal(old.has('pgone'), false);
   // the state is saved without `mcp` on the project; the next start finds c-p1 without a token and moves it
   const saved = JSON.parse(JSON.stringify(P.stateFile({}, { projects: mig.projects, mcpServers: servers })));
@@ -217,9 +217,9 @@ test('MCP: a token move that failed is retried at the next start; orphaned token
   assert.equal(again.moved.length, 0);
   const s2 = MS.normalizeServers(again.servers, ['p1', 'pbad']);
   good.save('stray', 'tok-stray'); // a server removed by hand from state.json
-  assert.deepEqual(MS.settleTokens(s2, old, good), { moved: 1, failed: 0, removed: 1 });
+  assert.deepEqual(MS.settleTokens(s2, old, good), { moved: 1, failed: 0, dropped: 0, removed: 1 });
   assert.equal(good.load('c-p1'), SECRET); assert.equal(old.has('p1'), false); assert.equal(good.has('stray'), false);
-  assert.deepEqual(MS.settleTokens(s2, old, good), { moved: 0, failed: 0, removed: 0 }); // idempotent
+  assert.deepEqual(MS.settleTokens(s2, old, good), { moved: 0, failed: 0, dropped: 0, removed: 0 }); // idempotent
 });
 
 test('MCP: the add form refuses plain http to another host and keys in the address (en+tr); stored ones still load', () => {
@@ -240,4 +240,102 @@ test('MCP: the add form refuses plain http to another host and keys in the addre
   assert.equal(servers.length, 1);
   const row = MS.listing({ account: {}, home: tmp(), cwd: null, servers, projectId: 'p1' })[0];
   assert.ok(row.host === 'a.io' && !JSON.stringify(row).includes('KEY9'));
+});
+
+test('MCP: a corrupt or missing state.json never sweeps the tokens; state.json is written atomically', () => {
+  const SF = require('../src/state-file.js');
+  const ud = tmp(), file = path.join(ud, 'state.json');
+  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe), old = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe);
+  store.save('m-1', SECRET); old.save('p1', SECRET);
+  // the start, as main runs it: settle with sweep only when the state was read whole
+  const start = () => {
+    const r = SF.readState(file);
+    const servers = MS.normalizeServers(MS.migrateConnections(r.raw.projects, r.raw.mcpServers).servers, []);
+    return MS.settleTokens(servers, old, store, { sweep: SF.trusted(r, file) });
+  };
+  assert.deepEqual(start(), { moved: 0, failed: 0, dropped: 0, removed: 0 }); // missing: nothing removed
+  fs.writeFileSync(file, '{"mcpServers": [{"id": "m-1", "na'); // a write cut half-way
+  assert.deepEqual(SF.readState(file), { raw: {}, ok: false, corrupt: true });
+  assert.deepEqual(start(), { moved: 0, failed: 0, dropped: 0, removed: 0 });
+  assert.equal(store.load('m-1'), SECRET); assert.equal(old.load('p1'), SECRET);
+  assert.ok(fs.readFileSync(SF.corruptPath(file), 'utf8').startsWith('{"mcpServers"')); // the bad copy is kept
+  // the next save replaces the bad file with a state without servers; the copy still blocks the sweep
+  SF.writeAtomic(file, JSON.stringify({ projects: [] }));
+  assert.equal(SF.readState(file).ok, true);
+  assert.deepEqual(start(), { moved: 0, failed: 0, dropped: 0, removed: 0 });
+  assert.equal(store.has('m-1'), true);
+  fs.writeFileSync(file, 'garbage'); SF.readState(file);
+  assert.ok(fs.readFileSync(SF.corruptPath(file), 'utf8').startsWith('{"mcpServers"')); // never overwritten
+  // once the copy is dealt with, a whole state sweeps as before
+  fs.rmSync(SF.corruptPath(file)); SF.writeAtomic(file, '{}');
+  assert.deepEqual(start(), { moved: 0, failed: 0, dropped: 0, removed: 2 });
+  // atomic: no temp file left, and a failed write leaves the old file whole
+  SF.writeAtomic(file, '{"a":1}');
+  assert.deepEqual(fs.readdirSync(ud).filter((f) => f.endsWith('.tmp')), []);
+  const failing = { ...fs, renameSync: () => { throw new Error('disk full'); } };
+  assert.throws(() => SF.writeAtomic(file, '{"a":2}', failing));
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"a":1}');
+  assert.deepEqual(fs.readdirSync(ud).filter((f) => f.endsWith('.tmp')), []);
+  // main reads and writes state.json only through these
+  const main = src('../main.js');
+  assert.ok(main.includes('SF.readState(statePath())') && main.includes('SF.writeAtomic(statePath()'));
+  assert.ok(/settleTokens\(state\.mcpServers, oldTokens\(\), tokens\(\), \{ sweep: SF\.trusted\(read, statePath\(\)\) \}\)/.test(main));
+});
+
+test('MCP: held servers are listed as handed off and removable; adding the folder again re-attaches them', () => {
+  const home = tmp();
+  let servers = [{ id: 'own', name: 'flow', type: 'http', url: 'https://f.io/x', scope: 'p1' }, { id: 'all', name: 'n', type: 'http', url: 'https://n.io', scope: 'all' }];
+  servers = MS.normalizeServers(MS.holdProject(servers, 'p1', '/w/proj'), ['p2']);
+  const list = MS.listing({ account: {}, home, cwd: null, servers, projectId: 'p2', read: () => null, hasToken: (id) => id === 'own' });
+  const away = list.find((s) => s.id === 'own');
+  assert.deepEqual(away, { name: 'flow', source: 'app', type: 'http', host: 'f.io', readOnly: false, id: 'own', scope: 'held', away: true, folder: 'proj', hasToken: true });
+  assert.equal(list.at(-1).id, 'own'); // last, after the ones the session gets
+  assert.ok(!JSON.stringify(list).includes('/w/proj'));
+  assert.equal(MS.removeServer(servers, 'own').length, 1); // mcp:remove by id (main also drops the token)
+  // the panel labels it (en+tr)
+  for (const l of ['en', 'tr']) {
+    const j = JSON.parse(src(`../locales/${l}.json`));
+    assert.ok(j.sidebar.mcpAway.includes('{folder}') && j.sidebar.mcpAwayHint, l);
+  }
+  assert.equal(JSON.parse(src('../locales/tr.json')).sidebar.mcpAway.startsWith('devredildi'), true);
+  const sb = src('../renderer/sidebar.js');
+  assert.ok(sb.includes("t('sidebar.mcpAway'") && sb.includes("s.away ? ' away' : ''"));
+  // projects:add / addDir re-attaches the held servers of that folder
+  const main = src('../main.js');
+  const addDir = main.slice(main.indexOf('function addDir('), main.indexOf("ipcMain.handle('projects:add'"));
+  assert.ok(addDir.includes('MS.adoptHeld(r.state.mcpServers || [], r.project.dir, r.project.id)'));
+  const back = MS.adoptHeld(servers, '/w/proj', 'p4');
+  assert.deepEqual(MS.serversFor(back, 'p4').map((s) => s.id), ['own', 'all']);
+});
+
+test('MCP: adopting does not re-scope a held server whose name the project already has; it stays held', () => {
+  let servers = [
+    { id: 'h1', name: 'flow', type: 'http', url: 'https://f.io', scope: 'p1', held: '/w/proj' },
+    { id: 'h2', name: 'docs', type: 'http', url: 'https://d.io', scope: 'p1', held: '/w/proj' },
+    { id: 'h3', name: 'docs', type: 'http', url: 'https://d2.io', scope: 'p0', held: '/w/proj' }, // an older handoff of the same folder
+    { id: 'mine', name: 'flow', type: 'http', url: 'https://mine.io', scope: 'p5' },
+  ];
+  servers = MS.adoptHeld(servers, '/w/proj', 'p5');
+  assert.deepEqual(servers.map((s) => [s.id, s.scope, s.held || null]), [['h1', 'p1', '/w/proj'], ['h2', 'p5', null], ['h3', 'p0', '/w/proj'], ['mine', 'p5', null]]);
+  assert.deepEqual(Object.keys(MS.appConfigs(servers, 'p5', () => '')).sort(), ['docs', 'flow']);
+  assert.equal(MS.appConfigs(servers, 'p5', () => '').flow.url, 'https://mine.io');
+  // still in the panel as away, so it can be removed
+  const list = MS.listing({ account: {}, home: tmp(), cwd: null, servers, projectId: 'p5', read: () => null });
+  assert.deepEqual(list.filter((s) => s.away).map((s) => s.id), ['h1', 'h3']);
+});
+
+test('MCP: a v3.43 token that does not decrypt is dropped, not retried forever', () => {
+  const ud = tmp();
+  const lockedSafe = { ...fakeSafe, decryptString: () => { throw new Error('no key'); } };
+  const oldW = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe);
+  oldW.save('p1', SECRET);
+  const old = MS.tokenStore(path.join(ud, 'connector-tokens'), lockedSafe), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
+  const servers = [{ id: 'c-p1', name: 'notion', type: 'http', url: 'https://n.io', scope: 'p1' }];
+  assert.deepEqual(MS.pendingMoves(servers, old, good), [{ from: 'p1', to: 'c-p1' }]);
+  assert.deepEqual(MS.settleTokens(servers, old, good, { sweep: false }), { moved: 0, failed: 0, dropped: 1, removed: 0 });
+  assert.equal(old.has('p1'), false); assert.equal(good.has('c-p1'), false);
+  assert.deepEqual(MS.pendingMoves(servers, old, good), []); // terminal
+  assert.deepEqual(MS.settleTokens(servers, old, good), { moved: 0, failed: 0, dropped: 0, removed: 0 });
+  const line = src('../main.js').split('\n').find((l) => l.includes('could not be decrypted'));
+  assert.deepEqual(line.match(/\$\{[^}]*\}/g), ['${settled.dropped}']); // the log names a count, never a token
 });

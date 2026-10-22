@@ -1058,4 +1058,5 @@ label.sb-langrow { cursor: pointer; }
 .sb-mcp-row .sb-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-mcp-row .sb-mcp-src { flex: 1; min-width: 0; opacity: .6; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-mcp-row.shadowed .sb-name { text-decoration: line-through; opacity: .6; }
+.sb-mcp-row.away .sb-name { font-style: italic; opacity: .6; }
 #sb-mcp-note { padding: 2px 12px; font-size: 10px; }

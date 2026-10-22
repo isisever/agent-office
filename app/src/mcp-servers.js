@@ -108,12 +108,20 @@ function dropProject(servers, projectId) {
  * (`held: dir`), and come back to it when a project at that folder is adopted again (`adoptHeld`).
  */
 const holdProject = (servers, projectId, dir) => servers.map((s) => (s.scope === projectId ? { ...s, held: dir } : s));
-/** A project arrives at `dir` (handed back): the servers held for that folder are its own again. */
-const adoptHeld = (servers, dir, projectId) => servers.map((s) => {
-  if (s.held !== dir) return s;
-  const { held, ...rest } = s;
-  return { ...rest, scope: projectId };
-});
+/**
+ * A project arrives at `dir` (handed back, or the folder added again): the servers held for that folder are its own
+ * again — except one whose name the project already has a server of; that one stays held (the panel lists it as
+ * handed off, where it can be removed).
+ */
+function adoptHeld(servers, dir, projectId) {
+  const names = new Set(servers.filter((s) => !s.held && s.scope === projectId).map((s) => s.name));
+  return servers.map((s) => {
+    if (s.held !== dir || names.has(s.name)) return s;
+    names.add(s.name);
+    const { held, ...rest } = s;
+    return { ...rest, scope: projectId };
+  });
+}
 
 /** The claude MCP entry: a remote server, the token as a bearer header. Lives only in the tab's 0600 MCP file. */
 function serverConfig(s, token) {
@@ -194,10 +202,17 @@ function tokenStore(dir, safe, fsx = fs) {
   };
 }
 
-/** Moves a token between stores (migration). The old one is removed only once the new one is saved. → ok */
-function moveToken(from, to, fromId, toId) {
+/**
+ * Moves a token between stores (migration). The old one is removed only once the new one is saved. → ok
+ * A stored token that cannot be read (it does not decrypt, or is empty) is final: its file goes, and `dropped`
+ * (when given) is called, so it is never retried.
+ */
+function moveToken(from, to, fromId, toId, dropped = () => {}) {
   const token = from.load(fromId);
-  if (!token) return true;
+  if (!token) {
+    if (from.has(fromId)) { from.remove(fromId); dropped(); }
+    return true;
+  }
   if (!to.save(toId, token)) return false;
   from.remove(fromId);
   return true;
@@ -209,18 +224,23 @@ const pendingMoves = (servers, from, to) => servers
   .filter((s) => /^c-/.test(s.id) && s.scope !== 'all' && !to.has(s.id) && from.has(s.scope))
   .map((s) => ({ from: s.scope, to: s.id }));
 /**
- * At every start (v3.44): retries each token move a previous start could not finish (idempotent), then removes the
- * tokens no server needs: new-store ids not in `servers`, old-store ids not waiting for a move (a v3.43 connection
- * whose URL was invalid had no server, so its token goes too). → { moved, failed, removed }
+ * At every start (v3.44): retries each token move a previous start could not finish (idempotent; a token that does
+ * not decrypt is dropped, not moved), then — with `sweep` (state.json was read whole) — removes the tokens no server
+ * needs: new-store ids not in `servers`, old-store ids not waiting for a move (a v3.43 connection whose URL was
+ * invalid had no server, so its token goes too). → { moved, failed, dropped, removed }
  */
-function settleTokens(servers, from, to) {
-  let moved = 0, failed = 0, removed = 0;
-  for (const m of pendingMoves(servers, from, to)) if (moveToken(from, to, m.from, m.to)) moved++; else failed++;
+function settleTokens(servers, from, to, { sweep = true } = {}) {
+  let moved = 0, failed = 0, dropped = 0, removed = 0;
+  for (const m of pendingMoves(servers, from, to)) {
+    let lost = false;
+    if (!moveToken(from, to, m.from, m.to, () => { lost = true; })) failed++; else if (lost) dropped++; else moved++;
+  }
+  if (!sweep) return { moved, failed, dropped, removed };
   const live = new Set(servers.map((s) => s.id));
   for (const id of to.ids()) if (!live.has(id)) { to.remove(id); removed++; }
   const waiting = new Set(pendingMoves(servers, from, to).map((m) => oldIdOf(m.from)));
   for (const id of from.ids()) if (!waiting.has(id)) { from.remove(id); removed++; }
-  return { moved, failed, removed };
+  return { moved, failed, dropped, removed };
 }
 
 /**
@@ -231,7 +251,9 @@ function settleTokens(servers, from, to) {
  * project's, v3.9 share) | 'app' (added in Agent Office; scope 'all' | 'project'; shadowed: a server of that name
  * already reaches the session, so this one is not added; the same rule as SC.prepareShared: a .mcp.json server that
  * is not approved does not count; bossShadowed: named `agent-office`, so the project's boss tab (`boss`, manager
- * mode) uses Agent Office's own server of that name there, and the other tabs this one).
+ * mode) uses Agent Office's own server of that name there, and the other tabs this one). Last, in every project's
+ * list, the servers held for a handed-off project (scope 'held', away: true, folder: the folder's last part); no
+ * session gets them, and they can be removed here.
  * @param {{ account: any, home: string, cwd: string | null, office?: any, servers?: any[], projectId: string,
  *   boss?: boolean, hasToken?: (id: string) => boolean, read?: (file: string) => any }} o
  */
@@ -256,11 +278,14 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
   for (const [n, c] of Object.entries(plan.own.project)) push(n, c, 'project', { approved: approved(n) });
   for (const [n, c] of Object.entries(plan.own.user)) push(n, c, isDefault ? 'user' : 'account');
   for (const [n, c] of Object.entries(plan.servers)) push(n, c, isObj(defLocal) && isObj(defLocal[n]) ? 'local' : isObj(defaultConfig?.mcpServers?.[n]) ? 'user' : 'office');
-  for (const s of serversFor(servers, projectId)) {
+  for (const s of serversFor(servers.filter((x) => !x.held), projectId)) {
     const shadowed = seen.has(s.name);
     const bossShadowed = !shadowed && boss && s.name === 'agent-office';
     if (!shadowed) seen.add(s.name);
     out.push({ name: s.name, source: 'app', type: s.type, host: hostOf(s.url), readOnly: false, id: s.id, scope: s.scope === 'all' ? 'all' : 'project', hasToken: Boolean(hasToken(s.id)), ...(shadowed ? { shadowed: true } : {}), ...(bossShadowed ? { bossShadowed: true } : {}) });
+  }
+  for (const s of servers.filter((x) => x.held)) {
+    out.push({ name: s.name, source: 'app', type: s.type, host: hostOf(s.url), readOnly: false, id: s.id, scope: 'held', away: true, folder: path.basename(s.held), hasToken: Boolean(hasToken(s.id)) });
   }
   return out;
 }
