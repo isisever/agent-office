@@ -242,7 +242,7 @@ body.dragging-split, body.dragging-split * { cursor: row-resize !important; user
 }
 .sb-add:hover { opacity: 1; border-style: solid; background: var(--accent); color: var(--status-bg); }
 /* Add account's type menu (v3.30): under the button, one line per account type */
-.sb-add-menu { margin: -2px 8px 6px; border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent); border-radius: 3px; overflow: hidden; }
+.sb-add-menu, .sb-oc-menu { margin: -2px 8px 6px; border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent); border-radius: 3px; overflow: hidden; }
 .sb-add-item { display: block; width: 100%; padding: 5px 8px; text-align: left; background: none; border: 0; cursor: pointer; opacity: .85; }
 .sb-add-item + .sb-add-item { border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
 .sb-add-item:hover, .sb-add-item:focus-visible { opacity: 1; background: var(--accent); color: var(--status-bg); }

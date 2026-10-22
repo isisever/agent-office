@@ -63,6 +63,7 @@ export function mountSidebar(el, on) {
   let ocAuth = null; // OpenCode's logins (v3.40, main's OcAuth); null until main answers
   let showOc = null;
   let addMenu = false; // the Add account type menu is open (v3.30)
+  let ocLoginMenu = false; // the OpenCode login chooser is open: normal (device code) vs one provider (v3.40)
   let addFor = null; // the project whose Account dropdown opened the type menu (v3.36): a new Claude account goes to it
   let activeId = null;
   let status = new Map();
@@ -663,11 +664,19 @@ export function mountSidebar(el, on) {
       auth);
   }
 
-  /** OpenCode's logins (contract v3.40): the providers it is logged in to, with Giriş yap (add one) / Çıkış yap; or that
-   *  the free models work without any login. Giriş yap runs `opencode providers login` (it asks which provider). */
+  /** OpenCode's logins (contract v3.40): the providers it is logged in to, with Giriş yap / Çıkış yap; or that
+   *  the free models work without any login. v1: Giriş yap opens the login chooser (normal device code vs one
+   *  provider); v2.x has one login (`opencode auth login opencode`), so it starts right away. */
   function ocRow() {
+    const toggle = (e) => { e.stopPropagation(); ocLoginMenu = !ocLoginMenu; renderAccounts(); acctList.querySelector('.sb-oc-menu')?.scrollIntoView?.({ block: 'nearest' }); };
     if (!ocShown()) return null;
     const state = ocAuth?.state || 'checking';
+    const v2 = (ocAuth?.major ?? 0) >= 2;
+    // v2.x ignores the mode for login (one login, `auth login opencode`); 'console' is the allowlisted default (v3.41)
+    const v2Login = () => on.ocLogin?.('console');
+    // which logout main runs (ocLoginArgs, v3.41): the OpenCode entry when it is logged in, else `auth logout` (asks which)
+    const consoleIn = (ocAuth?.providers || []).some((x) => x.id === 'opencode');
+    const logoutTitle = t(!consoleIn ? 'sidebar.ocLogoutAuth' : v2 ? 'sidebar.ocLogoutV2' : 'sidebar.ocLogoutTitle');
     const text = (s, title = '') => h('span', { class: 'sb-auth-text' + (state === 'in' ? ' sb-email' : ''), title }, s);
     let auth;
     if (state === 'missing') {
@@ -677,11 +686,11 @@ export function mountSidebar(el, on) {
     } else if (state === 'in') {
       const names = (ocAuth.providers || []).map((x) => x.id).join(', ');
       auth = h('div', { class: 'sb-auth' }, text(names || t('sidebar.loggedIn'), t('sidebar.ocInTitle', { providers: names })),
-        rowBtn('', t('sidebar.login'), t('sidebar.ocAddTitle'), () => on.ocLogin?.()),
-        rowBtn('', t('sidebar.logout'), t('sidebar.ocLogoutTitle'), () => on.ocLogout?.()));
+        rowBtn('', t('sidebar.login'), t(v2 ? 'sidebar.ocLoginV2' : 'sidebar.ocAddTitle'), v2 ? v2Login : toggle),
+        rowBtn('', t('sidebar.logout'), logoutTitle, () => on.ocLogout?.()));
     } else if (state === 'out') {
       auth = h('div', { class: 'sb-auth' }, text(t('sidebar.ocFree'), t('sidebar.ocFreeTitle')),
-        rowBtn('primary', t('sidebar.login'), t('sidebar.ocLoginTitle'), () => on.ocLogin?.()));
+        rowBtn('primary', t('sidebar.login'), t(v2 ? 'sidebar.ocLoginV2' : 'sidebar.ocLoginTitle'), v2 ? v2Login : toggle));
     } else {
       auth = h('div', { class: 'sb-auth' }, text(t('sidebar.checking')));
     }
@@ -694,6 +703,18 @@ export function mountSidebar(el, on) {
         hideBtn(ocUsed(), () => on.hideOc?.()),
       ),
       auth);
+  }
+
+  /** The OpenCode login chooser (like the Add account type menu): normal login (`opencode console login`, the device
+   *  code) or one provider (OAuth in the browser, or an API key, `opencode auth login`). v1 only: v2.x has one login. */
+  function ocLoginMenuRow() {
+    const item = (text, title, fn) => h('button', {
+      class: 'sb-add-item sb-oc-item', title,
+      onclick: (e) => { e.stopPropagation(); ocLoginMenu = false; fn(); },
+    }, text);
+    return h('li', { class: 'sb-oc-menu', role: 'menu' },
+      item(t('sidebar.ocNormalLogin'), t('sidebar.ocNormalLoginTitle'), () => on.ocLogin?.('console')),
+      item(t('sidebar.ocApiKeyLogin'), t('sidebar.ocApiKeyLoginTitle'), () => on.ocLogin?.('auth')));
   }
 
   /** The Add account type menu (contract v3.30): Claude (the name field, as before), Google Antigravity, Command Code. */
@@ -746,18 +767,24 @@ export function mountSidebar(el, on) {
     const agy = agyRow();
     const cmd = cmdRow();
     const oc = ocRow();
+    const ocMenu = oc && (ocAuth?.major ?? 0) < 2 && ocLoginMenu ? ocLoginMenuRow() : null;
     acctList.replaceChildren(...rows, ...(agy ? [agy] : []), ...(cmd ? [cmd] : []), ...(oc ? [oc] : []),
+      ...(ocMenu ? [ocMenu] : []),
       h('li', {}, h('button', {
         class: 'sb-add', title: t('sidebar.addAccountTitle'), 'aria-haspopup': 'menu', 'aria-expanded': String(addMenu),
         onclick: (e) => { e.stopPropagation(); addMenu = !addMenu; addFor = null; renderAccounts(); acctList.querySelector('.sb-add-menu')?.scrollIntoView?.({ block: 'nearest' }); },
       }, t('sidebar.addAccount'))),
       ...(addMenu ? [addMenuRow()] : []));
   }
-  // the type menu closes on a click elsewhere or Escape
+  // the type menu and the OpenCode login chooser close on a click elsewhere or Escape
   document.addEventListener('click', (e) => {
     if (addMenu && !(e.target instanceof Node && acctList.querySelector('.sb-add-menu')?.contains(e.target))) { addMenu = false; addFor = null; renderAccounts(); }
+    if (ocLoginMenu && !(e.target instanceof Node && acctList.querySelector('.sb-oc-menu')?.contains(e.target))) { ocLoginMenu = false; renderAccounts(); }
   });
-  document.addEventListener('keydown', (e) => { if (addMenu && e.key === 'Escape') { addMenu = false; addFor = null; renderAccounts(); } });
+  document.addEventListener('keydown', (e) => {
+    if (addMenu && e.key === 'Escape') { addMenu = false; addFor = null; renderAccounts(); }
+    if (ocLoginMenu && e.key === 'Escape') { ocLoginMenu = false; renderAccounts(); }
+  });
 
   // reset times and "x dk önce" go stale on their own: redraw once a minute
   setInterval(() => { if (!editing && accounts.some((a) => a.usage)) renderAccounts(); }, 60000);
