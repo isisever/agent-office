@@ -43,8 +43,12 @@ jobs:
         run: node app/test/office.test.mjs
       - name: Office pictures (visual regression)
         run: node app/test/visual.test.mjs
+      - name: Windows builder config (signing envs)
+        run: node --test app/test/win-builder-config.test.cjs
       - name: Device link (two devices pair on a local DHT testnet)
         run: node --test app/test/link.test.cjs
+      - name: node-pty quit-crash patch + pty guard
+        run: node --test app/test/node-pty-patch.test.cjs
 
   plugin:
     runs-on: ubuntu-latest

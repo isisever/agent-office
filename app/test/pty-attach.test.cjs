@@ -1,24 +1,24 @@
-// Tests for src/pty-attach.js: the wiring shared by every pty's onData/onExit registrations (id guard, quit ignore,
-// swallowed throws, disposables). A fake pty carries the registrations; the events are emitted by hand.
+// Tests for src/pty-attach.js: the one wiring path for every pty's onData/onExit registrations (id guard, the quit
+// guard of src/pty-guard.js: muted while quitting, logged throws, held disposables that release(t) drops). A fake pty
+// carries the registrations; the events are emitted by hand. The real createGuard is used, not a stand-in.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { attachPty } = require('../src/pty-attach.js');
+const PG = require('../src/pty-guard.js');
 
 // A pty stand-in: onData / onExit keep their listeners, emit() delivers to them, each registration disposes itself.
 function fakePty() {
   const listeners = { data: [], exit: [] };
-  return {
-    onData: (f) => { listeners.data.push(f); return { dispose: () => { const i = listeners.data.indexOf(f); if (i !== -1) listeners.data.splice(i, 1); } }; },
-    onExit: (f) => { listeners.exit.push(f); return { dispose: () => { const i = listeners.exit.indexOf(f); if (i !== -1) listeners.exit.splice(i, 1); } }; },
-    emit: (kind, ev) => { for (const f of [...listeners[kind]]) f(ev); },
-  };
+  const reg = (kind) => (f) => { listeners[kind].push(f); return { dispose: () => { const i = listeners[kind].indexOf(f); if (i !== -1) listeners[kind].splice(i, 1); } }; };
+  return { onData: reg('data'), onExit: reg('exit'), emit: (kind, ev) => { for (const f of [...listeners[kind]]) f(ev); }, count: (kind) => listeners[kind].length };
 }
+const guard = (isQuitting = () => false) => PG.createGuard(isQuitting);
 
 test('pty-attach: the id guard delivers only while the map holds this pty', () => {
   const map = new Map();
   const calls = [];
   const t = fakePty();
-  attachPty(map, 'id', t, { onData: (d) => calls.push(`data:${d}`), onExit: () => calls.push('exit') });
+  attachPty(map, 'id', t, { onData: (d) => calls.push(`data:${d}`), onExit: () => calls.push('exit') }, guard());
   map.set('id', t);
   t.emit('data', 'a');
   map.set('id', fakePty());   // replaced: this pty is no longer the one
@@ -28,60 +28,83 @@ test('pty-attach: the id guard delivers only while the map holds this pty', () =
   assert.deepEqual(calls, ['data:a']);
 });
 
-test('pty-attach: a throw in a handler is logged, the next event still works', () => {
+test('pty-attach: map null has no id guard (the relay facade listeners)', () => {
+  const calls = [];
+  const t = fakePty();
+  attachPty(null, 'id', t, { onExit: (e) => calls.push(e.exitCode) }, guard());
+  t.emit('exit', { exitCode: 3 });
+  assert.deepEqual(calls, [3]);
+});
+
+test('pty-attach: a throw in a handler is logged by guarded(), the next event still works', (tt) => {
+  const logs = [];
+  tt.mock.method(console, 'error', (...a) => logs.push(a.join(' ')));
   const map = new Map();
   const t = fakePty();
-  const logs = [];
   let n = 0;
-  const dispose = attachPty(map, 'id', t, {
-    onData: () => { if (++n === 1) throw new Error('deliberate'); },
-  }, { log: (...a) => logs.push(a.join(' ')) });
+  attachPty(map, 'id', t, { onData: () => { if (++n === 1) throw new Error('deliberate'); } }, guard());
   map.set('id', t);
-  t.emit('exit');
   t.emit('data');
   t.emit('data');
   assert.equal(n, 2);
-  assert.match(logs[0], /pty handler: deliberate/);
-  dispose();
+  assert.match(logs[0], /pty callback: deliberate/);
 });
 
-test('pty-attach: ignore() (the quitting flag) silences every event', () => {
+test('pty-attach: while quitting nothing is delivered; once quitting is reset, events flow again', () => {
+  let quitting = true;
   const map = new Map();
   const calls = [];
   const t = fakePty();
-  attachPty(map, 'id', t, { onData: (d) => calls.push(d), onExit: () => calls.push('exit') }, { ignore: () => true });
+  attachPty(map, 'id', t, { onData: (d) => calls.push(d), onExit: () => calls.push('exit') }, guard(() => quitting));
   map.set('id', t);
   t.emit('data', 'x');
   t.emit('exit');
-  assert.deepEqual(calls, []);
+  quitting = false;   // main's unquit(): the update install did not quit
+  t.emit('data', 'y');
+  assert.deepEqual(calls, ['y']);
 });
 
-test('pty-attach: dispose drops every registration, the pty may exist still', () => {
+test('pty-attach: listeners are held, release(t) drops every one of them before a kill', () => {
+  const g = guard();
   const map = new Map();
   const calls = [];
   const t = fakePty();
-  const dispose = attachPty(map, 'id', t, { onData: () => calls.push('d'), onExit: () => calls.push('e') });
-  assert.deepEqual(calls, []);
+  attachPty(map, 'id', t, { onData: () => calls.push('d'), onExit: () => calls.push('e') }, g);
+  attachPty(null, 'id', t, { onData: () => calls.push('facade') }, g);
   map.set('id', t);
+  assert.equal(t.count('data'), 2);
+  g.release(t);
+  assert.equal(t.count('data'), 0);
+  assert.equal(t.count('exit'), 0);
   t.emit('data');
   t.emit('exit');
-  assert.deepEqual(calls, ['d', 'e']);
-  dispose();
+  assert.deepEqual(calls, []);
+});
+
+test('pty-attach: the returned IDisposable drops only its own listeners, and is safe twice', () => {
+  const g = guard();
+  const t = fakePty();
+  const calls = [];
+  attachPty(null, 'id', t, { onData: () => calls.push('a') }, g);
+  const sub = attachPty(null, 'id', t, { onData: () => calls.push('b') }, g);
+  sub.dispose();
+  sub.dispose();
   t.emit('data');
-  t.emit('exit');
-  assert.deepEqual(calls, ['d', 'e']);
+  assert.deepEqual(calls, ['a']);
+  g.release(t);   // the already disposed one is disposed again harmlessly
+  assert.equal(t.count('data'), 0);
 });
 
 test('pty-attach: events pass through untouched, unused handlers stay unregistered', () => {
   const map = new Map();
   const t = fakePty();
   let seen = null;
-  const dispose = attachPty(map, 'id', t, { onExit: (e) => { seen = e; } });
+  attachPty(map, 'id', t, { onExit: (e) => { seen = e; } }, guard());
+  assert.equal(t.count('data'), 0);
   map.set('id', t);
   const ev = { exitCode: 7 };
   t.emit('exit', ev);
   assert.equal(seen, ev);
-  dispose();
 });
 
 test('pty-attach: two ptys of the same id do not cross wires', () => {
@@ -89,12 +112,10 @@ test('pty-attach: two ptys of the same id do not cross wires', () => {
   const calls = [];
   const t1 = fakePty();
   const t2 = fakePty();
-  const dispose1 = attachPty(map, 'ok', t1, { onData: () => calls.push('t1') });
-  const dispose2 = attachPty(map, 'ok', t2, { onData: () => calls.push('t2') });
+  attachPty(map, 'ok', t1, { onData: () => calls.push('t1') }, guard());
+  attachPty(map, 'ok', t2, { onData: () => calls.push('t2') }, guard());
   map.set('ok', t2);
   t1.emit('data');   // stale pty: silent
   t2.emit('data');
   assert.deepEqual(calls, ['t2']);
-  dispose1();
-  dispose2();
 });

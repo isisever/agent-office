@@ -9,6 +9,7 @@ const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
 const N = require('./src/attention.js');
 const OS = require('./src/platform.js');
+const PG = require('./src/pty-guard.js');
 const L = require('./src/locales.js');
 const UP = require('./src/updates.js');
 const M = require('./src/memory.js');
@@ -56,16 +57,6 @@ const sizes = new Map();     // pty id → { cols, rows } (last pty:resize)
 const auths = new Map();     // accountId → AccountAuth (in memory only)
 const usages = new Map();    // accountId → AccountUsage (also kept in usage/<accountId>/last.json)
 const relays = new Map();    // 'relay:<id>' → v3.34 remote login relay pty (amendment 8: own map, output never sent to the renderer)
-// The shared wiring around a pty's onData/onExit registrations (id guard, events ignored while quitting, logged
-// throws, disposables). See src/pty-attach.js; `quitting` is the app's own flag.
-const attachPty = (map, id, t, handlers) => PTY.attachPty(map, id, t, handlers, { ignore: () => quitting });
-// Every login pty's pane data and the exit that runs its engine's auth check share this shape.
-const onLoginData = (id) => (d) => send('pty:data', id, d);
-const onLoginExit = (id, check) => ({ exitCode }) => {
-  logins.delete(id);
-  send('pty:exit', id, exitCode);
-  check();
-};
 const ptyOf = (id) => terms.get(id) || logins.get(id);
 // An Antigravity project (contract v3.22): its tabs run `agy`, so nothing that reads Claude Code's files applies to it.
 const isAgy = (project) => P.engineOf(project) === 'agy';
@@ -115,7 +106,7 @@ function saveState() {
   } catch {}
 }
 
-const send = (ch, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...args); };
+const send = (ch, ...args) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(ch, ...args); };
 const snapshot = () => ({
   projects: state.projects,
   activeId: state.activeId,
@@ -293,6 +284,8 @@ function killPty(id) {
   mcpPrint.delete(id);
   ptyStart.delete(id);
   ptyLimit.delete(id);
+  release(t);   // dispose its onData/onExit listeners before the kill: nothing is left to fire from a dying pty
+  if (quitting && t.pid) dying.push(t.pid);   // will-quit waits for these (≤ 1 s)
   try { t.kill(); } catch {}
 }
 // Quitting (window closed, Quit, the updater's quitAndInstall): one last look at which tabs are mid-turn, so they
@@ -301,12 +294,36 @@ function killAll() {
   if (!quitting && state) checkTurns();
   quitting = true;
   for (const id of [...terms.keys(), ...logins.keys()]) killPty(id);
-  for (const t of relays.values()) { try { t.kill(); } catch {} }
+  for (const t of relays.values()) { release(t); if (t.pid) dying.push(t.pid); try { t.kill(); } catch {} }
   relays.clear();
 }
 
 // --- interrupted work (see src/resume.js): state.interrupted = { ptyId: sessionId | '' } for tabs mid-turn
 let quitting = false;
+// onData/onExit of killed ptys can still fire while quitting or during teardown (node-pty's exit TSFN,
+// microsoft/node-pty#904/#951): deliver nothing then, and keep a stray throw from becoming an uncaught one
+// (an uncaught throw in a dying environment is what turns into the SIGABRT on quit). src/pty-guard.js: guarded(f) is
+// the one wrapper for every pty callback; hold(t, …) keeps the disposables t.onData/t.onExit return, release(t)
+// disposes them before a kill. Every onData/onExit registration goes through attachPty (src/pty-attach.js), which
+// adds the id guard and applies guarded() and hold(), so there is one wiring path.
+const ptyGuard = PG.createGuard(() => quitting);
+const { release } = ptyGuard;
+/** @param {Map<string, any> | null} map null: no id guard @param {string} id @param {any} t
+ * @param {{ onData?: (e: any) => void, onExit?: (e: any) => void }} handlers */
+const attachPty = (map, id, t, handlers) => PTY.attachPty(map, id, t, handlers, ptyGuard);
+// pids of ptys killed while quitting; will-quit waits up to 1 s for them to be reaped
+/** @type {number[]} */
+const dying = [];
+// update:install killed everything and set quitting, but quitAndInstall may not quit (it threw, or the updater
+// reported an error while installing): without unquit, quitting would stay true and mute every new tab until a restart
+let appQuitting = false;
+let installing = false;
+function unquit() {
+  installing = false;
+  if (appQuitting || !quitting) return;
+  quitting = false;
+  dying.length = 0;
+}
 const marks = () => state?.interrupted || {};
 // saved at once (no broadcast: the renderer does not show it), so an ungraceful end still finds it
 function setMarks(next) {
@@ -501,18 +518,19 @@ function onFocus() {
   checkOcAuth();
 }
 
-// The engine logins' shared start: end the last login pty for that id, then start the engine's login line from the
-// same login shell (Windows: through the engine's launcher file, or the engine's no-tool notice) and wire the pane
-// data plus the exit that runs the engine's auth check (onLoginData/onLoginExit). What differs per engine is passed
-// in: the env, the launcher, the argv, the no-tool notice, the check and, for the log, the failing-start label.
-function startLoginPty({ id, label, env, win, argv, no, check }) {
+// The engine logins' shared start: end the last login pty for that id (its listeners released before the kill), then
+// start the engine's login line from the same login shell (Windows: through the engine's launcher file, or the
+// engine's no-tool notice) and wire the pane data plus the exit that runs the engine's auth check through attachPty.
+// What differs per engine is passed in: the env, the Windows launcher, the argv, the no-tool notice, the check and,
+// for the log, the failing-start label.
+function startLoginPty({ id, label, env, windowsLauncher, argv, noTool, check }) {
   const old = logins.get(id);
-  if (old) { logins.delete(id); try { old.kill(); } catch {} }
+  if (old) { logins.delete(id); release(old); try { old.kill(); } catch {} }
   const { cols, rows } = sizes.get(id) || lastSize;
   let t;
   try {
-    const win32 = IS_WIN ? win(env) : null;
-    if (IS_WIN && !win32) return no(id);
+    const win32 = IS_WIN ? windowsLauncher(env) : null;
+    if (IS_WIN && !win32) return noTool(id);
     t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', ...argv], {
       name: 'xterm-256color', cols, rows, cwd: app.getPath('home'), env,
     });
@@ -522,7 +540,14 @@ function startLoginPty({ id, label, env, win, argv, no, check }) {
     return;
   }
   logins.set(id, t);
-  attachPty(logins, id, t, { onData: onLoginData(id), onExit: onLoginExit(id, check) });
+  attachPty(logins, id, t, {
+    onData: (d) => send('pty:data', id, d),
+    onExit: ({ exitCode }) => {   // killed on purpose: silent (the id guard)
+      logins.delete(id);
+      send('pty:exit', id, exitCode);
+      check();
+    },
+  });
 }
 
 // `claude auth login` pty: same channel as the project ptys, id 'login:<accountId>'. One per account;
@@ -535,9 +560,9 @@ function startLogin(accountId) {
   startLoginPty({
     id, label: 'giriş pty\'si başlatılamadı',
     env: accountEnv(account),
-    win: (env) => windowsClaude(['auth', 'login'], env),
+    windowsLauncher: (env) => windowsClaude(['auth', 'login'], env),
     argv: [A.claudeCommand('auth login')],
-    no: sendNoClaude,
+    noTool: sendNoClaude,
     check: () => checkAuth(accountId, { showChecking: true }),
   });
 }
@@ -559,7 +584,8 @@ function spawnRelayLogin(account, relayId, devicePub) {
   /** @type {any} */ (t).accountId = account.id;
   relays.set(id, t);
   attachPty(relays, id, t, { onExit: () => relays.delete(id) });
-  return { onData: (f) => t.onData(f), onExit: (f) => t.onExit(f), write: (x) => t.write(x), kill: () => { if (relays.get(id) === t) relays.delete(id); try { t.kill(); } catch {} } };
+  // the caller's listeners: no id guard (its own onExit must still run after the delete above), guarded and held
+  return { onData: (f) => attachPty(null, id, t, { onData: f }), onExit: (f) => attachPty(null, id, t, { onExit: f }), write: (x) => t.write(x), kill: () => { if (relays.get(id) === t) relays.delete(id); release(t); try { t.kill(); } catch {} } };
 }
 const relayAccounts = () => state.accounts.map((a) => { const s = auths.get(a.id); return { id: a.id, label: a.label || a.id, state: s?.state || 'unknown', ...(s?.state === 'in' && s.email ? { email: s.email } : {}) }; });
 
@@ -610,9 +636,9 @@ function startAgyLogin() {
   startLoginPty({
     id: AGY_LOGIN, label: 'agy login pty',
     env: EN.agyEnv(process.env),
-    win: (env) => windowsAgy([], env),
+    windowsLauncher: (env) => windowsAgy([], env),
     argv: [EN.AGY_COMMAND, 'agy'],
-    no: sendNoAgy,
+    noTool: sendNoAgy,
     check: checkAgyAuth,
   });
 }
@@ -649,26 +675,47 @@ function startCmdLogin() {
   startLoginPty({
     id: CMD_LOGIN, label: 'cmd login pty',
     env,
-    win: (env) => windowsCommandCode(CA.CMD_LOGIN_ARGS, env),
+    windowsLauncher: (env) => windowsCommandCode(CA.CMD_LOGIN_ARGS, env),
     argv: [EN.CMD_COMMAND, EN.CMD.bin, ...CA.CMD_LOGIN_ARGS],
-    no: sendNoCommandCode,
+    noTool: sendNoCommandCode,
     check: checkCmdAuth,
   });
 }
 
-// --- OpenCode login (contract v3.40, src/oc-auth.js): providers, not one account. `opencode auth login` / `logout`
-// run in a login pty (they ask which provider and how). Logged in = auth.json holds a provider (only ids and types are
-// read, never the secrets). Not logged in is a normal state: OpenCode's free models need no login.
+// --- OpenCode login (contract v3.40, v3.41, src/oc-auth.js): providers, not one account. v1 CLI: login runs
+// `opencode console login` (normal: the device code flow of opencode.ai/console) or `opencode auth login`
+// (one provider, OAuth or API key), chosen by the user (the login chooser in the sidebar); v2.x has only
+// `opencode auth login opencode` (`ocLoginArgs(major)` decides). Logout: v1 `opencode console logout`, v2 `auth logout opencode`;
+// either is `auth logout` (asks which provider) when the OpenCode entry is not logged in (v3.41).
+// All run in a login pty. Logged in = the CLI's own `opencode auth list --format json` shows a connection (the
+// console login lives in OpenCode's own database; auth.json is read only for older CLIs — main and the check read
+// never the secrets). Not logged in is a normal state: OpenCode's free models need no login.
 // The check and the login pty get only ocEnv's allowlist: nothing of Claude Code or the office reaches OpenCode.
 const OC_LOGIN = 'login:oc';
 let ocAuth = /** @type {any} */ ({ installed: false, state: 'checking' });
+let ocMajor = null; // opencode's CLI major version (v2.x has one login), from the status check
+let ocProviders = /** @type {{ id: string }[]} */ ([]); // the logged in integrations of the last check (which logout runs, v3.41)
 let ocChecking = null;
 const sendOcAuth = () => send('oc:auth', ocAuth);
 function ocStatus(env) {
-  if (IS_WIN) return Promise.resolve({ path: OS.findOpenCode(env, isFile) });
+  if (IS_WIN) {
+    const path = OS.findOpenCode(env, isFile);
+    if (!path) return Promise.resolve({ path: null, major: null, raw: '' });
+    // v3.41: through OS.windowsCommand (npm's opencode.cmd needs cmd.exe) and with ocEnv's env, never the app's
+    const run = ({ file, args, options }) => new Promise((resolve) => {
+      const child = execFile(file, args, options, (_err, stdout) => resolve(String(stdout || '')));
+      child.on('error', () => resolve(''));
+      try { child.stdin?.end(); } catch {}
+    });
+    return Promise.all(OCA.ocWindowsStatusRuns(path, env, OS.windowsCommand).map(run))
+      .then(([ver, raw]) => ({ path, major: OCA.parseOcVersion(ver), raw }));
+  }
   return new Promise((resolve) => {
     const child = execFile(shell(), ['-l', '-i', '-c', OCA.OC_STATUS_COMMAND], { env, timeout: 15000, cwd: app.getPath('home') },
-      (_err, stdout) => resolve(OCA.parseOcStatus(String(stdout || ''))));
+      (_err, stdout) => {
+        const out = String(stdout || '');
+        resolve({ ...OCA.parseOcStatus(out), raw: out });
+      });
     try { child.stdin?.end(); } catch {}
   });
 }
@@ -677,24 +724,29 @@ function checkOcAuth() {
   ocChecking = (async () => {
     const env = EN.ocEnv(process.env);
     const status = await ocStatus(env);
-    let text = '';
-    try { text = fs.readFileSync(OCA.ocAuthFile(env.HOME || env.USERPROFILE || app.getPath('home'), env.XDG_DATA_HOME), 'utf8'); } catch {}
-    ocAuth = OCA.ocAuthState(status, text);
+    ocMajor = status.major ?? null;
+    let legacy = '';
+    // older CLIs (no `auth list --format json`) keep credentials in auth.json, which `console login` does not write
+    try { legacy = fs.readFileSync(OCA.ocAuthFile(env.HOME || env.USERPROFILE || app.getPath('home'), env.XDG_DATA_HOME), 'utf8'); } catch {}
+    ocAuth = OCA.ocAuthState(status, status.raw, legacy);
+    ocProviders = ocAuth.providers || [];
     sendOcAuth();
   })().catch((e) => console.error('oc auth:', e.message)).finally(() => { ocChecking = null; });
   return ocChecking;
 }
-// "Giriş yap" / "Çıkış yap": `opencode auth login` / `logout` in a login pty. Same channel and replace rules as agy's.
+// "Giriş yap" / "Çıkış yap": the args come from ocLoginArgs(mode, ocMajor) — v1: `opencode console login` (normal),
+// `opencode auth login` (one provider), `console logout`; v2.x: `auth login opencode` / `auth logout opencode`.
+// Same channel and replace rules as agy's.
 function startOcLogin(mode) {
   if (!win) return;
   const env = EN.ocEnv(process.env);
-  const args = mode === 'logout' ? OCA.OC_LOGOUT_ARGS : OCA.OC_LOGIN_ARGS;
+  const args = OCA.ocLoginArgs(mode, ocMajor, ocProviders);
   startLoginPty({
     id: OC_LOGIN, label: 'oc login pty',
     env,
-    win: (env) => windowsOpenCode(args, env),
+    windowsLauncher: (env) => windowsOpenCode(args, env),
     argv: [EN.OC_COMMAND, EN.OC.bin, ...args],
-    no: sendNoOpenCode,
+    noTool: sendNoOpenCode,
     check: checkOcAuth,
   });
 }
@@ -1715,13 +1767,21 @@ async function handOffProject(projectId, device) {
   const r = await linkHost.handOff(device.id, projectId);
   if (!r.ok) dialog.showMessageBox(win, { type: 'warning', message: T('main.handoffFailed', { project: p.name, device: device.name }), detail: T(`main.handoffReason.${r.reason}`) });
 }
-// close the link before exiting so paired devices see this one go offline at once, not after the heartbeat (≤ 1 s)
+// close the link before exiting so paired devices see this one go offline at once, not after the heartbeat (≤ 1 s),
+// and wait a moment for the killed ptys' onExit callbacks (exit TSFNs can still deliver while the environment dies)
 let linkClosed = false;
+let exitWaited = false;
 app.on('will-quit', (e) => {
-  if (!linkHost || linkClosed) return;
-  linkClosed = true;
+  if ((exitWaited || !dying.length) && (!linkHost || linkClosed)) return;   // nothing left to settle: quit at once
   e.preventDefault();
-  Promise.race([Promise.resolve(linkHost.destroy()).catch(() => {}), new Promise((r) => setTimeout(r, 1000))]).finally(() => app.quit());
+  const waits = [];
+  if (linkHost && !linkClosed) { linkClosed = true; waits.push(Promise.resolve(linkHost.destroy()).catch(() => {})); }
+  if (dying.length && !exitWaited) {
+    exitWaited = true;   // waited once only: the next will-quit passes through (the ≤ 1 s cap holds)
+    // gone: the pid has been reaped, so its node-pty kqueue thread ran and its exit callback has fired
+    waits.push(PG.waitGone(dying, { timeoutMs: 1000 }));
+  }
+  Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, 1000))]).catch(() => {}).finally(() => app.quit());
 });
 
 /** @returns {{ resumed: { id: string, name: string }[], skipped: { id: string, name: string }[] }} */
@@ -2203,7 +2263,8 @@ ipcMain.handle('agy:login', () => { startAgyLogin(); });
 ipcMain.handle('cmd:auth', async (_e, refresh) => { if (refresh) await checkCmdAuth(); return cmdAuth; });
 ipcMain.handle('cmd:login', () => { startCmdLogin(); });
 ipcMain.handle('oc:auth', async (_e, refresh) => { if (refresh) await checkOcAuth(); return ocAuth; });
-ipcMain.handle('oc:login', (_e, mode) => { startOcLogin(mode === 'logout' ? 'logout' : 'login'); });
+// v3.41: only 'console' | 'auth' | 'logout' pass (anything else is the device code login)
+ipcMain.handle('oc:login', (_e, mode) => { startOcLogin(OCA.ocLoginMode(mode)); });
 ipcMain.handle('accounts:logout', async (_e, id) => {
   const account = accountById(id);
   // the default account is the user's normal Claude Code login: the app does not log out of it
@@ -2804,7 +2865,7 @@ function setupUpdates() {
   updater.on('update-available', (info) => { if (info?.version !== updateReady) updateDownloading = info?.version || null; });
   updater.on('update-not-available', () => { updateDownloading = null; });
   updater.on('update-downloaded', (info) => { updateDownloading = null; updateReady = info.version; send('update:ready', info.version); });
-  updater.on('error', (e) => { updateDownloading = null; console.error('güncelleme:', e?.message || e); });
+  updater.on('error', (e) => { updateDownloading = null; if (installing) unquit(); console.error('güncelleme:', e?.message || e); });
   setTimeout(backgroundCheck, UP.FIRST_CHECK_MS);
   setInterval(backgroundCheck, UP.UPDATE_EVERY_MS);
 }
@@ -2843,7 +2904,12 @@ async function checkUpdatesNow() {
   dialog.showMessageBox(win, { type: 'warning', message: T('main.updateFailed'), detail: T('main.updateNoAnswer', { version: m.version }) });
 }
 ipcMain.handle('update:state', () => ({ version: app.getVersion(), ready: updateReady }));
-ipcMain.on('update:install', () => { if (updateReady && updater) { killAll(); updater.quitAndInstall(); } });
+ipcMain.on('update:install', () => {
+  if (!updateReady || !updater) return;
+  killAll();
+  installing = true;
+  try { updater.quitAndInstall(); } catch (e) { console.error('update install:', /** @type {any} */ (e)?.message || e); unquit(); }
+});
 
 function buildMenu() {
   const name = app.getName();
@@ -2956,4 +3022,4 @@ if (!isSecondInstance) app.whenReady().then(async () => {
 });
 app.on('activate', () => { if (!win && state) createWindow(); });
 app.on('window-all-closed', () => { killAll(); app.quit(); });
-app.on('before-quit', killAll);
+app.on('before-quit', () => { appQuitting = true; killAll(); });
