@@ -220,7 +220,7 @@ function ocEnv(base, platform = process.platform) {
 }
 
 module.exports = {
-  OC, ocArgs, OC_COMMAND, ocEnv, OC_ENV_PREFIXES, OC_PROVIDER_KEYS, OC_FORCED_ENV, launchLine,
+  OC, ocArgs, OC_COMMAND, UNSET_OFFICE_CLAUDE_ENV, ocEnv, OC_ENV_PREFIXES, OC_PROVIDER_KEYS, OC_FORCED_ENV, launchLine,
   AGY_COMMAND, agyArgs, agyEnv, AGY_ENV_NAMES, AGY_ENV_WINDOWS, AGY_ENV_PREFIXES,
   CMD, cmdArgs, CMD_COMMAND, cmdEnv, CMD_ENV_NAMES, CMD_ENV_PREFIXES, CMD_MCP_OUTPUT_MAX,
 };

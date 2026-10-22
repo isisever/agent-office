@@ -1,4 +1,4 @@
-// OpenCode login in the Accounts section (contract v3.40). Pure functions (no Electron; tested with node --test).
+// OpenCode login in the Accounts section (contract v3.40, v3.41). Pure functions (no Electron; tested with node --test).
 // What OpenCode's CLI offers (`opencode console --help`): `opencode console login` signs in to the OpenCode
 // Console with a device code (opencode.ai/console/device), `opencode console logout` signs out;
 // `opencode auth list` shows the credentials. The console login lives in OpenCode's own database
@@ -8,37 +8,90 @@
 // credentials and it picks one itself. So here "not logged in" is a normal state, never a blocker. Only
 // integration ids and connection methods are read; the secrets never reach the parser.
 const path = require('node:path');
+const { UNSET_OFFICE_CLAUDE_ENV } = require('./engine.js');
 
 // The documented install line; shown as a hint, never run by the app.
 const OC_INSTALL = 'curl -fsSL https://opencode.ai/install | bash';
 const OC_INSTALL_WIN = 'npm i -g opencode-ai';
 
 // The login and logout subcommands. Login has two ways: the `console` group signs in to the OpenCode Console with a
-// device code; the `auth` group logs in to one provider (OAuth or an API key, it asks which). Both log out via `console logout`.
+// device code; the `auth` group logs in to one provider (OAuth or an API key, it asks which). Logout (v3.41): the
+// Console entry (integration id 'opencode') with `console logout`; when it is not logged in, `auth logout` (it asks
+// which provider), so a provider added with `auth login` can be removed too.
 const OC_LOGIN_ARGS = ['console', 'login'];
 const OC_PROVIDER_LOGIN_ARGS = ['auth', 'login'];
 const OC_LOGOUT_ARGS = ['console', 'logout'];
+const OC_PROVIDER_LOGOUT_ARGS = ['auth', 'logout'];
 // v2.x (opencode.ai/v2) has one login and one logout: each names the OpenCode provider directly.
 const OC_V2_LOGIN_ARGS = ['auth', 'login', 'opencode'];
 const OC_V2_LOGOUT_ARGS = ['auth', 'logout', 'opencode'];
+// The Console / OpenCode provider's integration id in `auth list`.
+const OC_CONSOLE_ID = 'opencode';
+
+// The modes the renderer may ask for (IPC `oc:login`, v3.41); anything else is the default, the device code login.
+const OC_LOGIN_MODES = ['console', 'auth', 'logout'];
+/** @param {unknown} mode @returns {'console' | 'auth' | 'logout'} */
+const ocLoginMode = (mode) => /** @type {any} */ (OC_LOGIN_MODES.includes(/** @type {any} */ (mode)) ? mode : 'console');
 
 /**
- * The login pty's arguments: v2.x always `auth login opencode` / `auth logout opencode`; v1 (major unknown or 1)
- * keeps `console login` (the device code, the default), `auth login` (one provider) and `console logout`.
- * @param {string} mode 'login' | 'console' | 'auth' | 'logout' @param {number | null} major
+ * Which logout runs: the Console entry when it is logged in (or nothing is known), else `auth logout` (asks which).
+ * @param {{ id: string }[] | null | undefined} providers @returns {'console' | 'provider'}
+ */
+const ocLogoutKind = (providers) => (!Array.isArray(providers) || !providers.length || providers.some((p) => p && p.id === OC_CONSOLE_ID) ? 'console' : 'provider');
+
+/**
+ * The login pty's arguments: v2.x `auth login opencode` / `auth logout opencode`; v1 (major unknown or 1)
+ * keeps `console login` (the device code, the default), `auth login` (one provider) and `console logout`. On both,
+ * logout falls back to `auth logout` (asks which provider) when the OpenCode entry is not among `providers`.
+ * @param {string} mode 'console' | 'auth' | 'logout' (anything else: 'console') @param {number | null} major
+ * @param {{ id: string }[]} [providers] the logged in integrations of the last check
  * @returns {string[]}
  */
-function ocLoginArgs(mode, major) {
-  if (major >= 2) return mode === 'logout' ? OC_V2_LOGOUT_ARGS : OC_V2_LOGIN_ARGS;
-  if (mode === 'logout') return OC_LOGOUT_ARGS;
-  if (mode === 'auth') return OC_PROVIDER_LOGIN_ARGS;
-  return OC_LOGIN_ARGS;
+function ocLoginArgs(mode, major, providers) {
+  const m = ocLoginMode(mode);
+  if (m === 'logout') {
+    if (ocLogoutKind(providers) === 'provider') return OC_PROVIDER_LOGOUT_ARGS;
+    return major >= 2 ? OC_V2_LOGOUT_ARGS : OC_LOGOUT_ARGS;
+  }
+  if (major >= 2) return OC_V2_LOGIN_ARGS;
+  return m === 'auth' ? OC_PROVIDER_LOGIN_ARGS : OC_LOGIN_ARGS;
 }
 
 // The status check runs in the user's login shell with ocEnv (so PATH, rc files and 1.19+ apply as for an OpenCode
 // tab): where opencode is, its major version (v2.x has one login, `opencode auth login opencode`), and the CLI's own
-// list of logged in integrations. rc noise around it is tolerated.
-const OC_STATUS_COMMAND = 'command -v opencode; opencode --version; opencode auth list --format json; true';
+// list of logged in integrations. Before opencode runs, the same prelude as OC_COMMAND drops any AGENT_OFFICE_*,
+// ANTHROPIC_* and CLAUDE* an rc file set (v3.41). Markers mark where each answer starts, so rc noise (`\x1b[?1034h`,
+// banners, `[oh-my-zsh] …`) around them is not parsed as the answer.
+const OC_VERSION_MARK = '__AO_OC_VERSION__';
+const OC_AUTH_MARK = '__AO_OC_AUTH__';
+const OC_STATUS_COMMAND = `command -v opencode; ${UNSET_OFFICE_CLAUDE_ENV}echo ${OC_VERSION_MARK}; opencode --version; echo ${OC_AUTH_MARK}; opencode auth list --format json; true`;
+
+// Terminal control sequences (CSI such as `\x1b[?1034h`, OSC titles, single ESC codes) are dropped before parsing.
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
+const stripAnsi = (s) => String(s || '').replace(ANSI, '');
+/** The part of `text` after `mark` (up to `end` when given); the whole text when the mark is missing (Windows runs). */
+function section(text, mark, end) {
+  const i = text.lastIndexOf(mark);
+  if (i === -1) return text;
+  const rest = text.slice(i + mark.length);
+  const j = end ? rest.indexOf(end) : -1;
+  return j === -1 ? rest : rest.slice(0, j);
+}
+
+/**
+ * The Windows status runs (v3.41): `--version` and `auth list --format json` of the found opencode, each through
+ * OS.windowsCommand (npm's opencode.cmd needs cmd.exe) with ocEnv's env, never the app's.
+ * @param {string} file @param {Record<string, string | undefined>} env
+ * @param {(file: string, args: string[], env: any) => { file: string, args: string[], verbatim: boolean }} windowsCommand
+ * @returns {{ file: string, args: string[], options: { env: any, timeout: number, windowsVerbatimArguments: boolean, windowsHide: boolean } }[]}
+ */
+function ocWindowsStatusRuns(file, env, windowsCommand) {
+  return [['--version'], ['auth', 'list', '--format', 'json']].map((args) => {
+    const w = windowsCommand(file, args, env);
+    return { file: w.file, args: w.args, options: { env, timeout: 15000, windowsVerbatimArguments: w.verbatim, windowsHide: true } };
+  });
+}
 
 /**
  * The CLI's major version, whatever its line looks like: a line that is (or starts with) the version itself
@@ -47,7 +100,8 @@ const OC_STATUS_COMMAND = 'command -v opencode; opencode --version; opencode aut
  * @param {string} text @returns {number | null}
  */
 function parseOcVersion(text) {
-  for (const line of String(text || '').split(/\r?\n/)) {
+  const t = section(stripAnsi(text), OC_VERSION_MARK, OC_AUTH_MARK);
+  for (const line of t.split(/\r?\n/)) {
     const l = line.trim();
     const v = l.match(/^(?:opencode\s*)?[vV]?(\d+)\.\d+(?:\.\d+)?(?:\s|$)/i)
       || (/^opencode\b/i.test(l) && l.match(/\b[vV]?(\d+)\.\d+(?:\.\d+)?(?![\w.])/));
@@ -61,7 +115,7 @@ function parseOcVersion(text) {
  * @param {string} stdout @returns {{ path: string | null, major: number | null }}
  */
 function parseOcStatus(stdout) {
-  const text = String(stdout || '');
+  const text = stripAnsi(stdout);
   const lines = text.split(/\r?\n/).map((l) => l.trim());
   return { path: lines.find((l) => /^(\/|[A-Za-z]:\\).*[\\/]opencode(\.exe|\.cmd)?$/.test(l)) || null, major: parseOcVersion(text) };
 }
@@ -77,6 +131,26 @@ const PROVIDER_ID = /^[\w.-]{1,60}$/;
 const TYPES = ['oauth', 'api', 'wellknown'];
 
 /**
+ * The first JSON array in `s` that starts a line and ends one (rc noise before or after it is skipped). null: none.
+ * @param {string} s @returns {any[] | null}
+ */
+function jsonArray(s) {
+  const starts = [];
+  const ends = [];
+  const re = /^[ \t]*\[|\][ \t]*$/gm;
+  for (let m; (m = re.exec(s));) {
+    if (m[0].trim() === '[') starts.push(m.index + m[0].indexOf('['));
+    else ends.push(m.index + m[0].indexOf(']'));
+  }
+  for (const i of starts) {
+    for (let k = ends.length - 1; k >= 0 && ends[k] > i; k--) {
+      try { const a = JSON.parse(s.slice(i, ends[k] + 1)); if (Array.isArray(a)) return a; } catch {}
+    }
+  }
+  return null;
+}
+
+/**
  * The CLI's own list (`opencode auth list --format json`, possibly with rc noise around it) → the logged in
  * integrations as [{ id, type }] (type = the first connection's method, or 'other'), in integration order;
  * an integration without a connection is not logged in. If the text holds no JSON array (an older CLI without
@@ -86,12 +160,7 @@ const TYPES = ['oauth', 'api', 'wellknown'];
  * @param {string} [legacyText] an older CLI's auth.json @returns {{ id: string, type: string }[]}
  */
 function parseOcCredentials(text, legacyText = '') {
-  const s = String(text || '');
-  const start = s.indexOf('[');
-  let a = null;
-  if (start !== -1) {
-    try { a = JSON.parse(s.slice(start, s.lastIndexOf(']') + 1)); } catch { a = null; }
-  }
+  const a = jsonArray(section(stripAnsi(text), OC_AUTH_MARK));
   if (Array.isArray(a)) {
     const out = [];
     for (const e of a) {
@@ -127,4 +196,5 @@ function ocAuthState(status, credentialsText = '', legacyText = '') {
     : { installed: true, state: 'out', major };
 }
 
-module.exports = { OC_INSTALL, OC_INSTALL_WIN, OC_LOGIN_ARGS, OC_PROVIDER_LOGIN_ARGS, OC_LOGOUT_ARGS, OC_V2_LOGIN_ARGS, OC_V2_LOGOUT_ARGS, OC_STATUS_COMMAND, parseOcStatus, parseOcVersion, ocAuthFile, ocLoginArgs, parseOcCredentials, ocAuthState };
+module.exports = { OC_INSTALL, OC_INSTALL_WIN, OC_LOGIN_ARGS, OC_PROVIDER_LOGIN_ARGS, OC_LOGOUT_ARGS, OC_PROVIDER_LOGOUT_ARGS, OC_CONSOLE_ID,
+  OC_LOGIN_MODES, ocLoginMode, ocLogoutKind, OC_VERSION_MARK, OC_AUTH_MARK, ocWindowsStatusRuns, stripAnsi, OC_V2_LOGIN_ARGS, OC_V2_LOGOUT_ARGS, OC_STATUS_COMMAND, parseOcStatus, parseOcVersion, ocAuthFile, ocLoginArgs, parseOcCredentials, ocAuthState };
