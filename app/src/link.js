@@ -7,6 +7,8 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const C = require('./link-core.js');
 
+const OWED_MS = 4 * 3600 * 1000 + 30 * 60 * 1000;
+
 class Link extends EventEmitter {
   /**
    * @param {{ keyPair: { publicKey: Buffer, secretKey: Buffer }, name: string, devices?: C.Device[], secrets?: Record<string, string>,
@@ -574,7 +576,8 @@ class Link extends EventEmitter {
   expectReport(id, pub, project = '') { this.reportsOut.set(id, { pub, report: null, sent: false, at: this.now(), ...(project ? { project } : {}) }); this.saveReports(); }
   owesReport(id) { const r = this.reportsOut.get(id); return Boolean(r && r.report === null); }
   /** v3.46 depth 1: a task from a paired device was typed into this project and its report is still owed. */
-  owesReportFor(project) { return [...this.reportsOut.values()].some((r) => r.report === null && r.project === project); }
+  /** A device task still owes a report for this project only while young: the 4 h queue TTL + 30 min slack (reports-out persists, a lost one must not refuse 'depth' forever). */
+  owesReportFor(project) { return [...this.reportsOut.values()].some((r) => r.report === null && r.project === project && this.now() - r.at < OWED_MS); }
   /** The report of a task that device dispatched: sent now when it is connected, else on its next hello. */
   sendReport(id, report) {
     const r = this.reportsOut.get(id);

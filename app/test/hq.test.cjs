@@ -336,3 +336,34 @@ test('office MCP: the HQ tab lists 6 tools, a project boss 4; HQ-only tools refu
   sock.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('a foreign request id resolves to the current id and consentFor sees it live (real path)', () => {
+  let t = 1000;
+  const m = HQ.createMinter({ now: () => t, rand: () => 'x' });
+  const cur = m.mint();
+  const request = HQ.resolveRequest(m, 'rforged');
+  assert.equal(request, cur);
+  assert.equal(HQ.consentFor({ setting: true, remote: false, request, minter: m }), 'none');
+  assert.equal(HQ.consentFor({ setting: false, remote: false, request, minter: m }), 'app');
+  t += 31 * 60 * 1000;   // expired: falls to adhoc → dialog
+  const late = HQ.resolveRequest(m, 'rforged');
+  assert.equal(late, HQ.ADHOC);
+  assert.equal(HQ.consentFor({ setting: true, remote: false, request: late, minter: m }), 'app');
+});
+
+test('caps are re-checked after the consent dialog resolves', () => {
+  const body = fnBody('hqDispatch');
+  const a = body.indexOf('confirmHqDispatch(args, remote)');
+  const b = body.indexOf('HQ.capReason(loadHqBoard(), request)', a);
+  assert.ok(a > 0 && b > a, 'fresh capReason after the dialog');
+  // behavior: the board that filled while the dialog was open now refuses
+  let board = HQ.emptyBoard();
+  assert.equal(HQ.capReason(board, 'r1'), null);
+  for (let i = 0; i < HQ.MAX_PER_REQUEST; i++) board = HQ.addTask(board, { id: `x${i}`, request: 'r1', status: 'queued', pub: 'self' }, 1);
+  assert.equal(HQ.capReason(board, 'r1'), 'request-cap');
+});
+
+test('HQ launch keeps MCP tools next to --tools Read (live-checked)', () => {
+  const args = HQ.launchArgs({ dir: '/h', mcpConfig: '/c.json', server: 'agent-office' });
+  assert.equal(args[args.indexOf('--tools') + 1], 'Read');
+});

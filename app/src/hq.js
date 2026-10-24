@@ -116,7 +116,9 @@ const resolveRequest = (minter, id) => (minter.issued(id) ? id : minter.current(
 /**
  * Who consents to an HQ dispatch. office_dispatch is always auto-allowed at the Claude level, so the app is the only
  * gate: 'none' only for a local dispatch with the setting on and the live request id minted from the person's typed
- * prompt; everything else (setting off, remote, foreign or stale ids, 'adhoc') → 'app' (the app's dialog).
+ * prompt; everything else (setting off, remote, 'adhoc', or a request that is not the live one) → 'app' (the app's dialog).
+ * A foreign or missing id never reaches here as such: resolveRequest maps it to the minter's current id, which is live
+ * (so no dialog) unless it expired or was cleared, then 'adhoc' (dialog).
  */
 function consentFor({ setting, remote, request, minter }) {
   return setting && !remote && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';

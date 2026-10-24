@@ -1794,7 +1794,12 @@ async function hqDispatch(args) {
   const machine = String(args.machine || '').trim();
   const remote = Boolean(key) || !isHere(machine);
   const consent = HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter });
-  if (consent === 'app' && !(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
+  if (consent === 'app') {
+    if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
+    // two dispatches can wait on dialogs at once: re-check the caps on the fresh board after the answer
+    const late = HQ.capReason(loadHqBoard(), request);
+    if (late) return { status: 'rejected', reason: late };
+  }
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   const row = (r, extra) => {
     if (!r.id || r.status === 'rejected') return;
