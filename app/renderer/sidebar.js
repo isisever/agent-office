@@ -476,12 +476,54 @@ export function mountSidebar(el, on) {
     backdrop.querySelector('select, input, button.primary')?.focus();
   }
 
+  // ---- Bundled skill packs (contract v3.45) ----
+  /** "MIT · 7 skills" and, for a pack that calls a paid API, that it needs the user's key. */
+  const packMeta = (pk) => [pk.license, t('sidebar.skillsCount', { n: pk.skills }), pk.paidApi ? t('sidebar.skillsPaid', { api: pk.paidApi }) : '']
+    .filter(Boolean).join(' · ');
+  const packDesc = (pk) => t(`sidebar.skillPack.${pk.id}`);
+  /** The global Skills section: one row per pack (name, description, licence, skill count) with its on/off box. */
+  function skillsSection() {
+    const box = h('div', { class: 'sb-skills' }, h('div', { class: 'sb-skills-head' }, t('sidebar.skills')),
+      h('div', { class: 'sb-skills-hint' }, t('sidebar.skillsHint')));
+    on.skillPacks?.list(null).then((r) => {
+      for (const pk of r?.packs || []) {
+        const check = h('input', {
+          type: 'checkbox', class: 'sb-check', checked: pk.on, 'aria-label': pk.name,
+          onchange: async (e) => { const res = await on.skillPacks?.set(pk.id, e.target.checked); if (!res) e.target.checked = !e.target.checked; },
+        });
+        box.append(h('label', { class: 'sb-skill', title: `${pk.repo} @ ${pk.sha}` },
+          h('span', { class: 'sb-skill-text' }, h('span', { class: 'sb-skill-name' }, pk.name),
+            h('span', { class: 'sb-skill-desc' }, packDesc(pk)), h('span', { class: 'sb-skill-meta' }, packMeta(pk))),
+          check));
+      }
+    });
+    return box;
+  }
+  /** The project's popup part: per pack Default (the global state) / On / Off; disabled for engines other than Claude Code. */
+  function projectSkillsSection(p) {
+    const box = h('div', { class: 'sb-skills' }, h('div', { class: 'sb-skills-head' }, t('sidebar.skills')));
+    on.skillPacks?.list(p.id).then((r) => {
+      for (const pk of r?.packs || []) {
+        const opt = (v, label) => h('option', { value: v, selected: pk.project === v }, label);
+        const sel = h('select', {
+          class: 'sb-acct sb-mode', title: `${packDesc(pk)} (${packMeta(pk)})`,
+          onclick: (e) => e.stopPropagation(),
+          onchange: (e) => queue(`skillPack:${pk.id}`, () => on.skillPacks?.setProject(p.id, pk.id, e.target.value)),
+        },
+        opt('inherit', t('sidebar.skillPackInherit', { state: pk.on ? t('sidebar.skillPackOn') : t('sidebar.skillPackOff') })),
+        opt('on', t('sidebar.skillPackOn')), opt('off', t('sidebar.skillPackOff')));
+        box.append(control(p, 'skillPacks', pk.name, sel));
+      }
+    });
+    return box;
+  }
+
   /** The project's popup (contract v3.42): every per-project setting; Save applies what changed. */
   function openProjectSettings(p) {
     const map = new Map();
     const body = [
       accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p),
-      contextCapSelect(p), savingsSelect(p), backupSelect(p),
+      contextCapSelect(p), savingsSelect(p), backupSelect(p), projectSkillsSection(p),
     ];
     const save = h('button', {
       class: 'sb-btn primary', onclick: async () => {
@@ -571,7 +613,7 @@ export function mountSidebar(el, on) {
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, themeRow, botRow],
+      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, themeRow, botRow, skillsSection()],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 

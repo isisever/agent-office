@@ -3,6 +3,7 @@
 const path = require('path');
 const crypto = require('crypto');
 const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT } = require('./accounts.js');
+const { withSkillPacks } = require('./skill-packs.js');
 
 const newId = () => crypto.randomBytes(6).toString('hex');
 const projectName = (dir) => path.basename(dir);
@@ -30,6 +31,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withSavings(p.savings),
       ...withEngine(p.engine),
       ...withProjectFiles(p.projectFiles),
+      ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
       ...withBackup(p.backupAccount, known),
       ...withHome(p.homeAccount, known, known.has(p.accountId) ? p.accountId : DEFAULT_ID),
       ...withTabs(normalizeTabs(p.tabs)),

@@ -39,6 +39,8 @@ jobs:
         run: node --test app/test/locales.test.mjs
       - name: Engine capabilities
         run: node --test app/test/engine-caps.test.mjs
+      - name: Bundled skill packs (contract v3.45)
+        run: node --test app/test/skill-packs.test.mjs
       - name: One MCP system (contract v3.44)
         run: node --test app/test/mcp-servers.test.cjs
       - name: Office renderer and session reading
@@ -65,6 +67,8 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
       - name: Validate the plugin
         run: claude plugin validate plugin
+      - name: Validate the bundled skill packs
+        run: for d in skill-packs/*/; do claude plugin validate "$d" || exit 1; done
       - name: Plugin hook tests
         run: claude plugin test plugin
       - name: Terminal viewer smoke test

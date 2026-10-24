@@ -157,10 +157,19 @@
         "to": "plugin",
         "filter": [
           ".claude-plugin/plugin.json",
+          "agents/**",
           "hooks/**",
           "types/**",
           "tsconfig.json",
           "LICENSE"
+        ]
+      },
+      {
+        "from": "../skill-packs",
+        "to": "skill-packs",
+        "filter": [
+          "**/*",
+          "!**/.DS_Store"
         ]
       },
       {
