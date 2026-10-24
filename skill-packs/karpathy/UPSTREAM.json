@@ -1,0 +1,10 @@
+{
+  "repo": "multica-ai/andrej-karpathy-skills",
+  "sha": "2c606141936f1eeef17fa3043a72095b4765b9c2",
+  "license": "MIT",
+  "skills": [
+    "karpathy-guidelines"
+  ],
+  "dropped": [],
+  "patches": []
+}

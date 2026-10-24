@@ -1,0 +1,8 @@
+{
+  "name": "example-skills",
+  "description": "Apache-2.0 example skills from anthropics/skills: art, canvas design, Claude API, frontend design, internal comms, MCP builder, Slack GIFs, themes, web artifacts, webapp testing.",
+  "author": {
+    "name": "Anthropic"
+  },
+  "license": "Apache-2.0"
+}

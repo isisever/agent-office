@@ -320,7 +320,28 @@
       "ocWorkers": "Workers are not followed for OpenCode: the app only watches its terminal.",
       "ocCost": "OpenCode reports no token counts to the app.",
       "ocProjectFiles": "Agent Office writes no project files for OpenCode.",
-      "claudeOnlyMcp": "Claude Code only: servers added in Agent Office and their tokens are not given to Antigravity, Command Code or OpenCode."
+      "claudeOnlyMcp": "Claude Code only: servers added in Agent Office and their tokens are not given to Antigravity, Command Code or OpenCode.",
+      "claudeOnlySkills": "Claude Code only: skill packs are Claude Code plugins; Antigravity, Command Code and OpenCode do not get them."
+    },
+    "skills": "Skills",
+    "skillsHint": "Skill packs bundled with Agent Office, for Claude Code only (Antigravity, Command Code and OpenCode do not get them). Idle sessions restart to pick up a change; busy ones get it at their next start. A project can override each pack in its ⚙ settings.",
+    "skillsCount": "{n} skills",
+    "skillsPaid": "uses your paid {api} API key",
+    "skillsOwned": "already in your account, not loaded from the pack",
+    "skillsOwnedSome": "already in your account: {list}",
+    "skillPackInherit": "Default ({state})",
+    "skillPackOn": "On",
+    "skillPackOff": "Off",
+    "skillPack": {
+      "karpathy": "Coding guidelines: think first, keep it simple, change only what is needed.",
+      "ui-ux-pro-max": "UI/UX design data: styles, palettes, font pairings, charts and stack guidelines.",
+      "superpowers": "Workflows for planning, TDD, debugging and code review (skills only, no session hook).",
+      "skill-creator": "Create, test and improve skills.",
+      "design-dna": "Extract a design profile from screenshots or URLs and design from it.",
+      "anthropic-skills": "Anthropic's open example skills: art, canvas design, Claude API, frontend design, MCP builder, webapp testing and more.",
+      "caveman": "Terse replies when you ask for them (/caveman). Skills only, no hooks.",
+      "taste-skill": "A strict frontend house style with a look-and-fix loop.",
+      "scroll-craft": "Scroll-driven cinematic landing pages. Image and video generation needs a paid kie.ai API key."
     }
   },
   "panel": {

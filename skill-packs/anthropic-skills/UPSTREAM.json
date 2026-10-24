@@ -1,0 +1,27 @@
+{
+  "repo": "anthropics/skills",
+  "sha": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+  "license": "Apache-2.0 (fonts: SIL OFL 1.1)",
+  "skills": [
+    "algorithmic-art",
+    "brand-guidelines",
+    "canvas-design",
+    "claude-api",
+    "frontend-design",
+    "internal-comms",
+    "mcp-builder",
+    "slack-gif-creator",
+    "theme-factory",
+    "web-artifacts-builder",
+    "webapp-testing"
+  ],
+  "dropped": [
+    "skills/canvas-design/canvas-fonts/IBMPlexSerif-Bold.ttf",
+    "skills/canvas-design/canvas-fonts/IBMPlexSerif-BoldItalic.ttf",
+    "skills/canvas-design/canvas-fonts/IBMPlexSerif-Italic.ttf",
+    "skills/canvas-design/canvas-fonts/IBMPlexSerif-Regular.ttf",
+    "skills/canvas-design/canvas-fonts/InstrumentSerif-Italic.ttf",
+    "skills/canvas-design/canvas-fonts/InstrumentSerif-Regular.ttf"
+  ],
+  "patches": []
+}

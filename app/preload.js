@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setBossModel: (id, value) => ipcRenderer.invoke('projects:setBossModel', id, value), // 'sonnet' | 'opus' | 'haiku' | null (Auto); { restarted: pty ids } (v3.27)
     setAgentModel: (id, value) => ipcRenderer.invoke('projects:setAgentModel', id, value), // 'sonnet' | 'haiku' | 'opus' | null (Auto); { restarted: pty ids } (v3.14)
     setContextCap: (id, value) => ipcRenderer.invoke('projects:setContextCap', id, value), // 200000 | 400000 | null (Auto); { restarted: pty ids } (v3.15)
+    setSkillPacks: (id, values) => ipcRenderer.invoke('projects:setSkillPacks', id, values), // { [packId]: 'inherit' | 'on' | 'off' } in one call; { restarted } (v3.45)
     setSavings: (id, value) => ipcRenderer.invoke('projects:setSavings', id, value), // 'off' | 'normal' | 'strict'; { restarted: pty ids } (v3.20)
     setBackup: (id, value) => ipcRenderer.invoke('projects:setBackup', id, value), // null (none) | 'auto' | account id (v3.17)
     setEngine: (id, value) => ipcRenderer.invoke('projects:setEngine', id, value), // 'agy' | 'commandcode' | null (Claude Code); { restarted: pty ids }, every tab fresh, or { restarted: [], refused } when a tab is working (v3.22, v3.25)
@@ -29,6 +30,10 @@ contextBridge.exposeInMainWorld('agentOffice', {
     openFolder: (id) => ipcRenderer.invoke('projects:openFolder', id),   // opens the project's folder in the file manager → boolean
     menu: (id) => ipcRenderer.invoke('projects:menu', id),   // right click: native menu (move the session to another computer, v3.4)
     onChange: listen('projects:changed'),
+  },
+  skillPacks: {   // contract v3.45: bundled skill packs (Claude Code only)
+    list: (projectId) => ipcRenderer.invoke('skillPacks:list', projectId),   // { packs: [{ id, name, license, skills, defaultOn, paidApi, managerOff, repo, sha, on, project, active, owned, ownedSkills }] }
+    set: (id, on) => ipcRenderer.invoke('skillPacks:set', id, on),   // global on/off → { restarted }
   },
   mcp: {   // contract v3.44: one MCP list; the token goes in, never out
     list: (projectId) => ipcRenderer.invoke('mcp:list', projectId),   // { servers: [{ name, source, type, host, readOnly, id?, scope?, hasToken?, approved?, shadowed? }] }

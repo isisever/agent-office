@@ -22,6 +22,7 @@ const SC = require('./src/shared-config.js');
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
 const MR = require('./src/mcp-reload.js');
+const SP = require('./src/skill-packs.js');
 const R = require('./src/resume.js');
 const TU = require('./src/token-usage.js');
 const PD = require('./src/project-data.js');
@@ -259,6 +260,40 @@ function pluginDir() {
     plugin = null;
   }
   return plugin;
+}
+
+// Bundled skill packs (contract v3.45, src/skill-packs.js): the repo's skill-packs/ in development,
+// Resources/skill-packs in the packaged app. A session's pack is a copy in userData/skill-packs/<id> (or
+// <id>--<hash> without the skills the account already has): a skill may write into its own folder, e.g. design-dna's
+// optional sharp install, never inside the signed bundle. A copy is reused while its stamp (pack commit + app version
+// + skipped skills) matches, so such an install survives restarts; at start stale, leftover and unshipped copies go.
+const packRoot = () => (app.isPackaged ? path.join(process.resourcesPath, 'skill-packs') : path.join(__dirname, '..', 'skill-packs'));
+const packBase = () => path.join(app.getPath('userData'), 'skill-packs');
+let packList;
+function skillPacks() {
+  if (packList) return packList;
+  try { packList = SP.loadPacks(packRoot()); } catch (e) { console.error('skill packs:', e.message); packList = []; return packList; } // copies are kept: nothing to prune against
+  try { SP.prunePackDirs(packBase(), packList, app.getVersion()); } catch {}
+  return packList;
+}
+const packDirs = new Map();
+/** The pack's copy for a session (null when it could not be made: the session starts without that pack). */
+function skillPackDir(pack, without = []) {
+  const key = SP.copyName(pack.id, without);
+  if (packDirs.has(key)) return packDirs.get(key);
+  let dir = null;
+  try {
+    dir = SP.preparePackDir({ src: path.join(packRoot(), pack.id), base: packBase(), id: pack.id, sha: pack.sha, version: app.getVersion(), without });
+  } catch (e) { console.error('skill pack could not be copied:', pack.id, e.message); }
+  packDirs.set(key, dir);
+  return dir;
+}
+/** The account's own plugins and skills (SP.readOwned: two JSON files and two folder listings, nothing else). */
+function ownedOf(account) {
+  const home = app.getPath('home');
+  const def = path.join(home, '.claude');
+  const claudeDir = account?.configDir || def;
+  try { return SP.readOwned({ claudeDir, defaultDir: account?.configDir && SC.shareEnabled(account) ? def : null }); } catch { return { plugins: [], skills: [] }; }
 }
 
 // A tab's MCP file (Default's servers with their tokens, see shared-config.js) lives only while its claude runs.
@@ -1045,7 +1080,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const shared = SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
   const print = mcpFingerprintOf(account, project, cwd);
-  const args = R.claudeArgs([...P.bossModelArgs(project), ...(dir ? ['--plugin-dir', dir] : []), ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt);
+  // v3.45 one --plugin-dir per skill pack this project gets (global setting, or the project's own on/off), minus
+  // manager-off packs in a manager-mode boss tab and what the account already has (after sharedConfig's links)
+  const packs = SP.sessionPacks({
+    state, project, packs: skillPacks(), boss: id === project.id && P.managerOf(state, project), owned: ownedOf(account), dirFor: skillPackDir,
+  }).args;
+  const args = R.claudeArgs([...P.bossModelArgs(project), ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt);
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
@@ -1766,7 +1806,7 @@ function handoffDeps() {
           return !c || R.isTurnBusy({ claude: c, office: sid ? office()?.readSession(sid) : undefined }) || attention.get(id) === 'permission';
         }),
         memoryDir: handoffMemoryDir(configDir, home, p.dir), factsFile: factsFileOf(home, p.dir),
-        settings: { manager: p.manager, bossModel: p.bossModel, agentModel: p.agentModel, contextCap: p.contextCap, savings: p.savings, engine: p.engine },
+        settings: { manager: p.manager, bossModel: p.bossModel, agentModel: p.agentModel, contextCap: p.contextCap, savings: p.savings, engine: p.engine, skillPacks: p.skillPacks },
       };
     },
     release(projectId) {
@@ -2146,6 +2186,31 @@ ipcMain.handle('mcp:list', (_e, projectId) => {
 });
 /** Idle Claude Code sessions the change reaches restart in their conversation; busy ones take it at their next start. */
 const restartFor = (scope) => state.projects.filter((p) => P.engineOf(p) === 'claude' && (scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));
+// Bundled skill packs (contract v3.45): the list (never a path), the global on/off and the per-project override.
+// A change restarts the idle Claude Code sessions it reaches in their conversation; busy ones take it at their next start.
+ipcMain.handle('skillPacks:list', (_e, projectId) => {
+  const p = projectId ? P.findProject(state, projectId) : null;
+  const owned = ownedOf(p ? A.accountOf(state, p) : null);
+  return { packs: SP.listing(state, p, skillPacks(), owned).map(({ repo, sha, ...rest }) => ({ ...rest, repo, sha: sha.slice(0, 12) })) };
+});
+// global on/off: only projects whose effective pack set changed restart (a project overriding the pack does not)
+ipcMain.handle('skillPacks:set', (_e, id, on) => {
+  const before = state;
+  const next = SP.setGlobal(state, String(id), on === true, skillPacks());
+  if (next === state) return { restarted: [] };
+  commit(next);
+  const ids = SP.changedProjects(before, state, skillPacks(), P.engineOf);
+  return { restarted: state.projects.filter((p) => ids.includes(p.id)).flatMap((p) => restartIdle(p)) };
+});
+// per project, every pack of the popup in one call ({ [id]: 'inherit' | 'on' | 'off' }): one restart at most
+ipcMain.handle('projects:setSkillPacks', (_e, projectId, values) => {
+  const before = state;
+  const next = SP.setProjectPacks(state, projectId, values, skillPacks());
+  if (next === state) return { restarted: [] };
+  commit(next);
+  const p = P.findProject(state, projectId);
+  return { restarted: p && SP.changedProjects(before, state, skillPacks(), P.engineOf).includes(p.id) ? restartIdle(p) : [] };
+});
 ipcMain.handle('mcp:add', (_e, f) => {
   const form = { name: String(f?.name || ''), url: String(f?.url || '').trim(), type: f?.type === 'sse' ? 'sse' : 'http', scope: f?.scope };
   if (!stateWritable) return { ok: false, error: 'state' }; // it could not be saved: the next start would sweep its token
@@ -3121,7 +3186,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
   const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });

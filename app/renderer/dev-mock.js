@@ -199,6 +199,7 @@ window.agentOffice = {
       const p = /** @type {any} */ (projects.find((x) => x.id === id));
       if (p) { if (value) p.backupAccount = value; else delete p.backupAccount; changed(); }
     },
+    setSkillPacks: async () => ({ restarted: [] }), // v3.45
     setSavings: async (id, value) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === id));
       if (p) { if (value === 'off' || value === 'strict') p.savings = value; else delete p.savings; changed(); }
@@ -217,6 +218,13 @@ window.agentOffice = {
     onChange: ev.projects.add,
   },
   // contract v3.44: one MCP list per project (names, source, type, host only; the token is never kept in the mock)
+  skillPacks: { // contract v3.45
+    list: async () => ({ packs: [
+      { id: 'karpathy', name: 'andrej-karpathy-skills', license: 'MIT', skills: 1, defaultOn: true, paidApi: null, repo: 'multica-ai/andrej-karpathy-skills', sha: '2c606141936f', on: true, project: 'inherit', active: true },
+      { id: 'scroll-craft', name: 'nateherk-design', license: 'MIT', skills: 1, defaultOn: false, paidApi: 'kie.ai', repo: 'nateherkai/scroll-craft', sha: '75d81f74e836', on: false, project: 'inherit', active: false },
+    ] }),
+    set: async () => ({ restarted: [] }),
+  },
   mcp: {
     list: async () => ({ servers: [
       { name: 'github', source: 'user', type: 'http', host: 'api.githubcopilot.com', readOnly: true },

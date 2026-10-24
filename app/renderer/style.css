@@ -1060,3 +1060,13 @@ label.sb-langrow { cursor: pointer; }
 .sb-mcp-row.shadowed .sb-name { text-decoration: line-through; opacity: .6; }
 .sb-mcp-row.away .sb-name { font-style: italic; opacity: .6; }
 #sb-mcp-note { padding: 2px 12px; font-size: 10px; }
+
+/* Bundled skill packs (contract v3.45): global Settings and the project popup */
+.sb-skills { border-top: 1px solid var(--accent); margin-top: 8px; padding-top: 6px; }
+.sb-skills-head { font-size: 12px; font-weight: 600; padding: 2px 0; }
+.sb-skills-hint { font-size: 11px; opacity: .7; padding-bottom: 4px; }
+.sb-skill { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 5px 0; cursor: pointer; font-size: 12px; }
+.sb-skill-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.sb-skill-name { font-weight: 600; }
+.sb-skill-desc, .sb-skill-meta { font-size: 11px; opacity: .75; }
+.sb-skill-meta { opacity: .55; }

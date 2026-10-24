@@ -5,7 +5,7 @@
 export const ENGINES = ['claude', 'agy', 'commandcode', 'opencode'];
 
 /** The features of a project row, in the order the sidebar shows them. */
-export const FEATURES = ['account', 'login', 'manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'backup', 'workers', 'approvals', 'cost', 'projectFiles', 'appMcp'];
+export const FEATURES = ['account', 'login', 'manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'backup', 'workers', 'approvals', 'cost', 'projectFiles', 'appMcp', 'skillPacks'];
 
 const OK = Object.freeze({ ok: true });
 const no = (reason) => Object.freeze({ ok: false, reason });
@@ -22,10 +22,12 @@ const TABLE = {
     workers: no('agyWorkers'),
     cost: no('agyCost'),
     appMcp: no('claudeOnlyMcp'),
+    skillPacks: no('claudeOnlySkills'),
   },
   commandcode: {
     backup: no('cmdBackup'),
     appMcp: no('claudeOnlyMcp'),
+    skillPacks: no('claudeOnlySkills'),
   },
   // OpenCode (contract v3.40): observed from its terminal only; no launch config or files from the app, no token counts.
   opencode: {
@@ -38,6 +40,7 @@ const TABLE = {
     cost: no('ocCost'),
     projectFiles: no('ocProjectFiles'),
     appMcp: no('claudeOnlyMcp'),
+    skillPacks: no('claudeOnlySkills'),
   },
 };
 
@@ -47,6 +50,8 @@ const WITH_FILES = { agy: ['manager', 'agentModel'], commandcode: ['agentModel']
 
 // MCP servers added in Agent Office (contract v3.44, src/mcp-servers.js) and their tokens go only to Claude Code
 // sessions: the other engines get no token and no office data (the leak rule). The MCP panel says "Claude Code only".
+// Bundled skill packs (contract v3.45, src/skill-packs.js) are Claude Code plugins: passed as --plugin-dir to Claude
+// Code sessions only; the Skills settings say "Claude Code only" for the other engines.
 const engineOf = (e) => (ENGINES.includes(e) ? e : 'claude');
 
 /**

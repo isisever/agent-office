@@ -422,6 +422,16 @@ async function setContextCap(projectId, value) {
   } catch (e) { console.error(e); }
 }
 
+/** Bundled skill packs (v3.45): a global on/off or a project's 'inherit' | 'on' | 'off'; main restarts the idle tabs. */
+async function skillPackChange(fn) {
+  try {
+    const r = await fn();
+    for (const id of r?.restarted || []) panes.get(id)?.term.reset({ restarting: true });
+    applyProjects(await api.projects.list());
+    return r;
+  } catch (e) { console.error(e); return null; }
+}
+
 /** Per-project savings (v3.20): 'off' | 'normal' | 'strict'; main restarts the idle tabs. */
 async function setSavings(projectId, value) {
   try {
@@ -566,6 +576,11 @@ sidebar = mountSidebar($('sidebar'), {
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
   setTheme: setThemeSetting,
   openUsage: (p) => usagePanel?.show(p),
+  skillPacks: {
+    list: (projectId) => (api.skillPacks ? api.skillPacks.list(projectId).catch(() => null) : Promise.resolve(null)),
+    set: (id, on) => skillPackChange(() => api.skillPacks?.set(id, on)),
+    setProject: (projectId, values) => skillPackChange(() => api.projects.setSkillPacks?.(projectId, values)),
+  },
   mcp: { list: (id) => api.mcp.list(id).catch(() => null), add: (f) => mcpChange(() => api.mcp.add(f)), remove: (id) => mcpChange(() => api.mcp.remove(id)) },
 });
 

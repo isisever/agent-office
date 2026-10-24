@@ -1,0 +1,30 @@
+{
+  "repo": "obra/superpowers",
+  "sha": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b",
+  "license": "MIT",
+  "skills": [
+    "brainstorming",
+    "diagnosing-superpowers",
+    "dispatching-parallel-agents",
+    "executing-plans",
+    "finishing-a-development-branch",
+    "receiving-code-review",
+    "requesting-code-review",
+    "subagent-driven-development",
+    "systematic-debugging",
+    "test-driven-development",
+    "using-git-worktrees",
+    "verification-before-completion",
+    "writing-plans",
+    "writing-skills"
+  ],
+  "dropped": [
+    "skills/using-superpowers"
+  ],
+  "patches": [
+    {
+      "file": "skills/brainstorming/SKILL.md",
+      "why": "no always-on bootstrap: brainstorm when the user asks to design or plan, not before every task (clashes with manager mode)"
+    }
+  ]
+}

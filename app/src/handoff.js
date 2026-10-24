@@ -220,7 +220,7 @@ function walk(dir, rel = '', out = [], depth = 6) {
   return out;
 }
 
-const SETTINGS = ['manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'engine'];
+const SETTINGS = ['manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'engine', 'skillPacks']; // skillPacks: { [id]: boolean } only (v3.45)
 /** The project's Agent Office settings that travel (no account, no credentials); each value small and plain. */
 function cleanSettings(s) {
   const out = {};

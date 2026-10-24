@@ -1,0 +1,88 @@
+{
+  "about": "Bundled skill packs (contract v3.45). Each pack is a Claude Code plugin folder made by scripts/vendor-skills.mjs from one upstream commit: only the paths in take, minus drop, with patches applied. Updating a pack = bump sha here, run the script, review the diff in a PR.",
+  "packs": [
+    {
+      "id": "karpathy", "repo": "multica-ai/andrej-karpathy-skills", "sha": "2c606141936f1eeef17fa3043a72095b4765b9c2",
+      "license": "MIT", "defaultOn": true,
+      "plugin": { "name": "andrej-karpathy-skills", "version": "1.0.0", "description": "Behavioral guidelines to reduce common LLM coding mistakes, derived from Andrej Karpathy's observations on LLM coding pitfalls", "author": { "name": "forrestchang" }, "license": "MIT" },
+      "take": [["skills/karpathy-guidelines", "skills/karpathy-guidelines"]],
+      "drop": [],
+      "notice": "andrej-karpathy-skills\nhttps://github.com/multica-ai/andrej-karpathy-skills (commit 2c606141936f1eeef17fa3043a72095b4765b9c2)\n\nUpstream ships no LICENSE file. It declares the MIT License in README.md (\"License\" section, lines 169-171: \"MIT\") and in .claude-plugin/plugin.json (\"license\": \"MIT\", author forrestchang). It is redistributed here under that license:\n\nMIT License\n\nCopyright (c) forrestchang and the andrej-karpathy-skills contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n"
+    },
+    {
+      "id": "ui-ux-pro-max", "repo": "nextlevelbuilder/ui-ux-pro-max-skill", "sha": "d14efff8ed1faa4187f004f79926f428c8074ec7",
+      "license": "MIT (ui-styling: Apache-2.0; fonts: SIL OFL 1.1)", "defaultOn": true,
+      "plugin": { "name": "ui-ux-pro-max", "version": "2.15.0", "description": "UI/UX design intelligence: styles, palettes, font pairings, charts and stack guidelines from a local database. Use when designing, building, or reviewing UI.", "author": { "name": "nextlevelbuilder" }, "license": "MIT" },
+      "take": [[".claude/skills", "skills"], ["LICENSE", "LICENSE"]],
+      "drop": ["**/tests", "**/__pycache__", "**/.mcp.json", "**/.DS_Store", "skills/ui-styling/canvas-fonts"]
+    },
+    {
+      "id": "superpowers", "repo": "obra/superpowers", "sha": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b",
+      "license": "MIT", "defaultOn": true, "managerOff": true,
+      "plugin": { "name": "superpowers", "version": "7.0.1", "description": "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques (skills only; the upstream SessionStart hook is not shipped)", "author": { "name": "Jesse Vincent" }, "homepage": "https://github.com/obra/superpowers", "license": "MIT" },
+      "take": [["skills", "skills"], ["LICENSE", "LICENSE"]],
+      "drop": ["**/.mcp.json", "**/.DS_Store", "skills/using-superpowers"],
+      "patches": [
+        { "file": "skills/brainstorming/SKILL.md", "why": "no always-on bootstrap: brainstorm when the user asks to design or plan, not before every task (clashes with manager mode)",
+          "find": "description: \"You MUST use this before any creative work - creating features,",
+          "replace": "description: \"Use when the user asks to design or plan something new - creating features," }
+      ]
+    },
+    {
+      "id": "skill-creator", "repo": "anthropics/claude-plugins-official", "sha": "58267944f92187b7d6a1c822165c96c81c864806",
+      "license": "Apache-2.0", "defaultOn": true,
+      "plugin": { "name": "skill-creator", "description": "Create new skills, improve existing skills, and measure skill performance.", "author": { "name": "Anthropic" }, "license": "Apache-2.0" },
+      "take": [["plugins/skill-creator/skills", "skills"], ["plugins/skill-creator/LICENSE", "LICENSE"]],
+      "drop": ["**/__pycache__", "**/.DS_Store"]
+    },
+    {
+      "id": "design-dna", "repo": "zanwei/design-dna", "sha": "593e39bc9e3652734653bd75544a333d7d43615e",
+      "license": "MIT", "defaultOn": true,
+      "plugin": { "name": "design-dna", "version": "1.0.0", "description": "Extract a design profile (tokens, style, effects) from screenshots or URLs and generate designs from it.", "author": { "name": "the design-dna authors" }, "license": "MIT" },
+      "take": [["SKILL.md", "skills/design-dna/SKILL.md"], ["references", "skills/design-dna/references"], ["scripts", "skills/design-dna/scripts"], ["LICENSE", "LICENSE"]],
+      "drop": ["skills/design-dna/scripts/test"],
+      "patches": [
+        { "file": "skills/design-dna/SKILL.md", "why": "no silent runtime npm install: ask the user before installing sharp",
+          "find": "  ```bash\n  npm install --prefix \"$SKILL_ROOT/scripts\" --silent\n",
+          "replace": "  If `$SKILL_ROOT/scripts/node_modules/sharp` is missing, ask the user before installing it (it downloads the native sharp package into the skill folder). Only after their yes run `npm install --prefix \"$SKILL_ROOT/scripts\" --silent`; if they decline, fall back to visual sampling.\n  ```bash\n" }
+      ]
+    },
+    {
+      "id": "anthropic-skills", "repo": "anthropics/skills", "sha": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "license": "Apache-2.0 (fonts: SIL OFL 1.1)", "defaultOn": true,
+      "plugin": { "name": "example-skills", "description": "Apache-2.0 example skills from anthropics/skills: art, canvas design, Claude API, frontend design, internal comms, MCP builder, Slack GIFs, themes, web artifacts, webapp testing.", "author": { "name": "Anthropic" }, "license": "Apache-2.0" },
+      "take": [
+        ["skills/algorithmic-art", "skills/algorithmic-art"], ["skills/brand-guidelines", "skills/brand-guidelines"],
+        ["skills/canvas-design", "skills/canvas-design"], ["skills/claude-api", "skills/claude-api"],
+        ["skills/frontend-design", "skills/frontend-design"], ["skills/internal-comms", "skills/internal-comms"],
+        ["skills/mcp-builder", "skills/mcp-builder"], ["skills/slack-gif-creator", "skills/slack-gif-creator"],
+        ["skills/theme-factory", "skills/theme-factory"], ["skills/web-artifacts-builder", "skills/web-artifacts-builder"],
+        ["skills/webapp-testing", "skills/webapp-testing"],
+        ["skills/mcp-builder/LICENSE.txt", "LICENSE.txt"], ["THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md"]
+      ],
+      "drop": ["**/__pycache__", "**/.DS_Store"],
+      "fontsNeedLicense": true
+    },
+    {
+      "id": "caveman", "repo": "JuliusBrussee/caveman", "sha": "1f951fb4ad40ba63302c6e7f987147e034d599d9",
+      "license": "Apache-2.0 (parts MIT)", "defaultOn": false,
+      "plugin": { "name": "caveman", "version": "4.0.1", "description": "Terse communication mode on request (/caveman). Skills only: no hooks, no setup or gateway skill.", "author": { "name": "Julius Brussee" }, "license": "Apache-2.0" },
+      "take": [["skills/caveman", "skills/caveman"], ["skills/caveman-commit", "skills/caveman-commit"], ["skills/caveman-review", "skills/caveman-review"], ["skills/caveman-help", "skills/caveman-help"], ["LICENSE", "LICENSE"], ["NOTICE", "NOTICE"], ["LICENSE-MIT", "LICENSE-MIT"]],
+      "drop": ["**/README.md", "**/.DS_Store"]
+    },
+    {
+      "id": "taste-skill", "repo": "Leonxlnx/taste-skill", "sha": "6010f91a9935f1c167dfc500fb1a475681892e6b",
+      "license": "MIT", "defaultOn": false,
+      "plugin": { "name": "taste-skill", "version": "2.1.4", "description": "A strict frontend house style with a look-and-fix loop for landing pages, dashboards and app screens.", "author": { "name": "Leonxlnx" }, "license": "MIT" },
+      "take": [["skills/taste-skill", "skills/taste-skill"], ["LICENSE", "LICENSE"]],
+      "drop": ["skills/taste-skill/evals", "skills/taste-skill/README.md", "**/.DS_Store"]
+    },
+    {
+      "id": "scroll-craft", "repo": "nateherkai/scroll-craft", "sha": "75d81f74e83692add18cd7a8a8e078b8a887a579",
+      "license": "MIT", "defaultOn": false, "paidApi": "kie.ai",
+      "plugin": { "name": "nateherk-design", "version": "0.3.1", "description": "scroll-craft: premium scroll-driven interactive landing pages. Image and video generation uses a paid kie.ai API key.", "author": { "name": "Nate Herk" }, "homepage": "https://github.com/nateherkai/scroll-craft", "license": "MIT" },
+      "take": [["plugins/nateherk-design/skills", "skills"], ["LICENSE", "LICENSE"]],
+      "drop": ["**/.DS_Store"]
+    }
+  ]
+}

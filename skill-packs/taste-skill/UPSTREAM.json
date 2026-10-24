@@ -1,0 +1,13 @@
+{
+  "repo": "Leonxlnx/taste-skill",
+  "sha": "6010f91a9935f1c167dfc500fb1a475681892e6b",
+  "license": "MIT",
+  "skills": [
+    "taste-skill"
+  ],
+  "dropped": [
+    "skills/taste-skill/README.md",
+    "skills/taste-skill/evals"
+  ],
+  "patches": []
+}
