@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT } = require('./accounts.js');
 const { withSkillPacks } = require('./skill-packs.js');
 const HQ = require('./hq.js');
+const ROUT = require('./routines.js');
 
 // v3.46 HQ: its folder (userData/hq) is set by main at startup; 'hq' is never in state.projects.
 let hqDir = '';
@@ -469,7 +470,7 @@ module.exports = {
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,
   newId, projectName, findProject, setHqDir, hqProject, isHqId,
   /** state.hq (v3.46) normalized next to the rest */
-  normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq) }), findByDir,
+  normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq), routines: ROUT.normalizeRoutines(raw?.routines), routinesCfg: ROUT.normalizeCfg(raw?.routinesCfg) }), findByDir,
   addProject, removeProject, setActive, setProjectAccount, setProjectManager, managerOf,
   BOSS_MODELS, BOSS_MODELS_BY_ENGINE, setProjectBossModel, bossModelOf, bossModelArgs,
   AGENT_MODELS, setProjectAgentModel, agentModelOf,

@@ -153,6 +153,20 @@ contextBridge.exposeInMainWorld('agentOffice', {
     remoteOp: (key, op) => ipcRenderer.invoke('hq:remoteOp', key, op),
     onBoard: listen('hq:board'),
   },
+  // v3.47 Routines: definitions only from this UI (no MCP tool, no peer); held approvals answered here
+  routines: {
+    get: () => ipcRenderer.invoke('routines:get'),
+    save: (r) => ipcRenderer.invoke('routines:save', r),
+    remove: (id) => ipcRenderer.invoke('routines:delete', id),
+    setPaused: (id, paused) => ipcRenderer.invoke('routines:setPaused', id, paused),
+    runNow: (id) => ipcRenderer.invoke('routines:runNow', id),
+    approve: (heldId, allow) => ipcRenderer.invoke('routines:approve', heldId, allow),
+    markRead: (runId) => ipcRenderer.invoke('routines:markRead', runId),
+    setCfg: (cfg) => ipcRenderer.invoke('routines:setCfg', cfg),
+    preview: (schedule) => ipcRenderer.invoke('routines:preview', schedule),
+    summary: (request) => ipcRenderer.invoke('routines:summary', request),
+    onChange: listen('routines:changed'),
+  },
   office: {
     onData: listen('office:data'),
     themes: () => ipcRenderer.invoke('office:themes'),   // gallery + user themes.json (contract v3.1)

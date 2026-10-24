@@ -1090,3 +1090,27 @@ label.sb-langrow { cursor: pointer; }
 .hq-empty { opacity: .6; }
 .sb-remote.offline { opacity: .45; }
 .hq-badge { font-size: 10px; padding: 0 4px; border-radius: 4px; border: 1px solid currentColor; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+
+/* v3.47 Routines: list under the HQ row, editor and history in the Board area */
+.rt-list { padding: 2px 6px 4px 18px; font-size: 12px; }
+.rt-head { cursor: pointer; opacity: .8; padding: 2px 0; }
+.rt-row { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 6px; cursor: pointer; }
+.rt-row:hover, .rt-row.active { background: var(--hover, rgba(127,127,127,.15)); }
+.rt-row .rt-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rt-row .rt-next { opacity: .7; white-space: nowrap; }
+.rt-dot { width: 7px; height: 7px; border-radius: 50%; background: #3b82f6; flex: none; }
+.rt-dot.paused { background: #9ca3af; } .rt-dot.amber { background: #f59e0b; } .rt-dot.red { background: #ef4444; }
+.rt-dot.on { background: #22c55e; animation: rt-pulse 1.2s ease-in-out infinite; }
+@keyframes rt-pulse { 50% { opacity: .35; } }
+.rt-unread { width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #3b82f6); flex: none; }
+.rt-note { opacity: .6; font-size: 11px; padding: 2px 0; }
+.rt-editor { display: flex; flex-direction: column; gap: 8px; max-width: 640px; padding: 8px; font-size: 13px; }
+.rt-editor label { display: flex; flex-direction: column; gap: 3px; }
+.rt-editor label.inline { flex-direction: row; align-items: center; gap: 6px; }
+.rt-editor textarea { min-height: 120px; font: inherit; }
+.rt-tabs, .rt-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.rt-tabs button.active { font-weight: 600; }
+.rt-warn { color: #b45309; font-size: 12px; }
+.rt-run { padding: 6px; border-radius: 6px; background: var(--hover, rgba(127,127,127,.12)); margin-bottom: 6px; }
+.rt-chip { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px; background: rgba(127,127,127,.25); margin: 0 4px; }
+.rt-chip.ok { background: rgba(34,197,94,.3); } .rt-chip.attention, .rt-chip.awaiting-consent { background: rgba(245,158,11,.35); } .rt-chip.failed { background: rgba(239,68,68,.35); }

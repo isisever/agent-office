@@ -13,9 +13,11 @@ const HQ_TTL_MS = 4 * 3600 * 1000;  // an HQ task may wait this long in a busy b
 const RETAIN_TASKS = 500;
 const RETAIN_MS = 90 * 24 * 3600 * 1000;
 const MINT_MS = 30 * 60 * 1000;     // a request id minted from the person's typed prompt stays valid this long
+const ROUTINE_MINT_MS = 4 * 3600 * 1000;   // v3.47 a routine run's request id (caps count against it this long)
+const HELD_MS = 12 * 3600 * 1000;   // v3.47 a held (awaiting-consent) task expires after this
 const TITLE_MAX = 80;
 const SUMMARY_MAX = 16 * 1024;
-const STATUSES = ['queued', 'delivered', 'running', 'needs-approval', 'reported', 'partial', 'failed', 'rejected', 'expired', 'lost'];
+const STATUSES = ['queued', 'delivered', 'running', 'needs-approval', 'awaiting-consent', 'reported', 'partial', 'failed', 'rejected', 'expired', 'lost'];
 const TERMINAL = new Set(['reported', 'partial', 'failed', 'rejected', 'expired', 'lost']);
 const OPEN = (t) => !TERMINAL.has(t.status);
 // HQ's built-in tools are an allowlist (--tools Read): it never edits code, runs commands, searches or reaches the
@@ -97,17 +99,35 @@ function writeMcpFile(file, servers, name = 'agent-office') {
   return file;
 }
 
-/** Request ids the app mints from the person's own typed HQ prompt; an inbox row (a turn the person did not type) clears it. */
+/**
+ * Request ids the app mints: from the person's own typed HQ prompt (origin 'typed'), or for a routine run (v3.47,
+ * origin 'routine', minted when the run is typed or dispatched). An inbox row (a turn the person did not type) or a
+ * typed prompt ends the no-ask liveness of every routine id; the id stays issued for its own TTL so caps count against it.
+ */
 function createMinter({ now = Date.now, rand = () => Math.random().toString(36).slice(2, 8) } = {}) {
   let current = null;
+  /** @type {Map<string, { at: number, origin: string, ttl: number, run: string, live: boolean }>} */
   const all = new Map();
+  const fresh = (e) => Boolean(e) && now() - e.at <= e.ttl;
+  const endRoutines = () => { for (const e of all.values()) if (e.origin === 'routine') e.live = false; };
   return {
-    mint() { const id = `r${now().toString(36)}${rand()}`; current = { id, at: now() }; all.set(id, current.at); if (all.size > 50) all.delete(all.keys().next().value); return id; },
+    mint({ origin = 'typed', run = '', ttlMs = 0 } = {}) {
+      const id = `r${now().toString(36)}${rand()}`;
+      const e = { at: now(), origin, ttl: ttlMs || (origin === 'routine' ? ROUTINE_MINT_MS : MINT_MS), run: String(run), live: true };
+      if (origin !== 'routine') { endRoutines(); current = { id, at: e.at }; }   // a routine mint never replaces the typed one
+      all.set(id, e);
+      if (all.size > 50) all.delete(all.keys().next().value);
+      return id;
+    },
     current() { return current && now() - current.at <= MINT_MS ? current.id : null; },
-    clear() { current = null; },
+    clear() { current = null; endRoutines(); },
     isLive(id) { return Boolean(current) && current.id === id && now() - current.at <= MINT_MS; },
-    /** an id this minter issued (any of its last 50), still within its 30 min */
-    issued(id) { return isStr(id) && all.has(id) && now() - /** @type {number} */ (all.get(id)) <= MINT_MS; },
+    isRoutine(id) { const e = all.get(id); return fresh(e) && e?.origin === 'routine'; },
+    isLiveRoutine(id) { const e = all.get(id); return fresh(e) && e?.origin === 'routine' && Boolean(e?.live); },
+    runOf(id) { const e = all.get(id); return fresh(e) ? e?.run || '' : ''; },
+    endRun(id) { all.delete(id); },
+    /** an id this minter issued (any of its last 50), still within its own TTL */
+    issued(id) { return isStr(id) && fresh(all.get(id)); },
   };
 }
 /** The request a dispatch belongs to: an id the minter issued, else the current one, else the capped 'adhoc' bucket. */
@@ -120,7 +140,10 @@ const resolveRequest = (minter, id) => (minter.issued(id) ? id : minter.current(
  * A foreign or missing id never reaches here as such: resolveRequest maps it to the minter's current id, which is live
  * (so no dialog) unless it expired or was cleared, then 'adhoc' (dialog).
  */
-function consentFor({ setting, remote, request, minter }) {
+function consentFor({ setting, remote, request, minter, routineNoAsk = false }) {
+  // v3.47 a routine run's request: never a modal; no-ask only for a local dispatch, the routine's own checkbox on and
+  // the run's id still live (the global setting does not apply); else a held card the person approves on the Board
+  if (minter?.isRoutine?.(request)) return !remote && routineNoAsk && minter.isLiveRoutine(request) ? 'none' : 'held';
   return setting && !remote && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';
 }
 
@@ -193,7 +216,7 @@ function addTask(board, t, now = Date.now()) {
   if (task.request) {
     const r = requests.find((x) => x.id === task.request);
     requests = r ? requests.map((x) => (x === r ? { ...x, tasks: [...x.tasks, task.id], done: false } : x))
-      : [{ id: task.request, at: now, prompt: line(redact(t.prompt || ''), 150), tasks: [task.id], done: false }, ...requests];
+      : [{ id: task.request, at: now, prompt: line(redact(t.prompt || ''), 150), tasks: [task.id], done: false, ...(t.routine ? { routine: line(t.routine, 16), run: line(t.run, 16) } : {}) }, ...requests];
   }
   return { tasks, requests };
 }
@@ -227,6 +250,18 @@ function finishRequests(board) {
     return { ...r, done: true };
   });
   return { board: { ...board, requests }, done };
+}
+/** v3.47 Allow/Decline of a held task: only a row still awaiting consent; it leaves that state at once (queued), so a
+ *  double click or a replay finds nothing to send. → { board, ok } */
+function takeHeld(board, id) {
+  const t = board.tasks.find((x) => x.id === id);
+  if (!t || t.status !== 'awaiting-consent') return { board, ok: false };
+  return { board: { ...board, tasks: board.tasks.map((x) => (x === t ? { ...x, status: 'queued', reason: 'approved' } : x)) }, ok: true };
+}
+/** Held tasks not answered within 12 h → expired. → { board, expired: ids } */
+function expireHeld(board, now = Date.now(), ms = HELD_MS) {
+  const expired = board.tasks.filter((t) => t.status === 'awaiting-consent' && now - t.at > ms).map((t) => t.id);
+  return { board: expired.length ? { ...board, tasks: board.tasks.map((t) => (expired.includes(t.id) ? { ...t, status: 'expired', reason: 'expired', finishedAt: now } : t)) } : board, expired };
 }
 /** At startup: an open task whose queue entry is gone (isKnown false) becomes lost; no automatic re-dispatch. */
 const markLost = (board, isKnown, now = Date.now()) => ({ ...board, tasks: board.tasks.map((t) => (OPEN(t) && !isKnown(t) ? { ...t, status: 'lost', finishedAt: now } : t)) });
@@ -315,6 +350,7 @@ You may edit this file: Agent Office writes it only when it is missing.
 
 module.exports = {
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
+  ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
   redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,

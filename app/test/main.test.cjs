@@ -4161,3 +4161,59 @@ test('düz terminal sekmesi: ortamdan CLAUDE*/ANTHROPIC_*/AGENT_OFFICE_* düşer
   assert.equal(base.CLAUDECODE, '1'); // the input is not changed
 });
 
+
+// --- v3.47 Routines: source checks on main.js (the engine lives there; the scheduler is tested in routines.test.cjs)
+{
+  const rtTest = require('node:test');
+  const rtAssert = require('node:assert/strict');
+  const rtFs = require('fs');
+  const rtPath = require('path');
+  const src = rtFs.readFileSync(rtPath.join(__dirname, '..', 'main.js'), 'utf8');
+  const fn = (name) => { const i = src.indexOf(`function ${name}(`); rtAssert.ok(i >= 0, name); const j = src.indexOf('\n}\n', i); return src.slice(i, j); };
+  rtTest('routines: powerMonitor resume/unlock tick, routinesTick on the HQ 5 s interval', () => {
+    rtAssert.match(src, /powerMonitor\.on\('resume'/);
+    rtAssert.match(src, /powerMonitor\.on\('unlock-screen'/);
+    rtAssert.match(src, /setInterval\(\(\) => \{ hqTick\(\); routinesTick\(\); \}, 5000\)/);
+  });
+  rtTest('routines: tabStateOf resolves HQ through resolvePty; the link still sees projects only', () => {
+    rtAssert.match(fn('tabStateOf'), /P\.resolvePty\(state, projectId\)/);
+    rtAssert.match(fn('linkTabState'), /P\.findProject\(state, projectId\) \? tabStateOf\(projectId\) : 'gone'/);
+  });
+  rtTest('routines: no office_routine* MCP tool (a session cannot create or run routines)', () => {
+    const mcp = rtFs.readFileSync(rtPath.join(__dirname, '..', 'src', 'office-mcp.js'), 'utf8');
+    rtAssert.doesNotMatch(mcp, /office_routine/);
+    rtAssert.doesNotMatch(src, /office_routine/);
+  });
+  rtTest('routines: the request id is minted at type/dispatch time (deliverRun), never when the run is recorded', () => {
+    rtAssert.match(fn('deliverRun'), /hqMinter\.mint\(\{ origin: 'routine'/);
+    rtAssert.doesNotMatch(fn('addRun'), /mint\(/);
+    rtAssert.doesNotMatch(fn('routinesTick'), /hqMinter\.mint/);
+  });
+  rtTest('routines: a cold HQ is started with the routine prompt even without history', () => {
+    rtAssert.match(fn('deliverRun'), /startPty\(HQ\.HQ_ID, \{ resume: true, prompt: text, forcePrompt: true \}\)/);
+    rtAssert.match(fn('startPty'), /resumeArgs, prompt, \{ always: forcePrompt \}\)/);
+  });
+  rtTest('routines: keystroke race — HQ writes are queued in the paste→Enter gap and HQ is busy after a keystroke', () => {
+    rtAssert.match(fn('typePrompt'), /if \(P\.isHqId\(id\)\) hqGate\.hold\(\);/);
+    rtAssert.match(fn('typePrompt'), /hqGate\.release\(\)/);
+    rtAssert.match(src, /if \(P\.isHqId\(id\)\) \{ hqLastKey = Date\.now\(\); if \(hqGate\.queue\(d\)\) return; \}/);
+    rtAssert.match(fn('deliverRun'), /ROUT\.hqBusy\(\{ state: tabStateOf\(HQ\.HQ_ID\), lastKeyAt: hqLastKey, now, onScreen: hqOnScreen\(\) \}\)/);
+  });
+  rtTest('routines: approve leaves awaiting-consent before any await (twice sends once); never a modal for routines', () => {
+    const a = fn('approveHeld');
+    rtAssert.ok(a.indexOf('HQ.takeHeld(') < a.indexOf('await '), 'takeHeld before await');
+    rtAssert.ok(a.indexOf('saveHqBoard(board)') < a.indexOf('await '));
+    const d = src.slice(src.indexOf('async function hqDispatch('), src.indexOf('/** Every 5 s: HQ running'));
+    rtAssert.ok(d.indexOf("consent === 'held'") < d.indexOf('confirmHqDispatch('), 'held path before the dialog');
+  });
+  rtTest('routines: inbox rows end routine no-ask but keep the id issued; routine project runs write no HQ inbox row', () => {
+    rtAssert.match(fn('inboxRow'), /hqMinter\.clear\(\)/);
+    const r = fn('onOfficeReport');
+    rtAssert.ok(r.indexOf('if (rec.routine) { routinesOnDone(done); return; }') >= 0 && r.indexOf('if (rec.routine)') < r.indexOf('inboxRow('));
+    rtAssert.match(fn('hqRequestsDone'), /const done = routinesOnDone\(all\);/);
+  });
+  rtTest('routines: only the app UI writes definitions (routines:* IPC), runtime file atomic', () => {
+    for (const ch of ['get', 'save', 'delete', 'setPaused', 'runNow', 'approve', 'markRead', 'setCfg']) rtAssert.match(src, new RegExp(`ipcMain\\.handle\\('routines:${ch}'`));
+    rtAssert.match(fn('saveRt'), /SF\.writeAtomic\(rtFileName\(\), text\)/);
+  });
+}

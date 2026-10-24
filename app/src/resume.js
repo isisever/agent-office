@@ -101,10 +101,11 @@ function promptArg(text) {
  * claude's arguments for a start: the start arguments, then the resume arguments, then (only when resuming and a
  * prompt is given) the prompt as the positional argument. Resume arguments come last among the options, so a
  * variadic option (`--mcp-config <configs...>`) cannot swallow the prompt.
- * @param {string[]} base @param {string[]} resumeArgs @param {string} [prompt]
+ * `always` (v3.47): pass the prompt on a fresh start too (a routine starting a cold HQ).
+ * @param {string[]} base @param {string[]} resumeArgs @param {string} [prompt] @param {{ always?: boolean }} [o]
  */
-function claudeArgs(base, resumeArgs, prompt) {
-  const p = resumeArgs.length && prompt ? promptArg(prompt) : '';
+function claudeArgs(base, resumeArgs, prompt, { always = false } = {}) {
+  const p = (resumeArgs.length || always) && prompt ? promptArg(prompt) : '';
   return [...base, ...resumeArgs, ...(p ? [p] : [])];
 }
 

@@ -17,3 +17,11 @@ test('request-done rows: a fixed prompt, malformed rows ignored', () => {
   expect(doneText({ kind: 'report-ready', id: 'x' }, wrap)).toBe(undefined)
   expect(doneText(null, wrap)).toBe(undefined)
 })
+
+test('routines (v3.47): the HQ section explains [routine <request>] prompts, OK:/ATTENTION: summaries and awaiting-consent', () => {
+  expect(hqText()).toContain('[routine <request>]')
+  expect(hqText()).toContain('OK:')
+  expect(hqText()).toContain('ATTENTION:')
+  expect(hqText()).toContain('awaiting-consent')
+  expect(sectionKind({ hq: false, manager: true })).toBe('manager')   // the routine line never reaches a manager-only session
+})
