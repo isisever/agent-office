@@ -579,7 +579,7 @@ sidebar = mountSidebar($('sidebar'), {
   skillPacks: {
     list: (projectId) => (api.skillPacks ? api.skillPacks.list(projectId).catch(() => null) : Promise.resolve(null)),
     set: (id, on) => skillPackChange(() => api.skillPacks?.set(id, on)),
-    setProject: (projectId, id, value) => skillPackChange(() => api.projects.setSkillPack?.(projectId, id, value)),
+    setProject: (projectId, values) => skillPackChange(() => api.projects.setSkillPacks?.(projectId, values)),
   },
   mcp: { list: (id) => api.mcp.list(id).catch(() => null), add: (f) => mcpChange(() => api.mcp.add(f)), remove: (id) => mcpChange(() => api.mcp.remove(id)) },
 });

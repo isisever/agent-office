@@ -199,7 +199,7 @@ window.agentOffice = {
       const p = /** @type {any} */ (projects.find((x) => x.id === id));
       if (p) { if (value) p.backupAccount = value; else delete p.backupAccount; changed(); }
     },
-    setSkillPack: async () => ({ restarted: [] }), // v3.45
+    setSkillPacks: async () => ({ restarted: [] }), // v3.45
     setSavings: async (id, value) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === id));
       if (p) { if (value === 'off' || value === 'strict') p.savings = value; else delete p.savings; changed(); }

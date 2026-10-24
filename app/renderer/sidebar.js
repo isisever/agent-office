@@ -478,7 +478,8 @@ export function mountSidebar(el, on) {
 
   // ---- Bundled skill packs (contract v3.45) ----
   /** "MIT · 7 skills" and, for a pack that calls a paid API, that it needs the user's key. */
-  const packMeta = (pk) => [pk.license, t('sidebar.skillsCount', { n: pk.skills }), pk.paidApi ? t('sidebar.skillsPaid', { api: pk.paidApi }) : '']
+  const packMeta = (pk) => [pk.license, t('sidebar.skillsCount', { n: pk.skills }), pk.paidApi ? t('sidebar.skillsPaid', { api: pk.paidApi }) : '',
+    pk.owned ? t('sidebar.skillsOwned') : '', pk.ownedSkills?.length ? t('sidebar.skillsOwnedSome', { list: pk.ownedSkills.join(', ') }) : '']
     .filter(Boolean).join(' · ');
   const packDesc = (pk) => t(`sidebar.skillPack.${pk.id}`);
   /** The global Skills section: one row per pack (name, description, licence, skill count) with its on/off box. */
@@ -502,13 +503,14 @@ export function mountSidebar(el, on) {
   /** The project's popup part: per pack Default (the global state) / On / Off; disabled for engines other than Claude Code. */
   function projectSkillsSection(p) {
     const box = h('div', { class: 'sb-skills' }, h('div', { class: 'sb-skills-head' }, t('sidebar.skills')));
+    const picks = {}; // every changed pack of this popup, applied by Save in one call (one restart)
     on.skillPacks?.list(p.id).then((r) => {
       for (const pk of r?.packs || []) {
         const opt = (v, label) => h('option', { value: v, selected: pk.project === v }, label);
         const sel = h('select', {
           class: 'sb-acct sb-mode', title: `${packDesc(pk)} (${packMeta(pk)})`,
           onclick: (e) => e.stopPropagation(),
-          onchange: (e) => queue(`skillPack:${pk.id}`, () => on.skillPacks?.setProject(p.id, pk.id, e.target.value)),
+          onchange: (e) => { picks[pk.id] = e.target.value; queue('skillPacks', () => on.skillPacks?.setProject(p.id, { ...picks })); },
         },
         opt('inherit', t('sidebar.skillPackInherit', { state: pk.on ? t('sidebar.skillPackOn') : t('sidebar.skillPackOff') })),
         opt('on', t('sidebar.skillPackOn')), opt('off', t('sidebar.skillPackOff')));

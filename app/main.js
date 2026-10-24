@@ -263,31 +263,37 @@ function pluginDir() {
 }
 
 // Bundled skill packs (contract v3.45, src/skill-packs.js): the repo's skill-packs/ in development,
-// Resources/skill-packs in the packaged app. Like the plugin, each enabled pack is copied to userData/skill-packs/<id>
-// once per run (a skill may write into its own folder, e.g. design-dna's optional npm install; never inside the
-// signed bundle); folders of packs no longer shipped are removed.
+// Resources/skill-packs in the packaged app. A session's pack is a copy in userData/skill-packs/<id> (or
+// <id>--<hash> without the skills the account already has): a skill may write into its own folder, e.g. design-dna's
+// optional sharp install, never inside the signed bundle. A copy is reused while its stamp (pack commit + app version
+// + skipped skills) matches, so such an install survives restarts; at start stale, leftover and unshipped copies go.
 const packRoot = () => (app.isPackaged ? path.join(process.resourcesPath, 'skill-packs') : path.join(__dirname, '..', 'skill-packs'));
+const packBase = () => path.join(app.getPath('userData'), 'skill-packs');
 let packList;
 function skillPacks() {
   if (packList) return packList;
   try { packList = SP.loadPacks(packRoot()); } catch (e) { console.error('skill packs:', e.message); packList = []; }
-  const base = path.join(app.getPath('userData'), 'skill-packs');
-  try { for (const n of fs.readdirSync(base)) if (!packList.some((p) => p.id === n)) fs.rmSync(path.join(base, n), { recursive: true, force: true }); } catch {}
+  try { SP.prunePackDirs(packBase(), packList, app.getVersion()); } catch {}
   return packList;
 }
 const packDirs = new Map();
-function skillPackDir(id) {
-  if (packDirs.has(id)) return packDirs.get(id);
-  const dest = path.join(app.getPath('userData'), 'skill-packs', id);
+/** The pack's copy for a session (null when it could not be made: the session starts without that pack). */
+function skillPackDir(pack, without = []) {
+  const key = SP.copyName(pack.id, without);
+  if (packDirs.has(key)) return packDirs.get(key);
+  let dir = null;
   try {
-    fs.rmSync(dest, { recursive: true, force: true });
-    fs.cpSync(path.join(packRoot(), id), dest, { recursive: true });
-    packDirs.set(id, dest);
-  } catch (e) {
-    console.error('skill pack could not be copied:', id, e.message);
-    packDirs.set(id, null);
-  }
-  return packDirs.get(id);
+    dir = SP.preparePackDir({ src: path.join(packRoot(), pack.id), base: packBase(), id: pack.id, sha: pack.sha, version: app.getVersion(), without });
+  } catch (e) { console.error('skill pack could not be copied:', pack.id, e.message); }
+  packDirs.set(key, dir);
+  return dir;
+}
+/** The account's own plugins and skills (SP.readOwned: two JSON files and two folder listings, nothing else). */
+function ownedOf(account) {
+  const home = app.getPath('home');
+  const def = path.join(home, '.claude');
+  const claudeDir = account?.configDir || def;
+  try { return SP.readOwned({ claudeDir, defaultDir: account?.configDir && SC.shareEnabled(account) ? def : null }); } catch { return { plugins: [], skills: [] }; }
 }
 
 // A tab's MCP file (Default's servers with their tokens, see shared-config.js) lives only while its claude runs.
@@ -1074,8 +1080,11 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const shared = SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
   const print = mcpFingerprintOf(account, project, cwd);
-  // v3.45 one --plugin-dir per skill pack this project gets (global setting, or the project's own on/off)
-  const packs = SP.pluginDirArgs(SP.enabledPacks(state, project, skillPacks()).map((p) => skillPackDir(p.id)).filter(Boolean));
+  // v3.45 one --plugin-dir per skill pack this project gets (global setting, or the project's own on/off), minus
+  // manager-off packs in a manager-mode boss tab and what the account already has (after sharedConfig's links)
+  const packs = SP.sessionPacks({
+    state, project, packs: skillPacks(), boss: id === project.id && P.managerOf(state, project), owned: ownedOf(account), dirFor: skillPackDir,
+  }).args;
   const args = R.claudeArgs([...P.bossModelArgs(project), ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt);
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
@@ -1797,7 +1806,7 @@ function handoffDeps() {
           return !c || R.isTurnBusy({ claude: c, office: sid ? office()?.readSession(sid) : undefined }) || attention.get(id) === 'permission';
         }),
         memoryDir: handoffMemoryDir(configDir, home, p.dir), factsFile: factsFileOf(home, p.dir),
-        settings: { manager: p.manager, bossModel: p.bossModel, agentModel: p.agentModel, contextCap: p.contextCap, savings: p.savings, engine: p.engine },
+        settings: { manager: p.manager, bossModel: p.bossModel, agentModel: p.agentModel, contextCap: p.contextCap, savings: p.savings, engine: p.engine, skillPacks: p.skillPacks },
       };
     },
     release(projectId) {
@@ -2181,20 +2190,26 @@ const restartFor = (scope) => state.projects.filter((p) => P.engineOf(p) === 'cl
 // A change restarts the idle Claude Code sessions it reaches in their conversation; busy ones take it at their next start.
 ipcMain.handle('skillPacks:list', (_e, projectId) => {
   const p = projectId ? P.findProject(state, projectId) : null;
-  return { packs: SP.listing(state, p, skillPacks()).map(({ repo, sha, ...rest }) => ({ ...rest, repo, sha: sha.slice(0, 12) })) };
+  const owned = ownedOf(p ? A.accountOf(state, p) : null);
+  return { packs: SP.listing(state, p, skillPacks(), owned).map(({ repo, sha, ...rest }) => ({ ...rest, repo, sha: sha.slice(0, 12) })) };
 });
+// global on/off: only projects whose effective pack set changed restart (a project overriding the pack does not)
 ipcMain.handle('skillPacks:set', (_e, id, on) => {
+  const before = state;
   const next = SP.setGlobal(state, String(id), on === true, skillPacks());
   if (next === state) return { restarted: [] };
   commit(next);
-  return { restarted: restartFor('all') };
+  const ids = SP.changedProjects(before, state, skillPacks(), P.engineOf);
+  return { restarted: state.projects.filter((p) => ids.includes(p.id)).flatMap((p) => restartIdle(p)) };
 });
-ipcMain.handle('projects:setSkillPack', (_e, projectId, id, value) => {
-  const next = SP.setProjectPack(state, projectId, String(id), value, skillPacks());
+// per project, every pack of the popup in one call ({ [id]: 'inherit' | 'on' | 'off' }): one restart at most
+ipcMain.handle('projects:setSkillPacks', (_e, projectId, values) => {
+  const before = state;
+  const next = SP.setProjectPacks(state, projectId, values, skillPacks());
   if (next === state) return { restarted: [] };
   commit(next);
   const p = P.findProject(state, projectId);
-  return { restarted: p && P.engineOf(p) === 'claude' ? restartIdle(p) : [] };
+  return { restarted: p && SP.changedProjects(before, state, skillPacks(), P.engineOf).includes(p.id) ? restartIdle(p) : [] };
 });
 ipcMain.handle('mcp:add', (_e, f) => {
   const form = { name: String(f?.name || ''), url: String(f?.url || '').trim(), type: f?.type === 'sse' ? 'sse' : 'http', scope: f?.scope };

@@ -326,6 +326,8 @@
     "skillsHint": "Agent Office ile gelen beceri paketleri, yalnız Claude Code için (Antigravity, Command Code ve OpenCode almaz). Boştaki oturumlar değişikliği almak için yeniden başlar; meşgul olanlar bir sonraki başlangıçta alır. Bir proje her paketi kendi ⚙ ayarlarında değiştirebilir.",
     "skillsCount": "{n} beceri",
     "skillsPaid": "ücretli {api} API anahtarınızı kullanır",
+    "skillsOwned": "hesabınızda zaten var, paketten yüklenmiyor",
+    "skillsOwnedSome": "hesabınızda zaten var: {list}",
     "skillPackInherit": "Varsayılan ({state})",
     "skillPackOn": "Açık",
     "skillPackOff": "Kapalı",

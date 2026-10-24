@@ -327,6 +327,8 @@
     "skillsHint": "Skill packs bundled with Agent Office, for Claude Code only (Antigravity, Command Code and OpenCode do not get them). Idle sessions restart to pick up a change; busy ones get it at their next start. A project can override each pack in its ⚙ settings.",
     "skillsCount": "{n} skills",
     "skillsPaid": "uses your paid {api} API key",
+    "skillsOwned": "already in your account, not loaded from the pack",
+    "skillsOwnedSome": "already in your account: {list}",
     "skillPackInherit": "Default ({state})",
     "skillPackOn": "On",
     "skillPackOff": "Off",

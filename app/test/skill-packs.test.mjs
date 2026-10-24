@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -31,10 +32,154 @@ test('skill packs: launch args = exactly one --plugin-dir per enabled pack', () 
   const on = SP.enabledPacks(state, null, packs);
   assert.deepEqual(ids(on), ['karpathy', 'ui-ux-pro-max', 'skill-creator', 'design-dna', 'anthropic-skills', 'caveman']);
   assert.deepEqual(SP.pluginDirArgs(on.map((p) => `/u/${p.id}`)), on.flatMap((p) => ['--plugin-dir', `/u/${p.id}`]));
-  // main.js passes them next to its own plugin, for Claude Code sessions (startClaude)
+});
+
+// startPty's assembly (main.js passes SP.sessionPacks(...).args after its own --plugin-dir): behaviour per project
+const dirFor = (pack, without) => `/u/${SP.copyName(pack.id, without)}`;
+const dirsOf = (args) => args.filter((_, i) => i % 2 === 1);
+test('skill packs: session args per project (override, manager-off boss tab, owned, failed copy)', () => {
+  const state = P.normalizeState({ projects: [{ id: 'a', dir: '/a' }, { id: 'b', dir: '/b', skillPacks: { karpathy: false, caveman: true } }] });
+  const [a, b] = state.projects;
+  const ra = SP.sessionPacks({ state, project: a, packs, dirFor });
+  assert.deepEqual(ra.ids, DEFAULT_ON);
+  assert.deepEqual(ra.args, DEFAULT_ON.flatMap((id) => ['--plugin-dir', `/u/${id}`]));
+  const rb = SP.sessionPacks({ state, project: b, packs, dirFor });
+  assert.deepEqual(rb.ids, [...DEFAULT_ON.filter((x) => x !== 'karpathy'), 'caveman']);
+  // the manager-mode boss tab does not get superpowers (managerOff); a worker tab of the same project does
+  const boss = SP.sessionPacks({ state, project: a, packs, boss: true, dirFor });
+  assert.ok(!boss.ids.includes('superpowers') && boss.skipped.some((x) => x.id === 'superpowers' && x.reason === 'manager'));
+  assert.ok(packs.find((p) => p.id === 'superpowers').managerOff);
+  // the account already has a superpowers plugin and the frontend-design skill
+  const owned = { plugins: ['superpowers'], skills: ['frontend-design', 'claude-api'] };
+  const ro = SP.sessionPacks({ state, project: a, packs, owned, dirFor });
+  assert.ok(!ro.ids.includes('superpowers'));
+  const anth = dirsOf(ro.args).find((d) => d.includes('anthropic-skills'));
+  assert.equal(anth, `/u/${SP.copyName('anthropic-skills', ['claude-api', 'frontend-design'])}`);
+  assert.match(anth, /anthropic-skills--[0-9a-f]{10}$/);
+  assert.deepEqual(ro.skipped.find((x) => x.id === 'anthropic-skills').skills, ['claude-api', 'frontend-design']);
+  // a pack whose copy failed is left out, the others still load
+  const rf = SP.sessionPacks({ state, project: a, packs, dirFor: (p, w) => (p.id === 'karpathy' ? null : p.id === 'design-dna' ? (() => { throw new Error('disk'); })() : dirFor(p, w)) });
+  assert.deepEqual(rf.ids, DEFAULT_ON.filter((x) => x !== 'karpathy' && x !== 'design-dna'));
+  assert.equal(rf.args.length, rf.ids.length * 2);
+  // main.js uses this assembly next to its own plugin
   const main = fs.readFileSync(path.join(HERE, '..', 'main.js'), 'utf8');
-  assert.match(main, /SP\.pluginDirArgs\(SP\.enabledPacks\(state, project, skillPacks\(\)\)/);
-  assert.match(main, /\['--plugin-dir', dir\] : \[\]\), \.\.\.packs, \.\.\.shared/);
+  assert.match(main, /SP\.sessionPacks\(\{/);
+});
+
+test('skill packs: skipOwned skips a taken plugin name, trims clashing skills, skips a pack left empty', () => {
+  const fake = [{ id: 'x', name: 'xp', skillNames: ['a', 'b'] }, { id: 'y', name: 'yp', skillNames: ['c'] }, { id: 'z', name: 'zp', skillNames: ['d'] }];
+  const r = SP.skipOwned(fake, { plugins: ['xp', 'd'], skills: ['c'] });
+  assert.deepEqual(r.map((x) => [x.pack.id, x.skip, x.without]), [['x', 'plugin', []], ['y', 'skills', ['c']], ['z', 'skills', ['d']]]);
+  assert.deepEqual(SP.skipOwned(fake, null).map((x) => x.skip), [null, null, null]);
+  const l = SP.listing({ projects: [] }, null, packs, { plugins: ['skill-creator'], skills: ['frontend-design'] });
+  assert.equal(l.find((p) => p.id === 'skill-creator').owned, 'plugin');
+  assert.deepEqual(l.find((p) => p.id === 'anthropic-skills').ownedSkills, ['frontend-design']);
+  assert.equal('skillNames' in l[0], false);
+});
+
+test('skill packs: readOwned reads only installed_plugins.json, settings.json and the skills folders', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-owned-'));
+  const acc = path.join(tmp, 'acc');
+  const def = path.join(tmp, 'def');
+  const w = (f, d) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(d)); };
+  w(path.join(acc, 'plugins', 'installed_plugins.json'), { plugins: { 'superpowers@m': [{ scope: 'user', installPath: '/x' }], 'off@m': [{}] } });
+  w(path.join(acc, 'settings.json'), { enabledPlugins: { 'superpowers@m': true, 'off@m': false } });
+  w(path.join(def, 'plugins', 'installed_plugins.json'), { plugins: { 'skill-creator@claude-plugins-official': [{}] } });
+  w(path.join(def, 'settings.json'), { enabledPlugins: { 'skill-creator@claude-plugins-official': true } });
+  fs.mkdirSync(path.join(acc, 'skills', 'frontend-design'), { recursive: true });
+  fs.mkdirSync(path.join(acc, 'skills', 'synced', 'claude-api'), { recursive: true });
+  w(path.join(acc, '.credentials.json'), { secret: 'never read' });
+  const reads = [];
+  const orig = fs.readFileSync;
+  fs.readFileSync = (f, ...r) => { reads.push(String(f)); return orig(f, ...r); };
+  let owned;
+  try { owned = SP.readOwned({ claudeDir: acc, defaultDir: def }); } finally { fs.readFileSync = orig; }
+  assert.deepEqual(owned, { plugins: ['skill-creator', 'superpowers'], skills: ['claude-api', 'frontend-design'] });
+  assert.equal(reads.length, 4); // two files per folder
+  assert.ok(reads.every((f) => /(installed_plugins|settings)\.json$/.test(f)), reads.join());
+  assert.deepEqual(SP.readOwned({ claudeDir: acc }).plugins, ['superpowers']); // not sharing Default's
+  assert.deepEqual(SP.readOwned({ claudeDir: path.join(tmp, 'none') }), { plugins: [], skills: [] });
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('skill packs: copies are stamped and reused, rebuilt atomically, pruned at start', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-copy-'));
+  const src = path.join(tmp, 'src');
+  const base = path.join(tmp, 'base');
+  fs.mkdirSync(path.join(src, 'skills', 'a'), { recursive: true });
+  fs.mkdirSync(path.join(src, 'skills', 'b'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'skills', 'a', 'SKILL.md'), 'a');
+  fs.writeFileSync(path.join(src, 'skills', 'b', 'SKILL.md'), 'b');
+  const o = { src, base, id: 'p', sha: 's1', version: '1.0.0' };
+  const d = SP.preparePackDir(o);
+  assert.equal(d, path.join(base, 'p'));
+  fs.writeFileSync(path.join(d, 'skills', 'a', 'installed.txt'), 'user-approved install'); // e.g. design-dna's sharp
+  assert.equal(SP.preparePackDir(o), d);
+  assert.ok(fs.existsSync(path.join(d, 'skills', 'a', 'installed.txt')), 'same stamp: not wiped');
+  SP.preparePackDir({ ...o, version: '1.0.1' });
+  assert.ok(!fs.existsSync(path.join(d, 'skills', 'a', 'installed.txt')), 'new app version: rebuilt');
+  const w = SP.preparePackDir({ ...o, version: '1.0.1', without: ['b'] });
+  assert.equal(path.basename(w), SP.copyName('p', ['b']));
+  assert.deepEqual(fs.readdirSync(path.join(w, 'skills')), ['a']);
+  assert.ok(!fs.readdirSync(base).some((n) => n.includes('.tmp-')));
+  assert.throws(() => SP.preparePackDir({ ...o, src: path.join(tmp, 'missing'), version: '2' }));
+  assert.ok(!fs.readdirSync(base).some((n) => n.includes('.tmp-')), 'a failed copy leaves no temp folder');
+  fs.mkdirSync(path.join(base, 'p.tmp-999'));
+  fs.mkdirSync(path.join(base, 'gone'));
+  const gone = SP.prunePackDirs(base, [{ id: 'p', sha: 's1' }], '1.0.1');
+  assert.deepEqual(gone, ['gone', 'p.tmp-999']);
+  assert.deepEqual(SP.prunePackDirs(base, [{ id: 'p', sha: 's2' }], '1.0.1').sort(), ['p', SP.copyName('p', ['b'])].sort()); // new pack commit
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('skill packs: one batched project call; only projects whose pack set changed restart', () => {
+  let s = P.normalizeState({ projects: [{ id: 'a', dir: '/a' }, { id: 'b', dir: '/b', skillPacks: { karpathy: true } }, { id: 'c', dir: '/c', engine: 'agy' }] });
+  const n = SP.setProjectPacks(s, 'a', { karpathy: 'off', caveman: 'on', bogus: 'on', superpowers: 'maybe' }, packs);
+  assert.deepEqual(n.projects[0].skillPacks, { karpathy: false, caveman: true });
+  assert.equal(SP.setProjectPacks(n, 'a', { karpathy: 'off' }, packs), n);
+  assert.deepEqual(SP.changedProjects(s, n, packs), ['a']);
+  const g = SP.setGlobal(s, 'karpathy', false, packs);
+  assert.deepEqual(SP.changedProjects(s, g, packs), ['a']); // b keeps karpathy on, c is not Claude Code
+  assert.deepEqual(SP.changedProjects(s, s, packs), []);
+});
+
+test('skill packs: project overrides travel with a handoff as plain settings (booleans only)', () => {
+  const H = require('../src/handoff.js');
+  assert.deepEqual(H.cleanSettings({ skillPacks: { caveman: true }, manager: false }), { manager: false, skillPacks: { caveman: true } });
+  const adopted = P.normalizeState({ projects: [{ id: 'a', dir: '/a', ...H.cleanSettings({ skillPacks: { caveman: true, 'Bad Id': true, x: 'token' } }) }] });
+  assert.deepEqual(adopted.projects[0].skillPacks, { caveman: true });
+  const main = fs.readFileSync(path.join(HERE, '..', 'main.js'), 'utf8');
+  assert.match(main, /savings: p\.savings, engine: p\.engine, skillPacks: p\.skillPacks/);
+});
+
+test('skill packs: superpowers has no bootstrap skill or always-on wording', () => {
+  const sp = path.join(ROOT, 'superpowers', 'skills');
+  assert.ok(!fs.existsSync(path.join(sp, 'using-superpowers')));
+  const brain = fs.readFileSync(path.join(sp, 'brainstorming', 'SKILL.md'), 'utf8');
+  assert.match(brain, /^description: "Use when the user asks to design or plan/m);
+  for (const s of fs.readdirSync(sp)) {
+    const text = fs.readFileSync(path.join(sp, s, 'SKILL.md'), 'utf8');
+    assert.doesNotMatch(text, /before ANY response|ABSOLUTELY MUST|You MUST use this/, s);
+  }
+});
+
+test('vendor check: forbidden files fail the check (settings, .lsp.json, monitors, root commands/agents, install scripts)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-vendor-check-'));
+  const dir = path.join(tmp, 'p');
+  const w = (rel, text = '{}') => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
+  w('.claude-plugin/plugin.json', JSON.stringify({ name: 'p' }));
+  w('UPSTREAM.json', JSON.stringify({ sha: 'x' }));
+  w('LICENSE', 'MIT');
+  w('skills/s/SKILL.md', 'x');
+  const manifest = { packs: [{ id: 'p', sha: 'x' }] };
+  assert.deepEqual(check(tmp, manifest), []);
+  w('skills/s/package.json', JSON.stringify({ scripts: { test: 'node t' } }));
+  assert.deepEqual(check(tmp, manifest), []);
+  for (const rel of ['skills/s/settings.json', 'skills/s/.lsp.json', 'skills/s/monitors/m.json', 'skills/s/x/hooks.json', 'skills/s/y/.mcp.json', 'commands/c.md', 'agents/a.md']) w(rel);
+  w('skills/s/z/package.json', JSON.stringify({ scripts: { postinstall: 'curl' } }));
+  const bad = check(tmp, manifest).join('\n');
+  for (const want of ['settings.json', '.lsp.json', 'monitors', 'hooks.json', '.mcp.json', 'commands/', 'agents/', 'postinstall']) assert.ok(bad.includes(want), want);
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('skill packs: global setting stores only what differs from the default', () => {
