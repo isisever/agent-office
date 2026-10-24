@@ -87,7 +87,7 @@ test('skill packs: readOwned reads only installed_plugins.json, settings.json an
   w(path.join(def, 'plugins', 'installed_plugins.json'), { plugins: { 'skill-creator@claude-plugins-official': [{}] } });
   w(path.join(def, 'settings.json'), { enabledPlugins: { 'skill-creator@claude-plugins-official': true } });
   fs.mkdirSync(path.join(acc, 'skills', 'frontend-design'), { recursive: true });
-  fs.mkdirSync(path.join(acc, 'skills', 'synced', 'claude-api'), { recursive: true });
+  w(path.join(acc, 'skills', 'synced', 'claude-api', 'SKILL.md'), 'x');
   w(path.join(acc, '.credentials.json'), { secret: 'never read' });
   const reads = [];
   const orig = fs.readFileSync;
@@ -99,6 +99,35 @@ test('skill packs: readOwned reads only installed_plugins.json, settings.json an
   assert.ok(reads.every((f) => /(installed_plugins|settings)\.json$/.test(f)), reads.join());
   assert.deepEqual(SP.readOwned({ claudeDir: acc }).plugins, ['superpowers']); // not sharing Default's
   assert.deepEqual(SP.readOwned({ claudeDir: path.join(tmp, 'none') }), { plugins: [], skills: [] });
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('skill packs: readOwned counts claude.ai-synced skills and plugins (anthropic-skills: namespace, bucket layout)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-synced-'));
+  const acc = path.join(tmp, 'acc');
+  const w = (f, d) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, d); };
+  const bucket = 'aaaaaaaa-0000-4000-8000-000000000001_bbbbbbbb-0000-4000-8000-000000000002';
+  const sk = path.join(acc, 'skills', 'synced');
+  for (const n of ['skill-creator', 'pdf', 'docx']) w(path.join(sk, bucket, n, 'SKILL.md'), '---\nname: x\n---');
+  w(path.join(sk, bucket, 'manifest.json'), JSON.stringify({ skills: [{ skillId: 'skill-creator', name: 'skill-creator' }] }));
+  w(path.join(sk, bucket, '.last-complete-round'), '1');
+  fs.mkdirSync(path.join(sk, `.bucket-${bucket}`), { recursive: true });
+  const pl = path.join(acc, 'plugins', 'synced', bucket);
+  w(path.join(pl, 'cowork-plugin-management', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'cowork-plugin-management' }));
+  fs.mkdirSync(path.join(pl, 'cowork-plugin-management', 'skills', 'create-cowork-plugin'), { recursive: true });
+  w(path.join(pl, 'manifest.json'), JSON.stringify({ plugins: [] }));
+  w(path.join(pl, '.marketplaces.json'), '{}');
+  w(path.join(acc, '.credentials.json'), JSON.stringify({ secret: 'never read' }));
+  w(path.join(acc, '.claude.json'), JSON.stringify({ oauthAccount: 'never read' }));
+  const reads = [];
+  const orig = fs.readFileSync;
+  fs.readFileSync = (f, ...r) => { reads.push(String(f)); return orig(f, ...r); };
+  let owned;
+  try { owned = SP.readOwned({ claudeDir: acc }); } finally { fs.readFileSync = orig; }
+  assert.deepEqual(owned, { plugins: ['cowork-plugin-management'], skills: ['docx', 'pdf', 'skill-creator'] });
+  assert.ok(reads.every((f) => /(installed_plugins|settings)\.json$/.test(f)), reads.join());
+  const packs = [{ id: 'skill-creator', name: 'skill-creator', skillNames: ['skill-creator'] }];
+  assert.equal(SP.skipOwned(packs, owned)[0].skip, 'skills');
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 

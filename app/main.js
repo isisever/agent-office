@@ -288,7 +288,7 @@ function skillPackDir(pack, without = []) {
   packDirs.set(key, dir);
   return dir;
 }
-/** The account's own plugins and skills (SP.readOwned: two JSON files and two folder listings, nothing else). */
+/** The account's own plugins and skills (SP.readOwned: two JSON files and folder listings, nothing else). */
 function ownedOf(account) {
   const home = app.getPath('home');
   const def = path.join(home, '.claude');
