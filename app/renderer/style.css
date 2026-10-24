@@ -921,13 +921,8 @@ label.sb-langrow { cursor: pointer; }
 .sb-agy-install { display: block; width: 100%; margin-top: 2px; font-size: 10px; opacity: .75; user-select: all; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Device link (v3.28, renderer/devices.js): Devices section and remote projects */
-.sb-remote { margin-top: 8px; }
-.sb-remote > summary { cursor: pointer; list-style: none; }
-.sb-remote > summary::-webkit-details-marker { display: none; }
-.sb-remote > summary::before { content: '▸ '; }
-.sb-remote[open] > summary::before { content: '▾ '; }
-.sb-dev, .sb-rproj { padding: 3px 6px; }
-.sb-dev-top, .sb-rproj-top { display: flex; align-items: center; gap: 6px; }
+.sb-dev { padding: 3px 6px; }
+.sb-dev-top { display: flex; align-items: center; gap: 6px; }
 .sb-dev .sb-adot { background: var(--status-text); opacity: .35; }
 .sb-dev.online .sb-adot { background: #3fb950; opacity: 1; }
 .sb-dev:hover .sb-x { opacity: .6; }
@@ -937,9 +932,6 @@ label.sb-langrow { cursor: pointer; }
 .sb-pair { margin: 6px 0; }
 .sb-pair-code { font-family: ui-monospace, monospace; font-size: 15px; letter-spacing: .5px; padding: 6px; border: 1px dashed var(--accent); text-align: center; user-select: all; word-break: break-word; }
 .sb-note.warn { color: #e5484d; }
-.sb-rdev-name { font-weight: bold; padding: 2px 6px; opacity: .9; }
-.sb-rproj .sb-sub { font-size: 10px; opacity: .7; }
-.sb-rproj.st-approval .sb-name { color: #e5a84d; }
 .sb-note.cmd-rejected { color: #e5484d; }
 .sb-note.cmd-delivered { color: #3fb950; }
 
@@ -1088,8 +1080,23 @@ label.sb-langrow { cursor: pointer; }
 .hq-task-meta { opacity: .7; font-size: 11px; }
 .hq-report { white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; margin: 6px 0 0; font-size: 11px; }
 .hq-empty { opacity: .6; }
-.sb-remote.offline { opacity: .45; }
-.hq-badge { font-size: 10px; padding: 0 4px; border-radius: 4px; border: 1px solid currentColor; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+/* remote rows in PROJECTS: the local rows' grid (.sb-proj); name + a short "remote" badge, machine on the status line */
+.sb-rlist[hidden] { display: none; }
+.sb-rname { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sb-rname .sb-name { min-width: 0; }
+.hq-badge { flex-shrink: 0; font-size: 10px; line-height: 13px; padding: 0 4px; border-radius: 4px; border: 1px solid currentColor; opacity: .7; white-space: nowrap; }
+.sb-rrow .sb-meta { flex-wrap: nowrap; }
+.sb-rrow .sb-tag { flex-shrink: 0; }
+.sb-rrow .sb-stats { flex: 0 1 auto; min-width: 0; }
+/* the machine name takes what is left and is cut first; the status stays readable */
+.sb-machine { flex: 1 1 0; min-width: 6ch; text-align: right; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-rrow .sb-rop { opacity: .55; font-size: 12px; }
+.sb-rrow.offline { opacity: .45; }
+.sb-rrow.offline .sb-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--status-text); }
+.sb-rrow.st-approval .sb-name { color: #e5a84d; }
+.sb-rbox { grid-column: 1 / -1; min-width: 0; cursor: default; }
+.sb-rbox .sb-rcmd { margin: 0; }
+.sb-rbox .sb-note { font-size: 10px; opacity: .8; overflow-wrap: anywhere; }
 
 /* v3.47 Routines: list under the HQ row, editor and history in the Board area */
 .rt-list { padding: 2px 6px 4px 18px; font-size: 12px; }

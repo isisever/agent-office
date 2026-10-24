@@ -777,7 +777,6 @@
     "permCount": "{n}/{total} izin",
     "rename": "Yeniden adlandır",
     "none": "Eşlenmiş cihaz yok",
-    "remote": "Uzak projeler",
     "status": {
       "working": "çalışıyor",
       "idle": "boşta",
@@ -898,6 +897,8 @@
     "here": "bu makine",
     "noReport": "Henüz rapor yok.",
     "remote": "uzak",
+    "remoteTip": "Bu patrona komut göndermek için tıkla",
+    "remoteTitle": "Diğer makinelerinizden birindeki proje",
     "offline": "Çevrim dışı: bilinen son projeler",
     "start": "Başlat veya uyandır",
     "sleep": "Uyut",
