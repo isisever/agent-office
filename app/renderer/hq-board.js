@@ -207,12 +207,14 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const pub = r.key.slice(0, r.key.indexOf(':'));
     const p = lv?.remotes?.find((x) => x.device === pub)?.projects?.find((x) => x.id === r.id) || null;
     const out = (lv?.outgoing || []).filter((o) => o.pub === pub && o.project === r.id).slice(0, 2);
-    return { pub, p, out };
+    // the link's view is live; the HQ view behind r is refreshed only every 10 s
+    const online = lv?.devices?.find((d) => d.id === pub)?.online ?? r.online;
+    return { pub, p, out, online };
   }
   function remoteCmd(r, pub, p, out) {
     if (!r.online) return el('div', { class: 'sb-rbox sb-note' }, t('hq.offline'));
     if ((p?.engine || 'claude') !== 'claude' || !api.link?.send) return el('div', { class: 'sb-rbox sb-note' }, t('devices.claudeOnly'));
-    const input = el('input', { name: 'text', maxlength: 8192, placeholder: t('devices.prompt', { project: r.name }), oninput: () => drafts.set(r.key, input.value) });
+    const input = el('input', { name: 'text', maxlength: 8192, placeholder: t('devices.prompt', { project: r.name }), oninput: () => drafts.set(r.key, input.value), onblur: () => setTimeout(renderRemote, 0) });
     input.value = drafts.get(r.key) || '';
     return el('div', { class: 'sb-rbox', onclick: (e) => e.stopPropagation() },
       el('form', { class: 'sb-rcmd', onsubmit: (e) => {
@@ -226,8 +228,9 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
         `${o.firstLine} — ${o.status === 'rejected' ? t('devices.cmd.rejected', { reason: t(`devices.reason.${o.reason}`) }) : t(`devices.cmd.${o.status}`)}`)));
   }
   function remoteRow(r) {
-    const { pub, p, out } = liveOf(r);
-    const st = !r.online ? 'offline' : r.status || p?.status || 'idle';
+    const { pub, p, out, online } = liveOf(r);
+    r = { ...r, online };
+    const st = !online ? 'offline' : p?.status || r.status || 'idle';
     const open = openKey === r.key;
     const op = (action) => (e) => { e.stopPropagation(); api.hq.remoteOp(r.key, action); };
     const status = st === 'offline' ? t('devices.offline')
@@ -235,7 +238,9 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     return el('li', {
       class: `sb-proj sb-rrow st-${st}${open ? ' open' : ''}${r.online ? '' : ' offline'}`, 'data-key': r.key,
       title: `${r.name} · ${r.machine}\n${r.online ? t('hq.remoteTip') : t('hq.offline')}`,
+      tabindex: '0', role: 'button', 'aria-expanded': String(open),
       onclick: () => { openKey = open ? '' : r.key; renderRemote(); },
+      onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); openKey = open ? '' : r.key; renderRemote(); } },
     },
     el('span', { class: `sb-dot${st === 'working' || st === 'approval' ? ' live' : ''}` }),
     el('span', { class: 'sb-rname' }, el('span', { class: 'sb-name' }, r.name), el('span', { class: 'hq-badge', title: t('hq.remoteTitle') }, t('hq.remote'))),
