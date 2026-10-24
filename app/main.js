@@ -272,7 +272,7 @@ const packBase = () => path.join(app.getPath('userData'), 'skill-packs');
 let packList;
 function skillPacks() {
   if (packList) return packList;
-  try { packList = SP.loadPacks(packRoot()); } catch (e) { console.error('skill packs:', e.message); packList = []; }
+  try { packList = SP.loadPacks(packRoot()); } catch (e) { console.error('skill packs:', e.message); packList = []; return packList; } // copies are kept: nothing to prune against
   try { SP.prunePackDirs(packBase(), packList, app.getVersion()); } catch {}
   return packList;
 }
