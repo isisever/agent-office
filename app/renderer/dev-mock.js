@@ -341,6 +341,7 @@ window.agentOffice = {
     onExit: ev.exit.add,
     restart: (id) => boot(id),
     wake: () => {},
+    shown: () => {},
     onSleep: () => {},
   },
   work: {

@@ -53,6 +53,8 @@ jobs:
         run: node --test app/test/link.test.cjs
       - name: HQ (board, consent, caps, remote rows, launch args)
         run: node --test app/test/hq.test.cjs
+      - name: Routines (scheduler, held approvals)
+        run: node --test app/test/routines.test.cjs
       - name: node-pty quit-crash patch + pty guard
         run: node --test app/test/node-pty-patch.test.cjs
       - name: pty wiring (attachPty)
