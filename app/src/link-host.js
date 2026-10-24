@@ -13,6 +13,11 @@ const QUEUE_MAX = 5;                    // waiting commands per project
 const QUEUE_TTL_MS = 30 * 60 * 1000;    // a command that waited this long is dropped ('expired')
 const SELF = 'self';                    // v3.35 the device of a task dispatched to a project of this machine
 const REPORT_POLL_MS = 5000;
+const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/starts its gone boss at most this often
+const REVIVE_STALE_MS = 10 * 60 * 1000;  // a budget untouched this long starts over
+const REVIVE_GAP_MS = 60 * 1000;          // ... and not more than once a minute
+const PUMP_MS = 1500;
+const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks between gone-sightings = a new gone spell
 
 /**
  * @param {{ app: any, safeStorage: any, ipcMain: any, send: (ch: string, ...a: any[]) => void,
@@ -305,7 +310,7 @@ function setupLink(d) {
   }
 
   // Claude Code projects only: their busy state is known (pid file) and their prompt takes a bracketed paste.
-  function onCommand({ device, id, project, text, reply, report = false, ttl = 0 }) {
+  function onCommand({ device, id, project, text, reply, report = false, ttl = 0, revive = false }) {
     const p = d.projects().find((x) => x.id === project);
     const done = (status, reason) => { log(device.name, p?.name || project, text, `${report ? 'task:' : ''}${reason ? `${status}:${reason}` : status}`); reply(status, reason); };
     if (!p) return done('rejected', 'unknown-project');
@@ -313,11 +318,12 @@ function setupLink(d) {
     if (report && d.loginOf?.(project) === 'out') return done('rejected', 'logged-out');   // v3.35
     const q = queue.get(project) || [];
     if (q.length >= QUEUE_MAX) return done('rejected', 'queue-full');
-    q.push({ id, device, text, at: Date.now(), reply, report, ttl });
+    q.push({ id, device, text, at: Date.now(), reply, report, ttl, revive: Boolean(revive) && device.pub === SELF });
     queue.set(project, q);
     done('queued');
     pump();
   }
+  const reviveBudget = new Map();   // project -> { n tries, at last try, since first seen gone }
   function pump() {
     const now = Date.now();
     for (const [project, q] of queue) {
@@ -326,7 +332,31 @@ function setupLink(d) {
         if (c.device.pub !== SELF && !link?.devices.some((x) => x.pub === c.device.pub)) { q.shift(); continue; }   // removed meanwhile
         if (now - c.at > ttlOf(c)) { q.shift(); c.reply('rejected', 'expired'); continue; }
         const s = d.tabState(project);
-        if (s === 'gone') { q.shift(); c.reply('rejected', 'not-running'); continue; }
+        if (s === 'gone') {
+          // v3.46 amendment: a local HQ task wakes a sleeping or starts a stopped boss (manage 'start'), a few times at
+          // most, and waits for it; everything else (and a start that failed) is refused 'not-running' as before
+          if (c.revive && d.manage) {
+            // one budget per project, not per queued entry; the first try waits a minute after the queue first saw the tab gone
+            let b = reviveBudget.get(project);
+            if (b && now - Math.max(b.at, b.since) > REVIVE_STALE_MS) b = null;
+            if (!b) { b = { n: 0, at: 0, since: now, seen: now }; reviveBudget.set(project, b); }
+            // pumps only run while something is queued: a gap since the last gone-sighting means the tab was up (or nothing
+            // waited) meanwhile, so this is a new gone spell: its minute starts now; n and at stay (the cap survives re-dispatch)
+            else if (now - (b.seen ?? now) > REVIVE_SEEN_MS) b.since = now;
+            b.seen = now;
+            if (b.n >= REVIVE_MAX) {
+              if (now - b.at < REVIVE_GAP_MS) break;   // give the last try its minute
+              q.shift(); c.reply('rejected', 'not-running'); continue;
+            }
+            if (now - (b.n ? b.at : b.since) < REVIVE_GAP_MS) break;
+            b.n += 1; b.at = now;
+            let r; try { r = d.manage('start', project); } catch { r = { ok: false }; }
+            if (r && typeof r.then !== 'function' && r.ok === false) { q.shift(); c.reply('rejected', r.reason === 'locked' ? 'locked' : 'not-running'); continue; }
+            break;
+          }
+          q.shift(); c.reply('rejected', 'not-running'); continue;
+        }
+        if (s === 'ready') reviveBudget.delete(project);
         // 'busy' and 'starting' (no session id or no first prompt yet: the trust dialog may be up, v3.31) wait
         if (s !== 'ready') break;
         q.shift();
@@ -391,7 +421,7 @@ function setupLink(d) {
     return r;
   }
 
-  const pumpTimer = setInterval(pump, 1500);
+  const pumpTimer = setInterval(pump, PUMP_MS);
   pumpTimer.unref?.();
 
   // --- v3.35 one boss: dispatch (office_dispatch) and the reports of dispatched tasks
@@ -400,12 +430,12 @@ function setupLink(d) {
   const newId = () => require('crypto').randomBytes(8).toString('hex');
   /** A task for a project of this machine: the same queue and checks as a remote one. → { id, status, reason? } */
   /** onStatus(id, status, reason?) hears every status (queued, then delivered or rejected), also the later ones. */
-  function dispatchLocal(projectId, text, fromName, onStatus, { ttl = 0 } = {}) {
+  function dispatchLocal(projectId, text, fromName, onStatus, { ttl = 0, revive = false } = {}) {
     const s = C.sanitizeCommand(text);
     const id = newId();
     if (!s.ok) return { id, status: 'rejected', reason: s.reason };
     /** @type {any} */ let out = null;   // the latest answer so far ('delivered' may follow 'queued' at once)
-    onCommand({ device: { pub: SELF, name: fromName }, id, project: projectId, text: s.text, report: true, ttl, reply: (status, reason) => {
+    onCommand({ device: { pub: SELF, name: fromName }, id, project: projectId, text: s.text, report: true, ttl, revive, reply: (status, reason) => {
       out = { id, status, ...(reason ? { reason } : {}) };
       try { onStatus?.(id, status, reason); } catch { /* the caller's record */ }
     } });
@@ -481,6 +511,27 @@ function setupLink(d) {
     pump, dispatchLocal, dispatchRemote, scanReports, projOp,
     /** v3.46 a local task still waiting in a queue or for its report (startup: the HQ board marks the others lost). */
     remoteTaskOpen: (project) => remoteTaskOpen(queue, link, project),
+    /** v3.46 amendment: where a local task waits → { project, pos (1-based), len, expiresAt } or null (not queued). */
+    waitInfo(id) {
+      for (const [project, q] of queue) {
+        const i = q.findIndex((c) => c.id === id);
+        if (i >= 0) return { project, pos: i + 1, len: q.length, expiresAt: q[i].at + ttlOf(q[i]) };
+      }
+      return null;
+    },
+    /** v3.46 amendment: removes a task of this machine from its queue; it is answered 'rejected: cancelled'. → true when found. */
+    cancel(id) {
+      for (const [project, q] of queue) {
+        const i = q.findIndex((c) => c.id === id && c.device.pub === SELF);
+        if (i < 0) continue;
+        const [c] = q.splice(i, 1);
+        if (!q.length) queue.delete(project);
+        log(c.device.name, d.projects().find((x) => x.id === project)?.name || project, c.text, `${c.report ? 'task:' : ''}rejected:cancelled`);
+        c.reply('rejected', 'cancelled');
+        return true;
+      }
+      return false;
+    },
     knows: (id) => localTasks.has(id) || [...queue.values()].some((q) => q.some((c) => c.id === id)),
     /** The Link (tests; null while off). */
     link: () => link,

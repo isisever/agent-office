@@ -152,6 +152,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     openFolder: () => ipcRenderer.invoke('hq:openFolder'),
     report: (id) => ipcRenderer.invoke('hq:report', id),
     remoteOp: (key, op) => ipcRenderer.invoke('hq:remoteOp', key, op),
+    cancel: (id) => ipcRenderer.invoke('hq:cancel', id),
     onBoard: listen('hq:board'),
   },
   // v3.47 Routines: definitions only from this UI (no MCP tool, no peer); held approvals answered here

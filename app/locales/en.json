@@ -939,7 +939,18 @@
     },
     "off": "off",
     "stopped": "stopped",
-    "enabled": "HQ on/off"
+    "enabled": "HQ on/off",
+    "wait": {
+      "ready": "about to be typed into the {project} boss",
+      "busy": "waiting — {project} boss is busy",
+      "starting": "waiting — {project} boss is starting",
+      "asleep": "waiting — {project} boss is asleep, waking it",
+      "not-running": "waiting — {project} boss is not running, starting it",
+      "pos": "{n} of {len} in its queue",
+      "expires": "expires in {min} min",
+      "cancel": "Cancel",
+      "cancelTip": "Remove this task from the project's queue"
+    }
   },
   "routines": {
     "title": "Routines",
