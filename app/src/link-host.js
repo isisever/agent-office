@@ -14,6 +14,7 @@ const QUEUE_TTL_MS = 30 * 60 * 1000;    // a command that waited this long is dr
 const SELF = 'self';                    // v3.35 the device of a task dispatched to a project of this machine
 const REPORT_POLL_MS = 5000;
 const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/starts its gone boss at most this often
+const REVIVE_STALE_MS = 10 * 60 * 1000;  // a budget untouched this long starts over
 const REVIVE_GAP_MS = 60 * 1000;          // ... and not more than once a minute
 
 /**
@@ -315,11 +316,12 @@ function setupLink(d) {
     if (report && d.loginOf?.(project) === 'out') return done('rejected', 'logged-out');   // v3.35
     const q = queue.get(project) || [];
     if (q.length >= QUEUE_MAX) return done('rejected', 'queue-full');
-    q.push({ id, device, text, at: Date.now(), reply, report, ttl, revive: Boolean(revive) && device.pub === SELF, revives: 0, revivedAt: 0 });
+    q.push({ id, device, text, at: Date.now(), reply, report, ttl, revive: Boolean(revive) && device.pub === SELF });
     queue.set(project, q);
     done('queued');
     pump();
   }
+  const reviveBudget = new Map();   // project -> { n tries, at last try, since first seen gone }
   function pump() {
     const now = Date.now();
     for (const [project, q] of queue) {
@@ -331,15 +333,24 @@ function setupLink(d) {
         if (s === 'gone') {
           // v3.46 amendment: a local HQ task wakes a sleeping or starts a stopped boss (manage 'start'), a few times at
           // most, and waits for it; everything else (and a start that failed) is refused 'not-running' as before
-          if (c.revive && d.manage && c.revives < REVIVE_MAX) {
-            if (now - c.revivedAt < REVIVE_GAP_MS) break;
-            c.revives += 1; c.revivedAt = now;
+          if (c.revive && d.manage) {
+            // one budget per project, not per queued entry; the first try waits a minute after the queue first saw the tab gone
+            let b = reviveBudget.get(project);
+            if (b && now - Math.max(b.at, b.since) > REVIVE_STALE_MS) b = null;
+            if (!b) { b = { n: 0, at: 0, since: now }; reviveBudget.set(project, b); }
+            if (b.n >= REVIVE_MAX) {
+              if (now - b.at < REVIVE_GAP_MS) break;   // give the last try its minute
+              q.shift(); c.reply('rejected', 'not-running'); continue;
+            }
+            if (now - (b.n ? b.at : b.since) < REVIVE_GAP_MS) break;
+            b.n += 1; b.at = now;
             let r; try { r = d.manage('start', project); } catch { r = { ok: false }; }
             if (r && typeof r.then !== 'function' && r.ok === false) { q.shift(); c.reply('rejected', r.reason === 'locked' ? 'locked' : 'not-running'); continue; }
             break;
           }
           q.shift(); c.reply('rejected', 'not-running'); continue;
         }
+        if (s === 'ready') reviveBudget.delete(project);
         // 'busy' and 'starting' (no session id or no first prompt yet: the trust dialog may be up, v3.31) wait
         if (s !== 'ready') break;
         q.shift();
