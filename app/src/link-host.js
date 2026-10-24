@@ -16,6 +16,8 @@ const REPORT_POLL_MS = 5000;
 const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/starts its gone boss at most this often
 const REVIVE_STALE_MS = 10 * 60 * 1000;  // a budget untouched this long starts over
 const REVIVE_GAP_MS = 60 * 1000;          // ... and not more than once a minute
+const PUMP_MS = 1500;
+const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks between gone-sightings = a new gone spell
 
 /**
  * @param {{ app: any, safeStorage: any, ipcMain: any, send: (ch: string, ...a: any[]) => void,
@@ -337,7 +339,11 @@ function setupLink(d) {
             // one budget per project, not per queued entry; the first try waits a minute after the queue first saw the tab gone
             let b = reviveBudget.get(project);
             if (b && now - Math.max(b.at, b.since) > REVIVE_STALE_MS) b = null;
-            if (!b) { b = { n: 0, at: 0, since: now }; reviveBudget.set(project, b); }
+            if (!b) { b = { n: 0, at: 0, since: now, seen: now }; reviveBudget.set(project, b); }
+            // pumps only run while something is queued: a gap since the last gone-sighting means the tab was up (or nothing
+            // waited) meanwhile, so this is a new gone spell: its minute starts now; n and at stay (the cap survives re-dispatch)
+            else if (now - (b.seen ?? now) > REVIVE_SEEN_MS) b.since = now;
+            b.seen = now;
             if (b.n >= REVIVE_MAX) {
               if (now - b.at < REVIVE_GAP_MS) break;   // give the last try its minute
               q.shift(); c.reply('rejected', 'not-running'); continue;
@@ -415,7 +421,7 @@ function setupLink(d) {
     return r;
   }
 
-  const pumpTimer = setInterval(pump, 1500);
+  const pumpTimer = setInterval(pump, PUMP_MS);
   pumpTimer.unref?.();
 
   // --- v3.35 one boss: dispatch (office_dispatch) and the reports of dispatched tasks

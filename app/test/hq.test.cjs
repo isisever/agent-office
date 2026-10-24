@@ -394,15 +394,16 @@ test('v3.46 amendment: waitState names why a task waits', () => {
 test('v3.46 amendment: an HQ task wakes/starts a gone boss, waits for it, then is typed; at most 3 tries a minute apart', (t) => {
   const real = Date.now; let clock = real(); Date.now = () => clock;
   t.after(() => { Date.now = real; });
+  const adv = (ms) => { for (let e = 0; e < ms; e += 1500) { clock += 1500; host.pump(); } };   // real pumps tick every 1.5 s
   let tab = 'gone'; const ops = [];
   const { host, typed } = waitHost(t, { tabState: () => tab, manage: (op, id) => { ops.push([op, id]); return { ok: true }; } });
   const seen = [];
   const r = host.dispatchLocal('p1', 'scan the repo', 'HQ', (id, s, why) => seen.push([s, why]), { ttl: 3600000, revive: true });
   assert.equal(r.status, 'queued');
   assert.deepEqual(ops, []);   // a boss just stopped is not restarted at once
-  clock += 30000; host.pump();
+  adv(30000);
   assert.equal(ops.length, 0);
-  clock += 31000; host.pump();
+  adv(31000);
   assert.deepEqual(ops, [['start', 'p1']]);
   host.pump();
   assert.equal(ops.length, 1);   // not again within a minute
@@ -419,7 +420,7 @@ test('v3.46 amendment: an HQ task wakes/starts a gone boss, waits for it, then i
   const seen2 = [];
   host.dispatchLocal('p1', 'again', 'HQ', (id, s, why) => seen2.push([s, why]), { ttl: 3600000, revive: true });
   host.pump(); assert.equal(ops.length, 0);
-  for (let i = 0; i < 6; i++) { clock += 61000; host.pump(); }
+  adv(6 * 61000);
   assert.equal(ops.length, 3);
   assert.deepEqual(seen2.at(-1), ['rejected', 'not-running']);
 });
@@ -427,29 +428,48 @@ test('v3.46 amendment: an HQ task wakes/starts a gone boss, waits for it, then i
 test('v3.46 amendment: the revive budget is per project: several queued HQ tasks start the boss 3 times in all, then all are refused', (t) => {
   const real = Date.now; let clock = real(); Date.now = () => clock;
   t.after(() => { Date.now = real; });
+  const adv = (ms) => { for (let e = 0; e < ms; e += 1500) { clock += 1500; host.pump(); } };   // real pumps tick every 1.5 s
   const ops = [];
   const { host } = waitHost(t, { tabState: () => 'gone', manage: (op, id) => { ops.push([op, id]); return { ok: true }; } });
   const seen = [[], [], [], [], []];
   seen.forEach((a) => host.dispatchLocal('p1', 'x', 'HQ', (id, s, why) => a.push([s, why]), { ttl: 3600000, revive: true }));
   host.pump(); assert.equal(ops.length, 0);
-  for (let i = 0; i < 8; i++) { clock += 61000; host.pump(); }
+  adv(8 * 61000);
   assert.equal(ops.length, 3);
   for (const a of seen) assert.deepEqual(a.at(-1), ['rejected', 'not-running']);
+});
+
+test('v3.46 amendment: a cancelled wait does not carry its gone-spell start over: a later task waits a fresh minute', (t) => {
+  const real = Date.now; let clock = real(); Date.now = () => clock;
+  t.after(() => { Date.now = real; });
+  const adv = (ms) => { for (let e = 0; e < ms; e += 1500) { clock += 1500; host.pump(); } };
+  const ops = [];
+  const { host } = waitHost(t, { tabState: () => 'gone', manage: (op, id) => { ops.push([op, id]); return { ok: true }; } });
+  const a = host.dispatchLocal('p1', 'x', 'HQ', () => {}, { ttl: 3600000, revive: true });
+  adv(3000);                      // the queue saw the tab gone
+  assert.equal(host.cancel(a.id), true);
+  adv(5 * 60000);                 // the person ran and stopped the boss meanwhile; nothing queued, no pumps see it
+  host.dispatchLocal('p1', 'y', 'HQ', () => {}, { ttl: 3600000, revive: true });
+  adv(57000);
+  assert.equal(ops.length, 0);    // not restarted within a minute
+  adv(6000);
+  assert.equal(ops.length, 1);
 });
 
 test('v3.46 amendment: without revive a gone boss refuses at once; a failed start says why', (t) => {
   const real = Date.now; let clock = real(); Date.now = () => clock;
   t.after(() => { Date.now = real; });
+  const adv = (ms) => { for (let e = 0; e < ms; e += 1500) { clock += 1500; host.pump(); } };   // real pumps tick every 1.5 s
   let res = { ok: false, reason: 'locked' };
   const { host } = waitHost(t, { tabState: () => 'gone', manage: () => res });
   const a = []; host.dispatchLocal('p1', 'x', 'Boss', (id, s, why) => a.push([s, why]));
   assert.deepEqual(a.at(-1), ['rejected', 'not-running']);
   const b = []; host.dispatchLocal('p1', 'x', 'HQ', (id, s, why) => b.push([s, why]), { revive: true });
-  clock += 61000; host.pump();
+  adv(61000);
   assert.deepEqual(b.at(-1), ['rejected', 'locked']);
   res = { ok: false, reason: 'failed' };
   const c = []; host.dispatchLocal('p1', 'x', 'HQ', (id, s, why) => c.push([s, why]), { revive: true });
-  clock += 61000; host.pump();
+  adv(61000);
   assert.deepEqual(c.at(-1), ['rejected', 'not-running']);
 });
 
