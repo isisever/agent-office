@@ -1697,10 +1697,14 @@ function bossSid(tab) {
   return live || (P.isHqId(tab) ? validSid(lastSid.get(tab)) : '') || null;
 }
 /** A fixed inbox row (never report text). A row for HQ is a turn the person did not type: the minted request id ends. */
-/** v3.47 HQ's inbox file still has rows its plugin has not taken (it moves the file aside when it reads it) */
+/** v3.47 HQ's inbox file still has fresh rows its plugin has not taken (it moves the file aside when it reads it).
+ *  Rows older than 10 min no longer count: a file the plugin never empties must not hold routines until busy-timeout. */
 function inboxWaiting(sid) {
   if (!sid) return false;
-  try { return fs.statSync(path.join(app.getPath('home'), '.claude', 'agent-office', 'inbox', `${sid}.jsonl`)).size > 0; } catch { return false; }
+  try {
+    const st = fs.statSync(path.join(app.getPath('home'), '.claude', 'agent-office', 'inbox', `${sid}.jsonl`));
+    return st.size > 0 && Date.now() - st.mtimeMs < 10 * 60_000;
+  } catch { return false; }
 }
 function inboxRow(sid, tab, row) {
   if (P.isHqId(tab)) { hqMinter.clear(); hqWanted = true; }   // a report for HQ needs its pty (lazy start)
