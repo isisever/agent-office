@@ -114,7 +114,8 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
     mint({ origin = 'typed', run = '', ttlMs = 0 } = {}) {
       const id = `r${now().toString(36)}${rand()}`;
       const e = { at: now(), origin, ttl: ttlMs || (origin === 'routine' ? ROUTINE_MINT_MS : MINT_MS), run: String(run), live: true };
-      if (origin !== 'routine') { endRoutines(); current = { id, at: e.at }; }   // a routine mint never replaces the typed one
+      endRoutines();   // one live routine id at a time: a new mint (typed or routine) ends the others' no-ask
+      if (origin !== 'routine') current = { id, at: e.at };   // a routine mint never replaces the typed one
       all.set(id, e);
       if (all.size > 50) all.delete(all.keys().next().value);
       return id;

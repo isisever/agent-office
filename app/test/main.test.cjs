@@ -4209,7 +4209,7 @@ test('düz terminal sekmesi: ortamdan CLAUDE*/ANTHROPIC_*/AGENT_OFFICE_* düşer
   rtTest('routines: inbox rows end routine no-ask but keep the id issued; routine project runs write no HQ inbox row', () => {
     rtAssert.match(fn('inboxRow'), /hqMinter\.clear\(\)/);
     const r = fn('onOfficeReport');
-    rtAssert.ok(r.indexOf('if (rec.routine) { routinesOnDone(done); return; }') >= 0 && r.indexOf('if (rec.routine)') < r.indexOf('inboxRow('));
+    rtAssert.ok(r.indexOf('{ routinesOnDone(done); return; }') >= 0 && r.indexOf('if (rec.routine') < r.indexOf('inboxRow('));
     rtAssert.match(fn('hqRequestsDone'), /const done = routinesOnDone\(all\);/);
   });
   rtTest('routines: only the app UI writes definitions (routines:* IPC), runtime file atomic', () => {

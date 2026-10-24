@@ -8,6 +8,7 @@ const HQ = require('./hq');
 
 const MAX_ROUTINES = 20;
 const PROMPT_MAX = 8 * 1024;
+const PROJECT_PROMPT_MAX = PROMPT_MAX - 1024;   // a project run's text (prompt + wrapper) must fit office_dispatch's 8 KB
 const NAME_MAX = 60;
 const GRACE_MS = 10 * 60 * 1000;            // a slot this recent still counts as on time
 const CATCHUP_MAX_MS = 24 * 3600 * 1000;    // a missed slot older than this is skipped, never caught up
@@ -94,10 +95,10 @@ const quietEnd = (ms, quiet) => nextAfter({ kind: 'daily', at: quiet.to }, ms);
 const tzName = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } };
 
 /** A routine prompt without obvious secrets → { text, redacted } */
-function cleanPrompt(p) {
+function cleanPrompt(p, max = PROMPT_MAX) {
   const raw = String(p ?? '').replace(/\r\n?/g, '\n');
   let text = HQ.redact(raw);
-  while (Buffer.byteLength(text, 'utf8') > PROMPT_MAX) text = text.slice(0, Math.floor(text.length * 0.9));
+  while (Buffer.byteLength(text, 'utf8') > max) text = text.slice(0, Math.floor(text.length * 0.9));
   return { text: text.trim(), redacted: text !== raw && HQ.redact(raw) !== raw };
 }
 
@@ -107,9 +108,9 @@ function normalizeRoutine(raw, { now = Date.now(), newId } = {}) {
   const o = isObj(raw) ? raw : {};
   const id = /^rt[0-9a-f]{8}$/.test(String(o.id)) ? o.id : newId ? newId() : '';
   const name = line(o.name, NAME_MAX);
-  const prompt = cleanPrompt(o.prompt).text;
   const schedule = normalizeSchedule(o.schedule);
   const t = isObj(o.target) ? o.target : {};
+  const prompt = cleanPrompt(o.prompt, t.kind === 'project' ? PROJECT_PROMPT_MAX : PROMPT_MAX).text;
   const target = t.kind === 'hq' ? { kind: 'hq' } : t.kind === 'project' && /^[A-Za-z0-9_.-]{1,64}$/.test(String(t.projectId)) ? { kind: 'project', projectId: t.projectId } : null;
   if (!id || !name || !prompt || !schedule || !target) return null;
   const dflt = schedule.kind === 'hours' ? Math.min(24, Math.ceil(24 / /** @type {any} */ (schedule).every)) : 4;
@@ -163,7 +164,8 @@ function plan({ routines, cfg, file, now, tz = '', openRun = () => false, blocke
     if (r.paused || blocked(r) || !s) { f.sched[r.id] = { nextAt: nextAfter(r.schedule, now), lastCheckAt: now }; continue; }
     s.lastCheckAt = now;
     if (now < s.nextAt) continue;
-    const due = slotsBetween(r.schedule, s.lastSlotAt ?? s.nextAt - 1, now);
+    // a long absence: missed slots are counted back at most 7 days (an hourly routine never walks 500 slots per pass)
+    const due = slotsBetween(r.schedule, Math.max(s.lastSlotAt ?? s.nextAt - 1, now - 7 * CATCHUP_MAX_MS), now);
     if (!due.length) { s.nextAt = nextAfter(r.schedule, now); continue; }
     const L = due[due.length - 1];
     const older = due.length - 1;
@@ -228,7 +230,7 @@ function createWriteGate({ now = Date.now, holdMs = 2000 } = {}) {
 }
 
 module.exports = {
-  MAX_ROUTINES, PROMPT_MAX, GRACE_MS, CATCHUP_MAX_MS, JUMP_MS, OPEN_RUN, KEY_QUIET_MS,
+  MAX_ROUTINES, PROMPT_MAX, PROJECT_PROMPT_MAX, GRACE_MS, CATCHUP_MAX_MS, JUMP_MS, OPEN_RUN, KEY_QUIET_MS,
   parseHHMM, normalizeSchedule, nextAfter, slotsBetween, dayKey, inQuiet, quietEnd, tzName, cleanPrompt,
   normalizeRoutine, normalizeRoutines, normalizeCfg, normalizeFile, wokeUp, plan, manualGate, wrapText, outcomeOf, pruneRuns,
   hqBusy, createWriteGate,

@@ -250,6 +250,20 @@ test('approve twice sends once: takeHeld moves the row out of awaiting-consent; 
   assert.deepEqual([ex.expired, ex.board.tasks[0].status], [['hheld2'], 'expired']);
 });
 
+test('review fixes: one live routine id at a time; project prompts leave room for the wrapper; long absences clamp to 7 days', () => {
+  const m = HQ.createMinter();
+  const a = m.mint({ origin: 'routine' });
+  const b = m.mint({ origin: 'routine' });
+  assert.deepEqual([m.isLiveRoutine(a), m.isLiveRoutine(b), m.issued(a)], [false, true, true]);
+  const big = rt({ target: { kind: 'project', projectId: 'p1' }, prompt: 'x'.repeat(9000) });
+  const text = ROUT.wrapText({ routine: big, request: 'rabc123', slotAt: 0, t });
+  assert.ok(Buffer.byteLength(text) <= 8 * 1024);
+  const r = rt({ schedule: { kind: 'hours', every: 1 } });
+  const res = planOf({ routines: [r], file: { sched: { [r.id]: { nextAt: at(2026, 9, 1, 9), lastSlotAt: at(2026, 9, 1, 8) } } }, now: at(2026, 10, 24, 9) + 1000 });
+  assert.deepEqual(res.actions.map((x) => [x.kind, x.trigger]), [['skip', 'schedule'], ['run', 'schedule']]);
+  assert.ok(res.actions[0].missedCount <= 24 * 7);
+});
+
 test('pruneRuns keeps open runs, 90 days and 300 rows', () => {
   const now = at(2026, 10, 24);
   const runs = [{ id: 'a', status: 'waiting', at: 0 }, { id: 'b', status: 'ok', at: 0, finishedAt: 0 }, ...Array.from({ length: 400 }, (_, i) => ({ id: `c${i}`, status: 'ok', at: now }))];
