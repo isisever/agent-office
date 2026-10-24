@@ -1,0 +1,18 @@
+{
+  "repo": "JuliusBrussee/caveman",
+  "sha": "1f951fb4ad40ba63302c6e7f987147e034d599d9",
+  "license": "Apache-2.0 (parts MIT)",
+  "skills": [
+    "caveman",
+    "caveman-commit",
+    "caveman-help",
+    "caveman-review"
+  ],
+  "dropped": [
+    "skills/caveman-commit/README.md",
+    "skills/caveman-help/README.md",
+    "skills/caveman-review/README.md",
+    "skills/caveman/README.md"
+  ],
+  "patches": []
+}

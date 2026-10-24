@@ -1,0 +1,9 @@
+{
+  "name": "taste-skill",
+  "version": "2.1.4",
+  "description": "A strict frontend house style with a look-and-fix loop for landing pages, dashboards and app screens.",
+  "author": {
+    "name": "Leonxlnx"
+  },
+  "license": "MIT"
+}

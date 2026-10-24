@@ -1,0 +1,17 @@
+{
+  "repo": "zanwei/design-dna",
+  "sha": "593e39bc9e3652734653bd75544a333d7d43615e",
+  "license": "MIT",
+  "skills": [
+    "design-dna"
+  ],
+  "dropped": [
+    "skills/design-dna/scripts/test"
+  ],
+  "patches": [
+    {
+      "file": "skills/design-dna/SKILL.md",
+      "why": "no silent runtime npm install: ask the user before installing sharp"
+    }
+  ]
+}

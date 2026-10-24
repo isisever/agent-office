@@ -1,0 +1,24 @@
+{
+  "repo": "nextlevelbuilder/ui-ux-pro-max-skill",
+  "sha": "d14efff8ed1faa4187f004f79926f428c8074ec7",
+  "license": "MIT (ui-styling: Apache-2.0; fonts: SIL OFL 1.1)",
+  "skills": [
+    "banner-design",
+    "brand",
+    "design",
+    "design-system",
+    "slides",
+    "ui-styling",
+    "ui-ux-pro-max"
+  ],
+  "dropped": [
+    "skills/brand/scripts/tests",
+    "skills/design-system/scripts/tests",
+    "skills/design/scripts/logo/tests",
+    "skills/design/scripts/tests",
+    "skills/ui-styling/canvas-fonts",
+    "skills/ui-styling/scripts/tests",
+    "skills/ui-ux-pro-max/scripts/tests"
+  ],
+  "patches": []
+}

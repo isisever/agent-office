@@ -1,0 +1,9 @@
+{
+  "name": "ui-ux-pro-max",
+  "version": "2.15.0",
+  "description": "UI/UX design intelligence: styles, palettes, font pairings, charts and stack guidelines from a local database. Use when designing, building, or reviewing UI.",
+  "author": {
+    "name": "nextlevelbuilder"
+  },
+  "license": "MIT"
+}

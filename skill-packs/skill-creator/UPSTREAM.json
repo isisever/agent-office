@@ -1,0 +1,10 @@
+{
+  "repo": "anthropics/claude-plugins-official",
+  "sha": "58267944f92187b7d6a1c822165c96c81c864806",
+  "license": "Apache-2.0",
+  "skills": [
+    "skill-creator"
+  ],
+  "dropped": [],
+  "patches": []
+}

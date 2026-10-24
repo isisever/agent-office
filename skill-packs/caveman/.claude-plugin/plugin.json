@@ -1,0 +1,9 @@
+{
+  "name": "caveman",
+  "version": "4.0.1",
+  "description": "Terse communication mode on request (/caveman). Skills only: no hooks, no setup or gateway skill.",
+  "author": {
+    "name": "Julius Brussee"
+  },
+  "license": "Apache-2.0"
+}

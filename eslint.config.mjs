@@ -32,7 +32,7 @@ const browser = {
 }
 
 export default [
-  { ignores: ['**/node_modules/**', 'app/release/**', 'plugin/.claude-plugin/types/**', 'plugin/types/**'] },
+  { ignores: ['**/node_modules/**', 'app/release/**', 'plugin/.claude-plugin/types/**', 'plugin/types/**', 'skill-packs/*/**'] },
   js.configs.recommended,
   {
     linterOptions: { reportUnusedDisableDirectives: 'error' },

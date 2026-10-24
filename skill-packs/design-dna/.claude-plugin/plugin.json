@@ -1,0 +1,9 @@
+{
+  "name": "design-dna",
+  "version": "1.0.0",
+  "description": "Extract a design profile (tokens, style, effects) from screenshots or URLs and generate designs from it.",
+  "author": {
+    "name": "the design-dna authors"
+  },
+  "license": "MIT"
+}

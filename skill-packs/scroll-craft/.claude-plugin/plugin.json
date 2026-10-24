@@ -1,0 +1,10 @@
+{
+  "name": "nateherk-design",
+  "version": "0.3.1",
+  "description": "scroll-craft: premium scroll-driven interactive landing pages. Image and video generation uses a paid kie.ai API key.",
+  "author": {
+    "name": "Nate Herk"
+  },
+  "homepage": "https://github.com/nateherkai/scroll-craft",
+  "license": "MIT"
+}
