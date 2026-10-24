@@ -1153,3 +1153,16 @@ test('v3.34 relay: authenticated without a typed code is not success; spawn gets
   await new Promise((r) => setTimeout(r, 50));
   assert.deepEqual(replies.map((m) => [m.ok, m.reason]), [[false, 'failed']]);
 });
+
+test('owesReportFor counts an entry only while young (4 h TTL + 30 min)', (t) => {
+  let now = 1000;
+  const b = fakeLink(t, null);
+  b.now = () => now;
+  b.expectReport('o1', pubA, 'projX');
+  assert.equal(b.owesReportFor('projX'), true);
+  now += 4 * 3600 * 1000 + 29 * 60 * 1000;
+  assert.equal(b.owesReportFor('projX'), true);
+  now += 2 * 60 * 1000;
+  assert.equal(b.owesReportFor('projX'), false);
+  assert.equal(b.owesReport('o1'), true);   // still tracked for delivery, just no longer blocking depth
+});

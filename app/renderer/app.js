@@ -1,6 +1,7 @@
 // Wires everything together: sidebar (projects, accounts), per-project terminal(s) (tabs, v3.0), office and theme colors.
 import { mountTerminal, pasteIntoFocused } from './terminal.js';
 import { mountSidebar } from './sidebar.js';
+import { mountHq } from './hq-board.js';
 import { mountLogin } from './login.js';
 import { mountDevices, mergeRemote } from './devices.js';
 import { setLang, onLang, t } from './i18n.js';
@@ -48,7 +49,11 @@ function tabOf(p) {
   const n = activeTab.get(p.id);
   return tabsOf(p).some((x) => x.n === n) ? n : MAIN_TAB;
 }
-const activeProject = () => projects.find((p) => p.id === activeId) || null;
+// v3.46 HQ: selected in this window only (main's activeId stays a project); its pane is pty 'hq'
+const HQ_ROW = { id: 'hq', name: 'HQ', hq: true };
+let hqSelected = false;
+let hqUi = null;
+const activeProject = () => (hqSelected ? HQ_ROW : projects.find((p) => p.id === activeId) || null);
 /** pty id of the visible terminal. */
 const activePty = () => { const p = activeProject(); return p ? tabPtyId(p.id, tabOf(p)) : null; };
 // While the login overlay is open, focus stays on its terminal.
@@ -163,7 +168,7 @@ function createPane(id) {
 }
 
 function syncPanes() {
-  const ids = new Set(projects.flatMap(ptyIdsOf).filter((id) => !isLoginId(id)));
+  const ids = new Set([HQ_ROW, ...projects].flatMap(ptyIdsOf).filter((id) => !isLoginId(id)));
   for (const [id, p] of panes) {
     if (ids.has(id)) continue;
     p.term.destroy();
@@ -316,7 +321,7 @@ function render() {
   if (!projects.some((p) => p.id === activeId)) activeId = projects[0]?.id ?? null;
   syncPanes();
   showActive();
-  sidebar?.setState({ projects, activeId, status, accounts });
+  sidebar?.setState({ projects, activeId: hqSelected ? HQ_ROW.id : activeId, status, accounts });
   setTitleProject();
   const name = activeProject()?.name ?? null;
   if (office && name !== focusName) {
@@ -361,7 +366,12 @@ async function mcpChange(call) {
 }
 
 function selectProject(id) {
+  if (id === HQ_ROW.id) { hqSelected = true; hqUi?.setSelected(true); render(); return focusActive(); }
   if (!id || !projects.some((p) => p.id === id)) return;
+  const wasHq = hqSelected;
+  hqSelected = false;
+  hqUi?.setSelected(false);
+  if (wasHq && id === activeId) { render(); focusActive(); return; }
   if (id !== activeId) {
     activeId = id; // show immediately; onChange confirms
     render();
@@ -879,3 +889,6 @@ try { applyProjects(await api.projects.list()); } catch (e) { console.error(e); 
 
 // Files dropped outside the terminal must not navigate the window to that file.
 for (const ev of ['dragover', 'drop']) document.addEventListener(ev, (e) => e.preventDefault());
+
+// v3.46 HQ: the pinned row above PROJECTS, the Board in place of the office, paired devices' projects in the list
+hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac });

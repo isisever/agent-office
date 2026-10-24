@@ -22,6 +22,7 @@ import type { StopInput } from './finish'
 import { appendEntry, directoryProjects, entryOf, JOURNAL_FILE, LOOKBACK_MS, newsText, parseJournal, placeOfDir, selectNews } from './journal'
 import type { Host, JournalSeen, OfficeProject } from './journal'
 import { readyText, ReportTracker, typedTaskId, writeReport } from './reports'
+import { doneText, HQ_SECTION_ID, hqText, sectionKind } from './hq'
 
 // Claude Code side of Agent Office: writes agent arrivals, tools, deliveries and background shells to
 // ~/.claude/agent-office/sessions/<session>.json. The office itself is drawn by the
@@ -73,6 +74,7 @@ const STRINGS = {
     noNode: 'Node.js was not found on PATH; the office viewer needs it. Install Node.js 18+ and try again.',
     task: (text: string) => `Task from Agent Office: ${text}\n\nIf it fits, split the work across subagents and run them in parallel.`,
     reportReady: (id: string, project: string, machine: string) => `Remote task #${id} on ${project}@${machine} finished; read it with office_reports.`,
+    requestDone: (request: string, n: number) => `Request #${request} finished (${n} tasks); read them with office_board and office_reports, save the summary with office_summary and answer.`,
     stats: {
       heading: (date: string) => `Agent Office · today (${date})`,
       delivered: (count: number, failed: number, time: string) =>
@@ -110,6 +112,7 @@ const STRINGS = {
     noNode: "Node.js PATH'te bulunamadı; ofis görüntüleyicisi buna ihtiyaç duyar. Node.js 18+ kurup yeniden dene.",
     task: (text: string) => `Agent Ofis'ten görev: ${text}\n\nUygunsa işi alt agent'lara bölerek paralel yürüt.`,
     reportReady: (id: string, project: string, machine: string) => `Uzak görev #${id} (${project}@${machine}) bitti; office_reports ile oku.`,
+    requestDone: (request: string, n: number) => `İstek #${request} bitti (${n} görev); office_board ve office_reports ile oku, özeti office_summary ile kaydet ve yanıtla.`,
     stats: {
       heading: (date: string) => `Agent Ofis · bugün (${date})`,
       delivered: (count: number, failed: number, time: string) =>
@@ -791,14 +794,14 @@ async function submitTasks($: EngineInterface, raw: string) {
     })
     .filter(
       (t): t is { at: number; text?: string; kind?: string } =>
-        t !== null && typeof t === 'object' && typeof t.at === 'number' && t.at > inboxSeen && (Boolean(t.text) || t.kind === 'report-ready'),
+        t !== null && typeof t === 'object' && typeof t.at === 'number' && t.at > inboxSeen && (Boolean(t.text) || t.kind === 'report-ready' || t.kind === 'request-done'),
     )
   if (tasks.length === 0) return
   inboxSeen = await update($, inboxAtom, () => Math.max(...tasks.map(t => t.at)))
   for (const task of tasks) {
     // a report-ready row is a fixed notice with its own wrapper, never a task, and carries no report text (v3.35)
-    const ready = task.kind === 'report-ready' ? readyText(task, t.reportReady) : undefined
-    if (task.kind === 'report-ready' && !ready) continue
+    const ready = task.kind === 'report-ready' ? readyText(task, t.reportReady) : task.kind === 'request-done' ? doneText(task, t.requestDone) : undefined
+    if ((task.kind === 'report-ready' || task.kind === 'request-done') && !ready) continue
     await $.prompt.submit({ asUser: true, text: ready ?? t.task(task.text ?? '') })
   }
 }
@@ -1360,7 +1363,10 @@ export const register: Register = on => {
     const sections = [...result.sections]
     const isLoopManager =
       (await $.env.get('AGENT_OFFICE_MANAGER')) === '1' && !e.traits.includes('teammate') && e.tools.some(tool => AGENT_TOOLS.includes(tool))
-    if (isLoopManager && !sections.some(section => section.id === MANAGER_SECTION_ID)) {
+    // HQ (v3.46): its own brief instead of the manager's, never both
+    const kind = sectionKind({ hq: (await $.env.get('AGENT_OFFICE_HQ')) === '1' && !e.traits.includes('teammate'), manager: isLoopManager })
+    if (kind === 'hq' && !sections.some(section => section.id === HQ_SECTION_ID)) sections.push({ id: HQ_SECTION_ID, text: hqText(), scope: 'session' as const })
+    if (kind === 'manager' && !sections.some(section => section.id === MANAGER_SECTION_ID)) {
       const pinned = pinnedModel(await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL_FORCE'), await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL'))
       sections.push({ id: MANAGER_SECTION_ID, text: managerText(pinned), scope: 'session' as const })
     }

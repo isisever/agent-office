@@ -7,6 +7,8 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const C = require('./link-core.js');
 
+const OWED_MS = 4 * 3600 * 1000 + 30 * 60 * 1000;
+
 class Link extends EventEmitter {
   /**
    * @param {{ keyPair: { publicKey: Buffer, secretKey: Buffer }, name: string, devices?: C.Device[], secrets?: Record<string, string>,
@@ -557,7 +559,7 @@ class Link extends EventEmitter {
     let raw = null;
     try { raw = this.reportsFile && JSON.parse(fs.readFileSync(this.reportsFile, 'utf8')); } catch { return out; }
     for (const [id, r] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
-      if (r && typeof r.pub === 'string' && (r.report === null || C.cleanReport(r.report))) out.set(id, { pub: r.pub, report: r.report && C.cleanReport(r.report), sent: r.sent === true, at: Number(r.at) || 0 });
+      if (r && typeof r.pub === 'string' && (r.report === null || C.cleanReport(r.report))) out.set(id, { pub: r.pub, report: r.report && C.cleanReport(r.report), sent: r.sent === true, at: Number(r.at) || 0, ...(typeof r.project === 'string' ? { project: r.project } : {}) });
     }
     return out;
   }
@@ -567,12 +569,15 @@ class Link extends EventEmitter {
     if (!this.reportsFile) return;
     try {
       fs.mkdirSync(path.dirname(this.reportsFile), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(this.reportsFile, JSON.stringify(Object.fromEntries(keep.map(([id, r]) => [id, { pub: r.pub, report: r.report, sent: r.sent, at: r.at }]))), { mode: 0o600 });
+      fs.writeFileSync(this.reportsFile, JSON.stringify(Object.fromEntries(keep.map(([id, r]) => [id, { pub: r.pub, report: r.report, sent: r.sent, at: r.at, ...(r.project ? { project: r.project } : {}) }]))), { mode: 0o600 });
     } catch { /* best effort */ }
   }
   /** A task from that device was typed with report: its report is owed to it. */
-  expectReport(id, pub) { this.reportsOut.set(id, { pub, report: null, sent: false, at: this.now() }); this.saveReports(); }
+  expectReport(id, pub, project = '') { this.reportsOut.set(id, { pub, report: null, sent: false, at: this.now(), ...(project ? { project } : {}) }); this.saveReports(); }
   owesReport(id) { const r = this.reportsOut.get(id); return Boolean(r && r.report === null); }
+  /** v3.46 depth 1: a task from a paired device was typed into this project and its report is still owed. */
+  /** A device task still owes a report for this project only while young: the 4 h queue TTL + 30 min slack (reports-out persists, a lost one must not refuse 'depth' forever). */
+  owesReportFor(project) { return [...this.reportsOut.values()].some((r) => r.report === null && r.project === project && this.now() - r.at < OWED_MS); }
   /** The report of a task that device dispatched: sent now when it is connected, else on its next hello. */
   sendReport(id, report) {
     const r = this.reportsOut.get(id);
@@ -612,7 +617,7 @@ class Link extends EventEmitter {
   flushTo(pub, conn) {
     if (!this.snap || this.sentJson.get(pub) === this.snapJson) return;
     this.sentJson.set(pub, this.snapJson);
-    this.write(conn, { t: 'state', seq: ++this.seq, snap: this.snap });
+    this.write(conn, { t: 'state', seq: ++this.seq, snap: C.snapshotFor(this.snap, C.mayManage(this.devices, this.secrets, pub)) });
   }
 
   // --- v3.31 capabilities, v3.32 machine resources and catalog
