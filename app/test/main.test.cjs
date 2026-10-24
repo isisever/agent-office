@@ -4197,7 +4197,7 @@ test('düz terminal sekmesi: ortamdan CLAUDE*/ANTHROPIC_*/AGENT_OFFICE_* düşer
     rtAssert.match(fn('typePrompt'), /if \(P\.isHqId\(id\)\) hqGate\.hold\(\);/);
     rtAssert.match(fn('typePrompt'), /hqGate\.release\(\)/);
     rtAssert.match(src, /if \(P\.isHqId\(id\)\) \{ hqLastKey = Date\.now\(\); if \(hqGate\.queue\(d\)\) return; \}/);
-    rtAssert.match(fn('deliverRun'), /ROUT\.hqBusy\(\{ state: tabStateOf\(HQ\.HQ_ID\), lastKeyAt: hqLastKey, now, onScreen: hqOnScreen\(\) \}\)/);
+    rtAssert.match(fn('deliverRun'), /ROUT\.hqBusy\(\{ state: tabStateOf\(HQ\.HQ_ID\), lastKeyAt: hqLastKey, now, onScreen: hqOnScreen\(\), inboxWaiting: inboxWaiting\(bossSid\(HQ\.HQ_ID\)\) \}\)/);
   });
   rtTest('routines: approve leaves awaiting-consent before any await (twice sends once); never a modal for routines', () => {
     const a = fn('approveHeld');

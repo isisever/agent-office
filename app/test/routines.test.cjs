@@ -272,3 +272,106 @@ test('pruneRuns keeps open runs, 90 days and 300 rows', () => {
   assert.equal(kept[0].id, 'a');
   assert.ok(!kept.some((r) => r.id === 'b'));
 });
+
+// --- Phase 1 review fixes (v3.47)
+const MAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const mainFn = (name) => { const i = MAIN_SRC.indexOf(`function ${name}(`); assert.ok(i >= 0, name); return MAIN_SRC.slice(i, MAIN_SRC.indexOf('\n}\n', i)); };
+
+test('restart keeps held cards: markLost skips awaiting-consent; a run whose held cards are all gone is found and ends', () => {
+  let b = HQ.addTask(HQ.emptyBoard(), { id: 'hheld1', request: 'r1', title: 't', project: 'p', status: 'awaiting-consent' }, 1000);
+  b = HQ.addTask(b, { id: 'tq1', request: 'r1', title: 't', project: 'p', status: 'queued' }, 1000);
+  const after = HQ.markLost(b, () => false, 2000);
+  assert.deepEqual(after.tasks.map((x) => [x.id, x.status]).sort(), [['hheld1', 'awaiting-consent'], ['tq1', 'lost']]);
+  const held = new Set(after.tasks.filter((x) => x.status === 'awaiting-consent').map((x) => x.id));
+  const runs = [{ id: 'ru1', status: 'awaiting-consent', held: ['hheld1'] }, { id: 'ru2', status: 'awaiting-consent', held: ['hgone'] }, { id: 'ru3', status: 'awaiting-consent' }, { id: 'ru4', status: 'running', held: ['hgone'] }];
+  assert.deepEqual(ROUT.staleHeldRuns(runs, held).map((r) => r.id), ['ru2', 'ru3']);
+  const body = mainFn('setupRoutines');
+  assert.match(body, /ROUT\.staleHeldRuns\(rt\(\)\.runs, heldIds\)\) finishRun\(run, 'attention', 'lost'\)/);
+});
+
+test('a project run id stops being live after its dispatch; no-ask for a project routine only for its own project', () => {
+  const m = HQ.createMinter();
+  const rid = m.mint({ origin: 'routine' });
+  m.endLive(rid);
+  assert.deepEqual([m.issued(rid), m.isLiveRoutine(rid)], [true, false]);
+  assert.equal(HQ.consentFor({ setting: true, remote: false, request: rid, minter: m, routineNoAsk: true }), 'held');
+  const proj = rt({ noAsk: true, target: { kind: 'project', projectId: 'p1' } });
+  assert.equal(ROUT.routineNoAsk(proj, { projectId: 'p1' }), true);
+  assert.equal(ROUT.routineNoAsk(proj, { projectId: 'p2' }), false);
+  assert.equal(ROUT.routineNoAsk(proj, { projectId: '' }), false);
+  assert.equal(ROUT.routineNoAsk(proj, { remote: true, projectId: 'p1' }), false);
+  assert.equal(ROUT.routineNoAsk(rt({ noAsk: true }), { projectId: 'p9' }), true);   // an HQ routine: any local project
+  assert.equal(ROUT.routineNoAsk(rt({ noAsk: false }), { projectId: 'p9' }), false);
+  assert.match(mainFn('deliverRun'), /await hqDispatch\(\{[^\n]*\n\s*hqMinter\.endLive\(run\.request\)/);
+});
+
+test('HQ routine turn: liveness ends when the turn is over; not typed while HQ inbox rows wait', () => {
+  const now = 10 * 60e3;
+  assert.equal(ROUT.hqTurn({ status: 'typed', tab: 'busy', typedAt: now, now }), 'busy');
+  assert.equal(ROUT.hqTurn({ status: 'typed', tab: 'ready', typedAt: now - 60e3, now }), 'wait');
+  assert.equal(ROUT.hqTurn({ status: 'typed', tab: 'ready', typedAt: now - 3 * 60e3, now }), 'over');
+  assert.equal(ROUT.hqTurn({ status: 'running', tab: 'ready', typedAt: now, now }), 'over');   // busy → ready
+  assert.equal(ROUT.hqTurn({ status: 'running', tab: 'gone', typedAt: now, now }), 'over');
+  assert.equal(ROUT.hqTurn({ status: 'running', tab: 'starting', typedAt: now, now }), 'wait');
+  assert.match(mainFn('deliverRun'), /if \(turn === 'wait'\) return;\n\s*hqMinter\.endLive\(run\.request\)/);
+  assert.equal(ROUT.hqBusy({ state: 'ready', now: 1e6, inboxWaiting: true }), 'busy');
+  assert.equal(ROUT.hqBusy({ state: 'ready', now: 1e6, inboxWaiting: false }), 'ready');
+  assert.match(mainFn('deliverRun'), /inboxWaiting: inboxWaiting\(bossSid\(HQ\.HQ_ID\)\)/);
+});
+
+test('pty:shown sets the shown tab in main (HQ on screen even when HQ never slept)', () => {
+  const line = MAIN_SRC.split('\n').find((l) => l.startsWith("ipcMain.on('pty:shown'"));
+  assert.ok(line);
+  const handlers = {};
+  const run = new Function('ipcMain', 'ROUT', 'HQ', 'win', `let shownTab = ''; ${line}\n${MAIN_SRC.split('\n').find((l) => l.startsWith('const hqOnScreen'))}\nreturn { onScreen: () => hqOnScreen(), tab: () => shownTab };`);
+  const w = { isFocused: () => true, isMinimized: () => false };
+  const s = run({ on: (ch, fn) => { handlers[ch] = fn; } }, ROUT, HQ, w);
+  handlers['pty:shown']({}, 'hq');
+  assert.deepEqual([s.tab(), s.onScreen()], ['hq', true]);
+  handlers['pty:shown']({}, 'aaaaaaaaaaaa:0');
+  assert.deepEqual([s.tab(), s.onScreen()], ['aaaaaaaaaaaa:0', false]);
+  handlers['pty:shown']({}, { bad: 1 });
+  assert.equal(s.tab(), '');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
+  const show = app.slice(app.indexOf('function showActive('), app.indexOf('if (shownId === visible) return;'));
+  assert.match(show, /api\.pty\.shown\?\.\(visible \|\| ''\)/);   // sent before the early return, for every tab change
+});
+
+test('off-id dispatches are held only while the HQ routine id is live (the person\'s own requests go through after)', () => {
+  const m = HQ.createMinter();
+  const rid = m.mint({ origin: 'routine' });
+  assert.equal(HQ.holdsOffId({ approved: false, request: HQ.ADHOC, minter: m, openRoutine: rid }), true);
+  assert.equal(HQ.holdsOffId({ approved: false, request: rid, minter: m, openRoutine: rid }), false);
+  assert.equal(HQ.holdsOffId({ approved: true, request: HQ.ADHOC, minter: m, openRoutine: rid }), false);
+  m.endLive(rid);
+  assert.equal(HQ.holdsOffId({ approved: false, request: HQ.ADHOC, minter: m, openRoutine: rid }), false);
+  const typed = m.mint();
+  assert.equal(HQ.holdsOffId({ approved: false, request: typed, minter: m, openRoutine: rid }), false);
+  assert.equal(HQ.holdsOffId({ approved: false, request: typed, minter: m, openRoutine: '' }), false);
+});
+
+test('approve with a lost routines.json entry ends the card; expiry reports finished requests; Allow restarts the run clock', () => {
+  const body = mainFn('approveHeld');
+  assert.match(body, /if \(!h\) \{ saveHqBoard\(board\); hqStatus\(heldId, 'rejected', 'lost'\);/);
+  const old = HQ.addTask(HQ.emptyBoard(), { id: 'hheld2', request: 'r2', title: 't', project: 'p', status: 'awaiting-consent' }, 0);
+  const ex = HQ.expireHeld(old, HQ.HELD_MS + 1);
+  assert.deepEqual(ex.done.map((d) => d.id), ['r2']);
+  assert.deepEqual(HQ.expireHeld(old, 1).done, []);
+  assert.match(mainFn('routinesTick'), /const \{ board, expired, done \} = HQ\.expireHeld[^\n]*\n[^\n]*\n\s*saveHqBoard\(board\);\n\s*hqRequestsDone\(done\);/);
+  const run = { status: 'awaiting-consent', typedAt: 5 };
+  ROUT.approveRun(run, true, 99);
+  assert.deepEqual([run.status, run.typedAt], ['running', 99]);
+  const declined = { status: 'awaiting-consent', typedAt: 5 };
+  ROUT.approveRun(declined, false, 99);
+  assert.deepEqual([declined.status, declined.typedAt], ['running', 5]);
+});
+
+test('routines.json: a tick alone (lastTickAt) is written at most once a minute; any other change at once', () => {
+  const f = { sched: { a: { nextAt: 1 } }, lastTickAt: 1000, tz: 'X', runs: [], held: {} };
+  const w = { key: ROUT.persistKey(f), tickAt: 1000 };
+  assert.equal(ROUT.shouldPersist(w, { ...f, lastTickAt: 6000 }, 6000), false);
+  assert.equal(ROUT.shouldPersist(w, { ...f, lastTickAt: 61000 }, 61000), true);
+  assert.equal(ROUT.shouldPersist(w, { ...f, lastTickAt: 6000, runs: [{ id: 'ru1' }] }, 6000), true);
+  assert.equal(ROUT.shouldPersist(w, { ...f, lastTickAt: 6000, sched: {} }, 6000), true);
+  assert.equal(ROUT.shouldPersist({ key: '', tickAt: 0 }, f, 1000), true);
+});

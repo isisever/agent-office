@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onExit: listen('pty:exit'),
     restart: (id) => ipcRenderer.send('pty:restart', id),
     wake: (id) => ipcRenderer.send('pty:wake', id),     // the tab is shown: a sleeping claude starts
+    shown: (id) => ipcRenderer.send('pty:shown', id),   // v3.47 the tab on screen changed ('' = none)
     onReloaded: listen('pty:reloaded'),                 // v3.11: restarted in its session because its MCP servers changed
     onSleep: listen('pty:sleep'),                       // an idle background claude was ended to save memory
   },

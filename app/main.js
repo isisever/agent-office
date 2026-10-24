@@ -1697,6 +1697,11 @@ function bossSid(tab) {
   return live || (P.isHqId(tab) ? validSid(lastSid.get(tab)) : '') || null;
 }
 /** A fixed inbox row (never report text). A row for HQ is a turn the person did not type: the minted request id ends. */
+/** v3.47 HQ's inbox file still has rows its plugin has not taken (it moves the file aside when it reads it) */
+function inboxWaiting(sid) {
+  if (!sid) return false;
+  try { return fs.statSync(path.join(app.getPath('home'), '.claude', 'agent-office', 'inbox', `${sid}.jsonl`)).size > 0; } catch { return false; }
+}
 function inboxRow(sid, tab, row) {
   if (P.isHqId(tab)) { hqMinter.clear(); hqWanted = true; }   // a report for HQ needs its pty (lazy start)
   const inbox = path.join(app.getPath('home'), '.claude', 'agent-office', 'inbox');
@@ -1814,9 +1819,11 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   const machine = String(args.machine || '').trim();
   const remote = Boolean(key) || !isHere(machine);
   const rrun = routineRunOfRequest(request);
-  const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: Boolean(rrun && routineById(rrun.routine)?.noAsk) });
-  // during an open HQ routine turn, a dispatch without that routine's id is held too (never the typed path or a modal)
-  if (consent === 'held' || (!approved && !hqMinter.isRoutine(request) && openHqRoutineRequest())) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
+  const target = key ? null : byName(state.projects, args.project);
+  const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '' });   // a project routine: only its own project
+  const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: noAsk });
+  // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
+  if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
   if (consent === 'app') {
     if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
     // two dispatches can wait on dialogs at once: re-check the caps on the fresh board after the answer
@@ -1929,18 +1936,19 @@ ipcMain.handle('hq:report', (_e, id) => { const f = HQ.taskFile(hqDir(), String(
 // written only here). Runs only while the app is open; missed slots follow each routine's policy at the next tick.
 const rtFileName = () => path.join(hqDir(), 'routines.json');
 let rtMem = null;
-let rtWritten = '';
+let rtWritten = { key: '', tickAt: 0 };   // what is on disk (lastTickAt aside) and its lastTickAt
 let rtSettleUntil = 0;   // after start (60 s) and wake (30 s) nothing is typed yet
 const rtFailNoticed = new Set();   // `${routine}:${day}`: a failure notifies once per routine per day
 const rt = () => { if (!rtMem) rtMem = ROUT.normalizeFile(SF.readState(rtFileName()).raw); return rtMem; };
 function saveRt() {
   const f = rt();
   f.runs = ROUT.pruneRuns(f.runs, Date.now());
+  if (!ROUT.shouldPersist(rtWritten, f, Date.now())) return;   // a tick alone (lastTickAt) writes at most once a minute
+  const changed = ROUT.persistKey(f) !== rtWritten.key;
+  rtWritten = { key: ROUT.persistKey(f), tickAt: Date.now() };
   const text = JSON.stringify(f);
-  if (text === rtWritten) return;
-  rtWritten = text;
   try { SF.writeAtomic(rtFileName(), text); } catch (e) { console.error('routines:', e.message); }
-  send('routines:changed', routinesView());
+  if (changed) send('routines:changed', routinesView());
 }
 const routineById = (id) => (state.routines || []).find((r) => r.id === id) || null;
 const routineRunOfRequest = (request) => (request ? rt().runs.find((r) => r.request === request) || null : null);
@@ -2013,11 +2021,13 @@ function holdDispatch(args, request, rrun) {
 async function approveHeld(heldId, allow) {
   const { board, ok } = HQ.takeHeld(loadHqBoard(), String(heldId));
   const h = rt().held[heldId];
-  if (!ok || !h) return { ok: false, reason: 'not-held' };
+  if (!ok) return { ok: false, reason: 'not-held' };
+  // the card is still awaiting consent but its routines.json entry is gone: it can never be sent, so it ends now
+  if (!h) { saveHqBoard(board); hqStatus(heldId, 'rejected', 'lost'); return { ok: false, reason: 'not-held' }; }
   saveHqBoard(board);
   delete rt().held[heldId];
   const run = rt().runs.find((r) => r.id === h.run);
-  if (run?.status === 'awaiting-consent') run.status = 'running';
+  ROUT.approveRun(run, allow, Date.now());
   saveRt();
   if (!allow) { hqStatus(heldId, 'rejected', 'declined'); return { ok: true }; }
   const r = await hqDispatch(h.args, { approved: true, excludeId: heldId });
@@ -2038,7 +2048,7 @@ async function deliverRun(run, now) {
     if (problem) return finishRun(run, 'failed', problem);
     if (routine.target.kind === 'hq') {
       const running = terms.has(HQ.HQ_ID);
-      const st = running ? ROUT.hqBusy({ state: tabStateOf(HQ.HQ_ID), lastKeyAt: hqLastKey, now, onScreen: hqOnScreen() }) : 'cold';
+      const st = running ? ROUT.hqBusy({ state: tabStateOf(HQ.HQ_ID), lastKeyAt: hqLastKey, now, onScreen: hqOnScreen(), inboxWaiting: inboxWaiting(bossSid(HQ.HQ_ID)) }) : 'cold';
       if (st !== 'ready' && st !== 'cold') { if (now - Math.max(run.at, run.notBefore || 0) > 2 * 3600 * 1000) finishRun(run, 'failed', 'busy-timeout'); return; }
       // the request id is minted now, when the prompt is typed (not when the run was recorded)
       hqMinter.clear();   // the person's typed id is not usable in a routine turn
@@ -2055,6 +2065,7 @@ async function deliverRun(run, now) {
     saveRt();
     const text = ROUT.wrapText({ routine, request: run.request, slotAt: run.slotAt, t: T });
     const r = await hqDispatch({ project: p.name, title: routine.name, task: text, request: run.request });
+    hqMinter.endLive(run.request);   // the dispatch is done: HQ cannot borrow this id (office_board shows it) for no-ask
     if (r.status === 'rejected') {
       hqMinter.endRun(run.request);
       if (r.reason === 'open-cap' && now - Math.max(run.at, run.notBefore || 0) < 3600 * 1000) { Object.assign(run, { status: 'waiting', notBefore: now + 5 * 60 * 1000 }); delete run.request; return saveRt(); }
@@ -2067,10 +2078,10 @@ async function deliverRun(run, now) {
   if ((run.status === 'typed' || run.status === 'running') && now - (run.typedAt || run.at) > HQ.HQ_TTL_MS + 3600 * 1000) return finishRun(run, 'attention', run.kind === 'hq' ? 'no-summary' : 'no-report');
   if (run.kind !== 'hq' || (run.status !== 'typed' && run.status !== 'running')) return;
   // an HQ run without office_summary: once HQ is idle, 2 min with nothing dispatched or 10 min after its tasks ended
-  const st = terms.has(HQ.HQ_ID) ? tabStateOf(HQ.HQ_ID) : 'gone';
-  if (st === 'busy') { run.status = 'running'; run.idleSince = 0; return; }
-  if (st !== 'ready' && st !== 'gone') return;
-  if (run.status === 'typed' && now - (run.typedAt || now) < 2 * 60 * 1000) return;
+  const turn = ROUT.hqTurn({ status: run.status, tab: terms.has(HQ.HQ_ID) ? tabStateOf(HQ.HQ_ID) : 'gone', typedAt: run.typedAt, now });
+  if (turn === 'busy') { run.status = 'running'; run.idleSince = 0; return; }
+  if (turn === 'wait') return;
+  hqMinter.endLive(run.request);   // the routine's turn is over: its id no longer dispatches without asking
   run.idleSince = run.idleSince || now;
   const tasks = loadHqBoard().tasks.filter((t) => t.request === run.request);
   if (tasks.some((t) => !HQ.TERMINAL.has(t.status))) return;
@@ -2089,9 +2100,10 @@ async function routinesTick() {
     Object.assign(f, { sched: file.sched, lastTickAt: file.lastTickAt, tz: file.tz });
     for (const a of actions) { const r = routineById(a.routine); if (r) addRun(a, r, now); }
     // held tasks not answered within 12 h expire; their run ends with attention
-    const { board, expired } = HQ.expireHeld(loadHqBoard(), now);
+    const { board, expired, done } = HQ.expireHeld(loadHqBoard(), now);
     if (expired.length) {
       saveHqBoard(board);
+      hqRequestsDone(done);
       for (const id of expired) { const run = rt().runs.find((x) => x.id === rt().held[id]?.run); delete rt().held[id]; if (run) finishRun(run, 'attention', 'expired'); }
     }
     for (const run of f.runs.filter((x) => ROUT.OPEN_RUN.has(x.status)).reverse()) await deliverRun(run, now);
@@ -2104,6 +2116,10 @@ function setupRoutines() {
   // after a restart a run that was typed or dispatched has lost its turn; held approvals stay answerable
   // (a project run whose task the link still queues keeps waiting for its report)
   for (const run of rt().runs) if ((run.status === 'typed' || run.status === 'running') && !(run.kind === 'project' && run.tasks.some((id) => linkHost?.knows(id)))) finishRun(run, 'failed', 'lost');
+  // a run waiting on held cards that are all gone can never go on (else every slot would skip as overlap)
+  const heldIds = new Set(loadHqBoard().tasks.filter((t) => t.status === 'awaiting-consent').map((t) => t.id));
+  for (const run of ROUT.staleHeldRuns(rt().runs, heldIds)) finishRun(run, 'attention', 'lost');
+  for (const id of Object.keys(rt().held)) if (!heldIds.has(id)) delete rt().held[id];
   const wake = () => { rtSettleUntil = Math.max(rtSettleUntil, Date.now() + 30 * 1000); routinesTick(); };
   powerMonitor.on('resume', wake);
   powerMonitor.on('unlock-screen', wake);
@@ -3354,6 +3370,7 @@ ipcMain.on('pty:write', (_e, id, d) => {
 });
 // the renderer shows a tab: a sleeping one starts (lazy start, wake from sleep)
 ipcMain.on('pty:wake', (_e, id) => { shownTab = String(id); wake(id); });
+ipcMain.on('pty:shown', (_e, id) => { shownTab = ROUT.shownTabOf(id); });   // v3.47 every tab change (HQ on screen)
 ipcMain.on('pty:resize', (_e, id, cols, rows) => {
   if (!(cols > 0 && rows > 0)) return;
   // the login window's size must not change the projects' default size

@@ -212,11 +212,36 @@ function outcomeOf(text) {
 }
 const pruneRuns = (runs, now) => runs.filter((r) => OPEN_RUN.has(r.status) || now - (r.finishedAt || r.at) <= RETAIN_MS).slice(0, RETAIN_RUNS);
 
-/** HQ is typed into only when its tab is ready, nobody typed there in the last 15 s and it is not the tab on screen. */
-function hqBusy({ state, lastKeyAt = 0, now, onScreen = false }) {
+/** HQ is typed into only when its tab is ready, nobody typed there in the last 15 s, it is not the tab on screen and its
+ *  inbox file has no rows waiting (a report turn comes first). */
+function hqBusy({ state, lastKeyAt = 0, now, onScreen = false, inboxWaiting = false }) {
   if (state !== 'ready') return state;
-  return onScreen || now - lastKeyAt < KEY_QUIET_MS ? 'busy' : 'ready';
+  return onScreen || inboxWaiting || now - lastKeyAt < KEY_QUIET_MS ? 'busy' : 'ready';
 }
+/** An HQ run that was typed: where its turn is. tab 'busy' → 'busy' (status running); not ready/gone → 'wait';
+ *  typed less than 2 min ago and never seen busy → 'wait'; else 'over' (the turn finished: its id's liveness ends). */
+function hqTurn({ status, tab, typedAt = 0, now }) {
+  if (tab === 'busy') return 'busy';
+  if (tab !== 'ready' && tab !== 'gone') return 'wait';
+  if (status === 'typed' && now - (typedAt || now) < 2 * 60 * 1000) return 'wait';
+  return 'over';
+}
+/** A routine's own no-ask: an HQ routine for any local project; a project routine only for its own project. */
+const routineNoAsk = (routine, { remote = false, projectId = '' } = {}) => Boolean(routine?.noAsk) && !remote
+  && (routine.target?.kind !== 'project' || (Boolean(projectId) && routine.target.projectId === projectId));
+/** At startup: runs waiting for consent whose held cards are all gone (not on the board as awaiting-consent). */
+const staleHeldRuns = (runs, heldIds) => runs.filter((r) => r.status === 'awaiting-consent' && !(r.held || []).some((id) => heldIds.has(id)));
+/** Allow/Decline: a run waiting on its card runs again; an Allow restarts its clock (the no-report timeout). */
+function approveRun(run, allow, now) {
+  if (!run) return;
+  if (run.status === 'awaiting-consent') run.status = 'running';
+  if (allow) run.typedAt = now;
+}
+/** routines.json is written when anything but lastTickAt changed, or lastTickAt is a minute old on disk. */
+function persistKey(file) { const { lastTickAt, ...rest } = file; void lastTickAt; return JSON.stringify(rest); }
+const shouldPersist = ({ key, tickAt = 0 }, file, now) => persistKey(file) !== key || now - tickAt >= JUMP_MS;
+/** The tab the renderer shows (pty:shown): a short id string, '' for none. */
+const shownTabOf = (id) => (typeof id === 'string' && id.length <= 80 ? id : '');
 /** Between the paste and its Enter, the person's keystrokes for HQ are held and sent after the Enter. */
 function createWriteGate({ now = Date.now, holdMs = 2000 } = {}) {
   let until = 0; let queue = [];
@@ -230,6 +255,7 @@ function createWriteGate({ now = Date.now, holdMs = 2000 } = {}) {
 }
 
 module.exports = {
+  hqTurn, routineNoAsk, staleHeldRuns, approveRun, persistKey, shouldPersist, shownTabOf,
   MAX_ROUTINES, PROMPT_MAX, PROJECT_PROMPT_MAX, GRACE_MS, CATCHUP_MAX_MS, JUMP_MS, OPEN_RUN, KEY_QUIET_MS,
   parseHHMM, normalizeSchedule, nextAfter, slotsBetween, dayKey, inQuiet, quietEnd, tzName, cleanPrompt,
   normalizeRoutine, normalizeRoutines, normalizeCfg, normalizeFile, wokeUp, plan, manualGate, wrapText, outcomeOf, pruneRuns,

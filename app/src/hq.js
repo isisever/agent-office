@@ -127,12 +127,17 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
     isLiveRoutine(id) { const e = all.get(id); return fresh(e) && e?.origin === 'routine' && Boolean(e?.live); },
     runOf(id) { const e = all.get(id); return fresh(e) ? e?.run || '' : ''; },
     endRun(id) { all.delete(id); },
+    /** v3.47 the id's no-ask liveness ends (its turn or dispatch is over); it stays issued so caps count against it */
+    endLive(id) { const e = all.get(id); if (e) e.live = false; },
     /** an id this minter issued (any of its last 50), still within its own TTL */
     issued(id) { return isStr(id) && fresh(all.get(id)); },
   };
 }
 /** The request a dispatch belongs to: an id the minter issued, else the current one, else the capped 'adhoc' bucket. */
 const resolveRequest = (minter, id) => (minter.issued(id) ? id : minter.current() || ADHOC);
+/** v3.47 a dispatch without the routine's id is held only while an HQ routine turn's id is still live (never the
+ *  person's own typed requests after that turn ended). */
+const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && !minter.isRoutine(request) && Boolean(openRoutine) && minter.isLiveRoutine(openRoutine);
 
 /**
  * Who consents to an HQ dispatch. office_dispatch is always auto-allowed at the Claude level, so the app is the only
@@ -262,10 +267,14 @@ function takeHeld(board, id) {
 /** Held tasks not answered within 12 h → expired. → { board, expired: ids } */
 function expireHeld(board, now = Date.now(), ms = HELD_MS) {
   const expired = board.tasks.filter((t) => t.status === 'awaiting-consent' && now - t.at > ms).map((t) => t.id);
-  return { board: expired.length ? { ...board, tasks: board.tasks.map((t) => (expired.includes(t.id) ? { ...t, status: 'expired', reason: 'expired', finishedAt: now } : t)) } : board, expired };
+  if (!expired.length) return { board, expired, done: [] };
+  // the requests these rows close finish too (done → hqRequestsDone, like any other terminal status)
+  const { board: next, done } = finishRequests({ ...board, tasks: board.tasks.map((t) => (expired.includes(t.id) ? { ...t, status: 'expired', reason: 'expired', finishedAt: now } : t)) });
+  return { board: next, expired, done };
 }
-/** At startup: an open task whose queue entry is gone (isKnown false) becomes lost; no automatic re-dispatch. */
-const markLost = (board, isKnown, now = Date.now()) => ({ ...board, tasks: board.tasks.map((t) => (OPEN(t) && !isKnown(t) ? { ...t, status: 'lost', finishedAt: now } : t)) });
+/** At startup: an open task whose queue entry is gone (isKnown false) becomes lost; no automatic re-dispatch. A held
+ *  card (awaiting-consent, v3.47) was never queued: it stays answerable across a restart. */
+const markLost = (board, isKnown, now = Date.now()) => ({ ...board, tasks: board.tasks.map((t) => (OPEN(t) && t.status !== 'awaiting-consent' && !isKnown(t) ? { ...t, status: 'lost', finishedAt: now } : t)) });
 /** 500 tasks / 90 days → { board, removed: task ids whose folders go }. */
 function prune(board, now = Date.now()) {
   const keep = board.tasks.filter((t) => OPEN(t) || now - (t.finishedAt || t.at) <= RETAIN_MS).slice(0, RETAIN_TASKS);
@@ -353,7 +362,7 @@ module.exports = {
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
-  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, submitsTyped,
+  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
   taskFile, requestFile, reportMd, boardView, createPacer, mergePeerCache, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
 };

@@ -187,6 +187,7 @@ function isAsleep(id) {
 }
 
 let shownId; // visible terminal; focus/resize only when it changes
+let shownSent; // last tab told to main (pty:shown): main types a routine into HQ only when HQ is not on screen
 function showActive() {
   const visible = activePty();
   for (const [id, p] of panes) p.el.hidden = id !== visible;
@@ -194,6 +195,7 @@ function showActive() {
   renderTabs();
   // the shown tab always runs: a sleeping claude starts (and continues its session)
   if (visible && isAsleep(visible)) api.pty.wake?.(visible);
+  if (shownSent !== visible) { shownSent = visible; api.pty.shown?.(visible || ''); }
   if (shownId === visible) return;
   shownId = visible;
   const p = panes.get(visible);
