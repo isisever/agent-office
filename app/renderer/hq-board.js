@@ -26,8 +26,11 @@ function el(tag, attrs = {}, ...kids) {
   return e;
 }
 
-/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean }} o */
-export function mountHq({ sidebar, office, api, t, onSelect, isMac }) {
+// engine names on a remote row's status line (brand names, not translated)
+const ENGINE_NAMES = { claude: 'Claude Code', agy: 'Antigravity', commandcode: 'Command Code', opencode: 'OpenCode' };
+
+/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void } }} o */
+export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   if (!api?.hq || !sidebar) return null;
   let view = { board: { tasks: [], requests: [] }, settings: { dispatchWithoutAsking: false, enabled: true }, running: false, stopped: false, remotes: [] };
   let selected = false;
@@ -55,7 +58,10 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac }) {
   sidebar.prepend(el('div', { class: 'hq-pinned' }, row, settings, ...(api.routines ? [rtList] : [])));
   const board = el('div', { id: 'hq-board', class: 'hq-board', hidden: true });
   office?.after(board);
-  const remoteList = el('ul', { class: 'sb-list', id: 'sb-remote' });
+  // remote rows sit right under the local rows of PROJECTS, with the local rows' look (.sb-proj)
+  const remoteList = el('ul', { class: 'sb-list sb-rlist', id: 'sb-rprojects' });
+  let openKey = '';                 // the remote row showing its command box
+  const drafts = new Map();         // typed commands per row, kept across live updates
   const placeRemote = () => { const pl = document.getElementById('sb-projects'); if (pl && remoteList.parentElement !== pl.parentElement) pl.after(remoteList); };
 
   async function showReport(task) {
@@ -195,15 +201,69 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac }) {
             el('button', { onclick: async (e) => { e.stopPropagation(); await api.routines.approve(x.id, false); refresh(); } }, t('routines.decline'))) : null,
           openReport === x.id ? el('pre', { class: 'hq-report' }, x.text || t('hq.noReport')) : null))))));
   }
+  /** The link's live snapshot of one remote project (engine, counts) and the commands sent to it. */
+  function liveOf(r) {
+    const lv = link?.view?.();
+    const pub = r.key.slice(0, r.key.indexOf(':'));
+    const p = lv?.remotes?.find((x) => x.device === pub)?.projects?.find((x) => x.id === r.id) || null;
+    const out = (lv?.outgoing || []).filter((o) => o.pub === pub && o.project === r.id).slice(0, 2);
+    // the link's view is live; the HQ view behind r is refreshed only every 10 s
+    const online = lv?.devices?.find((d) => d.id === pub)?.online ?? r.online;
+    return { pub, p, out, online };
+  }
+  function remoteCmd(r, pub, p, out) {
+    if (!r.online) return el('div', { class: 'sb-rbox sb-note' }, t('hq.offline'));
+    if ((p?.engine || 'claude') !== 'claude' || !api.link?.send) return el('div', { class: 'sb-rbox sb-note' }, t('devices.claudeOnly'));
+    const input = el('input', { name: 'text', maxlength: 8192, placeholder: t('devices.prompt', { project: r.name }), oninput: () => drafts.set(r.key, input.value), onblur: () => setTimeout(renderRemote, 0) });
+    input.value = drafts.get(r.key) || '';
+    return el('div', { class: 'sb-rbox', onclick: (e) => e.stopPropagation() },
+      el('form', { class: 'sb-rcmd', onsubmit: (e) => {
+        e.preventDefault();
+        if (!input.value.trim()) return;
+        drafts.delete(r.key);
+        api.link.send(pub, r.id, input.value).then(() => renderRemote()).catch((err) => console.error(err));
+        input.value = '';
+      } }, input, el('button', { class: 'sb-btn', type: 'submit' }, t('devices.send'))),
+      ...out.map((o) => el('div', { class: `sb-note cmd-${o.status}` },
+        `${o.firstLine} — ${o.status === 'rejected' ? t('devices.cmd.rejected', { reason: t(`devices.reason.${o.reason}`) }) : t(`devices.cmd.${o.status}`)}`)));
+  }
+  function remoteRow(r) {
+    const { pub, p, out, online } = liveOf(r);
+    r = { ...r, online };
+    const st = !online ? 'offline' : p?.status || r.status || 'idle';
+    const open = openKey === r.key;
+    const op = (action) => (e) => { e.stopPropagation(); api.hq.remoteOp(r.key, action); };
+    const status = st === 'offline' ? t('devices.offline')
+      : [t(`devices.status.${st}`), p?.working ? t('devices.working', { n: p.working }) : '', p?.delivered ? t('devices.delivered', { n: p.delivered }) : ''].filter(Boolean).join(' · ');
+    return el('li', {
+      class: `sb-proj sb-rrow st-${st}${open ? ' open' : ''}${r.online ? '' : ' offline'}`, 'data-key': r.key,
+      title: `${r.name} · ${r.machine}\n${r.online ? t('hq.remoteTip') : t('hq.offline')}`,
+      tabindex: '0', role: 'button', 'aria-expanded': String(open),
+      onclick: () => { openKey = open ? '' : r.key; renderRemote(); },
+      onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); openKey = open ? '' : r.key; renderRemote(); } },
+    },
+    el('span', { class: `sb-dot${st === 'working' || st === 'approval' ? ' live' : ''}` }),
+    el('span', { class: 'sb-rname' }, el('span', { class: 'sb-name' }, r.name), el('span', { class: 'hq-badge', title: t('hq.remoteTitle') }, t('hq.remote'))),
+    el('span', { class: 'sb-icons' },
+      st === 'approval' ? el('span', { class: 'sb-attn permission', title: t('devices.status.approval') }, '✋') : null,
+      ...(r.online && r.actions.includes('wake') ? [
+        el('button', { class: 'sb-x sb-rop', title: t('hq.start'), 'aria-label': t('hq.start'), onclick: op('wake') }, '▶'),
+        el('button', { class: 'sb-x sb-rop', title: t('hq.sleep'), 'aria-label': t('hq.sleep'), onclick: op('sleep') }, '⏸')] : [])),
+    el('div', { class: 'sb-meta' },
+      el('span', { class: 'sb-tag sb-engine' }, ENGINE_NAMES[p?.engine || 'claude'] || p?.engine),
+      el('span', { class: 'sb-stats' }, status),
+      el('span', { class: 'sb-machine', title: `${r.machine} · ${t(r.online ? 'devices.online' : 'devices.offline')}` }, `⇄ ${r.machine}`)),
+    open ? remoteCmd(r, pub, p, out) : null);
+  }
   function renderRemote() {
     placeRemote();
-    remoteList.replaceChildren(...(view.remotes || []).map((r) => el('li', { class: `sb-item sb-remote${r.online ? '' : ' offline'}`, title: r.online ? r.name : t('hq.offline') },
-      el('span', { class: `sb-dot${r.online && r.status === 'working' ? ' on' : ''}` }),
-      el('span', { class: 'sb-name' }, r.name),
-      el('span', { class: 'hq-badge' }, `${t('hq.remote')} · ${r.machine}`),
-      ...(r.online && r.actions.includes('wake') ? [
-        el('button', { class: 'sb-gear', title: t('hq.start'), onclick: () => api.hq.remoteOp(r.key, 'wake') }, '▶'),
-        el('button', { class: 'sb-gear', title: t('hq.sleep'), onclick: () => api.hq.remoteOp(r.key, 'sleep') }, '⏸')] : []))));
+    // keep focus and typed text in a command box across live updates
+    const focused = document.activeElement;
+    if (focused && remoteList.contains(focused) && focused.tagName === 'INPUT') return;
+    const rows = view.remotes || [];
+    if (openKey && !rows.some((r) => r.key === openKey)) openKey = '';
+    remoteList.hidden = !rows.length;
+    remoteList.replaceChildren(...rows.map(remoteRow));
   }
   function render() {
     const tasks = view.board.tasks || [];
@@ -227,6 +287,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac }) {
   }
   api.routines?.onChange((v) => { if (v) { rv = v; render(); } });
   refresh();
+  link?.onView?.(() => renderRemote());
   api.hq.onBoard((v) => { if (v) { view = v; render(); } });
   api.hq.get().then((v) => { if (v) { view = v; render(); } }).catch(() => {});
   setInterval(() => { api.hq.get().then((v) => { if (v) { view = v; render(); } }).catch(() => {}); refresh(); }, 10000);

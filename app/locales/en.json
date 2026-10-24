@@ -805,7 +805,6 @@
     "permCount": "{n}/{total} permissions",
     "rename": "Rename",
     "none": "No paired devices",
-    "remote": "Remote projects",
     "status": {
       "working": "working",
       "idle": "idle",
@@ -926,6 +925,8 @@
     "here": "this machine",
     "noReport": "No report yet.",
     "remote": "remote",
+    "remoteTip": "Click to send a command to this boss",
+    "remoteTitle": "A project on another of your machines",
     "offline": "Offline: last-known projects",
     "start": "Start or wake",
     "sleep": "Sleep",

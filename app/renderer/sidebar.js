@@ -1061,7 +1061,7 @@ export function mountSidebar(el, on) {
     /** Today's token usage per project: [{ id, usd, total, pct }] (contract v3.13); the line opens the usage panel. */
     setTokenBriefs(list) {
       briefs = new Map((Array.isArray(list) ? list : []).filter((b) => b && b.id).map((b) => [b.id, b]));
-      for (const li of el.querySelectorAll('.sb-proj')) {
+      for (const li of el.querySelectorAll('.sb-proj[data-id]')) {   // local rows only, not remote ones (data-key)
         const btn = li.querySelector('.sb-cost');
         if (!btn) continue;
         const b = briefs.get(li.dataset.id);
@@ -1073,7 +1073,7 @@ export function mountSidebar(el, on) {
     /** OfficeData.projects: working / delivered / boss by project name. */
     setStats(list) {
       stats = new Map((list || []).map((s) => [s.name, s]));
-      for (const li of el.querySelectorAll('.sb-proj')) {
+      for (const li of el.querySelectorAll('.sb-proj[data-id]')) {   // local rows only, not remote ones (data-key)
         const p = projects.find((x) => x.id === li.dataset.id);
         const s = p && stats.get(p.name);
         const t = statsText(s);

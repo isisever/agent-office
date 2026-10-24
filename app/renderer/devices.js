@@ -1,5 +1,5 @@
-// Device link UI (contract v3.28): the "Devices" section under Accounts, the "Remote projects" group under the
-// project list, and the remote desks merged into the office data. Kept apart from sidebar.js on purpose.
+// Device link UI (contract v3.28): the "Devices" section under Accounts and the remote desks merged into the office
+// data. Remote projects are rows in PROJECTS (renderer/hq-board.js). Kept apart from sidebar.js on purpose.
 import { onLang, t } from './i18n.js';
 
 /** @param {string} tag @param {Record<string, any>} [attrs] @param {...any} children @returns {HTMLElement} */
@@ -15,8 +15,6 @@ function h(tag, attrs = {}, ...children) {
   for (const c of children.flat()) if (c != null && c !== false) el.append(c);
   return el;
 }
-/** @param {string} r */
-const why = (r) => t(`devices.reason.${r}`);
 /** @param {Event} e */
 const val = (e) => /** @type {HTMLInputElement} */ (e.target).value;
 /** Incoming handoff ids already answered from this window (a second click must not open a second folder picker). */
@@ -49,14 +47,11 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
   let view = { name: '', devices: [], remotes: [], outgoing: [], pairing: null, error: null };
   let joinState = /** @type {{ busy: boolean, error: string }} */ ({ busy: false, error: '' });
   let editing = /** @type {string | null} */ (null);
-  const drafts = new Map(); // "<device>/<project>" → unsent text
 
   const section = h('details', { class: 'sb-devices sb-panel', id: 'sb-devices' });   // a panel like the sidebar's others (v3.43)
   try { /** @type {HTMLDetailsElement} */ (section).open = localStorage.getItem('ao.panel.devices') === '1'; } catch {}
   section.addEventListener('toggle', () => { try { localStorage.setItem('ao.panel.devices', /** @type {HTMLDetailsElement} */ (section).open ? '1' : '0'); } catch {} });
-  const remoteGroup = h('details', { class: 'sb-remote', id: 'sb-remote', open: true });
   sidebarEl.querySelector('.sb-accounts')?.after(section);
-  sidebarEl.querySelector('#sb-top')?.append(remoteGroup);
 
   function renderDevices() {
     const wasOpen = /** @type {HTMLDetailsElement} */ (section).open;
@@ -141,43 +136,9 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
     /** @type {HTMLDetailsElement} */ (section).open = wasOpen || Boolean(p) || joinState.busy || ho.in.length > 0;
   }
 
-  function renderRemote() {
-    remoteGroup.hidden = !view.remotes.length;
-    const groups = view.remotes.map((/** @type {any} */ r) => h('li', { class: 'sb-rdev' },
-      h('div', { class: 'sb-rdev-name' }, `⇄ ${r.name}`),
-      h('ul', { class: 'sb-list' }, r.projects.map((/** @type {any} */ p) => {
-        const key = `${r.device}/${p.id}`;
-        const out = view.outgoing.filter((/** @type {any} */ o) => o.pub === r.device && o.project === p.id).slice(0, 2);
-        return h('li', { class: `sb-rproj st-${p.status}` },
-          h('div', { class: 'sb-rproj-top' },
-            h('span', { class: 'sb-name' }, p.name),
-            h('span', { class: 'sb-sub' }, [t(`devices.status.${p.status}`), p.working ? t('devices.working', { n: p.working }) : '', p.delivered ? t('devices.delivered', { n: p.delivered }) : ''].filter(Boolean).join(' · ')),
-            p.status === 'approval' ? h('span', { class: 'sb-attn' }, '✋') : null),
-          p.engine === 'claude'
-            ? h('form', { class: 'sb-rcmd', onsubmit: (/** @type {Event} */ e) => {
-              e.preventDefault();
-              const input = /** @type {HTMLInputElement} */ (/** @type {HTMLFormElement} */ (e.target).elements.namedItem('text'));
-              if (!input.value.trim()) return;
-              drafts.delete(key);
-              apply(api.link.send(r.device, p.id, input.value));
-            } },
-            h('input', { name: 'text', maxlength: 8192, placeholder: t('devices.prompt', { project: p.name }), value: drafts.get(key) || '', oninput: (/** @type {Event} */ e) => drafts.set(key, val(e)) }),
-            h('button', { class: 'sb-x', type: 'submit' }, t('devices.send')))
-            : h('div', { class: 'sb-note' }, t('devices.claudeOnly')),
-          out.map((/** @type {any} */ o) => h('div', { class: `sb-note cmd-${o.status}` }, `${o.firstLine} — ${o.status === 'rejected' ? t('devices.cmd.rejected', { reason: why(o.reason) }) : t(`devices.cmd.${o.status}`)}`)),
-        );
-      })),
-    ));
-    remoteGroup.replaceChildren(h('summary', { class: 'sb-head' }, t('devices.remote')), h('ul', { class: 'sb-list' }, groups));
-  }
-
   function render() {
     for (const cb of watchers) cb(view);
-    // keep focus and typed text in a command box across live updates
-    const focused = /** @type {HTMLInputElement | null} */ (document.activeElement);
-    if (focused && remoteGroup.contains(focused) && focused.name === 'text') { renderDevices(); return; }
     renderDevices();
-    renderRemote();
   }
   /** @param {Promise<any>} p */
   function apply(p) { p.then((v) => { if (v) { view = v; render(); } }).catch((e) => console.error(e)); }

@@ -893,4 +893,4 @@ try { applyProjects(await api.projects.list()); } catch (e) { console.error(e); 
 for (const ev of ['dragover', 'drop']) document.addEventListener(ev, (e) => e.preventDefault());
 
 // v3.46 HQ: the pinned row above PROJECTS, the Board in place of the office, paired devices' projects in the list
-hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac });
+hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices });

@@ -14,6 +14,7 @@
 // "+" adds a fake tab without a worktree, ⇧⌘T one with a worktree; × closes without asking.
 // ?longDir → the first project's folder is a long path (title bar cuts it from the left, v3.18).
 // ?usage[=<n>] → opens project n's token usage panel (v3.13; default the first) after a moment.
+// ?remotes → three paired machines (one with a long name, one offline) whose projects are rows in PROJECTS (v3.46 HQ).
 // ?machines[=<n>] → a fake device link (v3.31/v3.32) with n paired machines (default 2; one v1, one offline from n ≥ 3); opens the Machines panel.
 // ?theme=<name> → theme picker setting (v3.1; e.g. ?theme=sakura, ?theme=forest); default auto. The gallery is read from
 // ../../themes/*.json, so it is there under Electron's loadFile or a static server at the repo root (/app/renderer/index.html).
@@ -637,4 +638,41 @@ if (q.has('machines')) {
     handoffAnswer: ok, handoffAsk: ok, handoffKeep: ok, send: ok, handOff: () => Promise.resolve(true),
     onChange: changed.add,
   };
+}
+
+// ---- ?remotes: paired machines' projects as rows in PROJECTS (contract v3.46), for the sidebar layout ----
+if (q.has('remotes')) {
+  const [A, B, C] = ['a', 'b', 'c'].map((x) => x.repeat(64));
+  const lv = {
+    name: 'Studio', id: 'abcd1234', pairing: null, error: null, handoffs: { out: [], in: [] }, owners: [],
+    outgoing: [{ pub: A, project: 'r1', firstLine: 'run the tests', status: 'delivered' }],
+    devices: [
+      { id: A, name: 'DESKTOP-GE4AT5S', online: true, allowCommands: true, allowManage: true, addedAt: Date.now() - 86400e3, v: 2, caps: [] },
+      { id: B, name: 'very-long-machine-name-build-server-01.local', online: true, allowCommands: true, addedAt: Date.now() - 86400e3, v: 2, caps: [] },
+      { id: C, name: 'Old Mac', online: false, addedAt: Date.now() - 86400e3, v: null, caps: [] },
+    ],
+    remotes: [
+      { device: A, name: 'DESKTOP-GE4AT5S', at: Date.now(), projects: [{ id: 'r1', name: 'raeko', engine: 'claude', status: 'idle', working: 0, delivered: 2 }], workers: [], delivered: 2 },
+      { device: B, name: 'very-long-machine-name-build-server-01.local', at: Date.now(), workers: [], delivered: 0, projects: [
+        { id: 'r2', name: 'a-really-long-remote-project-name-for-layout', engine: 'claude', status: 'approval', working: 1, delivered: 0 },
+        { id: 'r3', name: 'notes', engine: 'agy', status: 'working', working: 2, delivered: 1 }] },
+    ],
+  };
+  const ok = () => Promise.resolve(structuredClone(lv));
+  window.agentOffice.link = {
+    get: ok, invite: ok, join: () => Promise.resolve({ ok: false, error: 'bad-code', view: structuredClone(lv) }), cancel: ok,
+    setName: ok, rename: ok, setAllow: ok, setAllowHandoff: ok, setAllowManage: ok, setAllowAccounts: ok, remove: ok,
+    handoffAnswer: ok, handoffAsk: ok, handoffKeep: ok, send: ok, handOff: () => Promise.resolve(true), onChange: listeners().add,
+  };
+  const base = ['watch', 'board', 'reports', 'dispatch'];
+  const row = (pub, id, name, machine, online, manage, status) => ({ key: `${pub}:${id}`, id, name, machine, online, lastSeen: Date.now(), remote: true,
+    ...(status ? { status } : {}), actions: [...base, ...(manage ? ['start', 'wake', 'sleep', 'stop'] : [])] });
+  const hv = { board: { tasks: [], requests: [] }, settings: { dispatchWithoutAsking: false, enabled: true }, running: false, stopped: false, remotes: [
+    row(A, 'r1', 'raeko', 'DESKTOP-GE4AT5S', true, true, 'idle'),
+    row(B, 'r2', 'a-really-long-remote-project-name-for-layout', 'very-long-machine-name-build-server-01.local', true, false, 'approval'),
+    row(B, 'r3', 'notes', 'very-long-machine-name-build-server-01.local', true, false, 'working'),
+    row(C, 'r4', 'website', 'Old Mac', false, true),
+  ] };
+  const hok = () => Promise.resolve(structuredClone(hv));
+  window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
 }
