@@ -14,8 +14,13 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'skill-packs');
 export const MANIFEST = path.join(ROOT, 'manifest.json');
-/** Never shipped in any pack: hooks, MCP configs, installers, and Anthropic's proprietary or unlicensed skills. */
-export const FORBIDDEN = ['hooks', '.mcp.json', 'hooks.json', 'install.sh', 'install.ps1'];
+/** Never shipped in any pack, at any depth: hooks, MCP/LSP configs, settings, monitors, installers. */
+export const FORBIDDEN = ['hooks', 'hooks.json', '.mcp.json', '.lsp.json', 'settings.json', 'monitors', 'install.sh', 'install.ps1'];
+/** Never at the plugin root: plugin commands and agents (a pack brings skills only). */
+export const FORBIDDEN_ROOT = ['commands', 'agents'];
+/** package.json scripts npm runs on its own during an install. */
+export const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall'];
+/** Anthropic's proprietary or unlicensed skills, always-on skills, and caveman's setup/gateway skill. */
 export const FORBIDDEN_SKILLS = ['docx', 'pdf', 'pptx', 'xlsx', 'doc-coauthoring', 'discernment-nudge', 'academy-guide', 'caveman-setup'];
 const LICENSE_RE = /^(LICENSE|LICENCE|NOTICE|COPYING)/i;
 
@@ -112,10 +117,16 @@ export function check(root = ROOT, manifest = readManifest(path.join(root, 'mani
     for (const p of walk(dir)) {
       const name = path.basename(p);
       if (FORBIDDEN.includes(name)) bad.push(`${pack.id}: ${path.relative(dir, p)} must not ship`);
+      if (name === 'package.json') {
+        let pkg = null;
+        try { pkg = JSON.parse(fs.readFileSync(p, 'utf8')); } catch { bad.push(`${pack.id}: ${path.relative(dir, p)} is not JSON`); }
+        for (const s of INSTALL_SCRIPTS) if (pkg?.scripts?.[s]) bad.push(`${pack.id}: ${path.relative(dir, p)} has an ${s} script`);
+      }
     }
+    for (const n of FORBIDDEN_ROOT) if (fs.existsSync(path.join(dir, n))) bad.push(`${pack.id}: ${n}/ must not ship at the plugin root`);
     for (const s of skillsOf(dir)) if (FORBIDDEN_SKILLS.includes(s)) bad.push(`${pack.id}: skill ${s} must not ship`);
     const pj = JSON.parse(fs.readFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), 'utf8'));
-    for (const k of ['hooks', 'mcpServers', 'lspServers']) if (pj[k]) bad.push(`${pack.id}: plugin.json has ${k}`);
+    for (const k of ['hooks', 'mcpServers', 'lspServers', 'monitors', 'commands', 'agents', 'settings']) if (pj[k]) bad.push(`${pack.id}: plugin.json has ${k}`);
   }
   return bad;
 }

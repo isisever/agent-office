@@ -18,10 +18,15 @@
     },
     {
       "id": "superpowers", "repo": "obra/superpowers", "sha": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b",
-      "license": "MIT", "defaultOn": true,
+      "license": "MIT", "defaultOn": true, "managerOff": true,
       "plugin": { "name": "superpowers", "version": "7.0.1", "description": "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques (skills only; the upstream SessionStart hook is not shipped)", "author": { "name": "Jesse Vincent" }, "homepage": "https://github.com/obra/superpowers", "license": "MIT" },
       "take": [["skills", "skills"], ["LICENSE", "LICENSE"]],
-      "drop": ["**/.mcp.json", "**/.DS_Store"]
+      "drop": ["**/.mcp.json", "**/.DS_Store", "skills/using-superpowers"],
+      "patches": [
+        { "file": "skills/brainstorming/SKILL.md", "why": "no always-on bootstrap: brainstorm when the user asks to design or plan, not before every task (clashes with manager mode)",
+          "find": "description: \"You MUST use this before any creative work - creating features,",
+          "replace": "description: \"Use when the user asks to design or plan something new - creating features," }
+      ]
     },
     {
       "id": "skill-creator", "repo": "anthropics/claude-plugins-official", "sha": "58267944f92187b7d6a1c822165c96c81c864806",

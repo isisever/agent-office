@@ -16,7 +16,8 @@ Agent Office bundles the following Claude Code skill packs, each copied unmodifi
 ## superpowers (superpowers)
 - Source: https://github.com/obra/superpowers at `2ce8aa15d05bd57213e6f746f953aafb7ded7a8b`
 - Licence: MIT; files: `LICENSE`
-- Skills (15): brainstorming, diagnosing-superpowers, dispatching-parallel-agents, executing-plans, finishing-a-development-branch, receiving-code-review, requesting-code-review, subagent-driven-development, systematic-debugging, test-driven-development, using-git-worktrees, using-superpowers, verification-before-completion, writing-plans, writing-skills
+- Skills (14): brainstorming, diagnosing-superpowers, dispatching-parallel-agents, executing-plans, finishing-a-development-branch, receiving-code-review, requesting-code-review, subagent-driven-development, systematic-debugging, test-driven-development, using-git-worktrees, verification-before-completion, writing-plans, writing-skills
+- Not shipped: `hooks/` and the `using-superpowers` bootstrap skill; modified (manifest patch): `brainstorming/SKILL.md` description
 
 ## skill-creator (skill-creator)
 - Source: https://github.com/anthropics/claude-plugins-official at `58267944f92187b7d6a1c822165c96c81c864806`

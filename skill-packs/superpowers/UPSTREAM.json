@@ -14,11 +14,17 @@
     "systematic-debugging",
     "test-driven-development",
     "using-git-worktrees",
-    "using-superpowers",
     "verification-before-completion",
     "writing-plans",
     "writing-skills"
   ],
-  "dropped": [],
-  "patches": []
+  "dropped": [
+    "skills/using-superpowers"
+  ],
+  "patches": [
+    {
+      "file": "skills/brainstorming/SKILL.md",
+      "why": "no always-on bootstrap: brainstorm when the user asks to design or plan, not before every task (clashes with manager mode)"
+    }
+  ]
 }
