@@ -678,7 +678,8 @@
     "hqDeny": "Vazgeç",
     "hqAsk": "Müdür {project} projesine görev vermek istiyor.",
     "hqAskRemote": "Müdür {machine} makinesindeki {project} projesine görev vermek istiyor.",
-    "hqRequestDone": "Müdür: bir istek bitti ({n} görev)"
+    "hqRequestDone": "Müdür: bir istek bitti ({n} görev)",
+    "hqGaveUp": "Müdür 5 kez başlayamadı ve durdu. Yeniden denemek için Müdür'ü açın."
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",
@@ -886,7 +887,7 @@
     "title": "Müdür: projelerinin üstündeki yönetici (⌘0)",
     "settings": "Müdür ayarları",
     "consent": "Bu makinedeki projelere sormadan görev ver",
-    "consentHint": "Yalnız Müdür'e kendi yazdığın istekler için; başka makinelere görev her zaman sorulur.",
+    "consentHint": "Yalnızca Müdür'e kendi yazdığınız istekler için; diğerlerinde ve başka makinelerde uygulama sorar.",
     "openFolder": "Müdür klasörünü aç",
     "board": "Müdür panosu",
     "empty": "Henüz görev yok. Müdür'e bir istek yaz.",
@@ -902,6 +903,9 @@
       "needs": "Seni bekliyor",
       "done": "Bitti",
       "failed": "Başarısız"
-    }
+    },
+    "off": "kapalı",
+    "stopped": "durdu",
+    "enabled": "Müdür açık/kapalı"
   }
 }

@@ -697,7 +697,8 @@
     "hqDeny": "Cancel",
     "hqAsk": "HQ wants to give a task to {project}.",
     "hqAskRemote": "HQ wants to give a task to {project} on {machine}.",
-    "hqRequestDone": "HQ: a request finished ({n} tasks)"
+    "hqRequestDone": "HQ: a request finished ({n} tasks)",
+    "hqGaveUp": "HQ stopped after failing to start 5 times. Open HQ to try again."
   },
   "auth": {
     "unreadable": "could not read the login status",
@@ -914,7 +915,7 @@
     "title": "HQ: the manager above your projects (⌘0)",
     "settings": "HQ settings",
     "consent": "Dispatch to this machine's projects without asking",
-    "consentHint": "Only for requests you typed into HQ yourself; dispatch to other machines always asks.",
+    "consentHint": "Only for requests you typed into HQ yourself; otherwise, and for other machines, the app asks.",
     "openFolder": "Open HQ folder",
     "board": "HQ board",
     "empty": "No tasks yet. Type a request into HQ.",
@@ -930,6 +931,9 @@
       "needs": "Needs you",
       "done": "Done",
       "failed": "Failed"
-    }
+    },
+    "off": "off",
+    "stopped": "stopped",
+    "enabled": "HQ on/off"
   }
 }

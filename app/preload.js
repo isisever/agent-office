@@ -146,6 +146,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
   hq: {
     get: () => ipcRenderer.invoke('hq:get'),
     setSettings: (patch) => ipcRenderer.invoke('hq:setSettings', patch),
+    open: () => ipcRenderer.invoke('hq:open'),
     markRead: (id) => ipcRenderer.invoke('hq:markRead', id),
     openFolder: () => ipcRenderer.invoke('hq:openFolder'),
     report: (id) => ipcRenderer.invoke('hq:report', id),

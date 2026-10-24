@@ -334,7 +334,7 @@ function setupLink(d) {
         if (c.report) {
           // v3.35: the plugin reports on the marked task (hooks/reports.ts); its report is owed to the dispatcher
           if (d.type(project, C.markedTask(c.id, c.device.name, c.text), { taskId: c.id }) === false) { c.reply('rejected', 'locked'); break; }
-          if (c.device.pub === SELF) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); } else link?.expectReport(c.id, c.device.pub);
+          if (c.device.pub === SELF) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); } else link?.expectReport(c.id, c.device.pub, project);
         } else if (d.type(project, C.markedCommand(c.device.name, c.text)) === false) { c.reply('rejected', 'not-running'); break; }   // v1-safe reason
         c.reply('delivered');
         break;                                     // one per project per tick: the tab is busy after a prompt
@@ -480,6 +480,7 @@ function setupLink(d) {
     publishMachine(res, catalog, accounts) { if (link) { link.publishRes(res); link.publishCatalog(catalog); if (accounts) link.publishAccounts(accounts); } },
     pump, dispatchLocal, dispatchRemote, scanReports, projOp,
     /** v3.46 a local task still waiting in a queue or for its report (startup: the HQ board marks the others lost). */
+    remoteTaskOpen: (project) => remoteTaskOpen(queue, link, project),
     knows: (id) => localTasks.has(id) || [...queue.values()].some((q) => q.some((c) => c.id === id)),
     /** The Link (tests; null while off). */
     link: () => link,
@@ -490,4 +491,7 @@ function setupLink(d) {
   };
 }
 
-module.exports = { setupLink, loadTaskIds, saveTaskIds, ttlOf, QUEUE_TTL_MS };
+/** v3.46 depth 1 across machines: a paired device's task (report) for this project is queued or its report is owed. */
+const remoteTaskOpen = (queue, link, project) => (queue.get(project) || []).some((c) => c.report && c.device.pub !== SELF) || Boolean(link?.owesReportFor?.(project));
+
+module.exports = { setupLink, loadTaskIds, saveTaskIds, ttlOf, remoteTaskOpen, QUEUE_TTL_MS };

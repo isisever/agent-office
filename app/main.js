@@ -1019,6 +1019,11 @@ function sharedConfig(account, project, cwd, key, extra = null, appMcp = null) {
   }
 }
 
+// v3.46 HQ's MCP file (0600, the same name the tab's exit removes): only the agent-office server, nothing shared.
+function hqMcpConfig(key, servers) {
+  try { return { pluginDirs: [], mcpConfig: HQ.writeMcpFile(path.join(mcpDir(), SC.mcpFileName(key)), servers), mcpNames: {} }; } catch (e) { console.error('hq mcp:', e.message); return { pluginDirs: [], mcpConfig: null, mcpNames: {} }; }
+}
+
 // The tab's office directory (contract v3.9): the projects, their folders and accounts and the MCP servers this
 // session sees for each. → the file for AGENT_OFFICE_DIRECTORY, or null.
 function officeDirectoryFile(project, key, mcpNames) {
@@ -1076,18 +1081,20 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // v3.35 one boss: a manager-mode boss tab (the main tab) gets the agent-office MCP server; its token only in that file
   const bossMcp = officeServerFor(id, project);
   // v3.44 servers added in Agent Office, Claude Code only: into this tab's 0600 MCP file, unless the name is taken
-  const appMcp = MS.sessionServers(P.engineOf(project), appServers(), project.id, (sid) => tokens().load(sid));
-  const prepared = sharedConfig(account, project, cwd, usageKey(id), bossMcp, appMcp);
-  const shared = SC.sharedArgs(prepared);
+  // v3.46 HQ: none of these (no Default/other projects' servers, no app servers, no skill packs): its own MCP file
+  // holds only the agent-office server and it runs with --strict-mcp-config (HQ.launchArgs)
+  const appMcp = project.hq ? null : MS.sessionServers(P.engineOf(project), appServers(), project.id, (sid) => tokens().load(sid));
+  const prepared = project.hq ? hqMcpConfig(usageKey(id), bossMcp) : sharedConfig(account, project, cwd, usageKey(id), bossMcp, appMcp);
+  const shared = project.hq ? [] : SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
   const print = mcpFingerprintOf(account, project, cwd);
   // v3.45 one --plugin-dir per skill pack this project gets (global setting, or the project's own on/off), minus
   // manager-off packs in a manager-mode boss tab and what the account already has (after sharedConfig's links)
-  const packs = SP.sessionPacks({
+  const packs = project.hq ? [] : SP.sessionPacks({
     state, project, packs: skillPacks(), boss: id === project.id && P.managerOf(state, project), owned: ownedOf(account), dirFor: skillPackDir,
   }).args;
-  // v3.46 HQ: no Bash/Edit/Write/NotebookEdit/WebFetch; Read and the read-only office tools auto-allowed in its folder only
-  const hqArgs = project.hq ? HQ.launchArgs({ dir: cwd, dispatchWithoutAsking: state.hq?.dispatchWithoutAsking === true }) : [];
+  // v3.46 HQ: only the Agent Office plugin, strict MCP (agent-office only), --tools Read, Read auto-allowed in its folder
+  const hqArgs = project.hq ? HQ.launchArgs({ dir: cwd, mcpConfig: prepared.mcpConfig || '' }) : [];
   const args = R.claudeArgs([...P.bossModelArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt);
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
@@ -1581,6 +1588,8 @@ function officeDispatch(tab, args, { ttl = 0 } = {}) {
   // v3.46 obvious secrets never leave in a task (journal patterns), and a boss working on an HQ task does not dispatch on (depth 1)
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   if (HQ.depthRefused(loadHqBoard(), tab)) return { status: 'rejected', reason: 'depth' };
+  // depth 1 for paired devices too: a boss with an open incoming task (report) from a device does not dispatch on
+  if (tab !== HQ.HQ_ID && linkHost?.remoteTaskOpen(String(tab).split(':')[0])) return { status: 'rejected', reason: 'depth' };
   if (Buffer.byteLength(task, 'utf8') > OM.TASK_MAX) return { status: 'rejected', reason: 'too-large' };
   const machine = String(args.machine || '').trim();
   const l = linkHost?.link();
@@ -1676,7 +1685,7 @@ function bossSid(tab) {
 }
 /** A fixed inbox row (never report text). A row for HQ is a turn the person did not type: the minted request id ends. */
 function inboxRow(sid, tab, row) {
-  if (P.isHqId(tab)) hqMinter.clear();
+  if (P.isHqId(tab)) { hqMinter.clear(); hqWanted = true; }   // a report for HQ needs its pty (lazy start)
   const inbox = path.join(app.getPath('home'), '.claude', 'agent-office', 'inbox');
   try {
     fs.mkdirSync(inbox, { recursive: true });
@@ -1692,6 +1701,9 @@ const peerCacheFile = () => path.join(app.getPath('userData'), 'link', 'peer-cac
 let hqBoard = null;
 let peerCacheMem = null;
 const hqMinter = HQ.createMinter();
+const hqRestarter = HQ.createRestarter();
+let hqWanted = false;    // lazy start: set the first time the person opens HQ or a report needs it; then it stays
+let hqWasRunning = false;
 const hqPacer = HQ.createPacer();
 const loadHqBoard = () => { if (!hqBoard) hqBoard = HQ.loadBoard(SF.readState(hqBoardFile()).raw); return hqBoard; };
 function saveHqBoard(b) {
@@ -1718,7 +1730,8 @@ function updatePeerCache() {
   peerCacheMem = next;
   if (changed || Object.keys(next).length) try { SF.writeAtomic(peerCacheFile(), JSON.stringify(next)); } catch {}
 }
-const hqView = () => ({ board: loadHqBoard(), settings: state.hq || HQ.normalizeHq(null), running: terms.has(HQ.HQ_ID), remotes: HQ.remoteRows(peerCache(), liveRemotes()) });
+const hqSettings = () => HQ.normalizeHq(state.hq);
+const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, remotes: HQ.remoteRows(peerCache(), liveRemotes()) });
 function hqStatus(id, status, reason) {
   const b = loadHqBoard();
   if (!b.tasks.some((t) => t.id === id)) return;
@@ -1773,7 +1786,8 @@ async function confirmHqDispatch(args, remote) {
 /** HQ's office_dispatch: caps, consent, auto-start of a local target, 4 h queue wait, dispatcher-side pacing for devices. */
 async function hqDispatch(args) {
   const board = loadHqBoard();
-  const request = (typeof args.request === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(args.request) ? args.request : '') || hqMinter.current() || '';
+  // only ids the minter issued; else the current one; else the one capped 'adhoc' bucket
+  const request = HQ.resolveRequest(hqMinter, typeof args.request === 'string' ? args.request : '');
   const cap = HQ.capReason(board, request);
   if (cap) return { status: 'rejected', reason: cap };
   const key = HQ.parseRemoteKey(args.project);
@@ -1805,15 +1819,36 @@ async function hqDispatch(args) {
   const pname = (l.remotes.get(pub)?.snap?.projects || []).find((x) => x.id === pid)?.name || pid;
   const extra = { pub, machineName: dv.name, project: pname, projectId: pid };
   /** @type {any} */ let now = null;
-  const sent = hqPacer.submit(pub, () => { const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task }); if (now) row(r, extra); else now = r; });
-  if (!sent) return { status: 'queued', reason: 'paced', ...(request ? { request } : {}) };   // held until the device's limit allows
+  // a held (paced) task gets a 'queued' row now, so the caps count it and the person sees it; sent → its real id
+  const heldId = `h${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
+  let held = false;
+  const sent = hqPacer.submit(pub, () => {
+    /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task });
+    if (!held) { now = r; return; }
+    if (!r.id || r.status === 'rejected') return hqStatus(heldId, 'rejected', r.reason || 'failed');
+    saveHqBoard(HQ.renameTask(loadHqBoard(), heldId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : {}) }));
+    try { const a = HQ.taskFile(hqDir(), heldId, '.'); const b = HQ.taskFile(hqDir(), r.id, '.'); if (a && b) fs.renameSync(path.dirname(a), path.dirname(b)); } catch {}
+  });
+  if (!sent) {
+    held = true;
+    row({ id: heldId, status: 'queued', reason: 'paced' }, extra);
+    return { id: heldId, status: 'queued', reason: 'paced', request };   // held until the device's limit allows
+  }
   now = now || { status: 'rejected', reason: 'failed' };
   row(now, extra);
   return { ...now, ...(request ? { request } : {}) };
 }
-/** Every 5 s: HQ running (restarted when gone, never asleep), paced sends, remote statuses mirrored, the peer cache. */
+/** Every 5 s: HQ running once wanted and on (restarted with backoff when gone, never asleep), paced sends, remote
+ *  statuses mirrored, the peer cache. */
 function hqTick() {
-  if (win && !win.isDestroyed() && isLoaded && !appQuitting && P.hqProject(state) && !terms.has(HQ.HQ_ID)) startPty(HQ.HQ_ID, { resume: true });
+  if (win && !win.isDestroyed() && isLoaded && !appQuitting && P.hqProject(state) && hqSettings().enabled && hqWanted) {
+    const running = terms.has(HQ.HQ_ID);
+    const step = hqRestarter.tick(running);
+    if (step === 'start') startPty(HQ.HQ_ID, { resume: true });
+    else if (step === 'give-up') { notify(T('main.hqGaveUp'), '', null); send('hq:board', hqView()); }
+    if (running !== hqWasRunning) send('hq:board', hqView());
+    hqWasRunning = running;
+  }
   hqPacer.flush();
   const l = linkHost?.link();
   if (l) {
@@ -1842,11 +1877,17 @@ ipcMain.handle('hq:get', () => hqView());
 ipcMain.handle('hq:setSettings', (_e, patch) => {
   const o = patch && typeof patch === 'object' ? patch : {};
   const next = HQ.normalizeHq({ ...(state.hq || {}), ...(typeof o.accountId === 'string' ? { accountId: o.accountId } : {}),
-    ...(typeof o.bossModel === 'string' ? { bossModel: o.bossModel } : {}), ...(typeof o.dispatchWithoutAsking === 'boolean' ? { dispatchWithoutAsking: o.dispatchWithoutAsking } : {}) });
+    ...(typeof o.bossModel === 'string' ? { bossModel: o.bossModel } : {}), ...(typeof o.dispatchWithoutAsking === 'boolean' ? { dispatchWithoutAsking: o.dispatchWithoutAsking } : {}),
+    ...(typeof o.enabled === 'boolean' ? { enabled: o.enabled } : {}) });
+  const relaunch = next.accountId !== hqSettings().accountId || next.bossModel !== hqSettings().bossModel;
   commit({ ...state, hq: next });
-  if (terms.has(HQ.HQ_ID) && linkTabState(HQ.HQ_ID) !== 'busy') killPty(HQ.HQ_ID);   // hqTick starts it again with the new settings
+  hqRestarter.reset();
+  if (!next.enabled) killPty(HQ.HQ_ID);   // off: no HQ pty
+  else if (relaunch && terms.has(HQ.HQ_ID) && linkTabState(HQ.HQ_ID) !== 'busy') killPty(HQ.HQ_ID);   // hqTick starts it with the new account/model
   return hqView();
 });
+// lazy start: the person opened HQ (a stopped HQ gets a fresh try)
+ipcMain.handle('hq:open', () => { hqWanted = true; if (hqRestarter.stopped) hqRestarter.reset(); hqTick(); return hqView(); });
 ipcMain.handle('hq:markRead', (_e, id) => { const b = loadHqBoard(); saveHqBoard({ ...b, tasks: b.tasks.map((t) => (t.id === id ? { ...t, read: true } : t)) }); return hqView(); });
 ipcMain.handle('hq:openFolder', () => eShell.openPath(hqDir()));
 ipcMain.handle('hq:report', (_e, id) => { const f = HQ.taskFile(hqDir(), String(id), 'report.md'); try { return f ? fs.readFileSync(f, 'utf8') : ''; } catch { return ''; } });

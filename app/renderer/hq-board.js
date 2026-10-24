@@ -26,18 +26,21 @@ function el(tag, attrs = {}, ...kids) {
 /** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean }} o */
 export function mountHq({ sidebar, office, api, t, onSelect, isMac }) {
   if (!api?.hq || !sidebar) return null;
-  let view = { board: { tasks: [], requests: [] }, settings: { dispatchWithoutAsking: false }, running: false, remotes: [] };
+  let view = { board: { tasks: [], requests: [] }, settings: { dispatchWithoutAsking: false, enabled: true }, running: false, stopped: false, remotes: [] };
   let selected = false;
   let openReport = '';
   const dot = el('span', { class: 'sb-dot' });
   const counts = el('span', { class: 'hq-counts' });
   const gear = el('button', { class: 'sb-gear', title: t('hq.settings'), onclick: (e) => { e.stopPropagation(); settings.hidden = !settings.hidden; } }, '⚙');
   const consent = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ dispatchWithoutAsking: consent.checked }); render(); } });
+  // HQ on/off (default on): off = no HQ pty; the row says "off" and keeps this toggle
+  const onOff = el('input', { type: 'checkbox', class: 'hq-toggle', title: t('hq.enabled'), onclick: (e) => e.stopPropagation(),
+    onchange: async () => { view = await api.hq.setSettings({ enabled: onOff.checked }); render(); } });
   const settings = el('div', { class: 'hq-settings', hidden: true },
     el('label', { title: t('hq.consentHint') }, consent, ` ${t('hq.consent')}`),
     el('button', { class: 'hq-link', onclick: () => api.hq.openFolder() }, t('hq.openFolder')));
   const row = el('div', { class: 'hq-row', id: 'hq-row', role: 'button', tabindex: '0', title: t('hq.title'), onclick: () => onSelect() },
-    dot, el('span', { class: 'hq-name' }, `♛ ${t('hq.name')}`), counts, gear);
+    dot, el('span', { class: 'hq-name' }, `♛ ${t('hq.name')}`), counts, onOff, gear);
   sidebar.prepend(el('div', { class: 'hq-pinned' }, row, settings));
   const board = el('div', { id: 'hq-board', class: 'hq-board', hidden: true });
   office?.after(board);
@@ -72,7 +75,10 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac }) {
   function render() {
     const tasks = view.board.tasks || [];
     dot.className = `sb-dot${view.running ? ' on' : ''}`;
-    counts.textContent = `▶ ${tasks.filter((x) => OPEN.has(x.status)).length}  ● ${tasks.filter((x) => !x.read && !OPEN.has(x.status)).length}`;
+    const on = view.settings?.enabled !== false;
+    onOff.checked = on;
+    counts.textContent = !on ? t('hq.off') : view.stopped ? t('hq.stopped')
+      : `▶ ${tasks.filter((x) => OPEN.has(x.status)).length}  ● ${tasks.filter((x) => !x.read && !OPEN.has(x.status)).length}`;
     consent.checked = Boolean(view.settings?.dispatchWithoutAsking);
     row.classList.toggle('active', selected);
     board.hidden = !selected;
@@ -85,5 +91,6 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac }) {
   setInterval(() => api.hq.get().then((v) => { if (v) { view = v; render(); } }).catch(() => {}), 10000);
   window.addEventListener('keydown', (e) => { if (e.key === '0' && (isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey) { e.preventDefault(); onSelect(); } }, true);
   render();
-  return { setSelected(on) { selected = Boolean(on); render(); } };
+  // lazy start: HQ's pty starts the first time the person opens HQ
+  return { setSelected(on) { selected = Boolean(on); if (selected) api.hq.open?.().then((v) => { if (v) { view = v; render(); } }).catch(() => {}); render(); } };
 }

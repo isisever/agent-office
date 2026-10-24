@@ -3,6 +3,7 @@
 // report files, restart → lost, retention), dispatcher-side pacing for paired devices and the peer cache that keeps
 // an offline machine's projects (names and ids only) for the PROJECTS list.
 'use strict';
+const fs = require('fs');
 const path = require('path');
 
 const HQ_ID = 'hq';
@@ -17,9 +18,18 @@ const SUMMARY_MAX = 16 * 1024;
 const STATUSES = ['queued', 'delivered', 'running', 'needs-approval', 'reported', 'partial', 'failed', 'rejected', 'expired', 'lost'];
 const TERMINAL = new Set(['reported', 'partial', 'failed', 'rejected', 'expired', 'lost']);
 const OPEN = (t) => !TERMINAL.has(t.status);
-// HQ never edits code or reaches the net itself; Read/Glob/Grep stay, auto-allowed only inside its own folder.
-const HQ_DISALLOWED = ['Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch'];
-const HQ_READ_TOOLS = ['office_machines', 'office_reports', 'office_board', 'office_summary'];
+// HQ's built-in tools are an allowlist (--tools Read): it never edits code, runs commands, searches or reaches the
+// net itself. The denylist stays as a second belt. Read is auto-allowed only inside its own folder.
+const HQ_TOOLS = ['Read'];
+const HQ_DISALLOWED = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Glob', 'Grep', 'Task', 'Agent', 'Skill'];
+// the office tools HQ uses, all auto-allowed at the Claude level: the app is the only gate for office_dispatch (consentFor)
+const HQ_OFFICE_TOOLS = ['office_machines', 'office_reports', 'office_board', 'office_summary', 'office_dispatch'];
+const HQ_READ_TOOLS = HQ_OFFICE_TOOLS.slice(0, 4);
+const ADHOC = 'adhoc';              // the one capped bucket for dispatches without an issued request id
+const FAST_MS = 10 * 1000;          // a pty that ends sooner than this counts as a fast failure
+const LIVE_MS = 60 * 1000;          // a pty that lived this long resets the backoff
+const BACKOFF_MS = [5000, 600000];  // restart backoff: 5 s doubling up to 10 min
+const MAX_FAST = 5;                 // fast failures in a row before HQ stops restarting (one notice)
 const REMOTE_ACTIONS = ['watch', 'board', 'reports', 'dispatch'];
 const MANAGE_ACTIONS = ['start', 'wake', 'sleep', 'stop'];
 
@@ -49,6 +59,7 @@ function normalizeHq(raw) {
   const o = isObj(raw) ? raw : {};
   return {
     accountId: isStr(o.accountId) ? o.accountId : 'default',
+    enabled: o.enabled !== false,
     ...(isStr(o.bossModel) ? { bossModel: o.bossModel } : {}),
     dispatchWithoutAsking: o.dispatchWithoutAsking === true,
   };
@@ -62,11 +73,28 @@ function hqProject(hq, dir) {
 
 /** Claude Code permission rule for "anything under dir" (absolute paths take a leading //). */
 const readRule = (dir) => `Read(//${String(dir).replace(/\\/g, '/').replace(/^\/+/, '')}/**)`;
-/** HQ's extra claude arguments: no Bash/Edit/Write/NotebookEdit/WebFetch, Read and the read-only office tools
- *  auto-allowed only in its folder; office_dispatch only with the consent setting on (see consentFor). */
-function launchArgs({ dir, dispatchWithoutAsking = false, server = 'agent-office' }) {
-  const allowed = [readRule(dir), ...HQ_READ_TOOLS.map((t) => `mcp__${server}__${t}`), ...(dispatchWithoutAsking ? [`mcp__${server}__office_dispatch`] : [])];
-  return ['--disallowedTools', HQ_DISALLOWED.join(','), '--allowedTools', allowed.join(',')];
+/**
+ * HQ's claude arguments (the only MCP and settings it gets besides the Agent Office plugin and the app's --settings):
+ * - `--setting-sources project`: the account's user settings (allow rules, a bypass defaultMode, enabled plugins) never
+ *   widen HQ; the project source is HQ's own folder, which only the app writes. Login comes from the account folder
+ *   (CLAUDE_CONFIG_DIR credentials / keychain), not from settings, so it is unaffected.
+ * - `--strict-mcp-config --mcp-config <file>`: the file holds only the agent-office server (no shared/app servers).
+ * - `--permission-mode default`, `--tools Read` (allowlist), the denylist as a second belt, and Read auto-allowed only
+ *   in its folder plus the office tools (office_dispatch included: the app asks, see consentFor).
+ */
+function launchArgs({ dir, mcpConfig = '', server = 'agent-office' }) {
+  const allowed = [readRule(dir), ...HQ_OFFICE_TOOLS.map((t) => `mcp__${server}__${t}`)];
+  return ['--setting-sources', 'project', '--strict-mcp-config', ...(mcpConfig ? ['--mcp-config', mcpConfig] : []), '--permission-mode', 'default',
+    '--tools', HQ_TOOLS.join(','), '--disallowedTools', [...HQ_DISALLOWED, `mcp__${server}__office_project`].join(','), '--allowedTools', allowed.join(',')];
+}
+
+/** HQ's MCP file (0600): only the agent-office server (any other name is dropped). → the path, or null. */
+function writeMcpFile(file, servers, name = 'agent-office') {
+  if (!isObj(servers) || !isObj(servers[name])) return null;
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { [name]: servers[name] } }), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  return file;
 }
 
 /** Request ids the app mints from the person's own typed HQ prompt; an inbox row (a turn the person did not type) clears it. */
@@ -78,18 +106,20 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
     current() { return current && now() - current.at <= MINT_MS ? current.id : null; },
     clear() { current = null; },
     isLive(id) { return Boolean(current) && current.id === id && now() - current.at <= MINT_MS; },
+    /** an id this minter issued (any of its last 50), still within its 30 min */
+    issued(id) { return isStr(id) && all.has(id) && now() - /** @type {number} */ (all.get(id)) <= MINT_MS; },
   };
 }
+/** The request a dispatch belongs to: an id the minter issued, else the current one, else the capped 'adhoc' bucket. */
+const resolveRequest = (minter, id) => (minter.issued(id) ? id : minter.current() || ADHOC);
 
 /**
- * Who consents to an HQ dispatch: 'claude' (Claude Code's permission prompt asked already: the tool is not
- * auto-allowed), 'none' (setting on, local, request id minted from the person's typed prompt), else 'app' (the
- * tool is auto-allowed but this dispatch is not covered: the app asks). Remote never goes without a prompt.
+ * Who consents to an HQ dispatch. office_dispatch is always auto-allowed at the Claude level, so the app is the only
+ * gate: 'none' only for a local dispatch with the setting on and the live request id minted from the person's typed
+ * prompt; everything else (setting off, remote, foreign or stale ids, 'adhoc') → 'app' (the app's dialog).
  */
 function consentFor({ setting, remote, request, minter }) {
-  if (!setting) return 'claude';
-  if (remote) return 'app';
-  return request && minter?.isLive(request) ? 'none' : 'app';
+  return setting && !remote && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';
 }
 
 /** Typed-prompt detection for the HQ pty: true when this write submits a typed line (Enter after typed text). */
@@ -107,8 +137,44 @@ const openTasks = (board) => board.tasks.filter(OPEN);
 /** Caps before a dispatch: 8 per request, 12 open. → reason or null. */
 function capReason(board, request) {
   if (openTasks(board).length >= MAX_OPEN) return 'open-cap';
-  if (request && board.tasks.filter((t) => t.request === request).length >= MAX_PER_REQUEST) return 'request-cap';
+  // the adhoc bucket counts its open tasks only (it never ends); a real request counts all of its tasks
+  if (request && board.tasks.filter((t) => t.request === request && (request !== ADHOC || OPEN(t))).length >= MAX_PER_REQUEST) return 'request-cap';
   return null;
+}
+/** A paced (held) remote task got its real id when it was sent: the row, its request and its brief path follow. */
+function renameTask(board, from, to, patch = {}) {
+  if (!board.tasks.some((t) => t.id === from)) return board;
+  return {
+    tasks: board.tasks.filter((t) => t.id !== to).map((t) => (t.id === from ? { ...t, ...patch, id: to, brief: `tasks/${to}/brief.md` } : t)),
+    requests: board.requests.map((r) => ({ ...r, tasks: r.tasks.map((x) => (x === from ? to : x)) })),
+  };
+}
+/**
+ * HQ's pty restarts: exponential backoff 5 s → 10 min, reset after a pty lived 60 s; after 5 fast failures in a row
+ * (a pty that ended within 10 s, or never came up) it stops ('give-up' once) until reset (toggle, or the person opens HQ).
+ * tick(running) → 'run' | 'start' | 'wait' | 'give-up' | 'stopped'.
+ */
+function createRestarter({ now = Date.now } = {}) {
+  let fails = 0; let fast = 0; let nextAt = 0; let startedAt = 0; let started = false; let stopped = false;
+  return {
+    tick(running) {
+      const t = now();
+      if (running) { if (started && t - startedAt >= LIVE_MS) { fails = 0; fast = 0; } return 'run'; }
+      if (stopped) return 'stopped';
+      if (started) {
+        const lived = t - startedAt;
+        started = false;
+        if (lived >= LIVE_MS) { fails = 0; fast = 0; } else { fails++; fast = lived < FAST_MS ? fast + 1 : 0; }
+        if (fast >= MAX_FAST) { stopped = true; return 'give-up'; }
+        nextAt = fails ? t + Math.min(BACKOFF_MS[1], BACKOFF_MS[0] * 2 ** (fails - 1)) : t;
+      }
+      if (t < nextAt) return 'wait';
+      startedAt = t; started = true;
+      return 'start';
+    },
+    reset() { fails = 0; fast = 0; nextAt = 0; started = false; stopped = false; },
+    get stopped() { return stopped; },
+  };
 }
 /** Depth 1: a project boss working on an HQ task may not dispatch further. */
 const depthRefused = (board, fromTab) => fromTab !== HQ_ID && board.tasks.some((t) => OPEN(t) && t.projectId === fromTab && t.machine === 'self');
@@ -246,7 +312,8 @@ You may edit this file: Agent Office writes it only when it is missing.
 `;
 
 module.exports = {
-  HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_DISALLOWED, HQ_READ_TOOLS, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
+  HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
+  createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
   redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
   taskFile, requestFile, reportMd, boardView, createPacer, mergePeerCache, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,

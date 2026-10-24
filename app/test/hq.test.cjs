@@ -17,7 +17,7 @@ const fnBody = (name) => { const i = MAIN.indexOf(`function ${name}(`); assert.o
 
 test('seam: resolvePty("hq") gives the frozen HQ project, never one of state.projects', () => {
   const s = P.normalizeState({ projects: [{ id: 'aaaaaaaaaaaa', dir: '/x/a' }], hq: { accountId: 'work', dispatchWithoutAsking: 'yes' } });
-  assert.deepEqual(s.hq, { accountId: 'work', dispatchWithoutAsking: false });
+  assert.deepEqual(s.hq, { accountId: 'work', enabled: true, dispatchWithoutAsking: false });
   P.setHqDir('');
   assert.equal(P.resolvePty(s, 'hq'), null);   // before main set the folder
   P.setHqDir('/ud/hq');
@@ -47,17 +47,27 @@ test('findProject callers and state.projects loops treat hq explicitly', () => {
   assert.match(fnBody('officeServerFor'), /project\.hq\) && id === HQ\.HQ_ID/);
 });
 
-test('launch args: no Bash/Edit/Write/NotebookEdit/WebFetch, Read only in the HQ folder, dispatch only with consent on', () => {
-  const a = HQ.launchArgs({ dir: '/ud/hq' });
-  assert.equal(a[0], '--disallowedTools');
-  assert.deepEqual(a[1].split(','), ['Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch']);
-  assert.equal(a[2], '--allowedTools');
-  const allowed = a[3].split(',');
-  assert.equal(allowed[0], 'Read(//ud/hq/**)');
-  assert.ok(!allowed.some((x) => /office_dispatch|office_project|^Read$|Read\(\/\/\*\*\)/.test(x)));
-  assert.ok(allowed.includes('mcp__agent-office__office_board'));
-  assert.ok(HQ.launchArgs({ dir: '/ud/hq', dispatchWithoutAsking: true })[3].includes('mcp__agent-office__office_dispatch'));
-  assert.match(MAIN, /project\.hq \? HQ\.launchArgs\(\{ dir: cwd/);
+test('launch args: strict MCP (agent-office only), --tools Read allowlist, no user settings, all office tools auto-allowed', () => {
+  const a = HQ.launchArgs({ dir: '/ud/hq', mcpConfig: '/m/hq.json' });
+  assert.deepEqual(a, [
+    '--setting-sources', 'project', '--strict-mcp-config', '--mcp-config', '/m/hq.json', '--permission-mode', 'default', '--tools', 'Read',
+    '--disallowedTools', 'Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Glob,Grep,Task,Agent,Skill,mcp__agent-office__office_project',
+    '--allowedTools', 'Read(//ud/hq/**),mcp__agent-office__office_machines,mcp__agent-office__office_reports,mcp__agent-office__office_board,mcp__agent-office__office_summary,mcp__agent-office__office_dispatch',
+  ]);
+  assert.ok(!HQ.launchArgs({ dir: '/ud/hq' }).includes('--mcp-config'));
+  // the MCP file holds only agent-office, 0600
+  const d = tmp('hq-mcp-');
+  const f = HQ.writeMcpFile(path.join(d, 'x', 'hq.json'), { 'agent-office': { command: 'node' }, github: { headers: { Authorization: 'x' } } });
+  assert.deepEqual(JSON.parse(fs.readFileSync(f, 'utf8')), { mcpServers: { 'agent-office': { command: 'node' } } });
+  if (process.platform !== 'win32') assert.equal(fs.statSync(f).mode & 0o777, 0o600);
+  assert.equal(HQ.writeMcpFile(path.join(d, 'y.json'), { github: {} }), null);
+  // startPty: HQ skips the shared config, app servers and skill packs; only the Agent Office plugin dir
+  const sp = fnBody('startPty');
+  assert.match(sp, /project\.hq \? null : MS\.sessionServers/);
+  assert.match(sp, /project\.hq \? hqMcpConfig\(usageKey\(id\), bossMcp\) : sharedConfig\(/);
+  assert.match(sp, /const shared = project\.hq \? \[\] : SC\.sharedArgs/);
+  assert.match(sp, /const packs = project\.hq \? \[\] : SP\.sessionPacks/);
+  assert.match(sp, /HQ\.launchArgs\(\{ dir: cwd, mcpConfig: prepared\.mcpConfig/);
   assert.match(MAIN, /if \(project\.hq\) env\.AGENT_OFFICE_HQ = '1'/);
 });
 
@@ -68,14 +78,14 @@ test('redaction runs before every dispatch', () => {
   assert.match(fnBody('hqDispatch'), /const task = HQ\.redact\(/);
 });
 
-test('consent: off → Claude Code asks; on → only for a live request id minted from a typed prompt, never remote', () => {
+test('consent matrix: the app is the only gate; no dialog only for local + setting on + live minted id', () => {
   let t = 1000;
   const m = HQ.createMinter({ now: () => t, rand: () => 'x' });
-  assert.equal(HQ.consentFor({ setting: false, remote: false, request: '', minter: m }), 'claude');
   const id = m.mint();
-  assert.equal(HQ.consentFor({ setting: true, remote: false, request: id, minter: m }), 'none');
-  assert.equal(HQ.consentFor({ setting: true, remote: true, request: id, minter: m }), 'app');
-  assert.equal(HQ.consentFor({ setting: true, remote: false, request: 'rforged', minter: m }), 'app');
+  for (const [setting, remote, request, want] of [
+    [false, false, id, 'app'], [false, true, id, 'app'], [true, true, id, 'app'], [true, false, id, 'none'],
+    [true, false, 'rforged', 'app'], [true, false, '', 'app'], [true, false, HQ.ADHOC, 'app'],
+  ]) assert.equal(HQ.consentFor({ setting, remote, request, minter: m }), want, `${setting} ${remote} ${request}`);
   m.clear();   // an inbox row (report-ready / request-done) is a turn the person did not type
   assert.equal(HQ.consentFor({ setting: true, remote: false, request: id, minter: m }), 'app');
   const id2 = m.mint();
@@ -86,10 +96,112 @@ test('consent: off → Claude Code asks; on → only for a live request id minte
   assert.match(fnBody('inboxRow'), /hqMinter\.clear\(\)/);
 });
 
-test('no-sleep and restart: HQ is skipped by the sleep loop and started again when its pty is gone', () => {
+test('request ids: only minted ones are accepted, else the current one, else the capped adhoc bucket', () => {
+  let t = 1000;
+  const m = HQ.createMinter({ now: () => t, rand: () => 'x' });
+  assert.equal(HQ.resolveRequest(m, 'rmadeup'), HQ.ADHOC);
+  assert.equal(HQ.resolveRequest(m, ''), HQ.ADHOC);
+  const a = m.mint(); t += 1;
+  const b = m.mint();
+  assert.equal(HQ.resolveRequest(m, a), a);          // issued earlier, still within 30 min
+  assert.equal(HQ.resolveRequest(m, 'rmadeup'), b);  // unminted → current
+  m.clear();
+  assert.equal(HQ.resolveRequest(m, 'rmadeup'), HQ.ADHOC);
+  t += 31 * 60 * 1000;
+  assert.equal(HQ.resolveRequest(m, a), HQ.ADHOC);
+  // adhoc: capped by its open tasks only (it never ends)
+  let board = HQ.emptyBoard();
+  for (let i = 0; i < 8; i++) board = HQ.addTask(board, { id: `ad${i}`, request: HQ.ADHOC, status: 'queued', pub: 'self' }, 1);
+  assert.equal(HQ.capReason(board, HQ.ADHOC), 'request-cap');
+  board = HQ.setStatus(board, 'ad0', 'reported');
+  assert.equal(HQ.capReason(board, HQ.ADHOC), null);
+  assert.match(fnBody('hqDispatch'), /HQ\.resolveRequest\(hqMinter,/);
+});
+
+test('backoff: 5 s doubling to 10 min, reset after 60 s alive, stop after 5 fast failures; reset restarts', () => {
+  let t = 0;
+  const r = HQ.createRestarter({ now: () => t });
+  assert.equal(r.tick(false), 'start');
+  const waits = [];
+  for (let i = 0; i < 4; i++) {   // ends after 1 s each time (fast)
+    t += 1000;
+    assert.equal(r.tick(false), 'wait');
+    const from = t;
+    while (r.tick(false) === 'wait') t += 1000;
+    waits.push(t - from);
+  }
+  assert.deepEqual(waits, [5000, 10000, 20000, 40000]);
+  t += 1000;
+  assert.equal(r.tick(false), 'give-up');
+  assert.equal(r.tick(false), 'stopped');
+  assert.equal(r.stopped, true);
+  r.reset();
+  assert.equal(r.tick(false), 'start');
+  // slow failures (alive 30 s) keep doubling up to 10 min and never stop
+  const slow = [];
+  for (let i = 0; i < 10; i++) {
+    t += 30000;
+    assert.equal(r.tick(true), 'run');
+    r.tick(false);
+    const from = t;
+    while (r.tick(false) === 'wait') t += 1000;
+    slow.push(t - from);
+  }
+  assert.deepEqual(slow.slice(0, 3), [5000, 10000, 20000]);
+  assert.equal(slow[9], 600000);
+  // a pty that lived 60 s resets the backoff
+  t += 61000;
+  assert.equal(r.tick(true), 'run');
+  assert.equal(r.tick(false), 'start');
+});
+
+test('on/off and lazy start: HQ starts only once wanted and on; off kills it; never sleeps', () => {
+  assert.equal(HQ.normalizeHq({}).enabled, true);
+  assert.equal(HQ.normalizeHq({ enabled: false }).enabled, false);
+  const tick = fnBody('hqTick');
+  assert.match(tick, /hqSettings\(\)\.enabled && hqWanted/);
+  assert.match(tick, /step === 'start'\) startPty\(HQ\.HQ_ID/);
+  assert.match(tick, /step === 'give-up'\) \{ notify\(T\('main\.hqGaveUp'\)/);
+  assert.match(MAIN, /ipcMain\.handle\('hq:open', \(\) => \{ hqWanted = true;/);
+  assert.match(fnBody('inboxRow'), /hqWanted = true/);
+  assert.match(MAIN, /if \(!next\.enabled\) killPty\(HQ\.HQ_ID\)/);
   assert.match(fnBody('sleepIdle'), /r\.project\.hq\) continue/);
-  assert.match(fnBody('hqTick'), /!terms\.has\(HQ\.HQ_ID\)\) startPty\(HQ\.HQ_ID/);
   assert.match(fnBody('bossSid'), /lastSid\.get\(tab\)/);
+});
+
+test('paced remote task: a queued row at submit (counted by the caps), renamed to its real id when sent', () => {
+  let board = HQ.emptyBoard();
+  for (let i = 0; i < 11; i++) board = HQ.addTask(board, { id: `t${i}`, request: 'r1', status: 'delivered', pub: 'self' }, 1);
+  assert.equal(HQ.capReason(board, 'r2'), null);
+  board = HQ.addTask(board, { id: 'hheld', request: 'r2', status: 'queued', reason: 'paced', pub: 'a'.repeat(64) }, 2);
+  assert.equal(HQ.capReason(board, 'r2'), 'open-cap');
+  board = HQ.renameTask(board, 'hheld', 'real01', { status: 'queued' });
+  const t = board.tasks.find((x) => x.id === 'real01');
+  assert.equal(t.brief, 'tasks/real01/brief.md');
+  assert.ok(!board.tasks.some((x) => x.id === 'hheld'));
+  assert.deepEqual(board.requests.find((r) => r.id === 'r2').tasks, ['real01']);
+  assert.match(fnBody('hqDispatch'), /row\(\{ id: heldId, status: 'queued', reason: 'paced' \}, extra\)/);
+});
+
+test('remote depth 1: a boss with an incoming device task queued or awaiting its report may not dispatch', () => {
+  const owed = new Set();
+  const link = { owesReportFor: (p) => owed.has(p) };
+  const queue = new Map([['p1', [{ report: true, device: { pub: 'b'.repeat(64) } }]], ['p2', [{ report: true, device: { pub: 'self' } }]], ['p3', [{ report: false, device: { pub: 'c'.repeat(64) } }]]]);
+  assert.equal(LH.remoteTaskOpen(queue, link, 'p1'), true);
+  assert.equal(LH.remoteTaskOpen(queue, link, 'p2'), false);   // local (HQ) tasks: depthRefused covers them
+  assert.equal(LH.remoteTaskOpen(queue, link, 'p3'), false);   // a plain command is not a task
+  owed.add('p4');
+  assert.equal(LH.remoteTaskOpen(queue, link, 'p4'), true);
+  assert.match(fnBody('officeDispatch'), /linkHost\?\.remoteTaskOpen\(/);
+});
+
+test('snapshot: worker descriptions only for devices with the manage cap', () => {
+  const C = require('../src/link-core.js');
+  const snap = { projects: [], workers: [{ id: 'w', project: 'p', type: 'x', description: 'secret task text' }], delivered: 0 };
+  assert.equal(C.snapshotFor(snap, true).workers[0].description, 'secret task text');
+  assert.ok(!('description' in C.snapshotFor(snap, false).workers[0]));
+  assert.equal(snap.workers[0].description, 'secret task text');   // the published one is untouched
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'link.js'), 'utf8'), /C\.snapshotFor\(this\.snap, C\.mayManage\(this\.devices, this\.secrets, pub\)\)/);
 });
 
 test('board: statuses, report files, request done, persistence and restart → lost', () => {

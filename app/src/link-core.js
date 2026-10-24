@@ -474,6 +474,9 @@ function snapshotOf(projects, office, attention = new Map()) {
   return cleanSnapshot({ projects: list, workers, delivered: office?.delivered || 0 });
 }
 
+/** v3.46 what one device gets: a device without the manage cap sees no worker descriptions (task text). */
+const snapshotFor = (snap, manage) => (manage || !snap?.workers ? snap : { ...snap, workers: snap.workers.map(({ description: _d, ...w }) => w) });
+
 /** One log line for a received command (first line only, never the whole text). */
 const logEntry = (at, device, project, text, outcome) => ({ at: new Date(at).toISOString(), device, project, firstLine: cleanLine(String(text).split(/\r?\n/)[0], 120), outcome });
 
@@ -483,7 +486,7 @@ module.exports = {
   makeCode, normalizeCode, pairSecrets, pairProof, proofOk, pairTopic, hex, isHex,
   cleanLine, sanitizeCommand, markedCommand, markedTask, cleanReport, REPORT_MAX, deviceName, RateLimiter,
   cleanSnapshot, validateMessage, validatePair, LineReader, encode,
-  normalizeDevices, trusted, mayCommand, mayHandoff, mayManage, mayAccounts, snapshotOf, logEntry,
+  normalizeDevices, trusted, mayCommand, mayHandoff, mayManage, mayAccounts, snapshotOf, snapshotFor, logEntry,
   cleanRes, cleanCatalog, resOf, resChanged, typingReady,
   LOGIN_HOSTS, LOGIN_REDIRECT, LOGIN_CODE_RE, LOGIN_TIMEOUT_MS, LOGIN_REASONS, loginUrlOk, loginCodeOk, stripAnsi, parseLoginOutput, cleanAccounts,
 };
