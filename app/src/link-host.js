@@ -29,6 +29,16 @@ const REPORT_POLL_MS = 5000;
  *     target: (dir: string) => { root: string, memoryDir: string, factsFile: string, accountId?: string },
  *     adopt: (o: { dir: string, settings: any, sessionIds: string[], accountId?: string }) => void, pickFolder: (defaultPath: string) => Promise<string | null> } }} d
  */
+/** v3.46 the ids of local tasks awaiting a report, kept across restarts (userData/link/local-tasks.json, 0600). */
+function loadTaskIds(file) {
+  try { const a = JSON.parse(fs.readFileSync(file, 'utf8')); return new Set(Array.isArray(a) ? a.filter((x) => typeof x === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(x)).slice(-200) : []); } catch { return new Set(); }
+}
+function saveTaskIds(file, set) {
+  try { fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 }); fs.writeFileSync(`${file}.tmp`, JSON.stringify([...set].slice(-200)), { mode: 0o600 }); fs.renameSync(`${file}.tmp`, file); } catch { /* best effort */ }
+}
+/** Queue-wait limit of one command: its own (an HQ task: 4 h at most) or the default 30 min. */
+const ttlOf = (c) => (Number.isFinite(c.ttl) && c.ttl > 0 ? Math.min(c.ttl, 4 * 3600 * 1000) : QUEUE_TTL_MS);
+
 function setupLink(d) {
   const dir = path.join(d.app.getPath('userData'), 'link');
   const keysFile = path.join(dir, 'keys.bin');
@@ -295,7 +305,7 @@ function setupLink(d) {
   }
 
   // Claude Code projects only: their busy state is known (pid file) and their prompt takes a bracketed paste.
-  function onCommand({ device, id, project, text, reply, report = false }) {
+  function onCommand({ device, id, project, text, reply, report = false, ttl = 0 }) {
     const p = d.projects().find((x) => x.id === project);
     const done = (status, reason) => { log(device.name, p?.name || project, text, `${report ? 'task:' : ''}${reason ? `${status}:${reason}` : status}`); reply(status, reason); };
     if (!p) return done('rejected', 'unknown-project');
@@ -303,7 +313,7 @@ function setupLink(d) {
     if (report && d.loginOf?.(project) === 'out') return done('rejected', 'logged-out');   // v3.35
     const q = queue.get(project) || [];
     if (q.length >= QUEUE_MAX) return done('rejected', 'queue-full');
-    q.push({ id, device, text, at: Date.now(), reply, report });
+    q.push({ id, device, text, at: Date.now(), reply, report, ttl });
     queue.set(project, q);
     done('queued');
     pump();
@@ -314,7 +324,7 @@ function setupLink(d) {
       while (q.length) {
         const c = q[0];
         if (c.device.pub !== SELF && !link?.devices.some((x) => x.pub === c.device.pub)) { q.shift(); continue; }   // removed meanwhile
-        if (now - c.at > QUEUE_TTL_MS) { q.shift(); c.reply('rejected', 'expired'); continue; }
+        if (now - c.at > ttlOf(c)) { q.shift(); c.reply('rejected', 'expired'); continue; }
         const s = d.tabState(project);
         if (s === 'gone') { q.shift(); c.reply('rejected', 'not-running'); continue; }
         // 'busy' and 'starting' (no session id or no first prompt yet: the trust dialog may be up, v3.31) wait
@@ -324,7 +334,7 @@ function setupLink(d) {
         if (c.report) {
           // v3.35: the plugin reports on the marked task (hooks/reports.ts); its report is owed to the dispatcher
           if (d.type(project, C.markedTask(c.id, c.device.name, c.text), { taskId: c.id }) === false) { c.reply('rejected', 'locked'); break; }
-          if (c.device.pub === SELF) localTasks.add(c.id); else link?.expectReport(c.id, c.device.pub);
+          if (c.device.pub === SELF) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); } else link?.expectReport(c.id, c.device.pub);
         } else if (d.type(project, C.markedCommand(c.device.name, c.text)) === false) { c.reply('rejected', 'not-running'); break; }   // v1-safe reason
         c.reply('delivered');
         break;                                     // one per project per tick: the tab is busy after a prompt
@@ -385,16 +395,17 @@ function setupLink(d) {
   pumpTimer.unref?.();
 
   // --- v3.35 one boss: dispatch (office_dispatch) and the reports of dispatched tasks
-  const localTasks = new Set();            // ids of tasks dispatched to a project of this machine (until reported)
+  const localTasksFile = path.join(dir, 'local-tasks.json');
+  const localTasks = loadTaskIds(localTasksFile);   // ids of tasks dispatched to a project of this machine (until reported; v3.46 kept across restarts)
   const newId = () => require('crypto').randomBytes(8).toString('hex');
   /** A task for a project of this machine: the same queue and checks as a remote one. → { id, status, reason? } */
   /** onStatus(id, status, reason?) hears every status (queued, then delivered or rejected), also the later ones. */
-  function dispatchLocal(projectId, text, fromName, onStatus) {
+  function dispatchLocal(projectId, text, fromName, onStatus, { ttl = 0 } = {}) {
     const s = C.sanitizeCommand(text);
     const id = newId();
     if (!s.ok) return { id, status: 'rejected', reason: s.reason };
     /** @type {any} */ let out = null;   // the latest answer so far ('delivered' may follow 'queued' at once)
-    onCommand({ device: { pub: SELF, name: fromName }, id, project: projectId, text: s.text, report: true, reply: (status, reason) => {
+    onCommand({ device: { pub: SELF, name: fromName }, id, project: projectId, text: s.text, report: true, ttl, reply: (status, reason) => {
       out = { id, status, ...(reason ? { reason } : {}) };
       try { onStatus?.(id, status, reason); } catch { /* the caller's record */ }
     } });
@@ -418,7 +429,7 @@ function setupLink(d) {
       const id = n.slice(0, -5);
       const report = readJson(f);
       let used = false;
-      if (report && localTasks.has(id)) { localTasks.delete(id); d.onReport?.({ id, machine: '', pub: SELF, report: C.cleanReport(report) }); used = true; }
+      if (report && localTasks.has(id)) { localTasks.delete(id); saveTaskIds(localTasksFile, localTasks); d.onReport?.({ id, machine: '', pub: SELF, report: C.cleanReport(report) }); used = true; }
       else if (report && link?.owesReport(id)) used = link.sendReport(id, report);
       let old = false;
       try { old = Date.now() - fs.statSync(f).mtimeMs > 24 * 3600 * 1000; } catch { /* gone */ }
@@ -468,6 +479,8 @@ function setupLink(d) {
     /** v3.32: this machine's resources (C.resOf) and project catalog; the link sends them by capability and opt-in. */
     publishMachine(res, catalog, accounts) { if (link) { link.publishRes(res); link.publishCatalog(catalog); if (accounts) link.publishAccounts(accounts); } },
     pump, dispatchLocal, dispatchRemote, scanReports, projOp,
+    /** v3.46 a local task still waiting in a queue or for its report (startup: the HQ board marks the others lost). */
+    knows: (id) => localTasks.has(id) || [...queue.values()].some((q) => q.some((c) => c.id === id)),
     /** The Link (tests; null while off). */
     link: () => link,
     /** Paired devices a project can be handed to (online ones first). */
@@ -477,4 +490,4 @@ function setupLink(d) {
   };
 }
 
-module.exports = { setupLink };
+module.exports = { setupLink, loadTaskIds, saveTaskIds, ttlOf, QUEUE_TTL_MS };

@@ -673,7 +673,12 @@
     "moveOc": "Yalnızca Claude Code projeleri başka bir bilgisayara taşınabilir; bu proje OpenCode çalıştırıyor.",
     "engineOcConfirm": "“{name}” Claude Code'a geçirilsin mi?",
     "engineOcDetail": "Bu projede OpenCode çalışıyor ve Agent Office işin ortasında olup olmadığını bilemez. Geçiş onu şimdi durdurur; Claude Code sıfırdan başlar.",
-    "projectFilesRefused": "Agent Office, “{name}” içindeki bazı dosyalara dokunmadı: kendisinin yazmadığı (ya da yazdıktan sonra değiştirilmiş) aynı adlı bir dosyanın üzerine asla yazılmaz, silinmez."
+    "projectFilesRefused": "Agent Office, “{name}” içindeki bazı dosyalara dokunmadı: kendisinin yazmadığı (ya da yazdıktan sonra değiştirilmiş) aynı adlı bir dosyanın üzerine asla yazılmaz, silinmez.",
+    "hqAllow": "Görevi ver",
+    "hqDeny": "Vazgeç",
+    "hqAsk": "Müdür {project} projesine görev vermek istiyor.",
+    "hqAskRemote": "Müdür {machine} makinesindeki {project} projesine görev vermek istiyor.",
+    "hqRequestDone": "Müdür: bir istek bitti ({n} görev)"
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",
@@ -874,6 +879,29 @@
       "checking": "kontrol ediliyor",
       "error": "hata",
       "unknown": "bilinmiyor"
+    }
+  },
+  "hq": {
+    "name": "Müdür",
+    "title": "Müdür: projelerinin üstündeki yönetici (⌘0)",
+    "settings": "Müdür ayarları",
+    "consent": "Bu makinedeki projelere sormadan görev ver",
+    "consentHint": "Yalnız Müdür'e kendi yazdığın istekler için; başka makinelere görev her zaman sorulur.",
+    "openFolder": "Müdür klasörünü aç",
+    "board": "Müdür panosu",
+    "empty": "Henüz görev yok. Müdür'e bir istek yaz.",
+    "here": "bu makine",
+    "noReport": "Henüz rapor yok.",
+    "remote": "uzak",
+    "offline": "Çevrim dışı: bilinen son projeler",
+    "start": "Başlat veya uyandır",
+    "sleep": "Uyut",
+    "col": {
+      "queued": "Sırada",
+      "running": "Çalışıyor",
+      "needs": "Seni bekliyor",
+      "done": "Bitti",
+      "failed": "Başarısız"
     }
   }
 }

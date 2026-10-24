@@ -692,7 +692,12 @@
     "moveOc": "Only Claude Code projects can move to another computer; this project runs OpenCode.",
     "engineOcConfirm": "Switch “{name}” to Claude Code?",
     "engineOcDetail": "OpenCode is running in this project, and Agent Office can't tell whether it is in the middle of work. Switching stops it now; Claude Code starts fresh.",
-    "projectFilesRefused": "Agent Office left some files in “{name}” alone: a file of the same name that it didn't write (or that was changed after it did) is never overwritten or removed."
+    "projectFilesRefused": "Agent Office left some files in “{name}” alone: a file of the same name that it didn't write (or that was changed after it did) is never overwritten or removed.",
+    "hqAllow": "Dispatch",
+    "hqDeny": "Cancel",
+    "hqAsk": "HQ wants to give a task to {project}.",
+    "hqAskRemote": "HQ wants to give a task to {project} on {machine}.",
+    "hqRequestDone": "HQ: a request finished ({n} tasks)"
   },
   "auth": {
     "unreadable": "could not read the login status",
@@ -902,6 +907,29 @@
       "checking": "checking",
       "error": "error",
       "unknown": "unknown"
+    }
+  },
+  "hq": {
+    "name": "HQ",
+    "title": "HQ: the manager above your projects (⌘0)",
+    "settings": "HQ settings",
+    "consent": "Dispatch to this machine's projects without asking",
+    "consentHint": "Only for requests you typed into HQ yourself; dispatch to other machines always asks.",
+    "openFolder": "Open HQ folder",
+    "board": "HQ board",
+    "empty": "No tasks yet. Type a request into HQ.",
+    "here": "this machine",
+    "noReport": "No report yet.",
+    "remote": "remote",
+    "offline": "Offline: last-known projects",
+    "start": "Start or wake",
+    "sleep": "Sleep",
+    "col": {
+      "queued": "Queued",
+      "running": "Running",
+      "needs": "Needs you",
+      "done": "Done",
+      "failed": "Failed"
     }
   }
 }

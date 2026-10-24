@@ -4,6 +4,14 @@ const path = require('path');
 const crypto = require('crypto');
 const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT } = require('./accounts.js');
 const { withSkillPacks } = require('./skill-packs.js');
+const HQ = require('./hq.js');
+
+// v3.46 HQ: its folder (userData/hq) is set by main at startup; 'hq' is never in state.projects.
+let hqDir = '';
+const setHqDir = (dir) => { hqDir = String(dir || ''); };
+/** The named seam: the HQ as a frozen project-like object (resolvePty('hq')), or null before main set its folder. */
+const hqProject = (state) => (hqDir ? HQ.hqProject(state?.hq, hqDir) : null);
+const isHqId = (id) => id === HQ.HQ_ID;
 
 const newId = () => crypto.randomBytes(6).toString('hex');
 const projectName = (dir) => path.basename(dir);
@@ -95,6 +103,7 @@ const allPtyIdsOf = (project) => [project.id, ...tabsOf(project).map((t) => tabP
 const tabDir = (project, tab) => tab?.dir || project.dir;
 /** Project and tab from a pty id (tab is null for the main tab); unknown → null. */
 function resolvePty(state, id) {
+  if (isHqId(id)) { const hq = hqProject(state); return hq ? { project: hq, tab: null, dir: hq.dir } : null; }
   const r = parsePtyId(id);
   const project = r && findProject(state, r.projectId);
   if (!project) return null;
@@ -198,6 +207,7 @@ function removeProject(state, id) {
 }
 
 function setActive(state, id) {
+  if (isHqId(id) || HQ.parseRemoteKey(id)) return state;   // HQ and remote rows are selected in the window only
   return findProject(state, id) ? { ...state, activeId: id } : state;
 }
 
@@ -457,7 +467,9 @@ module.exports = {
   historyDir,
   MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty,
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,
-  newId, projectName, normalizeState, findProject, findByDir,
+  newId, projectName, findProject, setHqDir, hqProject, isHqId,
+  /** state.hq (v3.46) normalized next to the rest */
+  normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq) }), findByDir,
   addProject, removeProject, setActive, setProjectAccount, setProjectManager, managerOf,
   BOSS_MODELS, BOSS_MODELS_BY_ENGINE, setProjectBossModel, bossModelOf, bossModelArgs,
   AGENT_MODELS, setProjectAgentModel, agentModelOf,

@@ -142,6 +142,16 @@ contextBridge.exposeInMainWorld('agentOffice', {
     loginCancel: (loginId) => ipcRenderer.invoke('link:loginCancel', loginId),
     onChange: listen('link:changed'),
   },
+  // v3.46 HQ: board, settings, report text (data), remote rows' manage actions
+  hq: {
+    get: () => ipcRenderer.invoke('hq:get'),
+    setSettings: (patch) => ipcRenderer.invoke('hq:setSettings', patch),
+    markRead: (id) => ipcRenderer.invoke('hq:markRead', id),
+    openFolder: () => ipcRenderer.invoke('hq:openFolder'),
+    report: (id) => ipcRenderer.invoke('hq:report', id),
+    remoteOp: (key, op) => ipcRenderer.invoke('hq:remoteOp', key, op),
+    onBoard: listen('hq:board'),
+  },
   office: {
     onData: listen('office:data'),
     themes: () => ipcRenderer.invoke('office:themes'),   // gallery + user themes.json (contract v3.1)
