@@ -118,7 +118,7 @@ const snapshot = () => ({
     tabs: P.tabsOf(p).map((t) => ({ n: t.n, isRunning: terms.has(P.tabPtyId(p.id, t.n)), isAsleep: asleep.has(P.tabPtyId(p.id, t.n)) })),
   })),
 });
-const broadcast = () => send('projects:changed', snapshot());
+const broadcast = () => { send('projects:changed', snapshot()); try { hqWaitsPush(); } catch { /* before HQ is set up */ } };   // v3.46 amendment: a tab change refreshes why HQ tasks wait
 
 // --- waiting for you (see src/attention.js): notification, Dock badge, marker on the project row
 let attnState = N.emptyAttention();
@@ -1596,7 +1596,7 @@ function officeMachines() {
     projects: (v.remotes.find((r) => r.device === dv.id)?.projects || (dv.online ? [] : peerCache()[dv.id]?.projects) || []).map((p) => ({ id: p.id, key: HQ.remoteKey(dv.id, p.id), name: officeName(p.name), ...(p.status ? { status: p.status } : {}) })) }));
   return { machines: [here, ...there] };
 }
-function officeDispatch(tab, args, { ttl = 0 } = {}) {
+function officeDispatch(tab, args, { ttl = 0, revive = false } = {}) {
   // v3.46 obvious secrets never leave in a task (journal patterns), and a boss working on an HQ task does not dispatch on (depth 1)
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   if (HQ.depthRefused(loadHqBoard(), tab)) return { status: 'rejected', reason: 'depth' };
@@ -1619,7 +1619,7 @@ function officeDispatch(tab, args, { ttl = 0 } = {}) {
       x.status = status;
       if (reason) x.reason = reason; else delete x.reason;
       saveDispatches();
-    }, { ttl });
+    }, { ttl, revive });
     rec = { machine: selfName(), project: officeName(p.name), pub: 'self' };
   } else {
     const dv = byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
@@ -1756,7 +1756,28 @@ function updatePeerCache() {
   if (changed || Object.keys(next).length) try { SF.writeAtomic(peerCacheFile(), JSON.stringify(next)); } catch {}
 }
 const hqSettings = () => HQ.normalizeHq(state.hq);
-const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, remotes: HQ.remoteRows(peerCache(), liveRemotes()) });
+const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, remotes: HQ.remoteRows(peerCache(), liveRemotes()), waits: hqWaits() });
+/** v3.46 amendment: why each queued local task waits → { [taskId]: { state, project, pos, len, expiresAt } }. */
+function hqWaits() {
+  const out = {};
+  if (!linkHost) return out;
+  for (const t of loadHqBoard().tasks) {
+    if (t.status !== 'queued' || t.machine !== 'self') continue;
+    const w = linkHost.waitInfo(t.id);
+    if (!w) continue;
+    const ts = terms.has(w.project) ? tabStateOf(w.project) : 'gone';
+    out[t.id] = { state: HQ.waitState(ts, asleep.has(w.project)), project: t.project, pos: w.pos, len: w.len, expiresAt: w.expiresAt };
+  }
+  return out;
+}
+let hqWaitSig = '';
+/** Pushes the board when a queued task's wait changed (tab state, position); called by hqTick and broadcast. */
+function hqWaitsPush() {
+  const sig = JSON.stringify(hqWaits());
+  if (sig === hqWaitSig) return;
+  hqWaitSig = sig;
+  send('hq:board', hqView());
+}
 function hqStatus(id, status, reason) {
   const b = loadHqBoard();
   if (!b.tasks.some((t) => t.id === id)) return;
@@ -1844,7 +1865,7 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   if (!remote) {
     const p = byName(state.projects, args.project);
     if (p && !terms.has(p.id)) projectOp('start', p.id);   // a stopped or sleeping target starts first; pump waits for 'starting'
-    const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS });
+    const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
     if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id });
     // v3.47 a routine's own project run: its report finishes the run and writes no HQ inbox row
     const rid = /** @type {any} */ (r).id;
@@ -1893,6 +1914,7 @@ function hqTick() {
     hqWasRunning = running;
   }
   hqPacer.flush();
+  hqWaitsPush();
   const l = linkHost?.link();
   if (l) {
     for (const t of HQ.openTasks(loadHqBoard()).filter((x) => x.machine !== 'self')) {
@@ -1933,6 +1955,13 @@ ipcMain.handle('hq:setSettings', (_e, patch) => {
 // lazy start: the person opened HQ (a stopped HQ gets a fresh try)
 ipcMain.handle('hq:open', () => { hqWanted = true; shownTab = HQ.HQ_ID; if (hqRestarter.stopped) hqRestarter.reset(); hqTick(); return hqView(); });
 ipcMain.handle('hq:markRead', (_e, id) => { const b = loadHqBoard(); saveHqBoard({ ...b, tasks: b.tasks.map((t) => (t.id === id ? { ...t, read: true } : t)) }); return hqView(); });
+// v3.46 amendment: Cancel on a queued card of this machine: out of the project's queue → 'rejected: cancelled'
+ipcMain.handle('hq:cancel', (_e, id) => {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return hqView();
+  const t = loadHqBoard().tasks.find((x) => x.id === id);
+  if (t && t.status === 'queued' && t.machine === 'self') linkHost?.cancel(id);   // its reply sets the card (hqStatus)
+  return hqView();
+});
 ipcMain.handle('hq:openFolder', () => eShell.openPath(hqDir()));
 ipcMain.handle('hq:report', (_e, id) => { const f = HQ.taskFile(hqDir(), String(id), 'report.md'); try { return f ? fs.readFileSync(f, 'utf8') : ''; } catch { return ''; } });
 // --- v3.47 Routines (src/routines.js): recurring tasks for HQ and local Claude Code project bosses. Definitions in

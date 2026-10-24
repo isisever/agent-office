@@ -911,7 +911,18 @@
     },
     "off": "kapalı",
     "stopped": "durdu",
-    "enabled": "Müdür açık/kapalı"
+    "enabled": "Müdür açık/kapalı",
+    "wait": {
+      "ready": "{project} patronuna yazılmak üzere",
+      "busy": "bekliyor — {project} patronu meşgul",
+      "starting": "bekliyor — {project} patronu açılıyor",
+      "asleep": "bekliyor — {project} patronu uykuda, uyandırılıyor",
+      "not-running": "bekliyor — {project} patronu çalışmıyor, başlatılıyor",
+      "pos": "kuyrukta {len} görevden {n}.",
+      "expires": "{min} dk sonra düşer",
+      "cancel": "İptal",
+      "cancelTip": "Bu görevi projenin kuyruğundan çıkar"
+    }
   },
   "routines": {
     "title": "Rutinler",

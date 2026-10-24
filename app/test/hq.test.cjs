@@ -367,3 +367,96 @@ test('HQ launch keeps MCP tools next to --tools Read (live-checked)', () => {
   const args = HQ.launchArgs({ dir: '/h', mcpConfig: '/c.json', server: 'agent-office' });
   assert.equal(args[args.indexOf('--tools') + 1], 'Read');
 });
+
+// ---- v3.46 amendment: why a queued HQ task waits, wake/start of a gone boss, Cancel
+
+function waitHost(t, over = {}) {
+  const dir = tmp('ao-hqwait-');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const typed = [];
+  const host = LH.setupLink({
+    app: { getPath: () => dir, getVersion: () => '0.21.0' },
+    safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain', encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+    ipcMain: { handle: () => {} }, send: () => {}, notify: () => {}, T: (k) => k, loginOf: () => 'in', reportsDir: path.join(dir, 'r'),
+    projects: () => [{ id: 'p1', name: 'pii', engine: 'claude' }], type: (id, text) => { typed.push(text); }, ...over,
+  });
+  t.after(() => host.destroy());
+  return { host, typed };
+}
+
+test('v3.46 amendment: waitState names why a task waits', () => {
+  assert.deepEqual(['ready', 'busy', 'starting'].map((s) => HQ.waitState(s, false)), ['ready', 'busy', 'starting']);
+  assert.equal(HQ.waitState('gone', true), 'asleep');
+  assert.equal(HQ.waitState('gone', false), 'not-running');
+  assert.ok(HQ.WAIT_STATES.includes('not-running'));
+});
+
+test('v3.46 amendment: an HQ task wakes/starts a gone boss, waits for it, then is typed; at most 3 tries a minute apart', (t) => {
+  const real = Date.now; let clock = real(); Date.now = () => clock;
+  t.after(() => { Date.now = real; });
+  let tab = 'gone'; const ops = [];
+  const { host, typed } = waitHost(t, { tabState: () => tab, manage: (op, id) => { ops.push([op, id]); return { ok: true }; } });
+  const seen = [];
+  const r = host.dispatchLocal('p1', 'scan the repo', 'HQ', (id, s, why) => seen.push([s, why]), { ttl: 3600000, revive: true });
+  assert.equal(r.status, 'queued');
+  assert.deepEqual(ops, [['start', 'p1']]);
+  host.pump();
+  assert.equal(ops.length, 1);   // not again within a minute
+  const w = host.waitInfo(r.id);
+  assert.deepEqual([w.project, w.pos, w.len, w.expiresAt], ['p1', 1, 1, clock + 3600000]);
+  tab = 'starting'; host.pump();
+  assert.equal(typed.length, 0);
+  tab = 'ready'; host.pump();
+  assert.equal(typed.length, 1);
+  assert.deepEqual(seen.map((x) => x[0]), ['queued', 'delivered']);
+  assert.equal(host.waitInfo(r.id), null);
+  // a boss that never comes up: three tries, then 'not-running'
+  tab = 'gone'; ops.length = 0;
+  const seen2 = [];
+  host.dispatchLocal('p1', 'again', 'HQ', (id, s, why) => seen2.push([s, why]), { ttl: 3600000, revive: true });
+  for (let i = 0; i < 3; i++) { clock += 61000; host.pump(); }
+  assert.equal(ops.length, 3);
+  assert.deepEqual(seen2.at(-1), ['rejected', 'not-running']);
+});
+
+test('v3.46 amendment: without revive a gone boss refuses at once; a failed start says why', (t) => {
+  let res = { ok: false, reason: 'locked' };
+  const { host } = waitHost(t, { tabState: () => 'gone', manage: () => res });
+  const a = []; host.dispatchLocal('p1', 'x', 'Boss', (id, s, why) => a.push([s, why]));
+  assert.deepEqual(a.at(-1), ['rejected', 'not-running']);
+  const b = []; host.dispatchLocal('p1', 'x', 'HQ', (id, s, why) => b.push([s, why]), { revive: true });
+  assert.deepEqual(b.at(-1), ['rejected', 'locked']);
+  res = { ok: false, reason: 'failed' };
+  const c = []; host.dispatchLocal('p1', 'x', 'HQ', (id, s, why) => c.push([s, why]), { revive: true });
+  assert.deepEqual(c.at(-1), ['rejected', 'not-running']);
+});
+
+test('v3.46 amendment: Cancel takes a queued task out of its project queue as rejected: cancelled', (t) => {
+  const { host, typed } = waitHost(t, { tabState: () => 'busy' });
+  const s1 = []; const a = host.dispatchLocal('p1', 'one', 'HQ', (id, s, why) => s1.push([s, why]));
+  const b = host.dispatchLocal('p1', 'two', 'HQ');
+  assert.deepEqual([host.waitInfo(b.id).pos, host.waitInfo(b.id).len], [2, 2]);
+  assert.equal(host.cancel(a.id), true);
+  assert.deepEqual(s1.at(-1), ['rejected', 'cancelled']);
+  assert.deepEqual([host.waitInfo(b.id).pos, host.waitInfo(b.id).len], [1, 1]);
+  assert.equal(host.cancel(a.id), false);
+  assert.equal(host.cancel('nope'), false);
+  assert.equal(host.knows(a.id), false);
+  assert.equal(typed.length, 0);
+});
+
+test('v3.46 amendment: main wires waits, the push, Cancel (validated, queued local cards only) and revive for HQ only', () => {
+  assert.match(MAIN, /const hqView = \(\) => \(\{[^\n]*waits: hqWaits\(\) \}\);/);
+  assert.match(fnBody('hqWaits'), /t\.status !== 'queued' \|\| t\.machine !== 'self'/);
+  assert.match(fnBody('hqTick'), /hqWaitsPush\(\);/);
+  assert.match(MAIN, /const broadcast = \(\) => \{[^\n]*hqWaitsPush\(\)/);
+  const i = MAIN.indexOf("ipcMain.handle('hq:cancel'");
+  assert.ok(i > 0);
+  const body = MAIN.slice(i, MAIN.indexOf('\n});', i));
+  assert.match(body, /typeof id !== 'string' \|\| !\/\^\[A-Za-z0-9_-\]\{1,64\}\$\/\.test\(id\)/);
+  assert.match(body, /t\.status === 'queued' && t\.machine === 'self'\) linkHost\?\.cancel\(id\)/);
+  assert.match(fnBody('hqDispatch'), /\{ ttl: HQ\.HQ_TTL_MS, revive: true \}/);
+  assert.doesNotMatch(fnBody('officeDispatch'), /revive: true/);   // a project boss's dispatch never wakes a target
+  const pre = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  assert.match(pre, /cancel: \(id\) => ipcRenderer\.invoke\('hq:cancel', id\)/);
+});

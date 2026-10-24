@@ -295,6 +295,11 @@ function reportMd(task, report) {
   return `${out.join('\n')}\n`;
 }
 /** What office_board gives HQ: cleaned rows, newest first, plus the current request id. */
+/** v3.46 amendment: why a queued local task waits, from its boss tab's state ('ready'|'busy'|'starting'|'gone') and
+ *  whether a gone tab is asleep → 'ready' | 'busy' | 'starting' | 'asleep' | 'not-running'. */
+const WAIT_STATES = ['ready', 'busy', 'starting', 'asleep', 'not-running'];
+const waitState = (tab, isAsleep) => (tab === 'ready' || tab === 'busy' || tab === 'starting' ? tab : isAsleep ? 'asleep' : 'not-running');
+
 /** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string }} [o] */
 const boardView = (board, { request = '', status = '' } = {}) => board.tasks
   .filter((t) => (!request || t.request === request) && (!status || t.status === status)).slice(0, 50)
@@ -359,6 +364,7 @@ You may edit this file: Agent Office writes it only when it is missing.
 `;
 
 module.exports = {
+  waitState, WAIT_STATES,
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,

@@ -1078,6 +1078,7 @@ label.sb-langrow { cursor: pointer; }
 .hq-task { padding: 6px; border-radius: 6px; background: var(--hover, rgba(127,127,127,.12)); margin-bottom: 6px; cursor: pointer; }
 .hq-task.unread { box-shadow: inset 3px 0 0 var(--accent, #d97757); }
 .hq-task-meta { opacity: .7; font-size: 11px; }
+.hq-task-wait { font-size: 11px; margin-top: 3px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; opacity: .85; font-style: italic; }
 .hq-report { white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; margin: 6px 0 0; font-size: 11px; }
 .hq-empty { opacity: .6; }
 /* remote rows in PROJECTS: the local rows' grid (.sb-proj); name + a short "remote" badge, machine on the status line */
