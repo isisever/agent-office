@@ -102,6 +102,22 @@ function enabledPluginNames(claudeDir) {
 }
 
 /**
+ * Entry names under a claude.ai-synced folder (`<claudeDir>/skills/synced`, `<claudeDir>/plugins/synced`): Claude Code
+ * keeps them in one bucket folder per claude.ai organization and user (`<orgId>_<userId>/<name>/`, next to dot
+ * `.bucket-*` files and a manifest.json that is never read), and loads the skills as `anthropic-skills:<name>`. A
+ * direct child holding `marker` (SKILL.md, .claude-plugin) is an entry itself; any other child is a bucket and its
+ * children are the entries. Directory listings and existence checks only.
+ */
+function syncedNames(dir, marker) {
+  const out = [];
+  for (const d of listDirs(dir)) {
+    if (fs.existsSync(path.join(dir, d, marker))) out.push(d);
+    else out.push(...listDirs(path.join(dir, d)));
+  }
+  return out;
+}
+
+/**
  * What an account already has. claudeDir: the account's folder (configDir, or ~/.claude for Default); defaultDir:
  * ~/.claude when the account shares Default's plugins (their names count too), else null.
  * @param {{ claudeDir: string, defaultDir?: string | null }} o
@@ -110,7 +126,8 @@ function enabledPluginNames(claudeDir) {
 function readOwned({ claudeDir, defaultDir = null }) {
   const plugins = new Set(enabledPluginNames(claudeDir));
   if (defaultDir && path.resolve(defaultDir) !== path.resolve(claudeDir)) for (const n of enabledPluginNames(defaultDir)) plugins.add(n);
-  const skills = new Set([...listDirs(path.join(claudeDir, 'skills')), ...listDirs(path.join(claudeDir, 'skills', 'synced'))]);
+  for (const n of syncedNames(path.join(claudeDir, 'plugins', 'synced'), '.claude-plugin')) plugins.add(n);
+  const skills = new Set([...listDirs(path.join(claudeDir, 'skills')), ...syncedNames(path.join(claudeDir, 'skills', 'synced'), 'SKILL.md')]);
   skills.delete('synced');
   return { plugins: [...plugins].sort(), skills: [...skills].sort() };
 }
