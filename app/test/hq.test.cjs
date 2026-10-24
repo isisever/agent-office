@@ -482,3 +482,27 @@ test('v3.46 amendment: main wires waits, the push, Cancel (validated, queued loc
   const pre = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   assert.match(pre, /cancel: \(id\) => ipcRenderer\.invoke\('hq:cancel', id\)/);
 });
+
+test('shell status: tabStateOf types into a shell tab; tabWorkRunning still sees work; kill paths check it', () => {
+  const R = require('../src/resume.js');
+  const make = (status, extra = {}) => {
+    const deps = {
+      state: {}, P: { resolvePty: () => ({ project: { id: 'p' } }) }, terms: new Map([['p', { pid: 1 }]]), handoffLocks: new Set(),
+      A: { accountOf: () => ({ configDir: '/c' }) }, Z: { claudePidFile: () => '/c/sessions/1.json' }, app: { getPath: () => '/h' },
+      readJson: () => (status === null ? null : { sessionId: 's1', status }), validSid: (s) => s || '', LC: { typingReady: () => true },
+      sessionPrompted: () => true, R, office: () => ({ readSession: () => extra.office }), activity: new Map(), attention: new Map(),
+    };
+    const names = Object.keys(deps);
+    return new Function(...names, `${fnBody('tabStateOf')}\n}\n${fnBody('tabWorkRunning')}\n}\nreturn { tabStateOf, tabWorkRunning };`)(...names.map((n) => deps[n]));
+  };
+  for (const [status, ts, work] of [['idle', 'ready', false], ['shell', 'ready', true], ['busy', 'busy', true], ['waiting', 'busy', true]]) {
+    const f = make(status);
+    assert.equal(f.tabStateOf('p'), ts, status);
+    assert.equal(f.tabWorkRunning('p'), work, status);
+  }
+  assert.equal(make(null).tabStateOf('p'), 'busy', 'no pid file: busy');
+  // HQ relaunch (account/model change) never kills HQ while work runs, a background shell included
+  assert.match(MAIN, /relaunch && terms\.has\(HQ\.HQ_ID\) && tabStateOf\(HQ\.HQ_ID\) !== 'busy' && !tabWorkRunning\(HQ\.HQ_ID\)\) killPty\(HQ\.HQ_ID\)/);
+  // v3.33 sleep/stop refuse a tab with work running ('ready' includes shell)
+  assert.match(fnBody('projectOp'), /if \(tabWorkRunning\(id\)\) return \{ ok: false, reason: 'busy' \}/);
+});

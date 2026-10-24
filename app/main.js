@@ -1949,7 +1949,7 @@ ipcMain.handle('hq:setSettings', (_e, patch) => {
   commit({ ...state, hq: next });
   hqRestarter.reset();
   if (!next.enabled) killPty(HQ.HQ_ID);   // off: no HQ pty
-  else if (relaunch && terms.has(HQ.HQ_ID) && tabStateOf(HQ.HQ_ID) !== 'busy') killPty(HQ.HQ_ID);   // hqTick starts it with the new account/model
+  else if (relaunch && terms.has(HQ.HQ_ID) && tabStateOf(HQ.HQ_ID) !== 'busy' && !tabWorkRunning(HQ.HQ_ID)) killPty(HQ.HQ_ID);   // hqTick starts it with the new account/model; never while work (incl. a background shell) runs
   return hqView();
 });
 // lazy start: the person opened HQ (a stopped HQ gets a fresh try)
@@ -2233,6 +2233,7 @@ function projectOp(op, projectId) {
   }
   const ts = linkTabState(id);
   if (ts !== 'ready' && !(ts === 'starting' && !activity.get(id)?.draft)) return { ok: false, reason: 'busy' };
+  if (tabWorkRunning(id)) return { ok: false, reason: 'busy' };   // 'ready' includes a background shell: sleep/stop would kill it
   if (op === 'sleep') {
     const claude = readJson(Z.claudePidFile(A.accountOf(state, p).configDir, app.getPath('home'), t.pid));
     killPty(id);
@@ -2261,8 +2262,19 @@ function tabStateOf(projectId) {
   const sid = validSid(claude?.sessionId);
   // v3.31 (amendment 4): nothing is typed in from outside before the session is known and had its first prompt
   if (claude && !LC.typingReady({ sessionId: sid, prompted: sessionPrompted(sid, configDir) })) return 'starting';
-  if (!claude || R.isTurnBusy({ claude, office: sid ? office()?.readSession(sid) : undefined })) return 'busy';
+  // a 'shell' tab (idle prompt, background Bash running) takes a typed prompt; kill/sleep decisions use tabWorkRunning
+  if (!claude || !R.canTypePrompt({ claude, office: sid ? office()?.readSession(sid) : undefined })) return 'busy';
   return activity.get(projectId)?.draft || attention.get(projectId) === 'permission' ? 'busy' : 'ready';
+}
+/** Is work running in this tab (a turn, a dialog, sub-agents or a background shell)? For kill/sleep/restart decisions. */
+function tabWorkRunning(projectId) {
+  const p = P.resolvePty(state, projectId)?.project;
+  const t = terms.get(projectId);
+  if (!p || !t) return false;
+  const { configDir } = A.accountOf(state, p);
+  const claude = readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid));
+  const sid = validSid(claude?.sessionId);
+  return R.isTurnBusy({ claude, office: sid ? office()?.readSession(sid) : undefined });
 }
 // sessions known to have had a first prompt: Claude Code writes the transcript (<id>.jsonl) with the first message
 const promptedSids = new Set();

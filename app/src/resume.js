@@ -42,7 +42,8 @@ function normalizeInterrupted(raw, ptyIds) {
  * Is this claude in the middle of a turn? Claude Code's own pid file (<config>/sessions/<pid>.json, its `status`) is
  * fresh for this process; the office file's stats.isBossBusy (the plugin's hooks) is the fallback when the pid file
  * has no status (older Claude Code). An office file left by a killed claude can still say busy, so it is used only
- * when there is no pid file status.
+ * when there is no pid file status. This answers "is work running": it is true for 'shell' on purpose (an idle prompt
+ * with a background Bash task), so sleep, kill, restart and handoff never cut a background process off.
  * @param {{ claude?: any, office?: any }} o
  */
 function isTurnBusy({ claude, office }) {
@@ -50,6 +51,21 @@ function isTurnBusy({ claude, office }) {
   if (typeof status === 'string' && status) return status !== 'idle';
   if (!office || typeof office !== 'object' || office.endedAt) return false;
   return Boolean(office.stats?.isBossBusy);
+}
+
+/** Claude Code pid file statuses (2.1.310), precedence waiting > busy > shell > idle: idle | shell (idle prompt plus a
+ * running background Bash task) | busy (a turn, or sub-agents running) | waiting (a dialog or permission prompt). */
+const TYPEABLE = new Set(['idle', 'shell']);
+/**
+ * Can a typed prompt go in now? A background shell does not block the prompt; a turn, sub-agents or a dialog do.
+ * Unknown status strings are not typeable; no status at all falls back to the office file like isTurnBusy.
+ * @param {{ claude?: any, office?: any }} o
+ */
+function canTypePrompt({ claude, office }) {
+  const status = claude && typeof claude === 'object' ? claude.status : undefined;
+  if (typeof status === 'string' && status) return TYPEABLE.has(status);
+  if (!office || typeof office !== 'object' || office.endedAt) return true;
+  return !office.stats?.isBossBusy;
 }
 
 /**
@@ -230,4 +246,4 @@ function typedPrompt(text) {
   return `\x1b[200~${promptArg(text)}\x1b[201~`;
 }
 
-module.exports = { RESUME_PROMPT, UNFINISHED_PROMPT, entryTurn, transcriptState, transcriptFileState, unfinishedActions, typedPrompt, normalizeInterrupted, isTurnBusy, nextInterrupted, clearInterrupted, resumeTargets, promptArg, claudeArgs };
+module.exports = { RESUME_PROMPT, UNFINISHED_PROMPT, entryTurn, transcriptState, transcriptFileState, unfinishedActions, typedPrompt, normalizeInterrupted, isTurnBusy, canTypePrompt, nextInterrupted, clearInterrupted, resumeTargets, promptArg, claudeArgs };

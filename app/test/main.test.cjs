@@ -2374,6 +2374,25 @@ test('yarım iş: meşgul mü (claude pid dosyası önce, yoksa ofis dosyasını
   assert.equal(isTurnBusy({}), false);
 });
 
+test('yazılabilir mi: idle ve shell evet; busy, waiting, bilinmeyen hayır; durum yoksa ofis dosyası', () => {
+  const { canTypePrompt, isTurnBusy } = require('../src/resume.js');
+  const { sleepBlocker } = require('../src/sleep.js');
+  assert.equal(canTypePrompt({ claude: { status: 'idle' } }), true);
+  assert.equal(canTypePrompt({ claude: { status: 'shell' } }), true, 'a background shell does not block the prompt');
+  assert.equal(canTypePrompt({ claude: { status: 'busy' } }), false);
+  assert.equal(canTypePrompt({ claude: { status: 'waiting' } }), false);
+  assert.equal(canTypePrompt({ claude: { status: 'later-thing' } }), false);
+  assert.equal(canTypePrompt({ claude: { status: 'shell' }, office: { stats: { isBossBusy: true } } }), true, 'pid file status wins');
+  assert.equal(canTypePrompt({ claude: {}, office: { stats: { isBossBusy: true } } }), false);
+  assert.equal(canTypePrompt({ claude: {}, office: { stats: { isBossBusy: false } } }), true);
+  assert.equal(canTypePrompt({ office: { endedAt: 1, stats: { isBossBusy: true } } }), true);
+  assert.equal(canTypePrompt({}), true);
+  assert.equal(isTurnBusy({ claude: { status: 'shell' } }), true, 'work running: shell still blocks sleep/kill/restart');
+  const now = 10_000_000;
+  assert.equal(sleepBlocker({ now, idleMs: 30 * 60000, lastActivityAt: now - 31 * 60000, claude: { pid: 1, sessionId: 'x', status: 'shell' },
+    office: { format: 2, project: 'p', updatedAt: now, workers: [], shells: [], stats: { isBossBusy: false } } }), 'busy');
+});
+
 test('yarım iş: meşgulken işaretlenir, tur bitince silinir; değişiklik yoksa aynı nesne', () => {
   const { nextInterrupted, clearInterrupted } = require('../src/resume.js');
   const none = {};
