@@ -105,18 +105,23 @@ const isDirAsync = async (d) => { try { return (await fs.promises.stat(d)).isDir
 // ANTHROPIC_MODEL as the pty gets it: claude starts in a login interactive shell, so ~/.zshrc exports reach it while a
 // Finder-launched app lacks them. Asked of the same shell, once a minute (the rc files may be slow), never throws.
 let shellCache = null;
+const MARK = '__AO_MODEL__';
 function loginShellModel({ shell = process.env.SHELL, platform = process.platform, base = process.env, run = execFile, now = Date.now } = {}) {
   if (platform === 'win32' || !shell) return Promise.resolve(modelValue(base.ANTHROPIC_MODEL) ? { ANTHROPIC_MODEL: base.ANTHROPIC_MODEL } : {});
   if (shellCache && now() - shellCache.at < 60000) return shellCache.p;
   const p = new Promise((resolve) => {
     const fallback = modelValue(base.ANTHROPIC_MODEL) ? { ANTHROPIC_MODEL: base.ANTHROPIC_MODEL } : {};
+    // an interactive shell may ignore SIGTERM: SIGKILL on timeout, and a timer of our own so the promise always settles
+    const guard = setTimeout(() => resolve(fallback), 6000);
+    guard.unref?.();
+    const done = (v) => { clearTimeout(guard); resolve(v); };
     try {
-      run(shell, ['-l', '-i', '-c', 'printf "%s" "$ANTHROPIC_MODEL"'], { timeout: 5000, env: { ...base, TERM: 'dumb' }, maxBuffer: 65536 }, (err, out) => {
-        if (err && !out) return resolve(fallback);
-        const lines = String(out || '').split('\n');
-        resolve({ ANTHROPIC_MODEL: lines[lines.length - 1].trim() });
+      // between markers: rc banners, a missing newline or a logout file's output never become the value
+      run(shell, ['-l', '-i', '-c', `printf '\\n${MARK}%s${MARK}\\n' "$ANTHROPIC_MODEL"`], { timeout: 5000, killSignal: 'SIGKILL', env: { ...base, TERM: 'dumb' }, maxBuffer: 65536 }, (err, out) => {
+        const m = err ? null : new RegExp(`${MARK}([^\\n]*?)${MARK}`).exec(String(out || ''));
+        done(m ? { ANTHROPIC_MODEL: m[1].trim() } : fallback);
       });
-    } catch { resolve(fallback); }
+    } catch { done(fallback); }
   });
   shellCache = { at: now(), p };
   return p;

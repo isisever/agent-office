@@ -89,11 +89,19 @@ test('IPC body: wrong engine, remote folder, manager flag, account configDir', a
 });
 
 let clock = 0;
-test('login shell: ANTHROPIC_MODEL from the shell the pty uses, last line, falls back on failure', async () => {
+test('login shell: ANTHROPIC_MODEL between markers, falls back on failure, noise or a shell that never exits', async () => {
   const run = (out, err = null) => (_sh, _args, _o, cb) => cb(err, out);
   const fresh = (o) => EM.loginShellModel({ shell: '/bin/zsh', platform: 'darwin', base: {}, now: () => (clock += 1e6), ...o });
-  assert.deepEqual(await fresh({ run: run('motd\nhaiku') }), { ANTHROPIC_MODEL: 'haiku' });
+  assert.deepEqual(await fresh({ run: run('motd\n__AO_MODEL__haiku__AO_MODEL__\nbye from .zlogout') }), { ANTHROPIC_MODEL: 'haiku' });
+  assert.deepEqual(await fresh({ run: run('banner without newline', null), base: { ANTHROPIC_MODEL: 'opus' } }), { ANTHROPIC_MODEL: 'opus' });
+  assert.deepEqual(await fresh({ run: run('__AO_MODEL__haiku__AO_MODEL__', new Error('timeout')), base: { ANTHROPIC_MODEL: 'opus' } }), { ANTHROPIC_MODEL: 'opus' });
   assert.deepEqual(await fresh({ run: run('', new Error('timeout')), base: { ANTHROPIC_MODEL: 'opus' } }), { ANTHROPIC_MODEL: 'opus' });
+  let opts;
+  const hang = (_sh, _args, o) => { opts = o; };
+  const t0 = Date.now();
+  assert.deepEqual(await fresh({ run: hang, base: { ANTHROPIC_MODEL: 'sonnet' } }), { ANTHROPIC_MODEL: 'sonnet' });
+  assert.ok(Date.now() - t0 >= 5900);
+  assert.equal(opts.killSignal, 'SIGKILL');
   assert.deepEqual(await fresh({ run: run('x'), platform: 'win32', base: {} }), {});
 });
 
