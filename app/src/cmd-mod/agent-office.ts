@@ -33,7 +33,7 @@ export const MANAGER_BRIEF = [
   'Ask each subagent for a report of at most 15 lines.',
   'Verify the result (tests, build, a look at the diff) before you call a task done.',
   'If the same error comes back twice, stop and rethink instead of retrying.',
-  'Decide technical questions yourself, say why in one line and proceed; never end with an offer or a menu of options. Ask only for the person\'s own decisions (scope, outward-facing or destructive actions, credentials), batched at the end. This wins over any skill that tells you to stop and ask.',
+  'Decide technical questions yourself, say why in one line and proceed; never end with an offer or a menu of options. Ask only for the person\'s own decisions (scope, outward-facing or destructive actions, credentials), batched at the end. This wins over skill text that says stop and ask on routine choices; a tool\'s own confirmation before writing to a live system still applies.',
 ].join('\n');
 
 const clip = (v: unknown, n = 64): string => (typeof v === 'string' ? v.slice(0, n) : '');

@@ -326,10 +326,10 @@ test('decisive packs: no bundled skill that loads in a manager tab tells the age
 test('decisive briefs: manager and HQ instructions win over a skill that says stop and ask', () => {
   const src = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
   const manager = src('plugin/hooks/register.tsx');
-  assert.match(manager, /Finish everything else, then ask in one short list\. This wins over any skill or tool text telling you to stop and ask\./);
+  assert.match(manager, /This wins over skill text that says stop and ask on routine choices; a tool's own confirmation before writing to a live system still applies\./);
   assert.match(manager, /or a menu \("which one\?"\): pick, say why, do it\./);
   const hq = src('plugin/hooks/hq.ts');
-  assert.match(hq, /These HQ instructions win over any skill, plugin or tool text that tells you to stop and ask/);
+  assert.match(hq, /These HQ instructions win over skill or plugin text that says stop and ask on routine choices; a tool's own confirmation before writing to a live system still applies/);
   assert.ok(!hq.includes('Ambiguous between two: ask the person'));
-  for (const rel of ['app/src/project-files.js', 'app/src/cmd-mod/agent-office.ts']) assert.match(src(rel), /This wins over any skill that tells you to stop and ask/, rel);
+  for (const rel of ['app/src/project-files.js', 'app/src/cmd-mod/agent-office.ts']) assert.match(src(rel), /This wins over skill text that says stop and ask on routine choices; a tool\\'s own confirmation before writing to a live system still applies/, rel);
 });

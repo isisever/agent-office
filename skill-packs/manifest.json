@@ -26,10 +26,10 @@
       "patches": [
         { "file": "skills/design/SKILL.md", "why": "decisive: offer the HTML preview in one line instead of stopping on AskUserQuestion",
           "find": "After generation, **ALWAYS** ask user about HTML preview via `AskUserQuestion`. If yes,",
-          "replace": "After generation, offer an HTML preview in one line at the end of your reply (don't stop on `AskUserQuestion` for it). If the user wants one," },
+          "replace": "After generation, build the HTML preview only when the user asked for one; don't ask about it (no `AskUserQuestion`). If they did," },
         { "file": "skills/design/references/logo-design.md", "why": "decisive: offer the HTML preview in one line instead of stopping on AskUserQuestion",
           "find": "3. Ask user about HTML preview → `AskUserQuestion` tool\n4. If yes,",
-          "replace": "3. Offer an HTML preview in one line at the end of your reply (don't stop on `AskUserQuestion` for it)\n4. If the user wants one," }
+          "replace": "3. Build the HTML preview only when the user asked for one; don't ask about it (no `AskUserQuestion`)\n4. If they did," }
       ]
     },
     {

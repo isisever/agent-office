@@ -78,8 +78,8 @@ Options: `--style`, `--industry`, `--prompt`, `--provider`, `--atlas-model`, `--
 
 1. Generate design brief → `scripts/logo/search.py --design-brief`
 2. Generate logo variations → `scripts/logo/generate.py --brand --style --industry`
-3. Offer an HTML preview in one line at the end of your reply (don't stop on `AskUserQuestion` for it)
-4. If the user wants one, use the bundled `ui-ux-pro-max` skill for the HTML gallery
+3. Build the HTML preview only when the user asked for one; don't ask about it (no `AskUserQuestion`)
+4. If they did, use the bundled `ui-ux-pro-max` skill for the HTML gallery
 
 ## Detailed References
 
