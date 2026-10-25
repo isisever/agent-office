@@ -12,6 +12,14 @@
     {
       "file": "skills/design-dna/SKILL.md",
       "why": "no silent runtime npm install: ask the user before installing sharp"
+    },
+    {
+      "file": "skills/design-dna/SKILL.md",
+      "why": "decisive: mention customization in one line instead of waiting for an answer"
+    },
+    {
+      "file": "skills/design-dna/SKILL.md",
+      "why": "decisive: mention customization in one line instead of waiting for an answer"
     }
   ]
 }

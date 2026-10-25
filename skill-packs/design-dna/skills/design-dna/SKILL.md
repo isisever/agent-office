@@ -34,7 +34,7 @@ When the user asks for the structural dimensions or schema:
    - **design_system**: What you can measure — exact hex values, pixel sizes, rem scales
    - **design_style**: What you can feel — mood, personality, composition strategy
    - **visual_effects**: What you can see but can't express in CSS alone — WebGL scenes, particle systems, shader distortions, scroll-driven animations
-4. Ask if the user wants to customize or extend any dimensions
+4. Mention in one line that any dimension can be customized or extended (don't stop to wait for an answer)
 
 ### Phase 2: Analyze — Extract DNA from References
 
@@ -47,7 +47,7 @@ When the user provides images, screenshots, or links representing a target desig
 3. For every field in the schema, extract or infer a value from the references
 4. When multiple references conflict, note the dominant pattern and mention variants
 5. Output a complete Design DNA JSON — every field populated, no empty strings
-6. After output, ask: "Want to adjust any values before using this for generation?"
+6. After output, note in one line that values can be adjusted before generation; when generation was requested too, proceed with it instead of waiting
 
 **Analysis approach per dimension:**
 

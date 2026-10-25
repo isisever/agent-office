@@ -23,5 +23,10 @@
     "skills/canvas-design/canvas-fonts/InstrumentSerif-Italic.ttf",
     "skills/canvas-design/canvas-fonts/InstrumentSerif-Regular.ttf"
   ],
-  "patches": []
+  "patches": [
+    {
+      "file": "skills/theme-factory/SKILL.md",
+      "why": "decisive: pick the best-fitting theme and say why instead of waiting for a selection"
+    }
+  ]
 }

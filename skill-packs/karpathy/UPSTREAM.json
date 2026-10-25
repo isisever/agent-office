@@ -6,5 +6,14 @@
     "karpathy-guidelines"
   ],
   "dropped": [],
-  "patches": []
+  "patches": [
+    {
+      "file": "skills/karpathy-guidelines/SKILL.md",
+      "why": "decisive: state the assumption, pick the most reasonable option and proceed; ask only for the user's own decisions (manager mode, v3.45 amendment)"
+    },
+    {
+      "file": "skills/karpathy-guidelines/SKILL.md",
+      "why": "decisive: state the assumption, pick the most reasonable option and proceed; ask only for the user's own decisions (manager mode, v3.45 amendment)"
+    }
+  ]
 }
