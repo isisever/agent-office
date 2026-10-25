@@ -245,6 +245,15 @@ const MENUS: string[] = [
   'Ne yapalım?',
   'A mı yoksa B mi olsun?',
   'Which would you like first, A or B?',
+  // permission for its own next step, which-first, and a pick after its own recommendation (S3D, v3.52)
+  'Boolean sonuçlarında en fazla 3 açık kenar kalabiliyor; hacim doğru.\n\nBunların hangisini önce kapatmamı istersiniz? Commit yapmadım.',
+  'En son değişikliklere reviewer çalıştırmadım.\n\nCommit yapmadım. Küre sorununa şimdi odaklanmamı ister misiniz, yoksa önce uygulamayı kendiniz deneyip geri bildirim mi vermek istersiniz?',
+  '1. **Voksel booleanı:** Sonuç her zaman kapalı. Önerim bu. 2. **Tam üçgen-üçgen yeniden yazım:** uzun sürer.\n\nHangisini istersiniz?',
+  "Geçmiş paneli: bizde yalnız metin listesi var.\n\nBunlardan hangisini önce yapmamı istersiniz? Bence sırası: menü/araç grupları, sonra taşıma gizmo'su.",
+  'The sphere still leaks. Should I focus on the sphere now, or do you want to try the app yourself first?',
+  'Two gaps remain. Do you want me to close the open edges first?',
+  'Option 1 is a voxel boolean, option 2 a full rewrite. I recommend option 1. Which do you want?',
+  "A: menus, B: the move gizmo. I'd go with A. Which would you prefer?",
 ]
 // the ask wins: a sentence with an ask topic is never a menu, even in a menu's shape
 const REAL_ASKS: string[] = [
@@ -260,6 +269,9 @@ const REAL_ASKS: string[] = [
   // a product preference phrased as theirs
   'Header için seçeneklerden hangisini tercih edersiniz?',
   'Hangisini tercih edersiniz?',
+  // a pick with no recommendation of the assistant's may be a product decision
+  '1. Voksel booleanı: sonuç her zaman kapalı. 2. Tam yeniden yazım: uzun sürer.\n\nHangisini istersiniz?',
+  'Option 1 is a voxel boolean, option 2 a full rewrite. Which would you prefer?',
 ]
 // narrative, not a question: Turkish menu cues need a "?", and "mı/mi" is a whole word
 const NARRATIVE: string[] = [
