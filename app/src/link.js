@@ -89,7 +89,7 @@ class Link extends EventEmitter {
     this.statusSent = new Map();   // id → { sig, at } of the last task-status sent (at most one per 5 s per task)
     // v3.48 incoming task-status / task-query are limited per device (a resync answers ≤300 open tasks at once)
     this.statusLimiter = new C.RateLimiter({ burst: 400, everyMs: 50, now: this.now });
-    this.queryLimiter = new C.RateLimiter({ burst: 8, everyMs: 2000, now: this.now });
+    this.queryLimiter = new C.RateLimiter({ burst: 16, everyMs: 2000, now: this.now });
     this.log = o.log || ((...a) => console.warn('[link]', ...a));
     this.destroyed = false;
   }
@@ -824,10 +824,12 @@ class Link extends EventEmitter {
     try {
       fs.mkdirSync(path.dirname(this.reportsFile), { recursive: true, mode: 0o700 });
       fs.writeFileSync(this.reportsFile, JSON.stringify(Object.fromEntries(keep.map(([id, r]) => [id, { pub: r.pub, report: r.report, sent: r.sent, at: r.at, ...(r.project ? { project: r.project } : {}) }]))), { mode: 0o600 });
-    } catch { /* best effort */ }
+    } catch (e) { this.log('reports-out not saved:', e?.code || e?.message || e); }
   }
   /** A task from that device was typed with report: its report is owed to it. */
   expectReport(id, pub, project = '') { this.reportsOut.set(id, { pub, report: null, sent: false, at: this.now(), ...(project ? { project } : {}) }); this.saveReports(); }
+  /** The task was refused after expectReport (not typed): nothing is owed. */
+  dropReport(id) { const r = this.reportsOut.get(id); if (r && r.report === null) { this.reportsOut.delete(id); this.saveReports(); } }
   owesReport(id) { const r = this.reportsOut.get(id); return Boolean(r && r.report === null); }
   /** v3.46 depth 1: a task from a paired device was typed into this project and its report is still owed. */
   /** A device task still owes a report for this project only while young: the 4 h queue TTL + 30 min slack (reports-out persists, a lost one must not refuse 'depth' forever). */

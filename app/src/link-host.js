@@ -365,8 +365,12 @@ function setupLink(d) {
         // type() → false: not typed (the project got handoff-locked meanwhile): refused, never 'delivered'
         if (c.report) {
           // v3.35: the plugin reports on the marked task (hooks/reports.ts); its report is owed to the dispatcher
-          if (d.type(project, C.markedTask(c.id, c.device.name, c.text), { taskId: c.id }) === false) { c.reply('rejected', 'locked'); break; }
-          if (c.device.pub === SELF) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); } else link?.expectReport(c.id, c.device.pub, project);
+          // the expectation is saved BEFORE typing (a crash between the two never types the task a second time on resync)
+          const remote = c.device.pub !== SELF;
+          if (remote) link?.expectReport(c.id, c.device.pub, project);
+          let ok; try { ok = d.type(project, C.markedTask(c.id, c.device.name, c.text), { taskId: c.id }) !== false; } catch { ok = false; }
+          if (!ok) { if (remote) link?.dropReport(c.id); c.reply('rejected', 'locked'); break; }
+          if (!remote) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); }
         } else if (d.type(project, C.markedCommand(c.device.name, c.text)) === false) { c.reply('rejected', 'not-running'); break; }   // v1-safe reason
         c.reply('delivered');
         break;                                     // one per project per tick: the tab is busy after a prompt

@@ -429,5 +429,55 @@ test('v3.48 review 7: task-status / task-query floods are limited per device; a 
   const before = a.wire.filter((m) => m.t === 'task-status').length;
   for (let i = 0; i < 100; i++) b.write(conn, { t: 'task-query', ids: [rec.id] });
   await flush();
-  assert.equal(a.wire.filter((m) => m.t === 'task-status').length - before, 8);
+  assert.equal(a.wire.filter((m) => m.t === 'task-status').length - before, 16);
+});
+
+test('v3.48 review: remote report task: type() false or throwing leaves no reports-out entry (rejected locked); expectation is saved before typing', (t) => {
+  const { setupLink } = require('../src/link-host.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-hqord-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let mode = 'ok'; let during = null; let captured = null;
+  const realOn = Link.prototype.on;
+  Link.prototype.on = function (ev, fn) { captured = this; return realOn.call(this, ev, fn); };
+  t.after(() => { Link.prototype.on = realOn; });
+  const host = setupLink({
+    app: { getPath: () => dir, getVersion: () => '0.21.0' },
+    safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain', encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+    ipcMain: { handle: () => {} }, send: () => {}, notify: () => {}, T: (k) => k, loginOf: () => 'in', reportsDir: path.join(dir, 'r'),
+    projects: () => [{ id: 'p1', name: 'pii', engine: 'claude' }], tabState: () => 'ready',
+    type: () => { during = captured.owesReport('t-ok'); if (mode === 'false') return false; if (mode === 'throw') throw new Error('x'); },
+  });
+  t.after(() => host.destroy());
+  host.devices();   // starts the link
+  const link = captured;
+  link.devices = [{ pub: PA, name: 'Studio', addedAt: 0, allowCommands: true, allowHandoff: false, allowManage: false, allowAccounts: false }];
+  const dev = { pub: PA, name: 'Studio' };
+  const go = (id) => { const r = []; link.emit('command', { device: dev, id, project: 'p1', text: 'x', report: true, reply: (s, why) => r.push([s, why]) }); host.pump(); return r.filter((x) => x[0] !== 'queued'); };
+  assert.deepEqual(go('t-ok'), [['delivered', undefined]]);
+  assert.equal(during, true);
+  assert.equal(link.owesReport('t-ok'), true);
+  for (const m of ['false', 'throw']) {
+    mode = m;
+    assert.deepEqual(go(`t-${m}`), [['rejected', 'locked']]);
+    assert.equal(link.reportsOut.has(`t-${m}`), false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'link', 'reports-out.json'), 'utf8'))[`t-${m}`], undefined);
+  }
+});
+
+test('v3.48 review: host restarted after expectReport but before the reply: the task is not typed again on resync', async (t) => {
+  const { dir, make, connect } = world(t);
+  const a = make('A'); const b = make('B');
+  const typed = [];
+  b.on('command', (c) => { b.expectReport(c.id, c.device.pub, c.project); typed.push(c.id); });   // no reply: the host died here
+  const drop = await connect(a, b);
+  const rec = a.sendCommand(PB, 'p1', 'once', { report: true });
+  await flush();
+  drop(); await b.destroy();
+  const b2 = make('B');
+  b2.on('command', (c) => typed.push(c.id));
+  await connect(a, b2);
+  await flush();
+  assert.deepEqual(typed, [rec.id]);
+  assert.equal(a.sentTask(rec.id).status, 'delivered');
+  assert.ok(dir);
 });
