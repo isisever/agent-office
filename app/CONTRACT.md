@@ -1218,3 +1218,12 @@ Amends v3.47 (Routines) and builds on v3.48 (HQ Phase 2). A routine may target a
 - **Editor**: the target list adds paired devices' projects as `<project> · <machine>` (from `routinesView().remotes`), greyed with `(offline)` while the device is offline (still selectable: an approved run waits in the outbox); a target whose device is no longer paired shows `routines.remoteGone`.
 - Strings (en/tr): `main.routineNeedsApprovalRemote`, `routines.offline`, `routines.remoteGone`, `routines.noAskRemote`, `routines.wait.{offline,paced,resend,queued,delivered,running,needs-approval}`.
 - **Not done here**: a read-only `office_routines` tool, export/import, per-routine notification mode, run templates (v3.47 Phase 2 list).
+
+## Finish guard: a menu is the boss's own choice (v3.52)
+
+The finish guard (v3.10, `plugin/hooks/finish.ts`) let a turn end on a menu ("Önerim: önce eskiz… Hangisiyle devam edelim?", "which should I start with?") because `hangisi`, `seçenek`, `tercih`, `which one/option`, `your call`, `up to you` counted as the person's decision.
+
+- **Menu cues** (`MENU_CUES`, `isMenu`): which option to take, what to do first, whether to continue or commit, Turkish and English ("hangisiyle/hangisinden başlayayım/devam edelim", "seçeneklerden hangisi", "A mı B mi" with an "-elim/-eyim" verb, "kaydetmemi/commit etmemi", "which should I start with / do first", "shall we continue", "should I do A or B?"). A menu sentence is a work cue, is never taken out as the person's part, and never counts as an ask. `FinishCues.isMenu` is new.
+- **Asks** (`ASK_TOPICS`) keep approvals, deploy/publish/delete/spend, credentials/login, and product decisions phrased as theirs ("which do you prefer…", "hangisini istersin", "tercihiniz"); the bare menu words are gone.
+- **Verdict**: a menu with no real ask blocks whatever the judge's label (still at most `FINISH_BLOCKS_MAX` = 2 per prompt), with `FINISH_REASON_MENU_MANAGER` / `FINISH_REASON_MENU_SOLO`: *"Agent Office: you ended on a menu. Choose yourself (the one you recommended, reason in one line) and carry on… Ask only for approvals, credentials or decisions that are the person's."*
+- **Judge labels**: label 1 (blocks) also covers asking the user to pick among options, choose what to do first, or confirm continuing/committing; label 2 says technical choices and the order of the work are not the user's decision.
