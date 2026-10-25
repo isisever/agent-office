@@ -240,10 +240,11 @@ test('awaiting-consent is open: counts toward the 12-open and 8-per-request caps
 
 test('approve twice sends once: takeHeld moves the row out of awaiting-consent; then renameTask; 12 h expiry', () => {
   let b = HQ.addTask(HQ.emptyBoard(), { id: 'hheld1', request: 'r1', title: 't', project: 'p', status: 'awaiting-consent' }, 1000);
-  const first = HQ.takeHeld(b, 'hheld1');
+  const first = HQ.takeHeld(b, 'hheld1', 2000);
   assert.equal(first.ok, true);
+  assert.deepEqual(HQ.takeHeld(b, 'hheld1', 1001 + HQ.HELD_MS), { board: b, ok: false, expired: true });   // past 12 h: never taken
   assert.equal(first.board.tasks[0].status, 'queued');
-  assert.equal(HQ.takeHeld(first.board, 'hheld1').ok, false);
+  assert.equal(HQ.takeHeld(first.board, 'hheld1', 2000).ok, false);
   b = HQ.renameTask(first.board, 'hheld1', 'treal1', { status: 'queued' });
   assert.deepEqual([b.tasks[0].id, b.requests[0].tasks], ['treal1', ['treal1']]);
   const old = HQ.addTask(HQ.emptyBoard(), { id: 'hheld2', request: 'r2', title: 't', project: 'p', status: 'awaiting-consent' }, 0);
@@ -359,7 +360,6 @@ test('approve with a lost routines.json entry ends the card; expiry reports fini
   const ex = HQ.expireHeld(old, HQ.HELD_MS + 1);
   assert.deepEqual(ex.done.map((d) => d.id), ['r2']);
   assert.deepEqual(HQ.expireHeld(old, 1).done, []);
-  assert.match(mainFn('routinesTick'), /const \{ board, expired, done \} = HQ\.expireHeld[^\n]*\n[^\n]*\n\s*saveHqBoard\(board\);\n\s*hqRequestsDone\(done\);/);
   const run = { status: 'awaiting-consent', typedAt: 5 };
   ROUT.approveRun(run, true, 99);
   assert.deepEqual([run.status, run.typedAt], ['running', 99]);
@@ -385,8 +385,8 @@ function remoteHarness({ online = true } = {}) {
   const os = require('os');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-remote-'));
   const names = ['tagRoutineRec', 'hqDispatch', 'holdDispatch', 'approveHeld', 'routineProblem', 'finishRun', 'routinesOnDone', 'routinesOnSummary',
-    'deliverRun', 'hqStatus', 'hqRequestsDone', 'hqOnReport', 'onOfficeReport'];
-  const lines = ['const isHere', 'const routineById', 'const routineRunOfRequest', 'const byName', 'const officeName', 'const openHqRoutineRequest'];
+    'deliverRun', 'hqStatus', 'hqRequestsDone', 'hqOnReport', 'onOfficeReport', 'expireHeldCards', 'routinesTick', 'setupRoutines'];
+  const lines = ['const isHere', 'const routineById', 'const routineRunOfRequest', 'const byName', 'const officeName', 'const openHqRoutineRequest', 'const openRunOf', 'let rtTicking'];
   const src = [
     ...lines.map((l) => MAIN_SRC.split('\n').find((x) => x.startsWith(l))),
     ...names.map((n) => { const i = MAIN_SRC.search(new RegExp(`^(async )?function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return MAIN_SRC.slice(i, MAIN_SRC.indexOf('\n}\n', i) + 2); }),
@@ -394,14 +394,16 @@ function remoteHarness({ online = true } = {}) {
   const env = {
     HQ, ROUT, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto'), T: t,
     state: { projects: [], routines: [], hq: { enabled: true } }, file: { runs: [], held: {}, sched: {} }, board: HQ.emptyBoard(), dispatches: new Map(),
-    notes: [], sent: [], dialogs: 0, rows: [], records: new Map(), online, n: 0,
+    notes: [], sent: [], dialogs: 0, added: [], rows: [], records: new Map(), online, n: 0,
   };
   const link = { devices: [{ pub: PUB, name: 'Mac2' }], get conns() { return new Set(env.online ? [PUB] : []); },
     remotes: new Map([[PUB, { snap: { projects: [{ id: 'web', name: 'Web' }] } }]]), outgoing: [] };
   const prelude = `
     const { HQ, ROUT, LC, SF, P, fs, path, crypto, T } = env; let state = env.state;
     const hqMinter = HQ.createMinter(); const hqPacer = HQ.createPacer();
-    const win = { isFocused: () => true, isDestroyed: () => false };
+    let win = { isFocused: () => true, isDestroyed: () => false }; const isLoaded = true; const appQuitting = false;
+    env.setWin = (w) => { win = w; };
+    const addRun = (a) => env.added.push(a); const rtFileName = () => path.join(${JSON.stringify(dir)}, 'routines.json'); const powerMonitor = { on() {} };
     const terms = new Map(); const rtFailNoticed = new Set(); let rtSettleUntil = 0; let hqWanted = false; const hqLastKey = 0;
     const rt = () => env.file; const saveRt = () => {}; const hqDir = () => ${JSON.stringify(dir)};
     const loadHqBoard = () => env.board; const saveHqBoard = (b) => { env.board = b; };
@@ -423,7 +425,7 @@ function remoteHarness({ online = true } = {}) {
     const hqSettings = () => ({ enabled: true });
   `;
   env.link = link;
-  const api = new Function('env', `${prelude}\n${src}\nreturn { deliverRun, approveHeld, hqStatus, hqRequestsDone, onOfficeReport, routineProblem, hqMinter };`)(env);
+  const api = new Function('env', `${prelude}\n${src}\nreturn { deliverRun, approveHeld, hqStatus, hqRequestsDone, onOfficeReport, routineProblem, hqMinter, routinesTick, setupRoutines, openRunOf };`)(env);
   // the restart rule and the tick's wait rule, as main runs them
   const stillOpenLine = MAIN_SRC.split('\n').find((l) => l.trim().startsWith('const stillOpen = (run) =>'));
   api.stillOpen = new Function('HQ', 'linkHost', `${stillOpenLine}\nreturn stillOpen;`)(HQ, { knows: () => false, remoteTask: (id) => env.records.get(id) || null });
@@ -554,14 +556,110 @@ test('review: a paced remote send keeps the run open across a restart; late repo
   assert.deepEqual(run.tasks, [id]);
   assert.equal(env.dispatches.get(id).routine, run.id);
   assert.equal(api.stillOpen(run), true);   // restart: the record is open → the run keeps waiting
-  // far past the 29 h timeout, but the task is still open on the board: the run stays
-  await api.deliverRun(run, Date.now() + 40 * H);
-  assert.equal(run.status, 'running');
-  // old peer drop: unknown record → the tick shows no wait
-  env.records.set(id, { id, status: 'unknown' });
-  assert.match(MAIN_SRC, /linkHost\?\.remoteTask\(t\.id\)\?\.status !== 'unknown'/);
   // the run ends some other way; a late report for its tagged record writes no HQ inbox row
   run.status = 'attention'; run.finishedAt = Date.now();
   api.onOfficeReport({ id, pub: PUB, report: { summary: 'OK: late' } });
   assert.deepEqual([env.rows.length, run.status], [0, 'attention']);
+});
+
+// ---- Routines Phase 2 review 2 ----
+const TTL1 = HQ.HQ_TTL_MS + H;
+test('a delivered remote task that never reports: the run ends attention no-report after TTL + 1 h from delivery; the next slot runs', async () => {
+  const { env, api, routine, newRun } = remoteHarness();
+  const t0 = Date.now();
+  const run = newRun();
+  await api.deliverRun(run, t0);
+  await api.approveHeld(env.board.tasks[0].id, true);
+  assert.equal(env.sent.length, 1);   // sent over the live connection: delivered
+  await api.deliverRun(run, t0 + 1000);
+  assert.equal(run.status, 'running');
+  await api.deliverRun(run, t0 + 1000 + TTL1 - 60e3);
+  assert.equal(run.status, 'running');
+  await api.deliverRun(run, t0 + 2000 + TTL1);
+  assert.deepEqual([run.status, run.reason], ['attention', 'no-report']);
+  assert.equal(api.openRunOf(routine.id), false);   // no overlap skip for the next slot
+  const next = newRun();
+  await api.deliverRun(next, Date.now());
+  assert.equal(next.status, 'awaiting-consent');
+  // a delivered-again task (bounced to the outbox) never keeps a run beyond twice the remote timeout
+  assert.equal(ROUT.remoteRunEnds({ typedAt: 0, deliveredAt: 80 * H, waiting: false, ttl: HQ.HQ_TTL_MS }), 2 * ROUT.runTimeoutMs('remote', HQ.HQ_TTL_MS));
+});
+
+test('a remote task waiting in the outbox suspends the clock only up to the 24 h outbox wait', async () => {
+  const { env, api, newRun } = remoteHarness({ online: false });
+  const t0 = Date.now();
+  const run = newRun();
+  await api.deliverRun(run, t0);
+  await api.approveHeld(env.board.tasks[0].id, true);
+  await api.deliverRun(run, t0 + 10 * H);   // past TTL + 1 h, still before delivery
+  assert.equal(run.status, 'running');
+  assert.equal(run.deliveredAt, undefined);
+  await api.deliverRun(run, t0 + 1000 + ROUT.runTimeoutMs('remote', HQ.HQ_TTL_MS));
+  assert.deepEqual([run.status, run.reason], ['attention', 'no-report']);
+});
+
+test('old peer: an unknown record shows no wait in the real routines tick and counts as not yet delivered', async () => {
+  const { env, api, newRun } = remoteHarness();
+  const run = newRun();
+  await api.deliverRun(run, Date.now());
+  await api.approveHeld(env.board.tasks[0].id, true);
+  const id = env.sent[0].id;
+  env.board = { ...env.board, tasks: env.board.tasks.map((t) => (t.id === id ? { ...t, status: 'running' } : t)) };
+  env.records.set(id, { id, status: 'running' });
+  await api.routinesTick();
+  assert.equal(run.wait, 'running');
+  env.records.set(id, { id, status: 'unknown' });
+  delete run.deliveredAt;
+  await api.routinesTick();
+  assert.equal(run.wait, undefined);
+  await api.deliverRun(run, Date.now() + TTL1 + H);   // not delivered as far as we know: the outbox wait still applies
+  assert.equal(run.status, 'running');
+});
+
+test('Allow on a held card older than 12 h → refused and expired, the run ends attention, nothing sent; expiry runs without a window', async () => {
+  const { env, api, newRun } = remoteHarness();
+  const run = newRun();
+  await api.deliverRun(run, Date.now());
+  const held = env.board.tasks[0].id;
+  env.board = { ...env.board, tasks: env.board.tasks.map((t) => ({ ...t, at: Date.now() - HQ.HELD_MS - 1000 })) };
+  assert.deepEqual(await api.approveHeld(held, true), { ok: false, reason: 'expired' });
+  assert.equal(env.board.tasks[0].status, 'expired');
+  assert.deepEqual([run.status, run.reason, env.sent.length], ['attention', 'expired', 0]);
+  assert.equal(env.file.held[held], undefined);
+  const b = remoteHarness();
+  const run2 = b.newRun();
+  await b.api.deliverRun(run2, Date.now());
+  b.env.board = { ...b.env.board, tasks: b.env.board.tasks.map((t) => ({ ...t, at: Date.now() - HQ.HELD_MS - 1000 })) };
+  b.env.setWin(null);
+  await b.api.routinesTick();
+  assert.deepEqual([b.env.board.tasks[0].status, run2.status, run2.reason, b.env.sent.length], ['expired', 'attention', 'expired', 0]);
+});
+
+test('Allow after the device was unpaired → unknown-machine; after its project is gone → unknown-project; nothing sent', async () => {
+  const a = remoteHarness();
+  const run = a.newRun();
+  await a.api.deliverRun(run, Date.now());
+  const held = a.env.board.tasks[0].id;
+  a.env.link.devices = [];
+  await a.api.approveHeld(held, true);
+  assert.deepEqual([a.env.board.tasks[0].status, a.env.board.tasks[0].reason, a.env.sent.length], ['rejected', 'unknown-machine', 0]);
+  assert.equal(run.status, 'attention');
+  const b = remoteHarness();
+  const run2 = b.newRun();
+  await b.api.deliverRun(run2, Date.now());
+  b.env.link.remotes.get(PUB).snap.projects = [{ id: 'api', name: 'Api' }];   // online, snapshot without 'web'
+  await b.api.approveHeld(b.env.board.tasks[0].id, true);
+  assert.deepEqual([b.env.board.tasks[0].status, b.env.board.tasks[0].reason, b.env.sent.length], ['rejected', 'unknown-project', 0]);
+  assert.equal(run2.status, 'attention');
+});
+
+test('restart while a remote send is paced → the run ends failed: lost; the paced send never goes out', async () => {
+  const { env, api, newRun } = remoteHarness();
+  env.pace(false);
+  const run = newRun();
+  await api.deliverRun(run, Date.now());
+  await api.approveHeld(env.board.tasks[0].id, true);
+  assert.deepEqual([env.sent.length, run.status], [0, 'running']);
+  api.setupRoutines();   // the pacer is in memory only: after a restart nothing calls env.paced
+  assert.deepEqual([run.status, run.reason, env.sent.length], ['failed', 'lost', 0]);
 });

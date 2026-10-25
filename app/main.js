@@ -1895,9 +1895,11 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   if (!pub || !l) return { status: 'rejected', reason: 'unknown-machine' };
   // v3.48 an offline device: its last-known projects (peer cache); the task waits in the outbox (consent was given now)
   const online = l.conns.has(pub);
-  const known = l.remotes.get(pub)?.snap?.projects || (online ? [] : peerCache()[pub]?.projects || []);
+  const snap = l.remotes.get(pub)?.snap;
+  const known = snap?.projects || (online ? [] : peerCache()[pub]?.projects || []);
   const pid = key ? key.id : byName(known, args.project)?.id;
-  if (!pid || (!online && !known.some((x) => x.id === pid))) return { status: 'rejected', reason: online ? 'unknown-project' : 'offline' };
+  // v3.49 a project no longer in the online device's snapshot (e.g. a stale approval) is refused, never sent
+  if (!pid || ((!online || snap) && !known.some((x) => x.id === pid))) return { status: 'rejected', reason: online ? 'unknown-project' : 'offline' };
   const pname = known.find((x) => x.id === pid)?.name || pid;
   const extra = { pub, machineName: dv.name, project: pname, projectId: pid };
   if (!online) {
@@ -2096,8 +2098,10 @@ function holdDispatch(args, request, rrun) {
 }
 /** Allow/Decline a held task. The row leaves awaiting-consent before anything awaits: a second click sends nothing. */
 async function approveHeld(heldId, allow) {
-  const { board, ok } = HQ.takeHeld(loadHqBoard(), String(heldId));
+  const { board, ok, expired } = HQ.takeHeld(loadHqBoard(), String(heldId), Date.now());
   const h = rt().held[heldId];
+  // v3.49 a card past 12 h is never sent, even when the tick has not expired it yet (no window): it expires now
+  if (expired) { expireHeldCards(Date.now()); return { ok: false, reason: 'expired' }; }
   if (!ok) return { ok: false, reason: 'not-held' };
   // the card is still awaiting consent but its routines.json entry is gone: it can never be sent, so it ends now
   if (!h) { saveHqBoard(board); hqStatus(heldId, 'rejected', 'lost'); return { ok: false, reason: 'not-held' }; }
@@ -2112,6 +2116,15 @@ async function approveHeld(heldId, allow) {
   else saveHqBoard(HQ.renameTask(loadHqBoard(), heldId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : { reason: undefined }) }));
   if (run && r.id) { run.tasks = [...run.tasks, r.id]; saveRt(); }
   return { ok: true };
+}
+/** Held tasks not answered within 12 h expire; their run ends with attention. */
+function expireHeldCards(now) {
+  const { board, expired, done } = HQ.expireHeld(loadHqBoard(), now);
+  if (!expired.length) return;
+  saveHqBoard(board);
+  hqRequestsDone(done);
+  for (const id of expired) { const run = rt().runs.find((x) => x.id === rt().held[id]?.run); delete rt().held[id]; if (run) finishRun(run, 'attention', 'expired'); }
+  saveRt();
 }
 const hqOnScreen = () => shownTab === HQ.HQ_ID && Boolean(win?.isFocused()) && !win?.isMinimized();
 /** One open run one step further: typed into HQ / dispatched to the project when the target is free. */
@@ -2154,9 +2167,15 @@ async function deliverRun(run, now) {
     return saveRt();
   }
   // a run that never reports (tab closed, session crashed) ends after the HQ queue TTL + 1 h, so overlap cannot block it forever
-  // v3.49 a remote run never times out while a task of its request is still open (outbox, queued or running there)
-  const remoteLive = run.kind === 'remote' && run.request && loadHqBoard().tasks.some((t) => t.request === run.request && !HQ.TERMINAL.has(t.status));
-  if ((run.status === 'typed' || run.status === 'running') && !remoteLive && now - (run.typedAt || run.at) > ROUT.runTimeoutMs(run.kind, HQ.HQ_TTL_MS)) return finishRun(run, 'attention', run.kind === 'hq' ? 'no-summary' : 'no-report');
+  if ((run.status === 'typed' || run.status === 'running') && run.kind === 'remote') {
+    // v3.49 a remote run: the outbox wait only while a task has not reached the device; TTL + 1 h from delivery after that
+    const open = run.request ? loadHqBoard().tasks.filter((t) => t.request === run.request && !HQ.TERMINAL.has(t.status)) : [];
+    const waiting = open.some((t) => ROUT.waitsBeforeDelivery(t, linkHost?.remoteTask(t.id)));
+    if (open.length && !waiting && !run.deliveredAt) { run.deliveredAt = now; saveRt(); }
+    if (now > ROUT.remoteRunEnds({ typedAt: run.typedAt || run.at, deliveredAt: run.deliveredAt, waiting, ttl: HQ.HQ_TTL_MS })) return finishRun(run, 'attention', 'no-report');
+    return;
+  }
+  if ((run.status === 'typed' || run.status === 'running') && now - (run.typedAt || run.at) > ROUT.runTimeoutMs(run.kind, HQ.HQ_TTL_MS)) return finishRun(run, 'attention', run.kind === 'hq' ? 'no-summary' : 'no-report');
   if (run.kind !== 'hq' || (run.status !== 'typed' && run.status !== 'running')) return;
   // an HQ run without office_summary: once HQ is idle, 2 min with nothing dispatched or 10 min after its tasks ended
   const turn = ROUT.hqTurn({ status: run.status, tab: terms.has(HQ.HQ_ID) ? tabStateOf(HQ.HQ_ID) : 'gone', typedAt: run.typedAt, now });
@@ -2170,7 +2189,10 @@ async function deliverRun(run, now) {
 }
 let rtTicking = false;
 async function routinesTick() {
-  if (rtTicking || !win || win.isDestroyed() || !isLoaded || appQuitting) return;
+  if (rtTicking || appQuitting) return;
+  // v3.49 held cards expire even without a loaded window (an Allow on an expired card is refused anyway)
+  try { expireHeldCards(Date.now()); } catch (e) { console.error('routines expiry:', e.message); }
+  if (!win || win.isDestroyed() || !isLoaded) return;
   rtTicking = true;
   try {
     const now = Date.now();
@@ -2180,13 +2202,6 @@ async function routinesTick() {
     const { actions, file } = ROUT.plan({ routines, cfg: state.routinesCfg, file: f, now, tz: ROUT.tzName(), openRun: openRunOf, blocked: (r) => Boolean(routineProblem(r)) && routineProblem(r) !== 'hq-off' });
     Object.assign(f, { sched: file.sched, lastTickAt: file.lastTickAt, tz: file.tz });
     for (const a of actions) { const r = routineById(a.routine); if (r) addRun(a, r, now); }
-    // held tasks not answered within 12 h expire; their run ends with attention
-    const { board, expired, done } = HQ.expireHeld(loadHqBoard(), now);
-    if (expired.length) {
-      saveHqBoard(board);
-      hqRequestsDone(done);
-      for (const id of expired) { const run = rt().runs.find((x) => x.id === rt().held[id]?.run); delete rt().held[id]; if (run) finishRun(run, 'attention', 'expired'); }
-    }
     for (const run of f.runs.filter((x) => ROUT.OPEN_RUN.has(x.status)).reverse()) await deliverRun(run, now);
     // v3.49 a remote run's history shows where its task waits (outbox offline/paced, queued there, running)
     const tasks = loadHqBoard().tasks;

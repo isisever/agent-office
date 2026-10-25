@@ -250,6 +250,15 @@ const REMOTE_WAIT_MS = 24 * 3600 * 1000;   // v3.48 outbox TTL: a remote run may
 /** When a typed/running run that never reported ends ('no-summary' / 'no-report'): the queue TTL + 1 h; a remote run
  *  also gets the outbox wait (the device may be offline for up to 24 h). */
 const runTimeoutMs = (kind, ttl) => ttl + 3600 * 1000 + (kind === 'remote' ? REMOTE_WAIT_MS : 0);
+/** v3.49 when a typed/running remote run that never reported ends (a timestamp). While a task still waits BEFORE delivery
+ *  (outbox offline/paced/resend, or an old peer's `unknown` record) the clock is the queue TTL + 1 h + the outbox wait
+ *  from the Allow; once delivered it is the queue TTL + 1 h from delivery. Never later than twice the remote timeout. */
+function remoteRunEnds({ typedAt, deliveredAt = 0, waiting = false, ttl }) {
+  const hard = typedAt + 2 * runTimeoutMs('remote', ttl);
+  return Math.min(hard, waiting || !deliveredAt ? typedAt + runTimeoutMs('remote', ttl) : deliveredAt + ttl + 3600 * 1000);
+}
+/** A board task (and its link record status) that has not reached the device yet. */
+const waitsBeforeDelivery = (t, rec) => (t.status === 'queued' && ['offline', 'paced', 'resend'].includes(t.reason)) || ['held', 'unknown'].includes(rec?.status);
 /** v3.49 the wait shown in a remote run's history: its newest open board task (held/outbox, queued there, running). */
 function runWait(tasks) {
   const t = (tasks || []).filter((x) => !['reported', 'partial', 'rejected', 'expired', 'lost', 'awaiting-consent'].includes(x.status)).sort((a, b) => (b.at || 0) - (a.at || 0))[0];
@@ -275,7 +284,7 @@ function createWriteGate({ now = Date.now, holdMs = 2000 } = {}) {
 }
 
 module.exports = {
-  hqTurn, routineNoAsk, staleHeldRuns, remoteProblem, runTimeoutMs, runWait, REMOTE_WAIT_MS, approveRun, persistKey, shouldPersist, shownTabOf,
+  hqTurn, routineNoAsk, staleHeldRuns, remoteProblem, runTimeoutMs, remoteRunEnds, waitsBeforeDelivery, runWait, REMOTE_WAIT_MS, approveRun, persistKey, shouldPersist, shownTabOf,
   MAX_ROUTINES, PROMPT_MAX, PROJECT_PROMPT_MAX, GRACE_MS, CATCHUP_MAX_MS, JUMP_MS, OPEN_RUN, KEY_QUIET_MS,
   parseHHMM, normalizeSchedule, nextAfter, slotsBetween, dayKey, inQuiet, quietEnd, tzName, cleanPrompt,
   normalizeRoutine, normalizeRoutines, normalizeCfg, normalizeFile, wokeUp, plan, manualGate, wrapText, outcomeOf, pruneRuns,
