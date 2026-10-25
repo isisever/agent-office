@@ -113,7 +113,6 @@ function loginShellModel({ shell = process.env.SHELL, platform = process.platfor
     const fallback = modelValue(base.ANTHROPIC_MODEL) ? { ANTHROPIC_MODEL: base.ANTHROPIC_MODEL } : {};
     // an interactive shell may ignore SIGTERM: SIGKILL on timeout, and a timer of our own so the promise always settles
     const guard = setTimeout(() => resolve(fallback), 6000);
-    guard.unref?.();
     const done = (v) => { clearTimeout(guard); resolve(v); };
     try {
       // between markers: rc banners, a missing newline or a logout file's output never become the value
