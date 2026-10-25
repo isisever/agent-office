@@ -70,7 +70,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     render();
   }
   // --- v3.47 Routines: list under the HQ row; the editor and history replace the Board while one is open
-  /** @type {any} */ let rv = { routines: [], cfg: { quiet: null, dailyCap: 48 }, runs: [], next: {}, problems: {}, held: [], projects: [] };
+  /** @type {any} */ let rv = { routines: [], cfg: { quiet: null, dailyCap: 48 }, runs: [], next: {}, problems: {}, held: [], projects: [], remotes: [] };
   /** @type {string | null} */ let rtSel = null;
   let rtTab = 'edit'; let rtOpen = true; let rtBuilt = ''; let rtNote = ''; let boardFilter = ''; let summaryOf = ''; let summaryText = '';
   const friendly = (ms) => {
@@ -109,9 +109,16 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const name = el('input', { type: 'text', maxlength: '60', value: o.name });
     const prompt = el('textarea', {}); prompt.value = o.prompt;
     const counter = el('span', { class: 'rt-note' });
+    // v3.49 remote targets: a paired device's project, with its machine; greyed while the device is offline (still allowed:
+    // an approved run waits in the outbox). A remote run always asks first, so the no-ask checkbox is off for it.
+    const tvOf = (x) => (x.kind === 'hq' ? 'hq' : x.kind === 'remote' ? `r:${x.pub}:${x.projectId}` : `p:${x.projectId}`);
+    const remotes = rv.remotes || [];
+    const gone = o.target.kind === 'remote' && !remotes.some((x) => x.pub === o.target.pub && x.id === o.target.projectId);
     const target = el('select', {}, el('option', { value: 'hq' }, t('routines.targetHq')),
-      ...(rv.projects || []).map((p) => el('option', { value: `p:${p.id}`, disabled: p.engine !== 'claude' }, p.engine === 'claude' ? p.name : `${p.name} (${t('routines.engineOnly')})`)));
-    target.value = o.target.kind === 'hq' ? 'hq' : `p:${o.target.projectId}`;
+      ...(rv.projects || []).map((p) => el('option', { value: `p:${p.id}`, disabled: p.engine !== 'claude' }, p.engine === 'claude' ? p.name : `${p.name} (${t('routines.engineOnly')})`)),
+      ...remotes.map((x) => el('option', { value: `r:${x.pub}:${x.id}`, class: x.online ? 'rt-remote' : 'rt-remote rt-off' }, `${x.name} · ${x.machine}${x.online ? '' : ` (${t('routines.offline')})`}`)),
+      ...(gone ? [el('option', { value: tvOf(o.target), disabled: true }, t('routines.remoteGone'))] : []));
+    target.value = tvOf(o.target);
     const kind = el('select', {}, ...['daily', 'weekdays', 'weekly', 'hours'].map((k) => el('option', { value: k }, t(`routines.${k}`))));
     kind.value = sc.kind;
     const at = el('input', { type: 'time', value: sc.at || '09:00' });
@@ -136,16 +143,20 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       const next = await api.routines.preview(schedule());
       preview.textContent = `${t('routines.nextRuns')}: ${(next || []).map(friendly).join(' · ')}`;
     };
+    const syncTarget = () => { const rem = target.value.startsWith('r:'); noAsk.disabled = rem; noAsk.closest('label')?.setAttribute('title', t(rem ? 'routines.noAskRemote' : 'routines.noAskHint')); };
+    target.addEventListener('change', syncTarget);
     for (const x of [prompt, kind, at, day, every, from, to]) x.addEventListener('input', sync);
     const save = async () => {
       const tv = target.value;
-      const res = await api.routines.save({ id: r?.id, name: name.value, prompt: prompt.value, target: tv === 'hq' ? { kind: 'hq' } : { kind: 'project', projectId: tv.slice(2) },
+      const rest = tv.slice(2); const cut = rest.lastIndexOf(':');
+      const tg = tv === 'hq' ? { kind: 'hq' } : tv.startsWith('r:') ? { kind: 'remote', pub: rest.slice(0, cut), projectId: rest.slice(cut + 1) } : { kind: 'project', projectId: rest };
+      const res = await api.routines.save({ id: r?.id, name: name.value, prompt: prompt.value, target: tg,
         schedule: schedule(), missed: missedSkip.checked ? 'skip' : 'once', maxPerDay: Number(maxPerDay.value), noAsk: noAsk.checked });
       if (!res?.ok) { note.textContent = t(res?.reason === 'too-many' ? 'routines.tooMany' : 'routines.invalid'); return; }
       rv = res.view; rtSel = res.id; rtBuilt = ''; rtNote = res.redacted ? t('routines.redacted') : ''; render();
     };
     sync();
-    return el('div', { class: 'rt-editor' },
+    const ed = el('div', { class: 'rt-editor' },
       field(t('routines.name'), name), field(t('routines.prompt'), prompt), counter, field(t('routines.target'), target),
       field(t('routines.schedule'), kind), fAt, fDay, fEvery, fWin,
       el('div', {}, t('routines.missed'), el('label', { class: 'inline' }, missedOnce, t('routines.missedOnce')), el('label', { class: 'inline' }, missedSkip, t('routines.missedSkip'))),
@@ -153,6 +164,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       el('div', { class: 'rt-actions' }, el('button', { onclick: save }, t('routines.save')),
         ...(r ? [el('button', { onclick: async () => { rv = await api.routines.setPaused(r.id, !r.paused); rtBuilt = ''; render(); } }, r.paused ? t('routines.resume') : t('routines.pause')),
           el('button', { onclick: async () => { if (!window.confirm(t('routines.confirmDelete'))) return; rv = await api.routines.remove(r.id); rtSel = null; render(); } }, t('routines.delete'))] : [])));
+    syncTarget();
+    return ed;
   }
   function historyOf(r) {
     const runs = runsOf(r.id);
@@ -160,7 +173,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     return el('div', { class: 'rt-editor' }, ...(runs.length ? [] : [el('p', { class: 'hq-empty' }, t('routines.noRuns'))]),
       ...runs.map((x) => el('div', { class: 'rt-run' },
         el('div', {}, new Date(x.at).toLocaleString(), ` · ${t(`routines.trigger.${x.trigger}`)}`,
-          el('span', { class: `rt-chip ${x.status}` }, `${t(`routines.status.${x.status}`)}${x.reason ? `: ${x.reason}` : ''}${x.missedCount ? ` ×${x.missedCount}` : ''}`)),
+          el('span', { class: `rt-chip ${x.status}` }, `${t(`routines.status.${x.status}`)}${x.reason ? `: ${x.reason}` : ''}${x.missedCount ? ` ×${x.missedCount}` : ''}`),
+          x.wait ? el('span', { class: 'rt-chip wait' }, t(`routines.wait.${x.wait}`)) : null),
         x.outcome ? el('div', {}, x.outcome) : null,
         el('div', { class: 'rt-actions' },
           ...(x.held || []).filter((h) => rv.held.includes(h)).flatMap((h) => [

@@ -271,11 +271,12 @@ function finishRequests(board) {
   });
   return { board: { ...board, requests }, done };
 }
-/** v3.47 Allow/Decline of a held task: only a row still awaiting consent; it leaves that state at once (queued), so a
- *  double click or a replay finds nothing to send. → { board, ok } */
-function takeHeld(board, id) {
+/** v3.47 Allow/Decline of a held task: only a row still awaiting consent and not older than 12 h; it leaves that state at
+ *  once (queued), so a double click or a replay finds nothing to send. → { board, ok, expired? } */
+function takeHeld(board, id, now = Date.now(), ms = HELD_MS) {
   const t = board.tasks.find((x) => x.id === id);
   if (!t || t.status !== 'awaiting-consent') return { board, ok: false };
+  if (now - t.at > ms) return { board, ok: false, expired: true };   // past 12 h: never sent (the caller expires it)
   return { board: { ...board, tasks: board.tasks.map((x) => (x === t ? { ...x, status: 'queued', reason: 'approved' } : x)) }, ok: true };
 }
 /** Held tasks not answered within 12 h → expired. → { board, expired: ids } */

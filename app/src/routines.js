@@ -110,8 +110,11 @@ function normalizeRoutine(raw, { now = Date.now(), newId } = {}) {
   const name = line(o.name, NAME_MAX);
   const schedule = normalizeSchedule(o.schedule);
   const t = isObj(o.target) ? o.target : {};
-  const prompt = cleanPrompt(o.prompt, t.kind === 'project' ? PROJECT_PROMPT_MAX : PROMPT_MAX).text;
-  const target = t.kind === 'hq' ? { kind: 'hq' } : t.kind === 'project' && /^[A-Za-z0-9_.-]{1,64}$/.test(String(t.projectId)) ? { kind: 'project', projectId: t.projectId } : null;
+  const prompt = cleanPrompt(o.prompt, t.kind === 'hq' ? PROMPT_MAX : PROJECT_PROMPT_MAX).text;
+  const pid = /^[A-Za-z0-9_.-]{1,64}$/.test(String(t.projectId)) ? t.projectId : '';
+  // v3.49 a remote target: a project on a paired device (`<pub>:<id>` like the v3.46 remote rows)
+  const target = t.kind === 'hq' ? { kind: 'hq' } : t.kind === 'project' && pid ? { kind: 'project', projectId: pid }
+    : t.kind === 'remote' && pid && /^[0-9a-f]{16,128}$/.test(String(t.pub)) ? { kind: 'remote', pub: t.pub, projectId: pid } : null;
   if (!id || !name || !prompt || !schedule || !target) return null;
   const dflt = schedule.kind === 'hours' ? Math.min(24, Math.ceil(24 / /** @type {any} */ (schedule).every)) : 4;
   return {
@@ -227,7 +230,7 @@ function hqTurn({ status, tab, typedAt = 0, now }) {
   return 'over';
 }
 /** A routine's own no-ask: an HQ routine for any local project; a project routine only for its own project. */
-const routineNoAsk = (routine, { remote = false, projectId = '' } = {}) => Boolean(routine?.noAsk) && !remote
+const routineNoAsk = (routine, { remote = false, projectId = '' } = {}) => Boolean(routine?.noAsk) && !remote && routine.target?.kind !== 'remote'
   && (routine.target?.kind !== 'project' || (Boolean(projectId) && routine.target.projectId === projectId));
 /** At startup: runs waiting for consent whose held cards are all gone (not on the board as awaiting-consent). */
 const staleHeldRuns = (runs, heldIds) => runs.filter((r) => r.status === 'awaiting-consent' && !(r.held || []).some((id) => heldIds.has(id)));
@@ -236,6 +239,32 @@ function approveRun(run, allow, now) {
   if (!run) return;
   if (run.status === 'awaiting-consent') run.status = 'running';
   if (allow) run.typedAt = now;
+}
+/** v3.49 a remote target can run: its device is still paired and the project is in its last-known list (peer cache).
+ *  An offline device is not a problem: an approved task waits in the outbox. → '' | 'target-gone' */
+function remoteProblem(target, { paired = [], cache = {} } = {}) {
+  if (!paired.includes(target.pub)) return 'target-gone';
+  return (cache[target.pub]?.projects || []).some((p) => p.id === target.projectId) ? '' : 'target-gone';
+}
+const REMOTE_WAIT_MS = 24 * 3600 * 1000;   // v3.48 outbox TTL: a remote run may wait this long for its device
+/** When a typed/running run that never reported ends ('no-summary' / 'no-report'): the queue TTL + 1 h; a remote run
+ *  also gets the outbox wait (the device may be offline for up to 24 h). */
+const runTimeoutMs = (kind, ttl) => ttl + 3600 * 1000 + (kind === 'remote' ? REMOTE_WAIT_MS : 0);
+/** v3.49 when a typed/running remote run that never reported ends (a timestamp). While a task still waits BEFORE delivery
+ *  (outbox offline/paced/resend, or an old peer's `unknown` record) the clock is the queue TTL + 1 h + the outbox wait
+ *  from the Allow; once delivered it is the queue TTL + 1 h from delivery. Never later than twice the remote timeout. */
+function remoteRunEnds({ typedAt, deliveredAt = 0, waiting = false, ttl }) {
+  const hard = typedAt + 2 * runTimeoutMs('remote', ttl);
+  return Math.min(hard, waiting || !deliveredAt ? typedAt + runTimeoutMs('remote', ttl) : deliveredAt + ttl + 3600 * 1000);
+}
+/** A board task (and its link record status) that has not reached the device yet. */
+const waitsBeforeDelivery = (t, rec) => (t.status === 'queued' && ['offline', 'paced', 'resend'].includes(t.reason)) || ['held', 'unknown'].includes(rec?.status);
+/** v3.49 the wait shown in a remote run's history: its newest open board task (held/outbox, queued there, running). */
+function runWait(tasks) {
+  const t = (tasks || []).filter((x) => !['reported', 'partial', 'rejected', 'expired', 'lost', 'awaiting-consent'].includes(x.status)).sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+  if (!t) return '';
+  if (t.status === 'queued' && ['offline', 'paced', 'resend'].includes(t.reason)) return t.reason;
+  return ['queued', 'delivered', 'running', 'needs-approval'].includes(t.status) ? t.status : '';
 }
 /** routines.json is written when anything but lastTickAt changed, or lastTickAt is a minute old on disk. */
 function persistKey(file) { const { lastTickAt, ...rest } = file; void lastTickAt; return JSON.stringify(rest); }
@@ -255,7 +284,7 @@ function createWriteGate({ now = Date.now, holdMs = 2000 } = {}) {
 }
 
 module.exports = {
-  hqTurn, routineNoAsk, staleHeldRuns, approveRun, persistKey, shouldPersist, shownTabOf,
+  hqTurn, routineNoAsk, staleHeldRuns, remoteProblem, runTimeoutMs, remoteRunEnds, waitsBeforeDelivery, runWait, REMOTE_WAIT_MS, approveRun, persistKey, shouldPersist, shownTabOf,
   MAX_ROUTINES, PROMPT_MAX, PROJECT_PROMPT_MAX, GRACE_MS, CATCHUP_MAX_MS, JUMP_MS, OPEN_RUN, KEY_QUIET_MS,
   parseHHMM, normalizeSchedule, nextAfter, slotsBetween, dayKey, inQuiet, quietEnd, tzName, cleanPrompt,
   normalizeRoutine, normalizeRoutines, normalizeCfg, normalizeFile, wokeUp, plan, manualGate, wrapText, outcomeOf, pruneRuns,

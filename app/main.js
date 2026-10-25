@@ -1684,7 +1684,8 @@ function onOfficeReport({ id, pub, report }) {
   rec.status = 'reported';
   saveDispatches();
   const done = hqOnReport(id, report);   // v3.46 board row, tasks/<id>/report.{json,md}; requests whose tasks all ended
-  if (rec.routine && rt().runs.some((r) => r.id === rec.routine && ROUT.OPEN_RUN.has(r.status))) { routinesOnDone(done); return; }   // v3.47 a routine's own project run: HQ was not asked, no HQ inbox rows
+  // v3.47/v3.49 a routine's own project or remote run: HQ was not asked, no HQ inbox rows (also when the run already ended)
+  if (rec.routine) { routinesOnDone(done); return; }
   const sid = bossSid(rec.tab);
   if (!sid) { notify(T('main.reportReady', { project: rec.project, machine: rec.machine }), '', null); return; }
   inboxRow(sid, rec.tab, { kind: 'report-ready', id, machine: officeName(rec.machine), project: officeName(rec.project) });
@@ -1842,6 +1843,12 @@ async function confirmHqDispatch(args, remote) {
     message: T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: LC.cleanLine(HQ.redact(String(args.task || '')), 300) });
   return r.response === 0;
 }
+/** v3.47/v3.49 a routine's own project or remote run: its dispatch record names the run, so the report ends the run
+ *  and writes no HQ inbox row (HQ was not asked). */
+function tagRoutineRec(id, rrun) {
+  const rec = id && rrun && rrun.kind !== 'hq' && ROUT.OPEN_RUN.has(rrun.status) ? loadDispatches().get(id) : null;   // never a run that already ended
+  if (rec) { rec.routine = rrun.id; saveDispatches(); }
+}
 /** HQ's office_dispatch: caps, consent, auto-start of a local target, 4 h queue wait, dispatcher-side pacing for devices. */
 async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   const capBoard = () => { const b = loadHqBoard(); return excludeId ? { ...b, tasks: b.tasks.filter((t) => t.id !== excludeId) } : b; };
@@ -1879,9 +1886,7 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
     if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id });
     // v3.47 a routine's own project run: its report finishes the run and writes no HQ inbox row
-    const rid = /** @type {any} */ (r).id;
-    const rec = rid && rrun?.kind === 'project' ? loadDispatches().get(rid) : null;
-    if (rec) { rec.routine = rrun.id; saveDispatches(); }
+    tagRoutineRec(/** @type {any} */ (r).id, rrun);
     return { ...r, ...(request ? { request } : {}) };
   }
   const l = linkHost?.link();
@@ -1890,14 +1895,17 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   if (!pub || !l) return { status: 'rejected', reason: 'unknown-machine' };
   // v3.48 an offline device: its last-known projects (peer cache); the task waits in the outbox (consent was given now)
   const online = l.conns.has(pub);
-  const known = l.remotes.get(pub)?.snap?.projects || (online ? [] : peerCache()[pub]?.projects || []);
+  const snap = l.remotes.get(pub)?.snap;
+  const known = snap?.projects || (online ? [] : peerCache()[pub]?.projects || []);
   const pid = key ? key.id : byName(known, args.project)?.id;
-  if (!pid || (!online && !known.some((x) => x.id === pid))) return { status: 'rejected', reason: online ? 'unknown-project' : 'offline' };
+  // v3.49 a project no longer in the online device's snapshot (e.g. a stale approval) is refused, never sent
+  if (!pid || ((!online || snap) && !known.some((x) => x.id === pid))) return { status: 'rejected', reason: online ? 'unknown-project' : 'offline' };
   const pname = known.find((x) => x.id === pid)?.name || pid;
   const extra = { pub, machineName: dv.name, project: pname, projectId: pid };
   if (!online) {
     /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task }, { hold: true, ttl: HQ.HQ_TTL_MS });
     if (r.status === 'rejected') return r;
+    tagRoutineRec(r.id, rrun);   // v3.49 a remote routine run: its report ends the run (no HQ inbox row)
     row({ id: r.id, status: 'queued', reason: 'offline' }, extra);
     return { id: r.id, status: 'queued', reason: 'offline', ...(request ? { request } : {}) };
   }
@@ -1907,8 +1915,11 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   let held = false;
   const sent = hqPacer.submit(pub, () => {
     /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task }, { ttl: HQ.HQ_TTL_MS });   // v3.48 4 h wait there (cap task-status)
+    tagRoutineRec(r.id, rrun);
     if (!held) { now = r; return; }
     if (!r.id || r.status === 'rejected') return hqStatus(heldId, 'rejected', r.reason || 'failed');
+    // v3.49 a routine run follows the real id (restart keeps it open by its record)
+    if (rrun?.tasks?.includes(heldId)) { rrun.tasks = rrun.tasks.map((x) => (x === heldId ? r.id : x)); saveRt(); }
     saveHqBoard(HQ.renameTask(loadHqBoard(), heldId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : {}) }));
     try { const a = HQ.taskFile(hqDir(), heldId, '.'); const b = HQ.taskFile(hqDir(), r.id, '.'); if (a && b) fs.renameSync(path.dirname(a), path.dirname(b)); } catch {}
   });
@@ -2017,6 +2028,7 @@ const openRunOf = (rid) => rt().runs.some((r) => r.routine === rid && ROUT.OPEN_
 /** Why a routine cannot run now (shown on its row), or '' */
 function routineProblem(r) {
   if (r.target.kind === 'hq') return hqSettings().enabled ? '' : 'hq-off';
+  if (r.target.kind === 'remote') return ROUT.remoteProblem(r.target, { paired: (linkHost?.link()?.devices || []).map((d) => d.pub), cache: peerCache() });
   const p = P.findProject(state, r.target.projectId);
   if (!p) return 'target-gone';
   return P.engineOf(p) === 'claude' ? '' : 'engine';
@@ -2043,7 +2055,7 @@ function finishRun(run, status, reason = '', outcome = '') {
 function routinesOnDone(done) {
   const rest = [];
   for (const d of done || []) {
-    const run = rt().runs.find((r) => r.request === d.id && r.kind === 'project');
+    const run = rt().runs.find((r) => r.request === d.id && r.kind !== 'hq');   // project or remote (v3.49)
     if (!run) { rest.push(d); continue; }
     const tasks = loadHqBoard().tasks.filter((t) => t.request === d.id);
     const bad = tasks.find((t) => t.status !== 'reported' && t.status !== 'partial');
@@ -2066,21 +2078,30 @@ function routinesOnSummary(request, text) {
 function holdDispatch(args, request, rrun) {
   const heldId = `h${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
   const key = HQ.parseRemoteKey(args.project);
-  const p = key ? null : byName(state.projects, args.project);
-  const project = p ? p.name : LC.cleanLine(String(args.project || ''), 64);
+  // v3.49 a remote target (key, or a machine name from HQ): the card names the device and its project
+  const devs = linkHost?.link()?.devices || [];
+  const dv = key ? devs.find((x) => x.pub === key.pub) : isHere(String(args.machine || '').trim()) ? null : byName(devs.map((x) => ({ id: x.pub, name: x.name })), args.machine);
+  const pub = key ? key.pub : dv ? dv.id : '';
+  const known = pub ? linkHost?.link()?.remotes.get(pub)?.snap?.projects || peerCache()[pub]?.projects || [] : [];
+  const rp = pub ? (key ? known.find((x) => x.id === key.id) : byName(known, args.project)) : null;
+  const p = pub ? null : byName(state.projects, args.project);
+  const project = p ? p.name : rp ? officeName(rp.name) : LC.cleanLine(String(args.project || ''), 64);
+  const machineName = pub ? officeName(dv?.name || peerCache()[pub]?.name || '') : selfName();
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   saveHqBoard(HQ.addTask(loadHqBoard(), { id: heldId, request, title: args.title, task, status: 'awaiting-consent', reason: 'awaiting-consent', prompt: rrun?.name || '',
-    ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), pub: key ? key.pub : 'self', machineName: key ? '' : selfName(), project, ...(p ? { projectId: p.id } : {}) }));
+    ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), pub: pub || 'self', machineName, project, ...(p ? { projectId: p.id } : rp ? { projectId: rp.id } : {}) }));
   rt().held[heldId] = { at: Date.now(), run: rrun?.id || '', args: { project: String(args.project || ''), machine: String(args.machine || ''), title: String(args.title || ''), task, request } };
-  if (rrun) { rrun.held = [...(rrun.held || []), heldId]; if (rrun.kind === 'project') rrun.status = 'awaiting-consent'; }
+  if (rrun) { rrun.held = [...(rrun.held || []), heldId]; if (rrun.kind !== 'hq') rrun.status = 'awaiting-consent'; }
   saveRt();
-  notify(T('main.routineNeedsApproval', { name: rrun?.name || '', project }), LC.cleanLine(task, 160), null);
+  notify(pub ? T('main.routineNeedsApprovalRemote', { name: rrun?.name || '', project, machine: machineName }) : T('main.routineNeedsApproval', { name: rrun?.name || '', project }), LC.cleanLine(task, 160), null);
   return { id: heldId, status: 'queued', reason: 'awaiting-consent', request };
 }
 /** Allow/Decline a held task. The row leaves awaiting-consent before anything awaits: a second click sends nothing. */
 async function approveHeld(heldId, allow) {
-  const { board, ok } = HQ.takeHeld(loadHqBoard(), String(heldId));
+  const { board, ok, expired } = HQ.takeHeld(loadHqBoard(), String(heldId), Date.now());
   const h = rt().held[heldId];
+  // v3.49 a card past 12 h is never sent, even when the tick has not expired it yet (no window): it expires now
+  if (expired) { expireHeldCards(Date.now()); return { ok: false, reason: 'expired' }; }
   if (!ok) return { ok: false, reason: 'not-held' };
   // the card is still awaiting consent but its routines.json entry is gone: it can never be sent, so it ends now
   if (!h) { saveHqBoard(board); hqStatus(heldId, 'rejected', 'lost'); return { ok: false, reason: 'not-held' }; }
@@ -2095,6 +2116,15 @@ async function approveHeld(heldId, allow) {
   else saveHqBoard(HQ.renameTask(loadHqBoard(), heldId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : { reason: undefined }) }));
   if (run && r.id) { run.tasks = [...run.tasks, r.id]; saveRt(); }
   return { ok: true };
+}
+/** Held tasks not answered within 12 h expire; their run ends with attention. */
+function expireHeldCards(now) {
+  const { board, expired, done } = HQ.expireHeld(loadHqBoard(), now);
+  if (!expired.length) return;
+  saveHqBoard(board);
+  hqRequestsDone(done);
+  for (const id of expired) { const run = rt().runs.find((x) => x.id === rt().held[id]?.run); delete rt().held[id]; if (run) finishRun(run, 'attention', 'expired'); }
+  saveRt();
 }
 const hqOnScreen = () => shownTab === HQ.HQ_ID && Boolean(win?.isFocused()) && !win?.isMinimized();
 /** One open run one step further: typed into HQ / dispatched to the project when the target is free. */
@@ -2119,12 +2149,14 @@ async function deliverRun(run, now) {
       Object.assign(run, { status: 'typed', typedAt: now });
       return saveRt();
     }
-    const p = P.findProject(state, routine.target.projectId);
+    // v3.49 a remote target goes through HQ's remote path by its `<pub>:<id>` key: always a held card first (remote asks)
+    const tg = routine.target;
+    const project = tg.kind === 'remote' ? HQ.remoteKey(tg.pub, tg.projectId) : P.findProject(state, tg.projectId).name;
     run.request = hqMinter.mint({ origin: 'routine', run: run.id });
     Object.assign(run, { status: 'running', typedAt: now });
     saveRt();
     const text = ROUT.wrapText({ routine, request: run.request, slotAt: run.slotAt, t: T });
-    const r = await hqDispatch({ project: p.name, title: routine.name, task: text, request: run.request });
+    const r = await hqDispatch({ project, title: routine.name, task: text, request: run.request });
     hqMinter.endLive(run.request);   // the dispatch is done: HQ cannot borrow this id (office_board shows it) for no-ask
     if (r.status === 'rejected') {
       hqMinter.endRun(run.request);
@@ -2135,7 +2167,15 @@ async function deliverRun(run, now) {
     return saveRt();
   }
   // a run that never reports (tab closed, session crashed) ends after the HQ queue TTL + 1 h, so overlap cannot block it forever
-  if ((run.status === 'typed' || run.status === 'running') && now - (run.typedAt || run.at) > HQ.HQ_TTL_MS + 3600 * 1000) return finishRun(run, 'attention', run.kind === 'hq' ? 'no-summary' : 'no-report');
+  if ((run.status === 'typed' || run.status === 'running') && run.kind === 'remote') {
+    // v3.49 a remote run: the outbox wait only while a task has not reached the device; TTL + 1 h from delivery after that
+    const open = run.request ? loadHqBoard().tasks.filter((t) => t.request === run.request && !HQ.TERMINAL.has(t.status)) : [];
+    const waiting = open.some((t) => ROUT.waitsBeforeDelivery(t, linkHost?.remoteTask(t.id)));
+    if (open.length && !waiting && !run.deliveredAt) { run.deliveredAt = now; saveRt(); }
+    if (now > ROUT.remoteRunEnds({ typedAt: run.typedAt || run.at, deliveredAt: run.deliveredAt, waiting, ttl: HQ.HQ_TTL_MS })) return finishRun(run, 'attention', 'no-report');
+    return;
+  }
+  if ((run.status === 'typed' || run.status === 'running') && now - (run.typedAt || run.at) > ROUT.runTimeoutMs(run.kind, HQ.HQ_TTL_MS)) return finishRun(run, 'attention', run.kind === 'hq' ? 'no-summary' : 'no-report');
   if (run.kind !== 'hq' || (run.status !== 'typed' && run.status !== 'running')) return;
   // an HQ run without office_summary: once HQ is idle, 2 min with nothing dispatched or 10 min after its tasks ended
   const turn = ROUT.hqTurn({ status: run.status, tab: terms.has(HQ.HQ_ID) ? tabStateOf(HQ.HQ_ID) : 'gone', typedAt: run.typedAt, now });
@@ -2149,7 +2189,10 @@ async function deliverRun(run, now) {
 }
 let rtTicking = false;
 async function routinesTick() {
-  if (rtTicking || !win || win.isDestroyed() || !isLoaded || appQuitting) return;
+  if (rtTicking || appQuitting) return;
+  // v3.49 held cards expire even without a loaded window (an Allow on an expired card is refused anyway)
+  try { expireHeldCards(Date.now()); } catch (e) { console.error('routines expiry:', e.message); }
+  if (!win || win.isDestroyed() || !isLoaded) return;
   rtTicking = true;
   try {
     const now = Date.now();
@@ -2159,14 +2202,15 @@ async function routinesTick() {
     const { actions, file } = ROUT.plan({ routines, cfg: state.routinesCfg, file: f, now, tz: ROUT.tzName(), openRun: openRunOf, blocked: (r) => Boolean(routineProblem(r)) && routineProblem(r) !== 'hq-off' });
     Object.assign(f, { sched: file.sched, lastTickAt: file.lastTickAt, tz: file.tz });
     for (const a of actions) { const r = routineById(a.routine); if (r) addRun(a, r, now); }
-    // held tasks not answered within 12 h expire; their run ends with attention
-    const { board, expired, done } = HQ.expireHeld(loadHqBoard(), now);
-    if (expired.length) {
-      saveHqBoard(board);
-      hqRequestsDone(done);
-      for (const id of expired) { const run = rt().runs.find((x) => x.id === rt().held[id]?.run); delete rt().held[id]; if (run) finishRun(run, 'attention', 'expired'); }
-    }
     for (const run of f.runs.filter((x) => ROUT.OPEN_RUN.has(x.status)).reverse()) await deliverRun(run, now);
+    // v3.49 a remote run's history shows where its task waits (outbox offline/paced, queued there, running)
+    const tasks = loadHqBoard().tasks;
+    for (const run of f.runs.filter((x) => x.kind === 'remote')) {
+      // an old peer's record that is 'unknown' (asked about on its next hello) shows no wait
+      const mine = tasks.filter((t) => t.request === run.request && linkHost?.remoteTask(t.id)?.status !== 'unknown');
+      const w = ROUT.OPEN_RUN.has(run.status) && run.request ? ROUT.runWait(mine) : '';
+      if (w) run.wait = w; else delete run.wait;
+    }
     saveRt();
   } catch (e) { console.error('routines tick:', e.message); } finally { rtTicking = false; }
 }
@@ -2175,7 +2219,9 @@ function setupRoutines() {
   rtSettleUntil = Date.now() + 60 * 1000;   // projects and HQ resume first; a missed run catches up after this
   // after a restart a run that was typed or dispatched has lost its turn; held approvals stay answerable
   // (a project run whose task the link still queues keeps waiting for its report)
-  for (const run of rt().runs) if ((run.status === 'typed' || run.status === 'running') && !(run.kind === 'project' && run.tasks.some((id) => linkHost?.knows(id)))) finishRun(run, 'failed', 'lost');
+  // v3.49 a remote run whose task record is still open (outbox, queued there) keeps waiting too: resync on the device's hello
+  const stillOpen = (run) => (run.kind === 'project' && run.tasks.some((id) => linkHost?.knows(id))) || (run.kind === 'remote' && run.tasks.some((id) => HQ.remoteOpen(linkHost?.remoteTask(id))));
+  for (const run of rt().runs) if ((run.status === 'typed' || run.status === 'running') && !stillOpen(run)) finishRun(run, 'failed', 'lost');
   // a run waiting on held cards that are all gone can never go on (else every slot would skip as overlap)
   const heldIds = new Set(loadHqBoard().tasks.filter((t) => t.status === 'awaiting-consent').map((t) => t.id));
   for (const run of ROUT.staleHeldRuns(rt().runs, heldIds)) finishRun(run, 'attention', 'lost');
@@ -2194,6 +2240,8 @@ function routinesView() {
     problems: Object.fromEntries((state.routines || []).map((r) => [r.id, routineProblem(r)])),
     held: board.tasks.filter((t) => t.status === 'awaiting-consent').map((t) => t.id),
     projects: state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p) })),
+    // v3.49 remote targets: paired devices' projects (last-known list), with the machine and whether it is online
+    remotes: HQ.remoteRows(peerCache(), liveRemotes()).map((r) => ({ pub: HQ.parseRemoteKey(r.key)?.pub || '', id: r.id, name: r.name, machine: r.machine, online: r.online })).filter((r) => r.pub),
   };
 }
 const routinesSet = (list) => { commit({ ...state, routines: ROUT.normalizeRoutines(list) }); send('routines:changed', routinesView()); return routinesView(); };
