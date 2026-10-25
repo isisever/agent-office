@@ -1596,7 +1596,7 @@ function officeMachines() {
     projects: (v.remotes.find((r) => r.device === dv.id)?.projects || (dv.online ? [] : peerCache()[dv.id]?.projects) || []).map((p) => ({ id: p.id, key: HQ.remoteKey(dv.id, p.id), name: officeName(p.name), ...(p.status ? { status: p.status } : {}) })) }));
   return { machines: [here, ...there] };
 }
-function officeDispatch(tab, args, { ttl = 0, revive = false } = {}) {
+function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {}) {
   // v3.46 obvious secrets never leave in a task (journal patterns), and a boss working on an HQ task does not dispatch on (depth 1)
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   if (HQ.depthRefused(loadHqBoard(), tab)) return { status: 'rejected', reason: 'depth' };
@@ -1624,10 +1624,11 @@ function officeDispatch(tab, args, { ttl = 0, revive = false } = {}) {
   } else {
     const dv = byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
     if (!dv) return { status: 'rejected', reason: 'unknown-machine' };
-    if (!l.conns.has(dv.id)) return { status: 'rejected', reason: 'offline' };   // nothing is queued here
-    const p = byName(l.remotes.get(dv.id)?.snap?.projects || [], args.project);
-    if (!p) return { status: 'rejected', reason: 'unknown-project' };
-    r = linkHost.dispatchRemote(dv.id, p.id, task);
+    // v3.48 HQ only (hold): an offline device's task waits in the outbox; its project comes from the peer cache
+    if (!l.conns.has(dv.id) && !hold) return { status: 'rejected', reason: 'offline' };   // nothing is queued here
+    const p = byName(l.remotes.get(dv.id)?.snap?.projects || (hold ? peerCache()[dv.id]?.projects : null) || [], args.project);
+    if (!p) return { status: 'rejected', reason: l.conns.has(dv.id) ? 'unknown-project' : 'offline' };
+    r = linkHost.dispatchRemote(dv.id, p.id, task, { hold, ttl, projectName: p.name });
     rec = { machine: officeName(dv.name), project: officeName(p.name), pub: dv.id };
   }
   if (r.status !== 'rejected') { loadDispatches().set(r.id, { id: r.id, tab, ...rec, at: Date.now(), status: r.status, ...(r.reason ? { reason: r.reason } : {}) }); saveDispatches(); }
@@ -1635,7 +1636,7 @@ function officeDispatch(tab, args, { ttl = 0, revive = false } = {}) {
 }
 function officeReports(args) {
   const out = l => l.map((x) => {
-    const o = x.pub !== 'self' ? linkHost?.link()?.outgoing.find((y) => y.id === x.id) : null;
+    const o = x.pub !== 'self' ? linkHost?.remoteTask(x.id) || linkHost?.link()?.outgoing.find((y) => y.id === x.id) : null;
     const status = x.report ? 'reported' : o?.status || x.status;
     const reason = x.report ? '' : o ? o.reason : x.reason;
     return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), at: x.at, ...(x.report ? { report: x.report } : {}) };
@@ -1768,6 +1769,16 @@ function hqWaits() {
     const ts = terms.has(w.project) ? tabStateOf(w.project) : 'gone';
     out[t.id] = { state: HQ.waitState(ts, asleep.has(w.project)), project: t.project, pos: w.pos, len: w.len, expiresAt: w.expiresAt };
   }
+  // v3.48 a remote task: held in the outbox (machine offline), or why it waits there (task-status)
+  const l = linkHost.link();
+  for (const t of loadHqBoard().tasks) {
+    if (t.status !== 'queued' || t.machine === 'self') continue;
+    const r = linkHost.remoteTask(t.id);
+    if (!r) continue;
+    const caps = l?.peers.get(r.pub)?.caps || [];
+    if (r.status === 'held') out[t.id] = { state: l?.conns.has(r.pub) ? 'sending' : 'offline', project: t.project, machine: t.machineName || '', pos: 0, len: 0, expiresAt: r.expiresAt, cancel: true };
+    else if (r.status === 'queued' && r.why) out[t.id] = { state: r.why.state, project: t.project, pos: r.why.pos, len: r.why.len, expiresAt: r.why.expiresAt, cancel: caps.includes('task-status') };
+  }
   return out;
 }
 let hqWaitSig = '';
@@ -1877,17 +1888,25 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   const dv = key ? (l?.devices || []).find((x) => x.pub === key.pub) : byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
   const pub = dv ? (key ? key.pub : dv.id) : '';
   if (!pub || !l) return { status: 'rejected', reason: 'unknown-machine' };
-  if (!l.conns.has(pub)) return { status: 'rejected', reason: 'offline' };
-  const pid = key ? key.id : byName(l.remotes.get(pub)?.snap?.projects || [], args.project)?.id;
-  if (!pid) return { status: 'rejected', reason: 'unknown-project' };
-  const pname = (l.remotes.get(pub)?.snap?.projects || []).find((x) => x.id === pid)?.name || pid;
+  // v3.48 an offline device: its last-known projects (peer cache); the task waits in the outbox (consent was given now)
+  const online = l.conns.has(pub);
+  const known = l.remotes.get(pub)?.snap?.projects || (online ? [] : peerCache()[pub]?.projects || []);
+  const pid = key ? key.id : byName(known, args.project)?.id;
+  if (!pid || (!online && !known.some((x) => x.id === pid))) return { status: 'rejected', reason: online ? 'unknown-project' : 'offline' };
+  const pname = known.find((x) => x.id === pid)?.name || pid;
   const extra = { pub, machineName: dv.name, project: pname, projectId: pid };
+  if (!online) {
+    /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task }, { hold: true, ttl: HQ.HQ_TTL_MS });
+    if (r.status === 'rejected') return r;
+    row({ id: r.id, status: 'queued', reason: 'offline' }, extra);
+    return { id: r.id, status: 'queued', reason: 'offline', ...(request ? { request } : {}) };
+  }
   /** @type {any} */ let now = null;
   // a held (paced) task gets a 'queued' row now, so the caps count it and the person sees it; sent → its real id
   const heldId = `h${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
   let held = false;
   const sent = hqPacer.submit(pub, () => {
-    /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task });
+    /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task }, { ttl: HQ.HQ_TTL_MS });   // v3.48 4 h wait there (cap task-status)
     if (!held) { now = r; return; }
     if (!r.id || r.status === 'rejected') return hqStatus(heldId, 'rejected', r.reason || 'failed');
     saveHqBoard(HQ.renameTask(loadHqBoard(), heldId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : {}) }));
@@ -1917,11 +1936,17 @@ function hqTick() {
   hqWaitsPush();
   const l = linkHost?.link();
   if (l) {
-    for (const t of HQ.openTasks(loadHqBoard()).filter((x) => x.machine !== 'self')) {
-      const o = l.outgoing.find((y) => y.id === t.id);
-      if (o && (o.status === 'delivered' || o.status === 'rejected') && o.status !== t.status) hqStatus(t.id, o.status, o.reason);
-    }
+    hqMirrorRemote();
     updatePeerCache();
+  }
+}
+/** v3.48 the board follows each remote task's record (outbox, live task-status, resync): only on a change. */
+function hqMirrorRemote() {
+  if (!linkHost) return;
+  for (const t of HQ.openTasks(loadHqBoard()).filter((x) => x.machine !== 'self')) {
+    const r = linkHost.remoteTask(t.id) || linkHost.link()?.outgoing.find((y) => y.id === t.id);
+    const m = r && HQ.boardOfRemote(r);
+    if (m && (m.status !== t.status || (m.reason || '') !== (t.reason || ''))) hqStatus(t.id, m.status, m.reason);
   }
 }
 function setupHq() {
@@ -1935,7 +1960,8 @@ function setupHq() {
   P.setHqDir(dir);
   SF.cleanTemps(hqBoardFile());
   // restart: an open task whose queue entry is gone is lost (no automatic re-dispatch)
-  saveHqBoard(HQ.markLost(loadHqBoard(), (t) => (t.machine === 'self' ? Boolean(linkHost?.knows(t.id)) : false)));
+  // v3.48 a remote task with a persisted record stays open: it is asked about on the device's next hello
+  saveHqBoard(HQ.markLost(loadHqBoard(), (t) => (t.machine === 'self' ? Boolean(linkHost?.knows(t.id)) : HQ.remoteOpen(linkHost?.remoteTask(t.id)))));
   setInterval(() => { hqTick(); routinesTick(); }, 5000).unref?.();
   setupRoutines();
 }
@@ -1960,6 +1986,7 @@ ipcMain.handle('hq:cancel', (_e, id) => {
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return hqView();
   const t = loadHqBoard().tasks.find((x) => x.id === id);
   if (t && t.status === 'queued' && t.machine === 'self') linkHost?.cancel(id);   // its reply sets the card (hqStatus)
+  else if (t && t.status === 'queued') { linkHost?.cancelRemote(id); hqMirrorRemote(); }   // v3.48 held here, or queued there (cap task-status)
   return hqView();
 });
 ipcMain.handle('hq:openFolder', () => eShell.openPath(hqDir()));
@@ -2306,6 +2333,7 @@ function startLink() {
     notify: (title, body) => notify(title, body, null),
     projects: () => state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p) })),
     tabState: linkTabState,
+    asleep: (id) => asleep.has(id), attentionOf: (id) => attention.get(id) || '',   // v3.48 task-status for a device's task
     type: typePrompt,
     loginOf: (projectId) => { const p = P.findProject(state, projectId); const s = p ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },
     reportsDir: path.join(app.getPath('home'), '.claude', 'agent-office', 'reports'),

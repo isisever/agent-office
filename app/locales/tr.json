@@ -792,7 +792,14 @@
       "queued": "sekme boşalınca iletilecek",
       "unknown": "bağlantı koptu, sonucu bilinmiyor",
       "delivered": "iletildi",
-      "rejected": "reddedildi: {reason}"
+      "rejected": "reddedildi: {reason}",
+      "held": "gönderilmeyi bekliyor",
+      "running": "çalışıyor",
+      "needs-approval": "orada onay bekliyor",
+      "expired": "süresi doldu, gönderilmedi",
+      "lost": "kayboldu, sonucu bilinmiyor",
+      "cancelled": "iptal edildi",
+      "reported": "raporlandı"
     },
     "reason": {
       "not-allowed": "o cihazda bu cihazın komutları kapalı",
@@ -805,7 +812,15 @@
       "rate-limited": "çok fazla komut, biraz bekleyin",
       "queue-full": "zaten 5 komut bekliyor",
       "expired": "30 dk bekledi, bırakıldı",
-      "removed": "cihaz kaldırıldı"
+      "removed": "cihaz kaldırıldı",
+      "cancelled": "iptal edildi",
+      "logged-out": "orada oturum kapalı",
+      "offline": "cihaz çevrimdışı",
+      "no-report": "o cihaz görevler için çok eski",
+      "locked": "proje başka cihaza taşınıyor",
+      "paced": "sınırın altında yavaş gönderiliyor",
+      "resend": "yeniden gönderiliyor",
+      "unknown": "sonucu bilinmiyor"
     },
     "error": {
       "no-keychain": "Cihaz anahtarlarını güvenle saklayacak sistem anahtarlığı yok: cihaz bağlantısı kapalı",
@@ -920,6 +935,8 @@
       "not-running": "bekliyor — {project} patronu çalışmıyor, başlatılıyor",
       "pos": "kuyrukta {len} görevden {n}.",
       "expires": "{min} dk sonra düşer",
+      "offline": "bekliyor — {machine} çevrimdışı; geri gelince gönderilecek",
+      "sending": "{machine} makinesine gönderiliyor…",
       "cancel": "İptal",
       "cancelTip": "Bu görevi projenin kuyruğundan çıkar"
     }

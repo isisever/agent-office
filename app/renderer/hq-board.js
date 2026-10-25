@@ -209,8 +209,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     if (!w) return null;
     const min = Math.max(0, Math.ceil((w.expiresAt - Date.now()) / 60000));
     return el('div', { class: 'hq-task-wait' },
-      el('span', {}, [t(`hq.wait.${w.state}`, { project: w.project }), w.len > 1 ? t('hq.wait.pos', { n: w.pos, len: w.len }) : '', t('hq.wait.expires', { min })].filter(Boolean).join(' · ')),
-      el('button', { class: 'hq-link', title: t('hq.wait.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
+      el('span', {}, [t(`hq.wait.${w.state}`, { project: w.project, machine: w.machine || '' }), w.len > 1 ? t('hq.wait.pos', { n: w.pos, len: w.len }) : '', t('hq.wait.expires', { min })].filter(Boolean).join(' · ')),
+      w.cancel === false ? null : el('button', { class: 'hq-link', title: t('hq.wait.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
   }
   /** The link's live snapshot of one remote project (engine, counts) and the commands sent to it. */
   function liveOf(r) {

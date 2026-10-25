@@ -52,7 +52,7 @@ jobs:
       - name: Device link (two devices pair on a local DHT testnet)
         run: node --test app/test/link.test.cjs
       - name: HQ (board, consent, caps, remote rows, launch args)
-        run: node --test app/test/hq.test.cjs
+        run: node --test app/test/hq.test.cjs app/test/hq-link.test.cjs
       - name: Routines (scheduler, held approvals)
         run: node --test app/test/routines.test.cjs
       - name: node-pty quit-crash patch + pty guard

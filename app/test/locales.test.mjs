@@ -88,3 +88,15 @@ test('koddaki her anahtar en.json\'da, en.json\'daki her anahtar kodda', () => {
   const unused = keys.filter((k) => !exact.has(k) && ![...prefixes.keys()].some((p) => k.startsWith(p)))
   assert.deepEqual(unused, [], 'en.json\'da kodda kullanılmayan anahtarlar')
 })
+
+test('v3.48 every remote task status and reason shown in the Devices panel has en and tr text', async () => {
+  const { createRequire } = await import('node:module')
+  const C = createRequire(import.meta.url)('../src/link-core.js')
+  const statuses = ['sent', 'queued', 'unknown', 'delivered', 'rejected', 'held', 'running', 'needs-approval', 'expired', 'lost', 'cancelled', 'reported']
+  const reasons = [...C.REASONS, 'paced', 'resend', 'unknown']
+  for (const code of ['en', 'tr']) {
+    const keys = Object.keys(flatten(JSON.parse(readFileSync(join(APP, 'locales', `${code}.json`), 'utf8'))))
+    for (const s of statuses) assert.ok(keys.includes(`devices.cmd.${s}`), `${code}: devices.cmd.${s}`)
+    for (const r of reasons) assert.ok(keys.includes(`devices.reason.${r}`), `${code}: devices.reason.${r}`)
+  }
+})

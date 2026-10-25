@@ -1,7 +1,7 @@
 // "One boss" (app contract v3.35), the side of the machine that runs a dispatched task: the app types the task as
 // `[Agent Office: remote task #<id> from "<machine>"] <text>`; this module notes the id at prompt.submit and, on a
 // main turn.complete with no worker of this session still running, writes <data dir>/reports/<id>.json (the answer,
-// redacted and cut to 16 KB, and the commits made since the task arrived). The app sends it to the dispatcher and
+// redacted and cut to 40 KB (v3.48; the app cuts it further, with a marker, for an older dispatcher), PR links found in it, and the commits made since the task arrived). The app sends it to the dispatcher and
 // deletes the file. A new marked task, or an unmarked prompt of the person, closes a still open one as partial; so
 // does a wait of more than TASK_MAX_MS. Before typing, the app also writes <data dir>/tasks/<session>.json { id, at }
 // (typedTaskId), so the task is known even if the engine hands the hook a prompt without the marker (a collapsed paste). On the dispatcher's side the boss gets only
@@ -9,7 +9,9 @@
 import { clip, commitsSince, placeOfDir, redact } from './journal'
 import type { Host, JournalCommit } from './journal'
 
-export const REPORT_MAX = 16 * 1024
+export const REPORT_MAX = 40 * 1024 // v3.48 (cap report2); was 16 KB
+export const REPORT_COMMITS = 30
+const PR_RE = /https:\/\/(?:github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+|gitlab\.com\/[\w./-]+\/-\/merge_requests\/\d+)/g
 export const REPORTS_DIR = 'reports'
 export const TASKS_DIR = 'tasks'
 export const TASK_MAX_MS = 2 * 3600 * 1000 // an open task is reported as partial after this long
@@ -18,7 +20,7 @@ const ID = /^[A-Za-z0-9_.:-]{1,64}$/
 const MARKER = /^\[Agent Office: remote task #([A-Za-z0-9_.:-]{1,64}) from "[^"\n]{0,64}"\] /
 
 export type PendingTask = { id: string; sinceMs: number; answer: string }
-export type TaskReport = { ok: boolean; partial: boolean; summary: string; commits: JournalCommit[]; at: number }
+export type TaskReport = { ok: boolean; partial: boolean; summary: string; commits: JournalCommit[]; at: number; truncated?: boolean; prs?: string[] }
 
 /** The task id of a prompt the app typed for a dispatched task, or undefined. */
 export function taskIdOf(text: string): string | undefined {
@@ -62,8 +64,10 @@ export class ReportTracker {
 
 /** The report of a task: the answer redacted and cut, the commits, the time. */
 export function reportOf(task: PendingTask, commits: JournalCommit[], now: number, partial = false): TaskReport {
-  const summary = clip(redact(task.answer.trim()), REPORT_MAX) || '(the session gave no answer)'
-  return { ok: true, partial, summary, commits: commits.slice(0, 12), at: now }
+  const full = redact(task.answer.trim())
+  const summary = clip(full, REPORT_MAX) || '(the session gave no answer)'
+  const prs = [...new Set(full.match(PR_RE) || [])].slice(0, 10)
+  return { ok: true, partial, summary, commits: commits.slice(0, REPORT_COMMITS), at: now, ...(full.length > REPORT_MAX ? { truncated: true } : {}), ...(prs.length ? { prs } : {}) }
 }
 
 /** Writes <root>/reports/<id>.json for the app (never throws). */

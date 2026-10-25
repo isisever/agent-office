@@ -26,6 +26,7 @@ const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks be
  *   tabState: (projectId: string) => 'ready' | 'busy' | 'starting' | 'gone', type: (projectId: string, text: string, o?: { taskId?: string }) => boolean | void,   // false: not typed
  *   loginOf?: (projectId: string) => 'in' | 'out' | 'unknown', reportsDir?: string,
  *   onReport?: (r: { id: string, machine: string, pub: string, report: any }) => void,
+ *   asleep?: (projectId: string) => boolean, attentionOf?: (projectId: string) => string,   // v3.48 why a device's task waits / needs approval
  *   manage?: (op: 'start' | 'wake' | 'sleep' | 'stop', projectId: string) => { ok: boolean, reason?: string } | Promise<{ ok: boolean, reason?: string }>,
  *   loginRelay?: { spawn: (account: any, id: string, devicePub?: string) => any, accounts: () => any[], checkAuth: (account: any) => Promise<{ ok: boolean, email?: string }>, localBusy?: (accountId: string) => boolean },
  *   openExternal?: (url: string) => void,
@@ -89,13 +90,14 @@ function setupLink(d) {
     try {
       const keys = loadKeys();
       const saved = readJson(devicesFile) || {};
-      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: saved.devices, secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
+      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: saved.devices, secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), tasksFile: path.join(dir, 'tasks-out.json'), seenFile: path.join(dir, 'tasks-seen.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
       link.on('persist', save);
       if (keys.fresh) link.persist();
       link.on('change', push);
       link.on('remote', onRemote);
       link.on('command', onCommand);
       link.on('proj-op', onProjOp);
+      link.on('task-cancel', onTaskCancel);   // v3.48
       link.on('report', ({ device, id, report }) => d.onReport?.({ id, machine: device.name, pub: device.pub, report }));
       link.on('handoff-offer', onHandoffOffer);
       link.on('handoff-refused', ({ device, offer, reason }) => hlog({ dir: 'in', device: device.name, project: offer.name, outcome: `refused:${reason}` }));
@@ -363,14 +365,51 @@ function setupLink(d) {
         // type() → false: not typed (the project got handoff-locked meanwhile): refused, never 'delivered'
         if (c.report) {
           // v3.35: the plugin reports on the marked task (hooks/reports.ts); its report is owed to the dispatcher
-          if (d.type(project, C.markedTask(c.id, c.device.name, c.text), { taskId: c.id }) === false) { c.reply('rejected', 'locked'); break; }
-          if (c.device.pub === SELF) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); } else link?.expectReport(c.id, c.device.pub, project);
+          // the expectation is saved BEFORE typing (a crash between the two never types the task a second time on resync)
+          const remote = c.device.pub !== SELF;
+          if (remote) link?.expectReport(c.id, c.device.pub, project);
+          let ok; try { ok = d.type(project, C.markedTask(c.id, c.device.name, c.text), { taskId: c.id }) !== false; } catch { ok = false; }
+          if (!ok) { if (remote) link?.dropReport(c.id); c.reply('rejected', 'locked'); break; }
+          if (!remote) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); }
         } else if (d.type(project, C.markedCommand(c.device.name, c.text)) === false) { c.reply('rejected', 'not-running'); break; }   // v1-safe reason
         c.reply('delivered');
         break;                                     // one per project per tick: the tab is busy after a prompt
       }
       if (!q.length) queue.delete(project);
     }
+    taskStatuses();
+  }
+  /** v3.48 the live status of every task a device sent here (cap task-status): queued + why (like the local cards), then
+   *  delivered / running / needs-approval from the boss tab. Never answers a permission prompt: it only reports it. */
+  function taskStatuses() {
+    const l = link;
+    if (!l) return;
+    const now = Date.now();
+    for (const [project, q] of queue) {
+      const ts = d.tabState(project);
+      const state = ts === 'gone' ? (d.asleep?.(project) ? 'asleep' : 'not-running') : ts;
+      q.forEach((c, i) => { if (c.report && c.device.pub !== SELF) l.taskState(c.id, 'queued', { state, pos: i + 1, len: q.length, expiresIn: Math.max(0, Math.min(C.TASK_TTL_MAX, c.at + ttlOf(c) - now)) }); });
+    }
+    const last = new Map();   // the newest typed task per project is the one its boss works on
+    for (const t of l.typedTasks()) last.set(t.project, t.id);
+    for (const t of l.typedTasks()) {
+      const ts = d.tabState(t.project);
+      const st = last.get(t.project) !== t.id ? 'delivered' : d.attentionOf?.(t.project) === 'permission' ? 'needs-approval' : ts === 'busy' ? 'running' : 'delivered';
+      l.taskState(t.id, st);
+    }
+  }
+  /** v3.48 a device cancels its own task: removed while still queued here ('rejected: cancelled'); else its status is the answer. */
+  function onTaskCancel({ device, id, answer }) {
+    for (const [project, q] of queue) {
+      const i = q.findIndex((c) => c.id === id && c.device.pub === device.pub);
+      if (i < 0) continue;
+      const [c] = q.splice(i, 1);
+      if (!q.length) queue.delete(project);
+      log(device.name, d.projects().find((x) => x.id === project)?.name || project, c.text, 'task:rejected:cancelled');
+      c.reply('rejected', 'cancelled');
+      return;
+    }
+    answer();
   }
   // --- v3.33 project actions from a device allowed to manage (proj-op): one at a time, logged, a notice here
   const opQueue = [];
@@ -421,7 +460,7 @@ function setupLink(d) {
     return r;
   }
 
-  const pumpTimer = setInterval(pump, PUMP_MS);
+  const pumpTimer = setInterval(() => { pump(); link?.pumpOutbox(); }, PUMP_MS);   // v3.48 the offline outbox too
   pumpTimer.unref?.();
 
   // --- v3.35 one boss: dispatch (office_dispatch) and the reports of dispatched tasks
@@ -442,10 +481,11 @@ function setupLink(d) {
     return out || { id, status: 'queued' };
   }
   /** A task for a project of a paired device (cmd with report, cap 'report'). Offline: refused, nothing queued. */
-  function dispatchRemote(pub, projectId, text) {
+  /** v3.48 o.hold: an offline device's task waits in the outbox (sent on its next hello); o.ttl: its queue wait there (cap task-status). */
+  function dispatchRemote(pub, projectId, text, { hold = false, ttl = 0, projectName = '' } = {}) {
     const l = link;
     if (!l || !l.devices.some((x) => x.pub === pub)) return { id: '', status: 'rejected', reason: 'unknown-machine' };
-    const rec = l.sendCommand(pub, projectId, text, { report: true });
+    const rec = l.sendCommand(pub, projectId, text, { report: true, hold, ttl, projectName });
     return { id: rec.id, status: rec.status, ...(rec.reason ? { reason: rec.reason } : {}) };
   }
   /** The reports the plugin wrote (<data dir>/reports/<id>.json): sent to the dispatcher, or handed to main. */
@@ -459,7 +499,7 @@ function setupLink(d) {
       const id = n.slice(0, -5);
       const report = readJson(f);
       let used = false;
-      if (report && localTasks.has(id)) { localTasks.delete(id); saveTaskIds(localTasksFile, localTasks); d.onReport?.({ id, machine: '', pub: SELF, report: C.cleanReport(report) }); used = true; }
+      if (report && localTasks.has(id)) { localTasks.delete(id); saveTaskIds(localTasksFile, localTasks); d.onReport?.({ id, machine: '', pub: SELF, report: C.cleanReport(report, true) }); used = true; }
       else if (report && link?.owesReport(id)) used = link.sendReport(id, report);
       let old = false;
       try { old = Date.now() - fs.statSync(f).mtimeMs > 24 * 3600 * 1000; } catch { /* gone */ }
@@ -532,6 +572,10 @@ function setupLink(d) {
       }
       return false;
     },
+    /** v3.48 a task sent to a device: its record (status, why it waits) or null; cancel of a held or queued one. */
+    remoteTask: (id) => link?.sentTask(id) || null,
+    cancelRemote: (id) => (link ? link.cancelTask(id) : { ok: false, reason: 'offline' }),
+    pumpOutbox: () => link?.pumpOutbox(),
     knows: (id) => localTasks.has(id) || [...queue.values()].some((q) => q.some((c) => c.id === id)),
     /** The Link (tests; null while off). */
     link: () => link,

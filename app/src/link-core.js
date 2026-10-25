@@ -6,9 +6,9 @@ const crypto = require('crypto');
 // v3.31: 2 = hello carries the app version and capabilities; a v1 peer gets no message type it does not know
 const PROTOCOL = 2;
 // what a peer may say it understands (hello.caps); unknown names are dropped
-const CAPS = ['res', 'catalog', 'manage', 'accounts', 'report'];
+const CAPS = ['res', 'catalog', 'manage', 'accounts', 'report', 'task-status', 'report2'];
 // what this build sends and understands (v3.32: res and catalog)
-const OUR_CAPS = ['res', 'catalog', 'report', 'manage', 'accounts'];   // v3.35 adds 'report', v3.33 'manage' (proj-op), v3.34 'accounts' (login relay)
+const OUR_CAPS = ['res', 'catalog', 'report', 'manage', 'accounts', 'task-status', 'report2'];   // v3.48 'task-status' (task-status/task-query/task-cancel, cmd.ttl), 'report2' (larger reports, prs/artifacts/transcriptRef); v3.35 adds 'report', v3.33 'manage' (proj-op), v3.34 'accounts' (login relay)
 // v3.33 what a device allowed to manage may do to a project's boss tab here (proj-op), and why it may be refused
 const PROJ_OPS = ['start', 'wake', 'sleep', 'stop'];
 const PROJ_OP_REASONS = ['not-allowed', 'unknown-project', 'engine', 'busy', 'locked', 'rate-limited', 'removed', 'offline', 'no-manage', 'timeout', 'failed'];
@@ -121,14 +121,44 @@ const markedTask = (id, fromName, text) => `[Agent Office: remote task #${id} fr
 const REPORT_MAX = 16 * 1024;   // a report's summary (characters)
 const REPORT_COMMITS = 12;
 /** A task report as it may cross the link: { ok, partial, summary ≤16 KB, commits ≤12 { hash, subject }, at }, or null. */
-function cleanReport(r) {
-  if (!r || typeof r !== 'object' || typeof r.summary !== 'string' || r.summary.length > REPORT_MAX * 2) return null;
-  const summary = r.summary.replace(ESCAPES, '').replace(CONTROLS, ' ').slice(0, REPORT_MAX);
-  const commits = (Array.isArray(r.commits) ? r.commits : []).slice(0, REPORT_COMMITS)
+// v3.48 cap 'report2': a larger summary (cut with a marker), more commits, PR links (https), artifact basenames and the
+// session id of the transcript (never a path). Received reports are always cleaned with the larger limits.
+const REPORT2_MAX = 40 * 1024;
+const REPORT2_COMMITS = 30;
+const TRUNC_MARK = '\n…[truncated]';
+function cleanReport(r, v2 = false) {
+  if (!r || typeof r !== 'object' || typeof r.summary !== 'string' || r.summary.length > (v2 ? REPORT2_MAX : REPORT_MAX) * 2) return null;
+  const max = v2 ? REPORT2_MAX : REPORT_MAX;
+  let summary = r.summary.replace(ESCAPES, '').replace(CONTROLS, ' ');
+  let truncated = r.truncated === true;
+  if (summary.length > max) { summary = summary.slice(0, max - TRUNC_MARK.length) + TRUNC_MARK; truncated = true; }
+  const commits = (Array.isArray(r.commits) ? r.commits : []).slice(0, v2 ? REPORT2_COMMITS : REPORT_COMMITS)
     .filter((c) => c && typeof c.hash === 'string' && /^[0-9a-f]{4,40}$/.test(c.hash))
     .map((c) => ({ hash: c.hash, subject: cleanLine(c.subject, 120) }));
-  return { ok: r.ok !== false, partial: r.partial === true, summary, commits, at: isInt(r.at) ? r.at : 0 };
+  const out = { ok: r.ok !== false, partial: r.partial === true, summary, commits, at: isInt(r.at) ? r.at : 0, ...(truncated ? { truncated: true } : {}) };
+  if (!v2) return out;
+  const prs = (Array.isArray(r.prs) ? r.prs : []).filter((u) => typeof u === 'string' && u.length <= 300 && /^https:\/\/[^\s"'<>\\]+$/.test(u)).slice(0, 10);
+  const artifacts = (Array.isArray(r.artifacts) ? r.artifacts : []).map((a) => cleanLine(a, 120)).filter((a) => a && !/[\\/]/.test(a) && a !== '..' && a !== '.').slice(0, 20);
+  const ref = typeof r.transcriptRef === 'string' && /^[0-9A-Za-z-]{8,64}$/.test(r.transcriptRef) ? r.transcriptRef : '';
+  return { ...out, ...(prs.length ? { prs } : {}), ...(artifacts.length ? { artifacts } : {}), ...(ref ? { transcriptRef: ref } : {}) };
 }
+/** v3.48 a report as it goes to one peer: cleaned for its caps and cut (with the marker) until one cmd-report fits a frame. */
+function fitReport(r, v2, id = 'x'.repeat(64)) {
+  let out = cleanReport(r, v2) || cleanReport({ ...r, summary: String(r?.summary || '').slice(0, v2 ? REPORT2_MAX : REPORT_MAX) }, v2);
+  if (!out) return null;
+  while (Buffer.byteLength(JSON.stringify({ t: 'cmd-report', id, ...out })) > MAX_FRAME - 512 && out.summary.length > 64) {
+    const keep = Math.floor((out.summary.length - TRUNC_MARK.length) * 0.75);
+    out = { ...out, summary: out.summary.replace(TRUNC_MARK, '').slice(0, keep) + TRUNC_MARK, truncated: true };
+  }
+  return out;
+}
+
+// v3.48 cap 'task-status': the runner's live status of one task, and why a queued one waits (like the local cards)
+const TASK_STATES = ['queued', 'delivered', 'running', 'needs-approval', 'reported', 'rejected', 'unknown'];
+const WAIT_STATES = ['ready', 'busy', 'starting', 'asleep', 'not-running'];
+const TASK_TTL_MAX = 4 * 3600 * 1000;   // a remote HQ task may wait this long in the runner's queue (cmd.ttl)
+const cleanWhy = (w) => (w && typeof w === 'object' && WAIT_STATES.includes(w.state) && isInt(w.pos, 99) && isInt(w.len, 99) && isInt(w.expiresIn, TASK_TTL_MAX)
+  ? { state: w.state, pos: w.pos, len: w.len, expiresIn: w.expiresIn } : null);
 
 /** A device name: one clean line, 1-40 chars, else the fallback. */
 const deviceName = (s, fallback = 'Device') => cleanLine(s, MAX_NAME) || fallback;
@@ -153,7 +183,7 @@ class RateLimiter {
 
 const STATUS = ['working', 'idle', 'approval'];
 const CMD_STATUS = ['queued', 'delivered', 'rejected'];
-const REASONS = ['not-allowed', 'unknown-project', 'engine', 'not-running', 'too-large', 'empty', 'not-text', 'rate-limited', 'queue-full', 'expired', 'removed', 'logged-out', 'offline', 'no-report', 'locked'];   // v3.35 reasons go only to peers with cap 'report'
+const REASONS = ['cancelled', 'not-allowed', 'unknown-project', 'engine', 'not-running', 'too-large', 'empty', 'not-text', 'rate-limited', 'queue-full', 'expired', 'removed', 'logged-out', 'offline', 'no-report', 'locked'];   // v3.35 reasons go only to peers with cap 'report'
 const isStr = (v, max) => typeof v === 'string' && v.length <= max;
 const isInt = (v, max = Number.MAX_SAFE_INTEGER) => Number.isInteger(v) && v >= 0 && v <= max;
 const isId = (v) => typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(v);
@@ -333,11 +363,20 @@ function validateMessage(m) {
       return isInt(m.seq) && snap ? { t: 'state', seq: m.seq, snap } : null;
     }
     case 'cmd':
-      return isId(m.id) && isId(m.project) && typeof m.text === 'string' && m.text.length <= MAX_COMMAND * 4 ? { t: 'cmd', id: m.id, project: m.project, text: m.text, ...(m.report === true ? { report: true } : {}) } : null;
-    case 'cmd-report': {   // v3.35, only to a peer with cap 'report'
-      const report = cleanReport(m);
+      return isId(m.id) && isId(m.project) && typeof m.text === 'string' && m.text.length <= MAX_COMMAND * 4 ? { t: 'cmd', id: m.id, project: m.project, text: m.text, ...(m.report === true ? { report: true } : {}), ...(isInt(m.ttl, TASK_TTL_MAX) && m.ttl > 0 ? { ttl: m.ttl } : {}) } : null;
+    case 'cmd-report': {   // v3.35, only to a peer with cap 'report' (v3.48: always cleaned with the report2 limits)
+      const report = cleanReport(m, true);
       return isId(m.id) && report ? { t: 'cmd-report', id: m.id, ...report } : null;
     }
+    case 'task-status': {   // v3.48, only to a peer with cap 'task-status'
+      const why = cleanWhy(m.why);
+      return isId(m.id) && TASK_STATES.includes(m.state) && (m.reason == null || REASONS.includes(m.reason))
+        ? { t: 'task-status', id: m.id, state: m.state, ...(m.reason ? { reason: m.reason } : {}), ...(why && m.state === 'queued' ? { why } : {}) } : null;
+    }
+    case 'task-query':      // v3.48, only to a peer with cap 'task-status'
+      return Array.isArray(m.ids) && m.ids.length >= 1 && m.ids.length <= 50 && m.ids.every(isId) ? { t: 'task-query', ids: [...new Set(m.ids)] } : null;
+    case 'task-cancel':     // v3.48, only to a peer with cap 'task-status'
+      return isId(m.id) ? { t: 'task-cancel', id: m.id } : null;
     case 'cmd-report-ack':   // v3.35, only to a peer with cap 'report'
       return isId(m.id) ? { t: 'cmd-report-ack', id: m.id } : null;
     case 'proj-op':          // v3.33, only to a peer with cap 'manage'
@@ -484,7 +523,7 @@ module.exports = {
   PROTOCOL, CAPS, OUR_CAPS, HEARTBEAT_MS, HEARTBEAT_MISSES, PAIR_TTL_MS, MAX_FRAME, MAX_COMMAND, WORDS, CODE_WORDS, REASONS,
   MAX_BUNDLE, MAX_PACK, CHUNK, HANDOFF_REASONS, HANDOFF_STATUS, PROJ_OPS, PROJ_OP_REASONS,
   makeCode, normalizeCode, pairSecrets, pairProof, proofOk, pairTopic, hex, isHex,
-  cleanLine, sanitizeCommand, markedCommand, markedTask, cleanReport, REPORT_MAX, deviceName, RateLimiter,
+  cleanLine, sanitizeCommand, markedCommand, markedTask, cleanReport, fitReport, REPORT_MAX, REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK, TASK_STATES, WAIT_STATES, TASK_TTL_MAX, deviceName, RateLimiter,
   cleanSnapshot, validateMessage, validatePair, LineReader, encode,
   normalizeDevices, trusted, mayCommand, mayHandoff, mayManage, mayAccounts, snapshotOf, snapshotFor, logEntry,
   cleanRes, cleanCatalog, resOf, resChanged, typingReady,

@@ -5,6 +5,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK } = require('./link-core.js');
 
 const HQ_ID = 'hq';
 const MAX_PER_REQUEST = 8;          // tasks one request may create
@@ -16,7 +17,7 @@ const MINT_MS = 30 * 60 * 1000;     // a request id minted from the person's typ
 const ROUTINE_MINT_MS = 4 * 3600 * 1000;   // v3.47 a routine run's request id (caps count against it this long)
 const HELD_MS = 12 * 3600 * 1000;   // v3.47 a held (awaiting-consent) task expires after this
 const TITLE_MAX = 80;
-const SUMMARY_MAX = 16 * 1024;
+const SUMMARY_MAX = REPORT2_MAX;   // v3.48 report2: the larger summary (cut with TRUNC_MARK)
 const STATUSES = ['queued', 'delivered', 'running', 'needs-approval', 'awaiting-consent', 'reported', 'partial', 'failed', 'rejected', 'expired', 'lost'];
 const TERMINAL = new Set(['reported', 'partial', 'failed', 'rejected', 'expired', 'lost']);
 const OPEN = (t) => !TERMINAL.has(t.status);
@@ -239,10 +240,23 @@ function setStatus(board, id, status, reason, now = Date.now()) {
 }
 const PR_RE = /https:\/\/(?:github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+|gitlab\.com\/[\w./-]+\/-\/merge_requests\/\d+)/g;
 const extractPrs = (text) => [...new Set(String(text || '').match(PR_RE) || [])].slice(0, 10);
+/** v3.48 a remote task's link record (status of the dispatcher's tasks-out entry) → its board status, or null while unknown. */
+function boardOfRemote(r) {
+  if (!r || typeof r.status !== 'string') return null;
+  if (r.status === 'held') return { status: 'queued', reason: r.reason === 'resend' ? 'resend' : 'offline' };
+  if (r.status === 'sent') return { status: 'queued' };
+  if (r.status === 'unknown') return null;   // asked about on the device's next hello (task-query): the card stays
+  if (['queued', 'delivered', 'running', 'needs-approval', 'expired', 'lost'].includes(r.status)) return { status: r.status, ...(r.reason && r.status !== 'queued' ? { reason: r.reason } : {}) };
+  if (r.status === 'rejected') return { status: 'rejected', reason: r.reason || 'failed' };
+  return null;   // reported: the report itself moves the card
+}
+/** v3.48 a remote task's record is still open (kept open across a restart; resync on hello). */
+const remoteOpen = (r) => Boolean(r && typeof r.status === 'string' && !['reported', 'rejected', 'expired', 'lost'].includes(r.status));
 function applyReport(board, id, report, now = Date.now()) {
   return { ...board, tasks: board.tasks.map((t) => (t.id !== id ? t : {
     ...t, status: report?.partial ? 'partial' : 'reported', finishedAt: now, report: `tasks/${id}/report.md`, read: false,
-    commits: (report?.commits || []).slice(0, 12).map((c) => ({ hash: line(c.hash, 40), subject: line(c.subject, 200) })), prs: extractPrs(report?.summary),
+    commits: (report?.commits || []).slice(0, REPORT2_COMMITS).map((c) => ({ hash: line(c.hash, 40), subject: line(c.subject, 200) })), prs: [...new Set([...(Array.isArray(report?.prs) ? report.prs.filter((u) => typeof u === 'string' && /^https:\/\/\S+$/.test(u)) : []), ...extractPrs(report?.summary)])].slice(0, 10),
+    ...(report?.transcriptRef ? { transcript: line(report.transcriptRef, 64) } : {}), ...(report?.truncated ? { truncated: true } : {}),
   })) };
 }
 /** Request ids whose tasks are all terminal and not yet marked done → the board with them marked, and the list. */
@@ -289,7 +303,11 @@ const taskFile = (dir, id, name) => (safeId(id) ? path.join(dir, 'tasks', id, na
 const requestFile = (dir, id) => (safeId(id) ? path.join(dir, 'requests', `${id}.md`) : null);
 function reportMd(task, report) {
   const out = [`# ${line(task.title, TITLE_MAX) || task.id}`, '', `Project: ${task.project} (${task.machine === 'self' ? 'this machine' : task.machineName || task.machine})`, `Status: ${task.status}`, ''];
-  out.push(String(report?.summary || '').replace(ESCAPES, '').replace(CONTROLS, ' ').slice(0, SUMMARY_MAX), '');
+  let summary = String(report?.summary || '').replace(ESCAPES, '').replace(CONTROLS, ' ');
+  if (summary.length > SUMMARY_MAX) summary = summary.slice(0, SUMMARY_MAX - TRUNC_MARK.length) + TRUNC_MARK;
+  // fenced: the summary is the remote agent's text, data in report.md (a fence longer than any backtick run inside)
+  const fence = '`'.repeat(Math.max(3, ...(summary.match(/`+/g) || []).map((x) => x.length + 1)));
+  out.push('## Summary', '', `${fence}text`, summary, fence, '');
   if (task.commits.length) out.push('## Commits', ...task.commits.map((c) => `- ${c.hash} ${c.subject}`), '');
   if (task.prs.length) out.push('## Pull requests', ...task.prs.map((u) => `- ${u}`), '');
   return `${out.join('\n')}\n`;
@@ -364,6 +382,7 @@ You may edit this file: Agent Office writes it only when it is missing.
 `;
 
 module.exports = {
+  boardOfRemote, remoteOpen,
   waitState, WAIT_STATES,
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
