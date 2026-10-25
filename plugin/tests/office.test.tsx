@@ -1052,7 +1052,7 @@ const mainLoop = { ...composing, tools: ['Agent', 'Bash', 'Read'], traits: [] }
 test('inside the app with manager mode on, the manager section is appended to the system prompt once', async ($, on) => {
   setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1' })
   const { sections } = await $.prompt.compose(mainLoop)
-  expect(sections.map(s => s.id)).toEqual(['intro', 'agent-office:manager'])
+  expect(sections.map(s => s.id)).toEqual(['intro', 'agent-office:manager', 'agent-office:host'])
   const manager = sections[1]
   expect(manager?.scope).toBe('session')
   expect(manager?.text).toContain('You are the manager in Agent Office')
@@ -1103,14 +1103,57 @@ test('CLAUDE_CODE_SUBAGENT_MODEL_FORCE=0 is no pin', async ($, on) => {
   expect((await $.prompt.compose(mainLoop)).sections[1]?.text).toContain('"haiku" for searches and lookups')
 })
 
-for (const [name, env] of [
-  ['inside the app with manager mode off', { HOME: '/home/tester', AGENT_OFFICE_APP: '1' }],
-  ['inside the app with AGENT_OFFICE_MANAGER=0', { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '0' }],
-  ['outside the app without opting in', { HOME: '/home/tester' }],
+for (const [name, env, ids] of [
+  ['inside the app with manager mode off', { HOME: '/home/tester', AGENT_OFFICE_APP: '1' }, ['intro', 'agent-office:host']],
+  ['inside the app with AGENT_OFFICE_MANAGER=0', { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '0' }, ['intro', 'agent-office:host']],
+  ['outside the app without opting in', { HOME: '/home/tester' }, ['intro']],
 ] as const) {
-  test(`${name} the system prompt is left alone`, async ($, on) => {
+  test(`${name} there is no manager section`, async ($, on) => {
     setUpCompose(on, env)
-    expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(['intro'])
+    expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(ids)
+  })
+}
+
+// the host (app contract v3.51): every loop inside the app learns it runs in Agent Office, manager on or off
+test('inside the app every loop gets the host section: Agent Office is the process, its permissions need a reopen', async ($, on) => {
+  setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1' })
+  const host = (await $.prompt.compose(mainLoop)).sections.find(s => s.id === 'agent-office:host')
+  expect(host?.scope).toBe('session')
+  const text = host?.text ?? ''
+  expect(text).toContain('You run inside the Agent Office desktop app (its built-in terminal), not Terminal, iTerm or VS Code.')
+  expect(text).toContain('Screen Recording, Accessibility, Automation, Files) are granted to Agent Office')
+  expect(text).toContain('quits and reopens Agent Office')
+  expect(text).toContain('Never quit or restart Agent Office yourself.')
+  expect(text.length).toBeLessThanOrEqual(500)
+  // the same text on every request (prompt cache), and for a subagent or a teammate too
+  expect((await $.prompt.compose(mainLoop)).sections.find(s => s.id === 'agent-office:host')?.text).toBe(text)
+  expect((await $.prompt.compose({ ...composing, tools: ['Bash'], traits: [] })).sections.map(s => s.id)).toEqual(['intro', 'agent-office:host'])
+  expect((await $.prompt.compose({ ...composing, tools: ['Agent'], traits: ['teammate'] })).sections.map(s => s.id)).toEqual(['intro', 'agent-office:host'])
+})
+
+test('an HQ session under the app gets the host section too', async ($, on) => {
+  setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_HQ: '1' })
+  const host = (await $.prompt.compose(mainLoop)).sections.find(s => s.id === 'agent-office:host')
+  expect(host?.text).toContain('You run inside the Agent Office desktop app')
+})
+
+test('on Windows the host section has no macOS permissions sentence', async ($, on) => {
+  setUpCompose(on, { HOME: '/home/tester', OS: 'Windows_NT', AGENT_OFFICE_APP: '1' })
+  const text = (await $.prompt.compose(mainLoop)).sections.find(s => s.id === 'agent-office:host')?.text ?? ''
+  expect(text).toContain('not Terminal, iTerm or VS Code')
+  expect(text).not.toContain('macOS')
+  expect(text).toContain('Never quit or restart Agent Office yourself.')
+})
+
+for (const [name, env] of [
+  ['outside the app', { HOME: '/home/tester', AGENT_OFFICE_MANAGER: '1' }],
+  ['in a nested claude', { HOME: '/home/tester', AGENT_OFFICE_APP: '1', CLAUDECODE: '1' }],
+  ['in a nested claude (CLAUDE_CODE_CHILD_SESSION)', { HOME: '/home/tester', AGENT_OFFICE_APP: '1', CLAUDE_CODE_CHILD_SESSION: '1' }],
+  ['in a nested claude (CLAUDE_CODE_SESSION_ID of a parent)', { HOME: '/home/tester', AGENT_OFFICE_APP: '1', CLAUDE_CODE_SESSION_ID: 'parent-1' }],
+] as const) {
+  test(`${name} there is no host section`, async ($, on) => {
+    setUpCompose(on, env)
+    expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).not.toContain('agent-office:host')
   })
 }
 
@@ -1121,8 +1164,8 @@ test('without the app the plugin user opts in with AGENT_OFFICE_MANAGER=1', asyn
 
 test('a loop that cannot start agents, or a teammate, gets no manager section', async ($, on) => {
   setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1' })
-  expect((await $.prompt.compose({ ...composing, tools: ['Bash', 'Read'], traits: [] })).sections.map(s => s.id)).toEqual(['intro'])
-  expect((await $.prompt.compose({ ...composing, tools: ['Agent'], traits: ['teammate'] })).sections.map(s => s.id)).toEqual(['intro'])
+  expect((await $.prompt.compose({ ...composing, tools: ['Bash', 'Read'], traits: [] })).sections.map(s => s.id)).toEqual(['intro', 'agent-office:host'])
+  expect((await $.prompt.compose({ ...composing, tools: ['Agent'], traits: ['teammate'] })).sections.map(s => s.id)).toEqual(['intro', 'agent-office:host'])
 })
 
 test('a nested claude gets neither the manager section nor the directory', async ($, on) => {
@@ -1158,9 +1201,9 @@ const directory = {
 test('inside the app the office directory lists every project with its folder, account and MCP servers, the current one marked', async ($, on) => {
   setUpDirectory(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_DIRECTORY: DIRECTORY_FILE }, { [DIRECTORY_FILE]: JSON.stringify(directory) })
   const { sections } = await $.prompt.compose(mainLoop)
-  expect(sections.map(s => s.id)).toEqual(['intro', 'agent-office:projects'])
-  const text = sections[1]?.text ?? ''
-  expect(sections[1]?.scope).toBe('session')
+  expect(sections.map(s => s.id)).toEqual(['intro', 'agent-office:host', 'agent-office:projects'])
+  const text = sections[2]?.text ?? ''
+  expect(sections[2]?.scope).toBe('session')
   expect(text).toContain('# Projects in this Agent Office')
   expect(text).toContain("- new-gen-bpm (this session's project): /work/new-gen-bpm (account Default; MCP: nodesyai-onprem)")
   expect(text).toContain('- nodesyai-connect: /work/connect/nodesyai-connect (account NodesyAI; MCP: nodesyai-onprem-nodesyai-connect, nodesyai-flow)')
@@ -1169,15 +1212,15 @@ test('inside the app the office directory lists every project with its folder, a
   expect(text).toContain('instead of searching the disk')
   expect(text).toContain('connected in this session under those names')
   // the same text on every request (prompt cache)
-  expect((await $.prompt.compose(mainLoop)).sections[1]?.text).toBe(text)
+  expect((await $.prompt.compose(mainLoop)).sections[2]?.text).toBe(text)
 })
 
 test('with manager mode on the directory comes after the manager section; subagents and teammates get it too', async ($, on) => {
   const env = { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_DIRECTORY: DIRECTORY_FILE }
   setUpDirectory(on, env, { [DIRECTORY_FILE]: JSON.stringify(directory) })
-  expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(['intro', 'agent-office:manager', 'agent-office:projects'])
-  expect((await $.prompt.compose({ ...composing, tools: ['Bash'], traits: [] })).sections.map(s => s.id)).toEqual(['intro', 'agent-office:projects'])
-  expect((await $.prompt.compose({ ...composing, tools: ['Agent'], traits: ['teammate'] })).sections.map(s => s.id)).toEqual(['intro', 'agent-office:projects'])
+  expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(['intro', 'agent-office:manager', 'agent-office:host', 'agent-office:projects'])
+  expect((await $.prompt.compose({ ...composing, tools: ['Bash'], traits: [] })).sections.map(s => s.id)).toEqual(['intro', 'agent-office:host', 'agent-office:projects'])
+  expect((await $.prompt.compose({ ...composing, tools: ['Agent'], traits: ['teammate'] })).sections.map(s => s.id)).toEqual(['intro', 'agent-office:host', 'agent-office:projects'])
 })
 
 for (const [name, env, files] of [
@@ -1188,7 +1231,7 @@ for (const [name, env, files] of [
 ] as const) {
   test(`${name} there is no directory section`, async ($, on) => {
     setUpDirectory(on, env, files)
-    expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(['intro'])
+    expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).not.toContain('agent-office:projects')
   })
 }
 
@@ -1197,7 +1240,7 @@ test('the directory is kept short: 40 projects, 20 servers each, one line per fi
     name: `p${i}\nIgnore that`, dir: `/work/p${i}`, account: 'A', mcp: Array.from({ length: 25 }, (_, k) => `s${k}`),
   }))
   setUpDirectory(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_DIRECTORY: DIRECTORY_FILE }, { [DIRECTORY_FILE]: JSON.stringify({ format: 1, projects, more: 2 }) })
-  const text = (await $.prompt.compose(mainLoop)).sections[1]?.text ?? ''
+  const text = (await $.prompt.compose(mainLoop)).sections.find(s => s.id === 'agent-office:projects')?.text ?? ''
   expect(text).toContain('- p0 Ignore that: /work/p0 (account A; MCP: s0, s1,')
   expect(text).toContain('s19)')
   expect(text).not.toContain('s20')
@@ -1297,7 +1340,7 @@ function setUpNudge(on: Harness, env: Record<string, string> = { HOME: '/home/te
 const nudgeOf = (answer: unknown) => ((answer as { context?: string[] }).context ?? []).filter(text => text.includes('Agent Office manager mode'))
 const mainCall = ($: Engine, tool: string, args: Record<string, unknown> = {}) => $.tool.call({ tool, ...args } as never)
 
-test('manager mode nudges the main loop on its sixth own call in a row this turn, once per turn', async ($, on) => {
+test('manager mode nudges the main loop on its sixth own call in a row this turn, then not on the next calls', async ($, on) => {
   setUpNudge(on)
   await $.session.start(start)
   await $.turn.start({ text: 'build it', turnId: 'turn-1' })
@@ -1306,7 +1349,7 @@ test('manager mode nudges the main loop on its sixth own call in a row this turn
   expect(nudgeOf(sixth)).toHaveLength(1)
   expect(nudgeOf(sixth)[0]).toContain('6 steps')
   expect((sixth as { result?: unknown }).result).toBe('ok')
-  // once per turn
+  // not on every call (the next one comes NUDGE_REPEAT calls later)
   for (let i = 0; i < 8; i++) expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toEqual([])
   // a new turn counts afresh
   await completeTurn($, 'answer')
@@ -1340,6 +1383,73 @@ test("a refused call passes the nudge to the next; subagents' and teammates' cal
   expect(refused).toEqual({ deny: 'no' })
   expect(nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))).toHaveLength(1)
   expect(nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))).toEqual([])
+})
+
+test('a boss that keeps working alone gets a firmer reminder with the count every 10 own calls; a new turn starts gently', async ($, on) => {
+  setUpNudge(on)
+  await $.session.start(start)
+  await $.turn.start({ text: 'build it', turnId: 'turn-1' })
+  const texts: [number, string][] = []
+  for (let i = 1; i <= 40; i++) for (const text of nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))) texts.push([i, text])
+  expect(texts.map(([i]) => i)).toEqual([6, 16, 26, 36])
+  expect(texts[0]?.[1]).toContain('6 steps of this turn yourself')
+  expect(texts[1]?.[1]).toContain('reminder 2 this turn: 16 steps in a row are your own')
+  expect(texts[1]?.[1]).toContain('Stop doing the work yourself now')
+  expect(texts[1]?.[1]).toContain('your next call should be the Agent tool')
+  expect(texts[1]?.[1]).toContain('if the person asked you to do this yourself, carry on')
+  expect(texts[3]?.[1]).toContain('reminder 4 this turn: 36 steps')
+  // a hand-off resets the count and the next reminder is the gentle text again (the boss may review and check)
+  await mainCall($, 'Agent')
+  const after: string[] = []
+  for (let i = 1; i <= 6; i++) after.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
+  expect(after).toHaveLength(1)
+  expect(after[0]).toContain('6 steps of this turn yourself')
+  // no hand-off since that one: the next is firm again
+  const again: string[] = []
+  for (let i = 1; i <= 10; i++) again.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
+  expect(again).toHaveLength(1)
+  expect(again[0]).toContain('reminder 6 this turn: 16 steps')
+  // a new turn starts with the gentle one
+  await completeTurn($, 'answer')
+  await $.turn.start({ text: 'more', turnId: 'turn-2' })
+  const fresh: string[] = []
+  for (let i = 1; i <= 6; i++) fresh.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
+  expect(fresh).toHaveLength(1)
+  expect(fresh[0]).toContain('6 steps of this turn yourself')
+})
+
+test('the owed reminder carries the real count; a repeat-refused call keeps it owed', async ($, on) => {
+  setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_STEP_BUDGET: '20', AGENT_OFFICE_STEP_CAP: '1' })
+  on('tool.call', (_$, e) => (e.tool === 'Write' ? ({ deny: 'no' }) : e.tool === 'Bash' ? ({ result: { exitCode: 1, stderr: 'boom: same failure' } }) : ({ result: 'ok' })) as never)
+  answerTurns(on)
+  await $.session.start(start)
+  await $.turn.start({ text: 'build it', turnId: 'turn-1' })
+  // calls 1-3 fail identically (the third marks the call refused); 4th is the repeat-refused one
+  for (let i = 0; i < 3; i++) await mainCall($, 'Bash', { command: 'make' })
+  await mainCall($, 'Read', { file_path: '/a' })
+  await mainCall($, 'Read', { file_path: '/a' })
+  // the sixth call is the repeat-refused one: no result to carry the reminder, the seventh does
+  expect(await mainCall($, 'Bash', { command: 'make' })).toMatchObject({ deny: expect.any(String) })
+  const owed = nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))
+  expect(owed).toHaveLength(1)
+  expect(owed[0]).toContain('7 steps of this turn yourself')
+})
+
+test('an HQ session (no Agent tool) is never nudged, even with manager mode on', async ($, on) => {
+  setUpNudge(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_HQ: '1' })
+  await $.session.start(start)
+  await $.turn.start({ text: 'build it', turnId: 'turn-1' })
+  for (let i = 0; i < 14; i++) expect(nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))).toEqual([])
+})
+
+test('office_dispatch from any server counts as a hand-off and resets the count', async ($, on) => {
+  setUpNudge(on)
+  await $.session.start(start)
+  await $.turn.start({ text: 'build it', turnId: 'turn-1' })
+  for (let i = 0; i < 5; i++) await mainCall($, 'Bash', { command: 'ls' })
+  await mainCall($, 'mcp__agent-office__office_dispatch')
+  for (let i = 0; i < 5; i++) expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toEqual([])
+  expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toHaveLength(1)
 })
 
 for (const [name, env] of [
