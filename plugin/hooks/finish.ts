@@ -22,9 +22,12 @@
 // Menus (v3.52): a question that hands the assistant's own choice back to the person ("Hangisiyle devam edelim?",
 // "önce eskiz mi yapalım, boolean mı?", "which should I start with?", "shall we continue?", "commit etmemi ister
 // misiniz?") is no decision of theirs: which option, what first, whether to go on or commit is the assistant's to
-// make. Such a sentence is a work cue, never counts as a request to the person, and blocks even against the
-// judge's label with its own reason (FINISH_REASON_MENU_*). Real asks (approve, deploy, publish, delete, spend,
-// credentials, login, a product decision phrased as theirs: "which do you prefer for the header?") still stop.
+// make. Such a sentence is a work cue and blocks with its own reason (FINISH_REASON_MENU_*) whatever the judge's label,
+// label 2 included: the judge reading a menu as the person's decision was the original leak, so a pure menu never
+// waits on it. The ask wins: a sentence with an ask topic (approve, deploy, publish, delete, spend, credentials,
+// login, a product decision phrased as theirs: "hangisini tercih edersiniz?") is never a menu, so "Shall I proceed
+// with the production deploy?" or "Should we use Stripe or Paddle for billing?" stops. Turkish menu cues count only
+// in a sentence with "?" ("devam edelim dedim" is narrative), and the "mı/mi" particle only as a whole word.
 
 export const FINISH_BLOCKS_MAX = 2
 // the judge reads at most this much of the message: the end, where the lists and the questions are
@@ -108,30 +111,44 @@ const NOT_DONE_CUES: RegExp[] = [
 ]
 
 // a menu: the assistant's own choice handed back to the person (which option, what first, whether to go on or commit)
-const MENU_CUES: RegExp[] = [
+// Turkish cues count only in a question (a sentence with "?"): "devam edelim dedim", "sonuca gelelim:" are narrative
+const MENU_CUES_TR: RegExp[] = [
   // "hangisiyle devam edelim", "hangisinden başlayayım", "hangi seçenekle ilerleyelim", "hangisini yapayım"
   re(String.raw`<hangi\p{L}*[^.?!\n]{0,40}?(?:başla|devam ed|devam et|ilerle|geç|yap|git|gid|seç|uygula|al)\p{L}*(?:elim|alım|eyim|ayım)>`),
   re(String.raw`<seçenek\p{L}*(?:den|dan) hangi`),
   re(String.raw`<(?:önce|ilk olarak|ilk) (?:hangi|ne)\p{L}*[^.?!\n]{0,30}?\p{L}(?:elim|alım|eyim|ayım)>`),
+  // "ne yapalım", "nasıl ilerleyelim", "sizce hangisi daha uygun", "hangisi daha iyi"
+  re(String.raw`<(?:ne|nasıl) (?:yapalım|yapayım|edelim|edeyim|ilerleyelim|ilerleyeyim)>`),
+  re(String.raw`<(?:sizce|sence) hangi|<hangisi (?:daha )?(?:uygun|iyi|mantıklı|doğru)`),
   // "devam edelim mi", "devam etmemi ister misiniz", "kaydetmemi / commit etmemi / commit atmamı ister misiniz"
   re(String.raw`<devam (?:edeyim|edelim|etmemi|edilsin|etmeli miyim|etmeli miyiz)>`),
   re(String.raw`<(?:kaydet|commit (?:et|at)|commitle)\p{L}*(?:memi|mamı|eyim|ayım|elim|alım)>`),
+]
+const MENU_CUES_EN: RegExp[] = [
   // "which should I start with / do first / go with", "what should we tackle first"
   re(String.raw`<(?:which|what)(?: one| option| approach| of (?:these|them|the \p{L}+))? (?:should|shall|do you want) (?:i|we|me to)(?: to)? (?:start|begin|do|go|tackle|pick|take|implement|use|work on|continue|proceed)`),
   re(String.raw`<which (?:would you like|do you want) (?:me )?(?:to )?(?:start with|do first|go with|tackle|pick)`),
+  re(String.raw`<which (?:one |option )?(?:would you like|do you want)(?: me to \p{L}+)? first>`),
   // "shall we continue", "should I proceed", "shall I commit"
   re(String.raw`<(?:shall|should) (?:i|we) (?:continue|proceed|go on|keep going|carry on|start with|go with|commit)>`),
   re(String.raw`<(?:do you want|would you like) (?:me to |us to )?(?:continue|proceed|keep going|commit)>`),
+  re(String.raw`<let me know how (?:you(?:'d| would) like|you want) (?:me |us )?(?:to )?(?:proceed|continue|go on)>`),
   // "should I do A or B?"
   re(String.raw`<(?:shall|should) (?:i|we) [^.?!\n]{1,60} or [^.?!\n]{1,60}\?`),
 ]
-// "A mı B mi?" with a first person plural or singular of the assistant's ("önce eskiz mi yapalım, boolean mı?")
-const PAIRED_QUESTION = re(String.raw`<m[ıiuü]\p{L}{0,4}>[^.?!\n]{1,60}<m[ıiuü]\p{L}{0,4}>`)
-const OWN_ACTION = re(String.raw`\p{L}(?:elim|alım|eyim|ayım)>`)
+// "A mı B mi?" with a verb of the assistant's or "olsun" ("önce eskiz mi yapalım, boolean mı?", "A mı yoksa B mi olsun?");
+// the particle is a whole word ("mümkün", "mimari", "mutlu" are not)
+const PARTICLE = String.raw`<m[ıiuü](?:s[ıiuü]n|y[ıiuü]z|s[ıiuü]n[ıiuü]z)?>`
+const PAIRED_QUESTION = re(String.raw`${PARTICLE}[^.?!\n]{1,60}${PARTICLE}`)
+const OWN_ACTION = re(String.raw`\p{L}(?:elim|alım|eyim|ayım)>|<olsun>`)
 
+// a menu is a menu only when no real ask is in it: "Shall I proceed with the production deploy?" is the person's
 function isMenu(sentence: string) {
   const text = fold(prose(sentence))
-  return MENU_CUES.some(cue => cue.test(text)) || (PAIRED_QUESTION.test(text) && OWN_ACTION.test(text))
+  if (ASK_TOPICS.some(topic => topic.test(text))) return false
+  if (MENU_CUES_EN.some(cue => cue.test(text))) return true
+  if (!text.includes('?')) return false
+  return MENU_CUES_TR.some(cue => cue.test(text)) || (PAIRED_QUESTION.test(text) && OWN_ACTION.test(text))
 }
 
 // the work cues: a list of what is left, next steps, or an offer to do more
@@ -233,9 +250,10 @@ export function finishCues(message: string): FinishCues {
   const text = fold(prose(part)).replace(NOTHING_LEFT, ' ')
   const hasMenu = sentencesOf(part).some(isMenu)
   const isWork = hasMenu || WORK_CUES.some(cue => cue.test(text))
-  // an ask is read in the whole message: a request to the person is theirs, and stays one; a menu sentence is none
+  // an ask is read in the whole message: a request to the person is theirs, and stays one (a sentence with an ask
+  // topic is never a menu)
   const isAsk = sentencesOf(fold(prose(message))).some(
-    sentence => !isMenu(sentence) && ASK_TOPICS.some(topic => topic.test(sentence)) && REQUEST.test(sentence),
+    sentence => ASK_TOPICS.some(topic => topic.test(sentence)) && REQUEST.test(sentence),
   )
   return { isWork, isAsk, isSoft: !isWork && SOFT_CUES.test(text), isMenu: hasMenu }
 }

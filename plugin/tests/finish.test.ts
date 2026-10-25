@@ -235,14 +235,46 @@ const MENUS: string[] = [
   MENU_S3D,
   'İki yol var: A daha hızlı, B daha temiz. Hangisinden başlayayım?',
   'Önce eskiz mi yapalım, boolean mı?',
-  'Seçeneklerden hangisini tercih edersiniz?',
+  'Seçeneklerden hangisi daha hızlı olur, hangisiyle başlayayım?',
   'Değişiklikleri commit etmemi ister misiniz?',
   'Analysis done: option A is faster, option B is cleaner. Which should I start with?',
   'I recommend the parser first. Which one should we do first?',
   'The refactor is half done. Shall we continue?',
   'Should I go with the SQLite store or the JSON file?',
+  "Let me know how you'd like to proceed.",
+  'Ne yapalım?',
+  'A mı yoksa B mi olsun?',
+  'Which would you like first, A or B?',
+  'Sizce hangisi daha uygun?',
 ]
-const REAL_ASKS: string[] = ['Deploy etmemi onaylıyor musunuz?', 'API anahtarınızı girmeniz gerekiyor.']
+// the ask wins: a sentence with an ask topic is never a menu, even in a menu's shape
+const REAL_ASKS: string[] = [
+  'Deploy etmemi onaylıyor musunuz?',
+  'API anahtarınızı girmeniz gerekiyor.',
+  'Shall I proceed with the production deploy?',
+  'Should I commit and push to main?',
+  'Do you want me to proceed with deleting the old bucket?',
+  'Eski tabloyu silmeye devam edeyim mi?',
+  'Release notlarını commit etmemi ve yayınlamamı onaylıyor musunuz?',
+  'Onaylarsanız deploy işlemine devam edelim.',
+  'Should we use Stripe or Paddle for billing?',
+  // a product preference phrased as theirs
+  'Header için seçeneklerden hangisini tercih edersiniz?',
+  'Hangisini tercih edersiniz?',
+]
+// narrative, not a question: Turkish menu cues need a "?", and "mı/mi" is a whole word
+const NARRATIVE: string[] = [
+  'Testler geçti; devam edelim dedim ve ikinci modülü de bitirdim.',
+  'Mümkün olduğunca mimari sadeleştirildi, şimdi sonuca gelelim: build yeşil.',
+  'Mutlu yol test edildi, diyelim ki eksik yok.',
+]
+
+test('the ask wins over a menu, and narrative is no menu', () => {
+  expect(REAL_ASKS.filter(message => heuristicBlocks(message))).toEqual([])
+  expect(REAL_ASKS.filter(message => finishCues(message).isMenu || !finishCues(message).isAsk)).toEqual([])
+  expect(NARRATIVE.filter(message => heuristicBlocks(message))).toEqual([])
+  expect(NARRATIVE.filter(message => finishCues(message).isMenu)).toEqual([])
+})
 
 test('a menu (which option, what first, whether to go on or commit) blocks with its own reason, whatever the judge says', async ($, on) => {
   setUp(on, MANAGER, () => JUDGE_LABELS[1])
@@ -258,6 +290,15 @@ test('a menu (which option, what first, whether to go on or commit) blocks with 
   // still at most two blocks per prompt
   expect((await stop($, MENUS[1])).block).toBe(FINISH_REASON_MENU_MANAGER)
   expect((await stop($, MENUS[2])).block).toBeUndefined()
+})
+
+test('a pure menu blocks even when the judge says it is the person\'s decision (label 2)', async ($, on) => {
+  setUp(on, MANAGER, () => JUDGE_LABELS[2])
+  await $.session.start(start)
+  await prompt($, 'pick a store')
+  expect((await stop($, 'Ne yapalım?')).block).toBe(FINISH_REASON_MENU_MANAGER)
+  // a real ask under the same label still stops
+  expect((await stop($, 'Shall I proceed with the production deploy?')).block).toBeUndefined()
 })
 
 test('a menu in the "does it itself" mode gets the solo wording', async ($, on) => {
