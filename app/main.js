@@ -1684,7 +1684,8 @@ function onOfficeReport({ id, pub, report }) {
   rec.status = 'reported';
   saveDispatches();
   const done = hqOnReport(id, report);   // v3.46 board row, tasks/<id>/report.{json,md}; requests whose tasks all ended
-  if (rec.routine && rt().runs.some((r) => r.id === rec.routine && ROUT.OPEN_RUN.has(r.status))) { routinesOnDone(done); return; }   // v3.47 a routine's own project run: HQ was not asked, no HQ inbox rows
+  // v3.47/v3.49 a routine's own project or remote run: HQ was not asked, no HQ inbox rows (also when the run already ended)
+  if (rec.routine) { routinesOnDone(done); return; }
   const sid = bossSid(rec.tab);
   if (!sid) { notify(T('main.reportReady', { project: rec.project, machine: rec.machine }), '', null); return; }
   inboxRow(sid, rec.tab, { kind: 'report-ready', id, machine: officeName(rec.machine), project: officeName(rec.project) });
@@ -1845,7 +1846,7 @@ async function confirmHqDispatch(args, remote) {
 /** v3.47/v3.49 a routine's own project or remote run: its dispatch record names the run, so the report ends the run
  *  and writes no HQ inbox row (HQ was not asked). */
 function tagRoutineRec(id, rrun) {
-  const rec = id && rrun && rrun.kind !== 'hq' ? loadDispatches().get(id) : null;
+  const rec = id && rrun && rrun.kind !== 'hq' && ROUT.OPEN_RUN.has(rrun.status) ? loadDispatches().get(id) : null;   // never a run that already ended
   if (rec) { rec.routine = rrun.id; saveDispatches(); }
 }
 /** HQ's office_dispatch: caps, consent, auto-start of a local target, 4 h queue wait, dispatcher-side pacing for devices. */
@@ -1915,6 +1916,8 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
     tagRoutineRec(r.id, rrun);
     if (!held) { now = r; return; }
     if (!r.id || r.status === 'rejected') return hqStatus(heldId, 'rejected', r.reason || 'failed');
+    // v3.49 a routine run follows the real id (restart keeps it open by its record)
+    if (rrun?.tasks?.includes(heldId)) { rrun.tasks = rrun.tasks.map((x) => (x === heldId ? r.id : x)); saveRt(); }
     saveHqBoard(HQ.renameTask(loadHqBoard(), heldId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : {}) }));
     try { const a = HQ.taskFile(hqDir(), heldId, '.'); const b = HQ.taskFile(hqDir(), r.id, '.'); if (a && b) fs.renameSync(path.dirname(a), path.dirname(b)); } catch {}
   });
@@ -2151,7 +2154,9 @@ async function deliverRun(run, now) {
     return saveRt();
   }
   // a run that never reports (tab closed, session crashed) ends after the HQ queue TTL + 1 h, so overlap cannot block it forever
-  if ((run.status === 'typed' || run.status === 'running') && now - (run.typedAt || run.at) > ROUT.runTimeoutMs(run.kind, HQ.HQ_TTL_MS)) return finishRun(run, 'attention', run.kind === 'hq' ? 'no-summary' : 'no-report');
+  // v3.49 a remote run never times out while a task of its request is still open (outbox, queued or running there)
+  const remoteLive = run.kind === 'remote' && run.request && loadHqBoard().tasks.some((t) => t.request === run.request && !HQ.TERMINAL.has(t.status));
+  if ((run.status === 'typed' || run.status === 'running') && !remoteLive && now - (run.typedAt || run.at) > ROUT.runTimeoutMs(run.kind, HQ.HQ_TTL_MS)) return finishRun(run, 'attention', run.kind === 'hq' ? 'no-summary' : 'no-report');
   if (run.kind !== 'hq' || (run.status !== 'typed' && run.status !== 'running')) return;
   // an HQ run without office_summary: once HQ is idle, 2 min with nothing dispatched or 10 min after its tasks ended
   const turn = ROUT.hqTurn({ status: run.status, tab: terms.has(HQ.HQ_ID) ? tabStateOf(HQ.HQ_ID) : 'gone', typedAt: run.typedAt, now });
@@ -2186,7 +2191,9 @@ async function routinesTick() {
     // v3.49 a remote run's history shows where its task waits (outbox offline/paced, queued there, running)
     const tasks = loadHqBoard().tasks;
     for (const run of f.runs.filter((x) => x.kind === 'remote')) {
-      const w = ROUT.OPEN_RUN.has(run.status) && run.request ? ROUT.runWait(tasks.filter((t) => t.request === run.request)) : '';
+      // an old peer's record that is 'unknown' (asked about on its next hello) shows no wait
+      const mine = tasks.filter((t) => t.request === run.request && linkHost?.remoteTask(t.id)?.status !== 'unknown');
+      const w = ROUT.OPEN_RUN.has(run.status) && run.request ? ROUT.runWait(mine) : '';
       if (w) run.wait = w; else delete run.wait;
     }
     saveRt();

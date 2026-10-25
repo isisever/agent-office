@@ -411,6 +411,7 @@ function remoteHarness({ online = true } = {}) {
     const confirmHqDispatch = async () => { env.dialogs++; return true; };
     const projectOp = () => {}; const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
     const linkHost = { link: () => env.link, remoteTask: (id) => env.records.get(id) || null, knows: () => false };
+    env.pace = (ok) => { hqPacer.submit = ok ? hqPacer.submit : (pub, fn) => { env.paced = fn; return false; }; };
     const officeDispatch = (tab, args, o = {}) => {
       const id = 'c' + (++env.n);
       env.sent.push({ id, args, hold: Boolean(o.hold) });
@@ -423,6 +424,9 @@ function remoteHarness({ online = true } = {}) {
   `;
   env.link = link;
   const api = new Function('env', `${prelude}\n${src}\nreturn { deliverRun, approveHeld, hqStatus, hqRequestsDone, onOfficeReport, routineProblem, hqMinter };`)(env);
+  // the restart rule and the tick's wait rule, as main runs them
+  const stillOpenLine = MAIN_SRC.split('\n').find((l) => l.trim().startsWith('const stillOpen = (run) =>'));
+  api.stillOpen = new Function('HQ', 'linkHost', `${stillOpenLine}\nreturn stillOpen;`)(HQ, { knows: () => false, remoteTask: (id) => env.records.get(id) || null });
   const routine = ROUT.normalizeRoutine({ id: 'rt0000000a', name: 'Nightly', prompt: 'Run the tests', target: { kind: 'remote', pub: PUB, projectId: 'web' }, schedule: { kind: 'daily', at: '09:00' }, noAsk: true });
   env.state.routines = [routine];
   const newRun = () => { const run = { id: 'ru0000000' + env.file.runs.length, routine: routine.id, name: routine.name, kind: 'remote', slotAt: Date.now(), at: Date.now(), trigger: 'manual', status: 'waiting', tasks: [] }; env.file.runs.unshift(run); return run; };
@@ -535,4 +539,29 @@ test('remoteProblem / runWait: unpaired or unknown project → target-gone; wait
   assert.equal(ROUT.runWait([{ status: 'reported', at: 2 }, { status: 'running', at: 1 }]), 'running');
   assert.equal(ROUT.runWait([{ status: 'awaiting-consent', at: 1 }]), '');
   assert.equal(ROUT.runWait([]), '');
+});
+
+test('review: a paced remote send keeps the run open across a restart; late reports never reach HQ inbox; no timeout while open; old-peer unknown shows no wait', async () => {
+  const { env, api, newRun } = remoteHarness();
+  env.pace(false);
+  const run = newRun();
+  await api.deliverRun(run, Date.now());
+  await api.approveHeld(env.board.tasks[0].id, true);
+  assert.equal(env.sent.length, 0);
+  assert.match(run.tasks[0], /^h/);   // the pacer's id for now
+  env.paced();   // the device's limit allows it
+  const id = env.sent[0].id;
+  assert.deepEqual(run.tasks, [id]);
+  assert.equal(env.dispatches.get(id).routine, run.id);
+  assert.equal(api.stillOpen(run), true);   // restart: the record is open → the run keeps waiting
+  // far past the 29 h timeout, but the task is still open on the board: the run stays
+  await api.deliverRun(run, Date.now() + 40 * H);
+  assert.equal(run.status, 'running');
+  // old peer drop: unknown record → the tick shows no wait
+  env.records.set(id, { id, status: 'unknown' });
+  assert.match(MAIN_SRC, /linkHost\?\.remoteTask\(t\.id\)\?\.status !== 'unknown'/);
+  // the run ends some other way; a late report for its tagged record writes no HQ inbox row
+  run.status = 'attention'; run.finishedAt = Date.now();
+  api.onOfficeReport({ id, pub: PUB, report: { summary: 'OK: late' } });
+  assert.deepEqual([env.rows.length, run.status], [0, 'attention']);
 });
