@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
-import { FINISH_REASON_MANAGER, FINISH_REASON_SOLO, JUDGE_LABELS, assistantsPart, finishCues, heuristicBlocks } from '../hooks/finish'
+import { FINISH_REASON_MANAGER, FINISH_REASON_MENU_MANAGER, FINISH_REASON_MENU_SOLO, FINISH_REASON_SOLO, JUDGE_LABELS, assistantsPart, finishCues, heuristicBlocks } from '../hooks/finish'
 
 // the finish guard (app contract v3.10): classic.Stop blocks a main-loop stop whose final message lists work
 // the loop could still do, in manager mode and with AGENT_OFFICE_FINISH=1
@@ -104,7 +104,7 @@ test('a report whose rest is the person\'s, a future event or a wait stops witho
   await $.session.start(start)
   await prompt($, 'release both')
   for (const message of [RELEASES_TR, DATA_LATER]) {
-    expect(finishCues(message)).toEqual({ isWork: false, isAsk: false, isSoft: false })
+    expect(finishCues(message)).toEqual({ isWork: false, isAsk: false, isSoft: false, isMenu: false })
     expect((await stop($, message)).block).toBeUndefined()
   }
   expect(judged).toEqual([])
@@ -228,6 +228,85 @@ test('manager mode off: no guard; AGENT_OFFICE_FINISH=1 ("does it itself") guard
   expect(answer.block).not.toContain('sub-agents')
 })
 
+// a real manager's final turn (v3.52): analysis, a recommendation, then a menu and an offer to commit
+const MENU_S3D =
+  'Analiz tamam: mevcut modelde gövde tek parça değil. Önerim: önce eskiz ve extrude, sonra boolean birleştirme. Hangisiyle devam edelim? Ayrıca henüz commit atmadım; değişiklikleri kaydetmemi isterseniz söyleyin.'
+const MENUS: string[] = [
+  MENU_S3D,
+  'İki yol var: A daha hızlı, B daha temiz. Hangisinden başlayayım?',
+  'Önce eskiz mi yapalım, boolean mı?',
+  'Seçeneklerden hangisi daha hızlı olur, hangisiyle başlayayım?',
+  'Değişiklikleri commit etmemi ister misiniz?',
+  'Analysis done: option A is faster, option B is cleaner. Which should I start with?',
+  'I recommend the parser first. Which one should we do first?',
+  'The refactor is half done. Shall we continue?',
+  'Should I go with the SQLite store or the JSON file?',
+  "Let me know how you'd like to proceed.",
+  'Ne yapalım?',
+  'A mı yoksa B mi olsun?',
+  'Which would you like first, A or B?',
+]
+// the ask wins: a sentence with an ask topic is never a menu, even in a menu's shape
+const REAL_ASKS: string[] = [
+  'Deploy etmemi onaylıyor musunuz?',
+  'API anahtarınızı girmeniz gerekiyor.',
+  'Shall I proceed with the production deploy?',
+  'Should I commit and push to main?',
+  'Do you want me to proceed with deleting the old bucket?',
+  'Eski tabloyu silmeye devam edeyim mi?',
+  'Release notlarını commit etmemi ve yayınlamamı onaylıyor musunuz?',
+  'Onaylarsanız deploy işlemine devam edelim.',
+  'Should we use Stripe or Paddle for billing?',
+  // a product preference phrased as theirs
+  'Header için seçeneklerden hangisini tercih edersiniz?',
+  'Hangisini tercih edersiniz?',
+]
+// narrative, not a question: Turkish menu cues need a "?", and "mı/mi" is a whole word
+const NARRATIVE: string[] = [
+  'Testler geçti; devam edelim dedim ve ikinci modülü de bitirdim.',
+  'Mümkün olduğunca mimari sadeleştirildi, şimdi sonuca gelelim: build yeşil.',
+  'Mutlu yol test edildi, diyelim ki eksik yok.',
+]
+
+test('the ask wins over a menu, and narrative is no menu', () => {
+  expect(REAL_ASKS.filter(message => heuristicBlocks(message))).toEqual([])
+  expect(REAL_ASKS.filter(message => finishCues(message).isMenu || !finishCues(message).isAsk)).toEqual([])
+  expect(NARRATIVE.filter(message => heuristicBlocks(message))).toEqual([])
+  expect(NARRATIVE.filter(message => finishCues(message).isMenu)).toEqual([])
+})
+
+test('a menu (which option, what first, whether to go on or commit) blocks with its own reason, whatever the judge says', async ($, on) => {
+  setUp(on, MANAGER, () => JUDGE_LABELS[1])
+  await $.session.start(start)
+  expect(MENUS.filter(message => !heuristicBlocks(message))).toEqual([])
+  expect(MENUS.filter(message => !finishCues(message).isMenu)).toEqual([])
+  expect(REAL_ASKS.filter(message => heuristicBlocks(message))).toEqual([])
+  await prompt($, 'model the S3D part')
+  const answer = await stop($, MENU_S3D)
+  expect(answer.block).toBe(FINISH_REASON_MENU_MANAGER)
+  expect(answer.block).toContain('you ended on a menu')
+  for (const message of REAL_ASKS) expect((await stop($, message)).block).toBeUndefined()
+  // still at most two blocks per prompt
+  expect((await stop($, MENUS[1])).block).toBe(FINISH_REASON_MENU_MANAGER)
+  expect((await stop($, MENUS[2])).block).toBeUndefined()
+})
+
+test('a pure menu blocks even when the judge says it is the person\'s decision (label 2)', async ($, on) => {
+  setUp(on, MANAGER, () => JUDGE_LABELS[2])
+  await $.session.start(start)
+  await prompt($, 'pick a store')
+  expect((await stop($, 'Ne yapalım?')).block).toBe(FINISH_REASON_MENU_MANAGER)
+  // a real ask under the same label still stops
+  expect((await stop($, 'Shall I proceed with the production deploy?')).block).toBeUndefined()
+})
+
+test('a menu in the "does it itself" mode gets the solo wording', async ($, on) => {
+  setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_FINISH: '1' })
+  await $.session.start(start)
+  await prompt($, 'model the S3D part')
+  expect((await stop($, MENU_S3D)).block).toBe(FINISH_REASON_MENU_SOLO)
+})
+
 // the heuristic alone (the judge's fallback), Turkish and English
 const BLOCKS: string[] = [
   LIST,
@@ -252,6 +331,7 @@ const BLOCKS: string[] = [
   'Done for now. The settings page is not implemented yet; you can use the old one meanwhile.',
   "If you'd like, I can add a retry once the API fails again.",
   'Eklentiyi sen seçersen kurulumu ben yaparım; testler henüz yapılmadı.',
+  ...MENUS,
 ]
 const STOPS: string[] = [
   DONE,
@@ -281,6 +361,7 @@ const STOPS: string[] = [
   'Fixed. If the crash happens again, let me know and I will look at the logs.',
   'Kaydedildi. Bir hata çıkarsa haber ver, sonra bakarım.',
   'Ölçüm açık. Karşılaştırma ancak birkaç gün sonra yapılabilir.',
+  ...REAL_ASKS,
   'Released 1.4.0.\n\n**Not verified:**\n- the Windows build still needs a real machine\n- the next steps of the wizard on a slow network',
 ]
 

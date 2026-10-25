@@ -18,6 +18,16 @@
 // while background work is in flight (agents, shells, monitors: their notifications wake the loop again and
 // the guard reads the next stop) or a session cron will wake it, nor after a turn that ended on an error or an
 // interrupt.
+//
+// Menus (v3.52): a question that hands the assistant's own choice back to the person ("Hangisiyle devam edelim?",
+// "önce eskiz mi yapalım, boolean mı?", "which should I start with?", "shall we continue?", "commit etmemi ister
+// misiniz?") is no decision of theirs: which option, what first, whether to go on or commit is the assistant's to
+// make. Such a sentence is a work cue and blocks with its own reason (FINISH_REASON_MENU_*) whatever the judge's label,
+// label 2 included: the judge reading a menu as the person's decision was the original leak, so a pure menu never
+// waits on it. The ask wins: a sentence with an ask topic (approve, deploy, publish, delete, spend, credentials,
+// login, a product decision phrased as theirs: "hangisini tercih edersiniz?") is never a menu, so "Shall I proceed
+// with the production deploy?" or "Should we use Stripe or Paddle for billing?" stops. Turkish menu cues count only
+// in a sentence with "?" ("devam edelim dedim" is narrative), and the "mı/mi" particle only as a whole word.
 
 export const FINISH_BLOCKS_MAX = 2
 // the judge reads at most this much of the message: the end, where the lists and the questions are
@@ -28,10 +38,15 @@ export const FINISH_REASON_MANAGER =
 export const FINISH_REASON_SOLO =
   'Agent Office: you listed remaining work. Do it now, then verify it. Stop only when the list is done or you need the person for an approval, credential or decision that is theirs; then ask in one short list.'
 
+export const FINISH_REASON_MENU_MANAGER =
+  "Agent Office: you ended on a menu. Choose yourself (the one you recommended, reason in one line) and carry on: delegate the independent parts to sub-agents in parallel, then review, integrate and verify. Ask only for approvals, credentials or decisions that are the person's."
+export const FINISH_REASON_MENU_SOLO =
+  "Agent Office: you ended on a menu. Choose yourself (the one you recommended, reason in one line) and carry on, then verify. Ask only for approvals, credentials or decisions that are the person's."
+
 // the judge's labels: the classifier answers with one of them, so each says what it means
 export const JUDGE_LABELS = [
-  'lists or offers more work the assistant could still do itself now',
-  'asks the user for an approval, credentials or a decision only the user can make, or leaves them a step only they can take',
+  'lists or offers more work the assistant could still do itself now, or asks the user to pick among options, choose what to do first, or confirm continuing or committing',
+  "asks the user for an approval of an outward-facing or destructive step (deploy, publish, delete, spend), credentials or a login, or a product decision that is theirs, or leaves them a step only they can take; technical choices and the order of the work are not the user's decision",
   'reports finished work with nothing left to do',
 ] as const
 
@@ -95,13 +110,54 @@ const NOT_DONE_CUES: RegExp[] = [
   re(String.raw`<yapılabil(?:ir|ecek)`),
 ]
 
+// a menu: the assistant's own choice handed back to the person (which option, what first, whether to go on or commit)
+// Turkish cues count only in a question (a sentence with "?"): "devam edelim dedim", "sonuca gelelim:" are narrative
+const MENU_CUES_TR: RegExp[] = [
+  // "hangisiyle devam edelim", "hangisinden başlayayım", "hangi seçenekle ilerleyelim", "hangisini yapayım"
+  re(String.raw`<hangi\p{L}*[^.?!\n]{0,40}?(?:başla|devam ed|devam et|ilerle|geç|yap|git|gid|seç|uygula|al)\p{L}*(?:elim|alım|eyim|ayım)>`),
+  re(String.raw`<seçenek\p{L}*(?:den|dan) hangi`),
+  re(String.raw`<(?:önce|ilk olarak|ilk) (?:hangi|ne)\p{L}*[^.?!\n]{0,30}?\p{L}(?:elim|alım|eyim|ayım)>`),
+  // "ne yapalım", "nasıl ilerleyelim" ("sizce hangisi daha uygun?" stays with the judge: it may be the person's decision)
+  re(String.raw`<(?:ne|nasıl) (?:yapalım|yapayım|edelim|edeyim|ilerleyelim|ilerleyeyim)>`),
+  // "devam edelim mi", "devam etmemi ister misiniz", "kaydetmemi / commit etmemi / commit atmamı ister misiniz"
+  re(String.raw`<devam (?:edeyim|edelim|etmemi|edilsin|etmeli miyim|etmeli miyiz)>`),
+  re(String.raw`<(?:kaydet|commit (?:et|at)|commitle)\p{L}*(?:memi|mamı|eyim|ayım|elim|alım)>`),
+]
+const MENU_CUES_EN: RegExp[] = [
+  // "which should I start with / do first / go with", "what should we tackle first"
+  re(String.raw`<(?:which|what)(?: one| option| approach| of (?:these|them|the \p{L}+))? (?:should|shall|do you want) (?:i|we|me to)(?: to)? (?:start|begin|do|go|tackle|pick|take|implement|use|work on|continue|proceed)`),
+  re(String.raw`<which (?:would you like|do you want) (?:me )?(?:to )?(?:start with|do first|go with|tackle|pick)`),
+  re(String.raw`<which (?:one |option )?(?:would you like|do you want)(?: me to \p{L}+)? first>`),
+  // "shall we continue", "should I proceed", "shall I commit"
+  re(String.raw`<(?:shall|should) (?:i|we) (?:continue|proceed|go on|keep going|carry on|start with|go with|commit)>`),
+  re(String.raw`<(?:do you want|would you like) (?:me to |us to )?(?:continue|proceed|keep going|commit)>`),
+  re(String.raw`<let me know how (?:you(?:'d| would) like|you want) (?:me |us )?(?:to )?(?:proceed|continue|go on)>`),
+  // "should I do A or B?"
+  re(String.raw`<(?:shall|should) (?:i|we) [^.?!\n]{1,60} or [^.?!\n]{1,60}\?`),
+]
+// "A mı B mi?" with a verb of the assistant's or "olsun" ("önce eskiz mi yapalım, boolean mı?", "A mı yoksa B mi olsun?");
+// the particle is a whole word ("mümkün", "mimari", "mutlu" are not)
+const PARTICLE = String.raw`<m[ıiuü](?:s[ıiuü]n|y[ıiuü]z|s[ıiuü]n[ıiuü]z)?>`
+const PAIRED_QUESTION = re(String.raw`${PARTICLE}[^.?!\n]{1,60}${PARTICLE}`)
+const OWN_ACTION = re(String.raw`\p{L}(?:elim|alım|eyim|ayım)>|<olsun>`)
+
+// a menu is a menu only when no real ask is in it: "Shall I proceed with the production deploy?" is the person's
+function isMenu(sentence: string) {
+  const text = fold(prose(sentence))
+  if (ASK_TOPICS.some(topic => topic.test(text))) return false
+  if (MENU_CUES_EN.some(cue => cue.test(text))) return true
+  if (!text.includes('?')) return false
+  return MENU_CUES_TR.some(cue => cue.test(text)) || (PAIRED_QUESTION.test(text) && OWN_ACTION.test(text))
+}
+
 // the work cues: a list of what is left, next steps, or an offer to do more
 const WORK_CUES: RegExp[] = [HEADING_CUE, ...OFFER_CUES, ...NOT_DONE_CUES]
 
 // what only the person can give: approvals for outward-facing or destructive steps, credentials, their decisions
 const ASK_TOPICS: RegExp[] = [
-  re(String.raw`<(?:approv|confirm|deploy|production>|prod>|go live|publish|release|push(?:ed|ing)? to (?:main|master|origin|remote|prod)|delet|drop (?:the )?(?:table|database)|wipe|erase|spend|billing|payment|purchase|pay for|credential|password|passphrase|token|api key|secret|log ?in>|sign ?in>|2fa|otp>|your (?:call|decision|choice)|up to you|which (?:one|option|approach|version|of)|do you prefer|would you prefer|you prefer)`),
-  re(String.raw`<(?:onay|canlı|yayın|deploy|prod>|sil(?:mek|me|eyim|elim|inecek|insin|ineceğ)|kaldırayım|şifre|parola|token|anahtar|giriş yap|oturum aç|kimlik|karar|tercih|hangisi|seçim|seçenek|ödeme|para>|satın|ücret|maliyet)`),
+  re(String.raw`<(?:approv|confirm|deploy|production>|prod>|go live|publish|release|push(?:ed|ing)? to (?:main|master|origin|remote|prod)|delet|drop (?:the )?(?:table|database)|wipe|erase|spend|billing|payment|purchase|pay for|credential|password|passphrase|token|api key|secret|log ?in>|sign ?in>|2fa|otp>|(?:do|would) you prefer)`),
+  // a product decision phrased as theirs: "hangisini istersin", "tercihiniz", "sizin kararınız"
+  re(String.raw`<(?:onay|canlı|yayın|deploy|prod>|sil(?:mek|me|eyim|elim|inecek|insin|ineceğ)|kaldırayım|şifre|parola|token|anahtar|giriş yap|oturum aç|kimlik|karar|hangisini (?:istersin|istersiniz|tercih edersin|tercih edersiniz)|tercihin|ödeme|para>|satın|ücret|maliyet)`),
 ]
 // a request in that same sentence: a question, or an explicit ask of the person ("you need to log in")
 const REQUEST = re(
@@ -147,7 +203,7 @@ const NOT_VERIFIED = re(
 
 function isUserOnly(sentence: string) {
   const text = fold(prose(sentence))
-  if (HEADING_CUE.test(text) || OFFER_CUES.some(offer => offer.test(text))) return false
+  if (HEADING_CUE.test(text) || OFFER_CUES.some(offer => offer.test(text)) || isMenu(sentence)) return false
   if (LATER.some(marker => marker.test(text))) return true
   // work announced as not done stays against a mere "you can": "not implemented yet; you can use the old one"
   if (NOT_DONE_CUES.some(cue => cue.test(text))) return false
@@ -185,14 +241,20 @@ const SOFT_CUES = re(
 )
 
 // isWork: a work cue (blocks even without the judge); isSoft: only a soft cue (the judge decides, else it stops)
-export type FinishCues = { isWork: boolean; isAsk: boolean; isSoft: boolean }
+// isMenu: a menu (a work cue of its own, with its own block reason)
+export type FinishCues = { isWork: boolean; isAsk: boolean; isSoft: boolean; isMenu: boolean }
 
 export function finishCues(message: string): FinishCues {
-  const text = fold(prose(assistantsPart(message))).replace(NOTHING_LEFT, ' ')
-  const isWork = WORK_CUES.some(cue => cue.test(text))
-  // an ask is read in the whole message: a request to the person is theirs, and stays one
-  const isAsk = sentencesOf(fold(prose(message))).some(sentence => ASK_TOPICS.some(topic => topic.test(sentence)) && REQUEST.test(sentence))
-  return { isWork, isAsk, isSoft: !isWork && SOFT_CUES.test(text) }
+  const part = assistantsPart(message)
+  const text = fold(prose(part)).replace(NOTHING_LEFT, ' ')
+  const hasMenu = sentencesOf(part).some(isMenu)
+  const isWork = hasMenu || WORK_CUES.some(cue => cue.test(text))
+  // an ask is read in the whole message: a request to the person is theirs, and stays one (a sentence with an ask
+  // topic is never a menu)
+  const isAsk = sentencesOf(fold(prose(message))).some(
+    sentence => ASK_TOPICS.some(topic => topic.test(sentence)) && REQUEST.test(sentence),
+  )
+  return { isWork, isAsk, isSoft: !isWork && SOFT_CUES.test(text), isMenu: hasMenu }
 }
 
 // the heuristic's verdict alone: true blocks the stop
@@ -269,8 +331,11 @@ export function finishCandidate(mode: FinishMode | undefined, e: StopInput) {
 // the verdict on a candidate: the judge's label decides; with none (judge off, failed, no label named) the
 // heuristic does. Returns the block to add to the Stop answer (counted), or undefined to let the stop stand
 export function finishVerdict(found: { mode: FinishMode; cues: FinishCues }, label: string | undefined) {
-  const isBlocking = label === undefined ? found.cues.isWork && !found.cues.isAsk : label === JUDGE_LABELS[0]
+  // a menu with no real ask blocks whatever the judge says: it is the assistant's choice handed back
+  const isMenu = found.cues.isMenu && !found.cues.isAsk
+  const isBlocking = isMenu || (label === undefined ? found.cues.isWork && !found.cues.isAsk : label === JUDGE_LABELS[0])
   if (!isBlocking) return undefined
   blocks++
+  if (isMenu) return { block: found.mode === 'manager' ? FINISH_REASON_MENU_MANAGER : FINISH_REASON_MENU_SOLO }
   return { block: found.mode === 'manager' ? FINISH_REASON_MANAGER : FINISH_REASON_SOLO }
 }
