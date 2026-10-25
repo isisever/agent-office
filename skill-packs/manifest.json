@@ -7,14 +7,30 @@
       "plugin": { "name": "andrej-karpathy-skills", "version": "1.0.0", "description": "Behavioral guidelines to reduce common LLM coding mistakes, derived from Andrej Karpathy's observations on LLM coding pitfalls", "author": { "name": "forrestchang" }, "license": "MIT" },
       "take": [["skills/karpathy-guidelines", "skills/karpathy-guidelines"]],
       "drop": [],
-      "notice": "andrej-karpathy-skills\nhttps://github.com/multica-ai/andrej-karpathy-skills (commit 2c606141936f1eeef17fa3043a72095b4765b9c2)\n\nUpstream ships no LICENSE file. It declares the MIT License in README.md (\"License\" section, lines 169-171: \"MIT\") and in .claude-plugin/plugin.json (\"license\": \"MIT\", author forrestchang). It is redistributed here under that license:\n\nMIT License\n\nCopyright (c) forrestchang and the andrej-karpathy-skills contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n"
+      "notice": "andrej-karpathy-skills\nhttps://github.com/multica-ai/andrej-karpathy-skills (commit 2c606141936f1eeef17fa3043a72095b4765b9c2)\n\nUpstream ships no LICENSE file. It declares the MIT License in README.md (\"License\" section, lines 169-171: \"MIT\") and in .claude-plugin/plugin.json (\"license\": \"MIT\", author forrestchang). It is redistributed here under that license:\n\nMIT License\n\nCopyright (c) forrestchang and the andrej-karpathy-skills contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n",
+      "patches": [
+        { "file": "skills/karpathy-guidelines/SKILL.md", "why": "decisive: state the assumption, pick the most reasonable option and proceed; ask only for the user's own decisions (manager mode, v3.45 amendment)",
+          "find": "- State your assumptions explicitly. If uncertain, ask.\n- If multiple interpretations exist, present them - don't pick silently.\n",
+          "replace": "- State your assumptions explicitly. If uncertain, pick the most reasonable option, say why in one line, and proceed.\n- If multiple interpretations exist, name them, pick the most reasonable one and say which - don't pick silently.\n" },
+        { "file": "skills/karpathy-guidelines/SKILL.md", "why": "decisive: state the assumption, pick the most reasonable option and proceed; ask only for the user's own decisions (manager mode, v3.45 amendment)",
+          "find": "- If something is unclear, stop. Name what's confusing. Ask.\n",
+          "replace": "- If something is unclear, name what's confusing and the assumption you make, then proceed. Ask only when the choice is genuinely the user's (scope, outward-facing or destructive actions, credentials), and batch those questions at the end.\n" }
+      ]
     },
     {
       "id": "ui-ux-pro-max", "repo": "nextlevelbuilder/ui-ux-pro-max-skill", "sha": "d14efff8ed1faa4187f004f79926f428c8074ec7",
       "license": "MIT (ui-styling: Apache-2.0; fonts: SIL OFL 1.1)", "defaultOn": true,
       "plugin": { "name": "ui-ux-pro-max", "version": "2.15.0", "description": "UI/UX design intelligence: styles, palettes, font pairings, charts and stack guidelines from a local database. Use when designing, building, or reviewing UI.", "author": { "name": "nextlevelbuilder" }, "license": "MIT" },
       "take": [[".claude/skills", "skills"], ["LICENSE", "LICENSE"]],
-      "drop": ["**/tests", "**/__pycache__", "**/.mcp.json", "**/.DS_Store", "skills/ui-styling/canvas-fonts"]
+      "drop": ["**/tests", "**/__pycache__", "**/.mcp.json", "**/.DS_Store", "skills/ui-styling/canvas-fonts"],
+      "patches": [
+        { "file": "skills/design/SKILL.md", "why": "decisive: offer the HTML preview in one line instead of stopping on AskUserQuestion",
+          "find": "After generation, **ALWAYS** ask user about HTML preview via `AskUserQuestion`. If yes,",
+          "replace": "After generation, offer an HTML preview in one line at the end of your reply (don't stop on `AskUserQuestion` for it). If the user wants one," },
+        { "file": "skills/design/references/logo-design.md", "why": "decisive: offer the HTML preview in one line instead of stopping on AskUserQuestion",
+          "find": "3. Ask user about HTML preview → `AskUserQuestion` tool\n4. If yes,",
+          "replace": "3. Offer an HTML preview in one line at the end of your reply (don't stop on `AskUserQuestion` for it)\n4. If the user wants one," }
+      ]
     },
     {
       "id": "superpowers", "repo": "obra/superpowers", "sha": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b",
@@ -44,7 +60,13 @@
       "patches": [
         { "file": "skills/design-dna/SKILL.md", "why": "no silent runtime npm install: ask the user before installing sharp",
           "find": "  ```bash\n  npm install --prefix \"$SKILL_ROOT/scripts\" --silent\n",
-          "replace": "  If `$SKILL_ROOT/scripts/node_modules/sharp` is missing, ask the user before installing it (it downloads the native sharp package into the skill folder). Only after their yes run `npm install --prefix \"$SKILL_ROOT/scripts\" --silent`; if they decline, fall back to visual sampling.\n  ```bash\n" }
+          "replace": "  If `$SKILL_ROOT/scripts/node_modules/sharp` is missing, ask the user before installing it (it downloads the native sharp package into the skill folder). Only after their yes run `npm install --prefix \"$SKILL_ROOT/scripts\" --silent`; if they decline, fall back to visual sampling.\n  ```bash\n" },
+        { "file": "skills/design-dna/SKILL.md", "why": "decisive: mention customization in one line instead of waiting for an answer",
+          "find": "4. Ask if the user wants to customize or extend any dimensions\n",
+          "replace": "4. Mention in one line that any dimension can be customized or extended (don't stop to wait for an answer)\n" },
+        { "file": "skills/design-dna/SKILL.md", "why": "decisive: mention customization in one line instead of waiting for an answer",
+          "find": "6. After output, ask: \"Want to adjust any values before using this for generation?\"",
+          "replace": "6. After output, note in one line that values can be adjusted before generation; when generation was requested too, proceed with it instead of waiting" }
       ]
     },
     {
@@ -61,7 +83,12 @@
         ["skills/mcp-builder/LICENSE.txt", "LICENSE.txt"], ["THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md"]
       ],
       "drop": ["**/__pycache__", "**/.DS_Store"],
-      "fontsNeedLicense": true
+      "fontsNeedLicense": true,
+      "patches": [
+        { "file": "skills/theme-factory/SKILL.md", "why": "decisive: pick the best-fitting theme and say why instead of waiting for a selection",
+          "find": "2. **Ask for their choice**: Ask which theme to apply to the deck\n3. **Wait for selection**: Get explicit confirmation about the chosen theme\n4. **Apply the theme**: Once a theme has been chosen, apply",
+          "replace": "2. **Choose**: If the user named a theme, use it; otherwise pick the theme that best fits the content and audience and say why in one line\n3. **Don't stop to wait**: The user can switch themes afterwards; say so in one line\n4. **Apply the theme**: Apply" }
+      ]
     },
     {
       "id": "caveman", "repo": "JuliusBrussee/caveman", "sha": "1f951fb4ad40ba63302c6e7f987147e034d599d9",

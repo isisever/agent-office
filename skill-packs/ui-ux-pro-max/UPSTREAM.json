@@ -20,5 +20,14 @@
     "skills/ui-styling/scripts/tests",
     "skills/ui-ux-pro-max/scripts/tests"
   ],
-  "patches": []
+  "patches": [
+    {
+      "file": "skills/design/SKILL.md",
+      "why": "decisive: offer the HTML preview in one line instead of stopping on AskUserQuestion"
+    },
+    {
+      "file": "skills/design/references/logo-design.md",
+      "why": "decisive: offer the HTML preview in one line instead of stopping on AskUserQuestion"
+    }
+  ]
 }

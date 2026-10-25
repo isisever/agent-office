@@ -74,7 +74,7 @@ python3 scripts/logo/generate.py --brand "TechFlow" --provider muapi --muapi-mod
 
 **IMPORTANT:** When scripts fail, try to fix them directly.
 
-After generation, **ALWAYS** ask user about HTML preview via `AskUserQuestion`. If yes, use the bundled `ui-ux-pro-max` skill for the gallery.
+After generation, offer an HTML preview in one line at the end of your reply (don't stop on `AskUserQuestion` for it). If the user wants one, use the bundled `ui-ux-pro-max` skill for the gallery.
 
 ## CIP Design (Built-in)
 

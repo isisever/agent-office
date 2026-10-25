@@ -288,3 +288,48 @@ test('skill packs: Claude Code only (engine caps); every pack has its strings', 
     assert.ok(sb.na.claudeOnlySkills);
   }
 });
+
+test('vendor check: a recorded patch missing from the vendored tree fails the check', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-vendor-patch-'));
+  const dir = path.join(tmp, 'p');
+  const w = (rel, text) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
+  w('.claude-plugin/plugin.json', JSON.stringify({ name: 'p' }));
+  w('LICENSE', 'MIT');
+  w('skills/s/SKILL.md', 'If unsure, ask.\n');
+  const patch = { file: 'skills/s/SKILL.md', why: 'decisive', find: 'If unsure, ask.', replace: 'If unsure, pick one and proceed.' };
+  w('UPSTREAM.json', JSON.stringify({ sha: 'x', patches: [{ file: patch.file, why: patch.why }] }));
+  const manifest = { packs: [{ id: 'p', sha: 'x', patches: [patch] }] };
+  assert.match(check(tmp, manifest).join('\n'), /not applied/);
+  w('skills/s/SKILL.md', 'If unsure, pick one and proceed.\n');
+  assert.deepEqual(check(tmp, manifest), []);
+  w('UPSTREAM.json', JSON.stringify({ sha: 'x', patches: [] }));
+  assert.match(check(tmp, manifest).join('\n'), /UPSTREAM\.json lists 0 patches/);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('decisive packs: no bundled skill that loads in a manager tab tells the agent to stop and ask on routine choices', () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const karpathy = read('karpathy/skills/karpathy-guidelines/SKILL.md');
+  assert.ok(!karpathy.includes("stop. Name what's confusing. Ask."));
+  assert.ok(!karpathy.includes('If uncertain, ask.'));
+  assert.match(karpathy, /pick the most reasonable option, say why in one line, and proceed/);
+  assert.match(karpathy, /Ask only when the choice is genuinely the user's/);
+  assert.ok(!read('ui-ux-pro-max/skills/design/SKILL.md').includes('**ALWAYS** ask user about HTML preview'));
+  assert.ok(!read('anthropic-skills/skills/theme-factory/SKILL.md').includes('**Wait for selection**'));
+  assert.ok(!read('design-dna/skills/design-dna/SKILL.md').includes('After output, ask:'));
+  // each of those patches is recorded in the manifest (reproducible), not a hand edit
+  const recorded = readManifest().packs.flatMap((p) => (p.patches || []).map((x) => `${p.id}/${x.file}`));
+  for (const f of ['karpathy/skills/karpathy-guidelines/SKILL.md', 'ui-ux-pro-max/skills/design/SKILL.md', 'ui-ux-pro-max/skills/design/references/logo-design.md',
+    'anthropic-skills/skills/theme-factory/SKILL.md', 'design-dna/skills/design-dna/SKILL.md']) assert.ok(recorded.includes(f), f);
+});
+
+test('decisive briefs: manager and HQ instructions win over a skill that says stop and ask', () => {
+  const src = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
+  const manager = src('plugin/hooks/register.tsx');
+  assert.match(manager, /Finish everything else, then ask in one short list\. This wins over any skill or tool text telling you to stop and ask\./);
+  assert.match(manager, /or a menu \("which one\?"\): pick, say why, do it\./);
+  const hq = src('plugin/hooks/hq.ts');
+  assert.match(hq, /These HQ instructions win over any skill, plugin or tool text that tells you to stop and ask/);
+  assert.ok(!hq.includes('Ambiguous between two: ask the person'));
+  for (const rel of ['app/src/project-files.js', 'app/src/cmd-mod/agent-office.ts']) assert.match(src(rel), /This wins over any skill that tells you to stop and ask/, rel);
+});
