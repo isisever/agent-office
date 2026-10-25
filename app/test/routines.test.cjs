@@ -136,14 +136,16 @@ test('timezone change (IANA name) re-anchors; forward jump of 8 h (wake) takes t
   assert.equal(back.file.sched[r.id].nextAt, at(2026, 10, 25, 9));
 });
 
-test('normalizeRoutine: bad HH:MM, oversize prompt cut, redaction, unknown project kept, remote dropped (Phase 2), max 20', () => {
+test('normalizeRoutine: bad HH:MM, oversize prompt cut, redaction, unknown project kept, remote kept (v3.49), max 20', () => {
   assert.equal(rt({ schedule: { kind: 'daily', at: '25:00' } }), null);
   assert.equal(rt({ schedule: { kind: 'hours', every: 0 } }), null);
   assert.ok(Buffer.byteLength(rt({ prompt: 'x'.repeat(20000) }).prompt) <= ROUT.PROMPT_MAX);
   assert.ok(!rt({ prompt: 'deploy with token=abcd1234efgh5678' }).prompt.includes('abcd1234efgh5678'));
   assert.equal(ROUT.cleanPrompt('use token=abcd1234efgh5678').redacted, true);
   assert.deepEqual(rt({ target: { kind: 'project', projectId: 'gone-project' } }).target, { kind: 'project', projectId: 'gone-project' });
-  assert.equal(rt({ target: { kind: 'remote', pub: 'ab'.repeat(16), projectId: 'x' } }), null);
+  assert.deepEqual(rt({ target: { kind: 'remote', pub: 'ab'.repeat(16), projectId: 'x' } }).target, { kind: 'remote', pub: 'ab'.repeat(16), projectId: 'x' });
+  assert.equal(rt({ target: { kind: 'remote', pub: 'not-hex', projectId: 'x' } }), null);
+  assert.equal(rt({ target: { kind: 'remote', pub: 'ab'.repeat(16), projectId: 'x y' } }), null);
   const many = Array.from({ length: 25 }, (_, i) => ({ ...rt(), id: `rt${String(i).padStart(8, '0')}` }));
   assert.equal(ROUT.normalizeRoutines(many).length, 20);
   assert.equal(rt({ schedule: { kind: 'hours', every: 5 } }).maxPerDay, 5);
@@ -374,4 +376,163 @@ test('routines.json: a tick alone (lastTickAt) is written at most once a minute;
   assert.equal(ROUT.shouldPersist(w, { ...f, lastTickAt: 6000, runs: [{ id: 'ru1' }] }, 6000), true);
   assert.equal(ROUT.shouldPersist(w, { ...f, lastTickAt: 6000, sched: {} }, 6000), true);
   assert.equal(ROUT.shouldPersist({ key: '', tickAt: 0 }, f, 1000), true);
+});
+
+// --- v3.49 remote targets: the real main.js functions (deliverRun, hqDispatch, holdDispatch, approveHeld, the report and
+// status paths) run against stubs for the link, the board file and Electron. No real link, userData or ~/.claude.
+const PUB = 'ab'.repeat(16);
+function remoteHarness({ online = true } = {}) {
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-remote-'));
+  const names = ['tagRoutineRec', 'hqDispatch', 'holdDispatch', 'approveHeld', 'routineProblem', 'finishRun', 'routinesOnDone', 'routinesOnSummary',
+    'deliverRun', 'hqStatus', 'hqRequestsDone', 'hqOnReport', 'onOfficeReport'];
+  const lines = ['const isHere', 'const routineById', 'const routineRunOfRequest', 'const byName', 'const officeName', 'const openHqRoutineRequest'];
+  const src = [
+    ...lines.map((l) => MAIN_SRC.split('\n').find((x) => x.startsWith(l))),
+    ...names.map((n) => { const i = MAIN_SRC.search(new RegExp(`^(async )?function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return MAIN_SRC.slice(i, MAIN_SRC.indexOf('\n}\n', i) + 2); }),
+  ].join('\n');
+  const env = {
+    HQ, ROUT, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto'), T: t,
+    state: { projects: [], routines: [], hq: { enabled: true } }, file: { runs: [], held: {}, sched: {} }, board: HQ.emptyBoard(), dispatches: new Map(),
+    notes: [], sent: [], dialogs: 0, rows: [], records: new Map(), online, n: 0,
+  };
+  const link = { devices: [{ pub: PUB, name: 'Mac2' }], get conns() { return new Set(env.online ? [PUB] : []); },
+    remotes: new Map([[PUB, { snap: { projects: [{ id: 'web', name: 'Web' }] } }]]), outgoing: [] };
+  const prelude = `
+    const { HQ, ROUT, LC, SF, P, fs, path, crypto, T } = env; let state = env.state;
+    const hqMinter = HQ.createMinter(); const hqPacer = HQ.createPacer();
+    const win = { isFocused: () => true, isDestroyed: () => false };
+    const terms = new Map(); const rtFailNoticed = new Set(); let rtSettleUntil = 0; let hqWanted = false; const hqLastKey = 0;
+    const rt = () => env.file; const saveRt = () => {}; const hqDir = () => ${JSON.stringify(dir)};
+    const loadHqBoard = () => env.board; const saveHqBoard = (b) => { env.board = b; };
+    const loadDispatches = () => env.dispatches; const saveDispatches = () => {};
+    const selfName = () => 'Mac1'; const peerCache = () => ({ [${JSON.stringify(PUB)}]: { name: 'Mac2', projects: [{ id: 'web', name: 'Web' }] } });
+    const notify = (title, body) => env.notes.push({ title, body });
+    const confirmHqDispatch = async () => { env.dialogs++; return true; };
+    const projectOp = () => {}; const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
+    const linkHost = { link: () => env.link, remoteTask: (id) => env.records.get(id) || null, knows: () => false };
+    const officeDispatch = (tab, args, o = {}) => {
+      const id = 'c' + (++env.n);
+      env.sent.push({ id, args, hold: Boolean(o.hold) });
+      env.dispatches.set(id, { id, tab, machine: 'Mac2', project: 'Web', pub: args.machine, at: Date.now(), status: o.hold ? 'held' : 'sent' });
+      env.records.set(id, { id, status: o.hold && !env.online ? 'held' : 'sent' });
+      return { id, status: o.hold && !env.online ? 'held' : 'sent' };
+    };
+    const tabStateOf = () => 'ready'; const hqOnScreen = () => false; const inboxWaiting = () => false; const startPty = () => {}; const typePrompt = () => true; const hqRestarter = { tick: () => {} };
+    const hqSettings = () => ({ enabled: true });
+  `;
+  env.link = link;
+  const api = new Function('env', `${prelude}\n${src}\nreturn { deliverRun, approveHeld, hqStatus, hqRequestsDone, onOfficeReport, routineProblem, hqMinter };`)(env);
+  const routine = ROUT.normalizeRoutine({ id: 'rt0000000a', name: 'Nightly', prompt: 'Run the tests', target: { kind: 'remote', pub: PUB, projectId: 'web' }, schedule: { kind: 'daily', at: '09:00' }, noAsk: true });
+  env.state.routines = [routine];
+  const newRun = () => { const run = { id: 'ru0000000' + env.file.runs.length, routine: routine.id, name: routine.name, kind: 'remote', slotAt: Date.now(), at: Date.now(), trigger: 'manual', status: 'waiting', tasks: [] }; env.file.runs.unshift(run); return run; };
+  return { env, api, routine, newRun, dir };
+}
+
+test('remote routine run → a held "awaiting approval" card + notification; never a modal or a send; the checkbox is ignored', async () => {
+  const { env, api, routine, newRun } = remoteHarness();
+  assert.equal(routine.noAsk, true);   // ticked, but it applies to local targets only
+  assert.equal(ROUT.routineNoAsk(routine, { remote: false, projectId: 'web' }), false);
+  assert.equal(api.routineProblem(routine), '');
+  const run = newRun();
+  await api.deliverRun(run, Date.now());
+  const card = env.board.tasks[0];
+  assert.deepEqual([card.status, card.machine, card.machineName, card.project, card.projectId], ['awaiting-consent', PUB, 'Mac2', 'Web', 'web']);
+  assert.equal(run.status, 'awaiting-consent');
+  assert.deepEqual(run.held, [card.id]);
+  assert.deepEqual([env.sent.length, env.dialogs], [0, 0]);
+  assert.equal(env.notes.length, 1);
+  assert.match(env.notes[0].title, /Nightly.*Web.*Mac2/);
+  assert.match(env.sent.length ? '' : card.request, /./);
+  // also with the global "dispatch without asking" on
+  env.state.hq.dispatchWithoutAsking = true;
+  const m = HQ.createMinter();
+  const id = m.mint({ origin: 'routine', run: 'x' });
+  assert.equal(HQ.consentFor({ setting: true, remote: true, request: id, minter: m, routineNoAsk: true }), 'held');
+});
+
+test('approve a remote held card → sent through the pacer; the record names the run; an OK report ends the run ok', async () => {
+  const { env, api, newRun } = remoteHarness();
+  const run = newRun();
+  await api.deliverRun(run, Date.now());
+  const held = env.board.tasks[0].id;
+  assert.deepEqual(await api.approveHeld(held, true), { ok: true });
+  assert.deepEqual(await api.approveHeld(held, true), { ok: false, reason: 'not-held' });   // twice sends once
+  assert.equal(env.sent.length, 1);
+  assert.deepEqual([env.sent[0].args.machine, env.sent[0].args.project, env.sent[0].hold], [PUB, 'web', false]);
+  assert.match(env.sent[0].args.task, /^\[routine /);
+  const id = env.sent[0].id;
+  assert.equal(env.dispatches.get(id).routine, run.id);
+  assert.equal(run.status, 'running');
+  assert.ok(run.tasks.includes(id));
+  assert.equal(env.board.tasks.filter((x) => x.status === 'awaiting-consent').length, 0);
+  api.onOfficeReport({ id, pub: PUB, report: { summary: 'OK: all 120 tests pass\nmore' } });
+  assert.deepEqual([run.status, run.outcome], ['ok', 'OK: all 120 tests pass']);
+  assert.equal(env.rows.length, 0);   // HQ was not asked: no HQ inbox rows
+});
+
+test('offline device: approve → the task waits in the outbox (held), history shows offline; ATTENTION report → attention', async () => {
+  const { env, api, newRun } = remoteHarness({ online: false });
+  assert.equal(api.routineProblem(env.state.routines[0]), '');   // offline is not a problem
+  const run = newRun();
+  await api.deliverRun(run, Date.now());
+  await api.approveHeld(env.board.tasks[0].id, true);
+  assert.deepEqual([env.sent.length, env.sent[0].hold], [1, true]);
+  const id = env.sent[0].id;
+  const task = env.board.tasks.find((x) => x.id === id);
+  assert.deepEqual([task.status, task.reason], ['queued', 'offline']);
+  assert.equal(ROUT.runWait(env.board.tasks.filter((x) => x.request === run.request)), 'offline');
+  assert.equal(env.dispatches.get(id).routine, run.id);
+  api.onOfficeReport({ id, pub: PUB, report: { summary: 'ATTENTION: 2 tests fail on main' } });
+  assert.deepEqual([run.status, run.outcome], ['attention', 'ATTENTION: 2 tests fail on main']);
+});
+
+test('expiry ends a remote run with attention: the held card after 12 h, or the outbox entry (expired on the link)', async () => {
+  const a = remoteHarness();
+  const run = a.newRun();
+  await a.api.deliverRun(run, Date.now());
+  const { board, expired, done } = HQ.expireHeld(a.env.board, Date.now() + HQ.HELD_MS + 1);
+  assert.equal(expired.length, 1);
+  a.env.board = board;
+  a.api.hqRequestsDone(done);
+  assert.deepEqual([run.status, run.reason], ['attention', 'expired']);
+  const b = remoteHarness({ online: false });
+  const run2 = b.newRun();
+  await b.api.deliverRun(run2, Date.now());
+  await b.api.approveHeld(b.env.board.tasks[0].id, true);
+  b.api.hqStatus(b.env.sent[0].id, 'expired', 'expired');   // what hqMirrorRemote does when the 24 h outbox TTL runs out
+  assert.deepEqual([run2.status, run2.reason], ['attention', 'expired']);
+  // decline → the run ends too (its request is done with a rejected task)
+  const c = remoteHarness();
+  const run3 = c.newRun();
+  await c.api.deliverRun(run3, Date.now());
+  await c.api.approveHeld(c.env.board.tasks[0].id, false);
+  assert.deepEqual([run3.status, run3.reason, c.env.sent.length], ['attention', 'declined', 0]);
+});
+
+test('old peer (no task-status): an unknown record keeps the run open (no wait shown) until lost or the remote timeout', async () => {
+  const { env, api, newRun } = remoteHarness();
+  const run = newRun();
+  await api.deliverRun(run, Date.now());
+  await api.approveHeld(env.board.tasks[0].id, true);
+  const id = env.sent[0].id;
+  env.records.set(id, { id, status: 'unknown' });
+  assert.equal(HQ.boardOfRemote(env.records.get(id)), null);   // the card stays as it was
+  assert.equal(run.status, 'running');
+  api.hqStatus(id, 'lost', 'unknown');   // its next hello: lost (never typed twice)
+  assert.deepEqual([run.status, run.reason], ['attention', 'unknown']);
+  assert.equal(ROUT.runTimeoutMs('remote', HQ.HQ_TTL_MS), HQ.HQ_TTL_MS + 3600e3 + ROUT.REMOTE_WAIT_MS);
+  assert.equal(ROUT.runTimeoutMs('project', HQ.HQ_TTL_MS), HQ.HQ_TTL_MS + 3600e3);
+});
+
+test('remoteProblem / runWait: unpaired or unknown project → target-gone; waits from the newest open task', () => {
+  const tg = { kind: 'remote', pub: PUB, projectId: 'web' };
+  const cache = { [PUB]: { projects: [{ id: 'web' }] } };
+  assert.equal(ROUT.remoteProblem(tg, { paired: [PUB], cache }), '');
+  assert.equal(ROUT.remoteProblem(tg, { paired: [], cache }), 'target-gone');
+  assert.equal(ROUT.remoteProblem({ ...tg, projectId: 'api' }, { paired: [PUB], cache }), 'target-gone');
+  assert.equal(ROUT.runWait([{ status: 'queued', reason: 'paced', at: 1 }]), 'paced');
+  assert.equal(ROUT.runWait([{ status: 'reported', at: 2 }, { status: 'running', at: 1 }]), 'running');
+  assert.equal(ROUT.runWait([{ status: 'awaiting-consent', at: 1 }]), '');
+  assert.equal(ROUT.runWait([]), '');
 });

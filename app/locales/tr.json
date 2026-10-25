@@ -683,7 +683,8 @@
     "routineDone": "Rutin: {name}",
     "routineAllGood": "Her şey yolunda",
     "routineFailed": "{name} rutini başarısız ({reason})",
-    "routineNeedsApproval": "{name} rutini {project} projesine görev göndermek için onayınızı bekliyor"
+    "routineNeedsApproval": "{name} rutini {project} projesine görev göndermek için onayınızı bekliyor",
+    "routineNeedsApprovalRemote": "{name} rutini {machine} üzerindeki {project} projesine görev göndermek için onayınızı bekliyor"
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",
@@ -1008,6 +1009,18 @@
     },
     "wrapHead": "{name} rutini (zamanı {time}, istek {request})",
     "wrapHq": "Her office_dispatch için {request} isteğini kullan. Bitince {request} isteğiyle office_summary kaydet; ilk satırı, kişinin yapacağı bir şey yoksa OK: ile, varsa ATTENTION: ve ne gerektiğiyle başlasın. Her şey yolundaysa tek satır yeter. awaiting-consent yanıtı alan görev kişinin onayını bekler: bunu söyle, yeniden deneme.",
-    "wrapProject": "Bu görev kişinin kendi rutininden geliyor (istek {request}). Raporunun ilk satırı, kişinin yapacağı bir şey yoksa OK: ile, varsa ATTENTION: ve ne gerektiğiyle başlasın."
+    "wrapProject": "Bu görev kişinin kendi rutininden geliyor (istek {request}). Raporunun ilk satırı, kişinin yapacağı bir şey yoksa OK: ile, varsa ATTENTION: ve ne gerektiğiyle başlasın.",
+    "offline": "çevrimdışı",
+    "remoteGone": "Artık eşli olmayan bir cihazdaki proje",
+    "noAskRemote": "Uzak bir proje, bu kutu ne derse desin, Pano üzerinden her zaman onayınızı ister.",
+    "wait": {
+      "offline": "cihaz bekleniyor (çevrimdışı)",
+      "paced": "gönderim sırası bekleniyor",
+      "resend": "yeniden gönderiliyor",
+      "queued": "cihazda sırada",
+      "delivered": "teslim edildi",
+      "running": "cihazda çalışıyor",
+      "needs-approval": "cihazda onay bekliyor"
+    }
   }
 }

@@ -702,7 +702,8 @@
     "routineDone": "Routine: {name}",
     "routineAllGood": "All good",
     "routineFailed": "Routine {name} failed ({reason})",
-    "routineNeedsApproval": "Routine {name} needs your approval to send a task to {project}"
+    "routineNeedsApproval": "Routine {name} needs your approval to send a task to {project}",
+    "routineNeedsApprovalRemote": "Routine {name} needs your approval to send a task to {project} on {machine}"
   },
   "auth": {
     "unreadable": "could not read the login status",
@@ -1036,6 +1037,18 @@
     },
     "wrapHead": "Routine {name} (scheduled {time}, request {request})",
     "wrapHq": "Use request {request} for every office_dispatch. When done, save office_summary with request {request} whose first line starts with OK: when nothing needs the person, otherwise ATTENTION: and what needs them. Keep an all-good answer to one line. A dispatch answered awaiting-consent waits for the person: say so, do not retry.",
-    "wrapProject": "This task comes from the person's own routine (request {request}). Start your report's first line with OK: when nothing needs the person, otherwise ATTENTION: and what needs them."
+    "wrapProject": "This task comes from the person's own routine (request {request}). Start your report's first line with OK: when nothing needs the person, otherwise ATTENTION: and what needs them.",
+    "offline": "offline",
+    "remoteGone": "A project on a device that is no longer paired",
+    "noAskRemote": "A remote project always asks for your approval on the Board, whatever this box says.",
+    "wait": {
+      "offline": "waiting for the device (offline)",
+      "paced": "waiting to send (paced)",
+      "resend": "resending",
+      "queued": "queued on the device",
+      "delivered": "delivered",
+      "running": "running on the device",
+      "needs-approval": "needs approval on the device"
+    }
   }
 }
