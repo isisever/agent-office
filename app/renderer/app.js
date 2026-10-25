@@ -550,6 +550,7 @@ sidebar = mountSidebar($('sidebar'), {
   setAccount,
   setProjectManager,
   setBossModel,
+  effectiveModel: (id) => Promise.resolve(api.projects.effectiveModel?.(id)).catch((e) => { console.error(e); return null; }),
   setAgentModel,
   setProjectFiles,
   setContextCap,

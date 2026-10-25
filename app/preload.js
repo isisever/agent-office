@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setAccount: (id, accountId) => ipcRenderer.invoke('projects:setAccount', id, accountId),
     setManager: (id, value) => ipcRenderer.invoke('projects:setManager', id, value),   // true | false | null (global setting); { restarted: pty ids } (v3.10)
     setBossModel: (id, value) => ipcRenderer.invoke('projects:setBossModel', id, value), // 'sonnet' | 'opus' | 'haiku' | null (Auto); { restarted: pty ids } (v3.27)
+    effectiveModel: (id) => ipcRenderer.invoke('projects:effectiveModel', id), // what Auto runs on: { model, family, source, manager } | null (v3.53)
     setAgentModel: (id, value) => ipcRenderer.invoke('projects:setAgentModel', id, value), // 'sonnet' | 'haiku' | 'opus' | null (Auto); { restarted: pty ids } (v3.14)
     setContextCap: (id, value) => ipcRenderer.invoke('projects:setContextCap', id, value), // 200000 | 400000 | null (Auto); { restarted: pty ids } (v3.15)
     setSkillPacks: (id, values) => ipcRenderer.invoke('projects:setSkillPacks', id, values), // { [packId]: 'inherit' | 'on' | 'off' } in one call; { restarted } (v3.45)

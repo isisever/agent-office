@@ -332,7 +332,25 @@ export function mountSidebar(el, on) {
       onchange: (e) => queue('bossModel', () => on.setBossModel?.(p.id, e.target.value === 'auto' ? null : e.target.value)),
     },
     opt('auto', t('sidebar.bossModelAuto')), ...choices.map((c) => opt(c.value, claudeModelLabel(c.value) || c.label)));
-    return control(p, 'bossModel', t('sidebar.bossModel'), sel);
+    const wrap = control(p, 'bossModel', t('sidebar.bossModel'), sel);
+    if (engineOfRow(p) === 'claude') showEffectiveModel(p, sel, wrap);
+    return wrap;
+  }
+  // Auto passes no --model, so claude inherits ANTHROPIC_MODEL or a saved `/model` default (contract v3.53): the Auto
+  // option names it ("Auto · Haiku (account default)"), and a manager inheriting Haiku gets a one-line hint.
+  function showEffectiveModel(p, sel, wrap) {
+    const autoOpt = sel.querySelector('option[value="auto"]');
+    const hint = h('span', { class: 'sb-model-hint', role: 'note', hidden: true }, t('sidebar.bossModelHaikuManager'));
+    wrap.append(hint);
+    Promise.resolve(on.effectiveModel?.(p.id)).then((eff) => {
+      if (!eff || !autoOpt) return;
+      const model = claudeModelLabel(eff.family) || eff.model;
+      const source = t(eff.source === 'env' ? 'sidebar.modelSourceEnv' : eff.source === 'project' ? 'sidebar.modelSourceProject' : 'sidebar.modelSourceAccount');
+      autoOpt.textContent = t('sidebar.bossModelAutoInherited', { model, source });
+      const update = () => { hint.hidden = !(sel.value === 'auto' && eff.family === 'haiku' && eff.manager); };
+      sel.addEventListener('change', update);
+      update();
+    }).catch((e) => console.error(e));
   }
 
   // "Let Agent Office add its files to this project" (contract v3.38): off by default; Antigravity and Command Code only.

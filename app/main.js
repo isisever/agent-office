@@ -9,6 +9,7 @@ const MS = require('./src/mcp-servers.js');
 const SF = require('./src/state-file.js');
 const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
+const EM = require('./src/effective-model.js');
 const N = require('./src/attention.js');
 const OS = require('./src/platform.js');
 const PG = require('./src/pty-guard.js');
@@ -2938,6 +2939,16 @@ ipcMain.handle('projects:setBossModel', (_e, id, value) => {
   commit(next);
   const p = P.findProject(state, id);
   return { restarted: p ? restartIdle(p) : [] };
+});
+// What Auto really runs on (contract v3.53): ANTHROPIC_MODEL, else the project's or the account's settings.json `model`
+// (`/model` saves it there). Read each time the settings popup asks; Claude engine only. null = Claude Code's default.
+ipcMain.handle('projects:effectiveModel', (_e, id) => {
+  const p = P.findProject(state, id);
+  if (!p || P.engineOf(p) !== 'claude') return null;
+  const eff = EM.readEffectiveModel({
+    projectDir: p.dir, configDir: A.accountOf(state, p).configDir, home: app.getPath('home'), env: process.env,
+  });
+  return eff ? { ...eff, manager: P.managerOf(state, p) } : null;
 });
 // Per-project subagent model (contract v3.14): 'sonnet' | 'haiku' | 'opus' pins every subagent, null = Auto (the
 // boss picks per agent). Applies like the manager setting: next start, idle tabs at once. Returns the restarted pty ids.
