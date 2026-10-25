@@ -175,6 +175,7 @@
     "modelSourceAccount": "hesabın varsayılanı",
     "modelSourceProject": "proje ayarları",
     "modelSourceEnv": "ANTHROPIC_MODEL",
+    "modelSourceManaged": "yönetilen ayarlar",
     "bossModelHaikuManager": "Otomatik burada Haiku ile çalışıyor. Yöneticiler en iyi Opus'ta çalışır: burada Opus seçin ya da varsayılanı Claude'da /model ile değiştirin.",
     "agentModel": "Ajan modeli",
     "agentModelTitle": "Bu projenin ajanlarının (alt ajanların) çalıştığı model. Otomatik'te müdür her ajan için seçer: aramalar için Haiku, rutin düzenleme, test ve derleme için Sonnet, tasarım, zor hata ayıklama ve incelemeler için kendi modeli. Sonnet, Haiku ya da Opus her ajanı o modelde çalıştırır. Projenin Claude'u bir sonraki başlayışında geçerli olur (boştaki sekmeler hemen yeniden başlar).",

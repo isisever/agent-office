@@ -2942,13 +2942,13 @@ ipcMain.handle('projects:setBossModel', (_e, id, value) => {
 });
 // What Auto really runs on (contract v3.53): ANTHROPIC_MODEL, else the project's or the account's settings.json `model`
 // (`/model` saves it there). Read each time the settings popup asks; Claude engine only. null = Claude Code's default.
-ipcMain.handle('projects:effectiveModel', (_e, id) => {
+ipcMain.handle('projects:effectiveModel', async (_e, id) => {
   const p = P.findProject(state, id);
   if (!p || P.engineOf(p) !== 'claude') return null;
-  const eff = EM.readEffectiveModel({
-    projectDir: p.dir, configDir: A.accountOf(state, p).configDir, home: app.getPath('home'), env: process.env,
+  return EM.effectiveModelForProject({
+    project: p, engine: P.engineOf(p), manager: P.managerOf(state, p), configDir: A.accountOf(state, p).configDir,
+    home: app.getPath('home'), env: await EM.loginShellModel(), isLocalDir: EM.isDirAsync,
   });
-  return eff ? { ...eff, manager: P.managerOf(state, p) } : null;
 });
 // Per-project subagent model (contract v3.14): 'sonnet' | 'haiku' | 'opus' pins every subagent, null = Auto (the
 // boss picks per agent). Applies like the manager setting: next start, idle tabs at once. Returns the restarted pty ids.

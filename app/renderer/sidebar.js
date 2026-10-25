@@ -5,6 +5,7 @@ import { hasText, locale, onLang, t } from './i18n.js';
 import { modLabel, platform } from './platform.js';
 import { isBossHere, projectStatus } from '../src/project-status.mjs';
 import { bossModelChoices, cap } from '../src/engine-caps.mjs';
+import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
 
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -345,9 +346,9 @@ export function mountSidebar(el, on) {
     Promise.resolve(on.effectiveModel?.(p.id)).then((eff) => {
       if (!eff || !autoOpt) return;
       const model = claudeModelLabel(eff.family) || eff.model;
-      const source = t(eff.source === 'env' ? 'sidebar.modelSourceEnv' : eff.source === 'project' ? 'sidebar.modelSourceProject' : 'sidebar.modelSourceAccount');
+      const source = t(eff.source === 'env' ? 'sidebar.modelSourceEnv' : eff.source === 'managed' ? 'sidebar.modelSourceManaged' : eff.source === 'project' ? 'sidebar.modelSourceProject' : 'sidebar.modelSourceAccount');
       autoOpt.textContent = t('sidebar.bossModelAutoInherited', { model, source });
-      const update = () => { hint.hidden = !(sel.value === 'auto' && eff.family === 'haiku' && eff.manager); };
+      const update = () => { hint.hidden = !showHaikuManagerHint(sel.value, eff); };
       sel.addEventListener('change', update);
       update();
     }).catch((e) => console.error(e));
