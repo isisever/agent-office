@@ -299,11 +299,14 @@ When the person names one of these projects, they mean that folder: read and wor
 // teammate (their calls carry agentId).
 const NUDGE_AFTER = 6
 const NUDGE_REPEAT = 10
-const NUDGE_TEXT = `Agent Office manager mode: you've done ${NUDGE_AFTER} steps of this turn yourself without handing any off. Hand the rest of the work to background agents (Agent tool), in parallel where the pieces are independent, and stay available to the person; keep your own steps to orientation, reviewing results and the final check. If the person asked you to do this yourself, carry on.`
+const nudgeText = (steps: number) =>
+  `Agent Office manager mode: you've done ${steps} steps of this turn yourself without handing any off. Hand the rest of the work to background agents (Agent tool), in parallel where the pieces are independent, and stay available to the person; keep your own steps to orientation, reviewing results and the final check. If the person asked you to do this yourself, carry on.`
 const nudgeFirmText = (steps: number, nudges: number) =>
   `Agent Office manager mode, reminder ${nudges + 1} this turn: ${steps} steps in a row are your own and you were already told to hand off. Stop doing the work yourself now: your next call should be the Agent tool, briefing background agents with the rest of the work (in parallel where the pieces are independent). Only if the person asked you to do this yourself, carry on.`
 // calls that hand work off
 const DELEGATING_TOOLS = new Set(['Agent', 'Task', 'SendMessage'])
+// the app's office_dispatch MCP tool (any server prefix) hands work off too
+const isDelegating = (tool: string) => DELEGATING_TOOLS.has(tool) || tool.endsWith('__office_dispatch')
 // bookkeeping calls: neither the work itself nor a hand-off
 const NEUTRAL_TOOLS = new Set([
   'TodoWrite',
@@ -385,6 +388,8 @@ let isManager = false // AGENT_OFFICE_MANAGER=1: manager mode, with its nudge
 let ownSteps = 0
 let nudges = 0
 let isNudgeOwed = false
+let hasDelegated = false // a hand-off since the turn's last reminder: the next one is the gentle text again
+let isHq = false
 // the subagents' step budget (STEP_BUDGET_MIN): N, 0 = off; whether calls past 2N are refused; reminders whose call was
 // refused, for that agent's next call; agents stopped for calling on after refusals (true once the boss was told)
 let stepBudget = 0
@@ -1173,9 +1178,10 @@ async function statsText($: EngineInterface) {
 
 // manager mode's nudge: counts one main-loop call; true when this call is the one the reminder rides on
 function countStep(tool: string) {
-  if (!isManager) return false
-  if (DELEGATING_TOOLS.has(tool)) {
+  if (!isManager || isHq) return false
+  if (isDelegating(tool)) {
     ownSteps = 0
+    hasDelegated = true
     isNudgeOwed = false
     return false
   }
@@ -1192,7 +1198,8 @@ function withNudge(answer: ToolCallResult): ToolCallResult {
     return answer
   }
   isNudgeOwed = false
-  const text = nudges ? nudgeFirmText(ownSteps, nudges) : NUDGE_TEXT
+  const text = nudges && !hasDelegated ? nudgeFirmText(ownSteps, nudges) : nudgeText(ownSteps)
+  hasDelegated = false
   nudges++
   return { ...answer, context: [...(answer.context ?? []), text] }
 }
@@ -1341,6 +1348,7 @@ export const register: Register = on => {
     isNested = await nestedOf($)
     isInApp = !isNested && Boolean(await $.env.get('AGENT_OFFICE_APP'))
     isManager = !isNested && (await $.env.get('AGENT_OFFICE_MANAGER')) === '1'
+    isHq = (await $.env.get('AGENT_OFFICE_HQ')) === '1' // HQ has no Agent tool: never nudged
     const budget = Number.parseInt((await $.env.get('AGENT_OFFICE_STEP_BUDGET')) ?? '', 10)
     stepBudget = !isNested && Number.isFinite(budget) && budget >= STEP_BUDGET_MIN ? budget : 0
     isStepCapped = stepBudget > 0 && (await $.env.get('AGENT_OFFICE_STEP_CAP')) === '1'
@@ -1502,6 +1510,7 @@ export const register: Register = on => {
     const signature = callSignature(e.tool, e as unknown as Record<string, unknown>)
     if (!isNested && isRefusedCall(key, signature)) {
       await countRepeat($, key, 'repeatDenied')
+      if (isNudging) isNudgeOwed = true
       return { deny: REPEAT_DENY_TEXT }
     }
     const run = async (ev: typeof e) => withHarness($, e, key, signature, await next(ev))
@@ -1635,6 +1644,7 @@ export const register: Register = on => {
     ownSteps = 0
     nudges = 0
     isNudgeOwed = false
+    hasDelegated = false
     // a new turn starts where the main loop runs, not where the last one ended
     const bossDir = sessionCwd !== sessionRoot ? sessionCwd : undefined
     if (!stats.isBossBusy || stats.bossDir !== bossDir)

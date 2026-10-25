@@ -1131,6 +1131,12 @@ test('inside the app every loop gets the host section: Agent Office is the proce
   expect((await $.prompt.compose({ ...composing, tools: ['Agent'], traits: ['teammate'] })).sections.map(s => s.id)).toEqual(['intro', 'agent-office:host'])
 })
 
+test('an HQ session under the app gets the host section too', async ($, on) => {
+  setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_HQ: '1' })
+  const host = (await $.prompt.compose(mainLoop)).sections.find(s => s.id === 'agent-office:host')
+  expect(host?.text).toContain('You run inside the Agent Office desktop app')
+})
+
 test('on Windows the host section has no macOS permissions sentence', async ($, on) => {
   setUpCompose(on, { HOME: '/home/tester', OS: 'Windows_NT', AGENT_OFFICE_APP: '1' })
   const text = (await $.prompt.compose(mainLoop)).sections.find(s => s.id === 'agent-office:host')?.text ?? ''
@@ -1142,6 +1148,8 @@ test('on Windows the host section has no macOS permissions sentence', async ($, 
 for (const [name, env] of [
   ['outside the app', { HOME: '/home/tester', AGENT_OFFICE_MANAGER: '1' }],
   ['in a nested claude', { HOME: '/home/tester', AGENT_OFFICE_APP: '1', CLAUDECODE: '1' }],
+  ['in a nested claude (CLAUDE_CODE_CHILD_SESSION)', { HOME: '/home/tester', AGENT_OFFICE_APP: '1', CLAUDE_CODE_CHILD_SESSION: '1' }],
+  ['in a nested claude (CLAUDE_CODE_SESSION_ID of a parent)', { HOME: '/home/tester', AGENT_OFFICE_APP: '1', CLAUDE_CODE_SESSION_ID: 'parent-1' }],
 ] as const) {
   test(`${name} there is no host section`, async ($, on) => {
     setUpCompose(on, env)
@@ -1390,12 +1398,17 @@ test('a boss that keeps working alone gets a firmer reminder with the count ever
   expect(texts[1]?.[1]).toContain('your next call should be the Agent tool')
   expect(texts[1]?.[1]).toContain('if the person asked you to do this yourself, carry on')
   expect(texts[3]?.[1]).toContain('reminder 4 this turn: 36 steps')
-  // a hand-off resets the count; working alone again in the same turn gets the firm reminder at once
+  // a hand-off resets the count and the next reminder is the gentle text again (the boss may review and check)
   await mainCall($, 'Agent')
   const after: string[] = []
   for (let i = 1; i <= 6; i++) after.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
   expect(after).toHaveLength(1)
-  expect(after[0]).toContain('reminder 5 this turn: 6 steps')
+  expect(after[0]).toContain('6 steps of this turn yourself')
+  // no hand-off since that one: the next is firm again
+  const again: string[] = []
+  for (let i = 1; i <= 10; i++) again.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
+  expect(again).toHaveLength(1)
+  expect(again[0]).toContain('reminder 6 this turn: 16 steps')
   // a new turn starts with the gentle one
   await completeTurn($, 'answer')
   await $.turn.start({ text: 'more', turnId: 'turn-2' })
@@ -1403,6 +1416,40 @@ test('a boss that keeps working alone gets a firmer reminder with the count ever
   for (let i = 1; i <= 6; i++) fresh.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
   expect(fresh).toHaveLength(1)
   expect(fresh[0]).toContain('6 steps of this turn yourself')
+})
+
+test('the owed reminder carries the real count; a repeat-refused call keeps it owed', async ($, on) => {
+  setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_STEP_BUDGET: '20', AGENT_OFFICE_STEP_CAP: '1' })
+  on('tool.call', (_$, e) => (e.tool === 'Write' ? ({ deny: 'no' }) : e.tool === 'Bash' ? ({ result: { exitCode: 1, stderr: 'boom: same failure' } }) : ({ result: 'ok' })) as never)
+  answerTurns(on)
+  await $.session.start(start)
+  await $.turn.start({ text: 'build it', turnId: 'turn-1' })
+  // calls 1-3 fail identically (the third marks the call refused); 4th is the repeat-refused one
+  for (let i = 0; i < 3; i++) await mainCall($, 'Bash', { command: 'make' })
+  await mainCall($, 'Read', { file_path: '/a' })
+  await mainCall($, 'Read', { file_path: '/a' })
+  // the sixth call is the repeat-refused one: no result to carry the reminder, the seventh does
+  expect(await mainCall($, 'Bash', { command: 'make' })).toMatchObject({ deny: expect.any(String) })
+  const owed = nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))
+  expect(owed).toHaveLength(1)
+  expect(owed[0]).toContain('7 steps of this turn yourself')
+})
+
+test('an HQ session (no Agent tool) is never nudged, even with manager mode on', async ($, on) => {
+  setUpNudge(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_HQ: '1' })
+  await $.session.start(start)
+  await $.turn.start({ text: 'build it', turnId: 'turn-1' })
+  for (let i = 0; i < 14; i++) expect(nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))).toEqual([])
+})
+
+test('office_dispatch from any server counts as a hand-off and resets the count', async ($, on) => {
+  setUpNudge(on)
+  await $.session.start(start)
+  await $.turn.start({ text: 'build it', turnId: 'turn-1' })
+  for (let i = 0; i < 5; i++) await mainCall($, 'Bash', { command: 'ls' })
+  await mainCall($, 'mcp__agent-office__office_dispatch')
+  for (let i = 0; i < 5; i++) expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toEqual([])
+  expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toHaveLength(1)
 })
 
 for (const [name, env] of [
