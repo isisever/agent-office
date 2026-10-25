@@ -245,7 +245,6 @@ const MENUS: string[] = [
   'Ne yapalım?',
   'A mı yoksa B mi olsun?',
   'Which would you like first, A or B?',
-  'Sizce hangisi daha uygun?',
 ]
 // the ask wins: a sentence with an ask topic is never a menu, even in a menu's shape
 const REAL_ASKS: string[] = [

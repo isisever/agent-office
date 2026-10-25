@@ -117,9 +117,8 @@ const MENU_CUES_TR: RegExp[] = [
   re(String.raw`<hangi\p{L}*[^.?!\n]{0,40}?(?:başla|devam ed|devam et|ilerle|geç|yap|git|gid|seç|uygula|al)\p{L}*(?:elim|alım|eyim|ayım)>`),
   re(String.raw`<seçenek\p{L}*(?:den|dan) hangi`),
   re(String.raw`<(?:önce|ilk olarak|ilk) (?:hangi|ne)\p{L}*[^.?!\n]{0,30}?\p{L}(?:elim|alım|eyim|ayım)>`),
-  // "ne yapalım", "nasıl ilerleyelim", "sizce hangisi daha uygun", "hangisi daha iyi"
+  // "ne yapalım", "nasıl ilerleyelim" ("sizce hangisi daha uygun?" stays with the judge: it may be the person's decision)
   re(String.raw`<(?:ne|nasıl) (?:yapalım|yapayım|edelim|edeyim|ilerleyelim|ilerleyeyim)>`),
-  re(String.raw`<(?:sizce|sence) hangi|<hangisi (?:daha )?(?:uygun|iyi|mantıklı|doğru)`),
   // "devam edelim mi", "devam etmemi ister misiniz", "kaydetmemi / commit etmemi / commit atmamı ister misiniz"
   re(String.raw`<devam (?:edeyim|edelim|etmemi|edilsin|etmeli miyim|etmeli miyiz)>`),
   re(String.raw`<(?:kaydet|commit (?:et|at)|commitle)\p{L}*(?:memi|mamı|eyim|ayım|elim|alım)>`),
