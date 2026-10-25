@@ -296,3 +296,138 @@ test('v3.48 wiring: HQ holds offline dispatches, Cancel reaches remote cards, re
   assert.match(host, /attentionOf\?\.\(t\.project\) === 'permission' \? 'needs-approval'/);
   assert.match(fs.readFileSync(path.join(root, '.github', 'workflows', 'test.yml'), 'utf8'), /app\/test\/hq-link\.test\.cjs/);
 });
+
+// --- Phase 2 review fixes
+
+test('v3.48 review 1: an old runner (no repeat check) never gets a task twice after a drop or a dispatcher restart', async (t) => {
+  const { make, connect } = world(t);
+  const a = make('A'); const b = make('B', { caps: OLD_CAPS });
+  // a real v3.47 runner: no tasks-seen, every cmd it hears is a new command (it may type it while we are apart)
+  const typed = [];
+  b.receiveCommand = (conn, d, m) => { typed.push(m.id); b.write(conn, { t: 'cmd-status', id: m.id, status: 'queued' }); };
+  let drop = await connect(a, b);
+  const q = a.sendCommand(PB, 'p1', 'queued there', { report: true });
+  await flush();
+  assert.equal(a.sentTask(q.id).status, 'queued');
+  b.receiveCommand = (conn, d, m) => { typed.push(m.id); };   // this one hears nothing back: stays 'sent'
+  const s = a.sendCommand(PB, 'p1', 'sent, no answer', { report: true });
+  await flush();
+  assert.equal(a.sentTask(s.id).status, 'sent');
+  drop();
+  await flush();
+  assert.equal(a.sentTask(s.id).text, undefined);   // not kept for a resend
+  drop = await connect(a, b);
+  await flush();
+  assert.deepEqual(typed, [q.id, s.id]);   // each exactly once
+  for (const id of [q.id, s.id]) assert.deepEqual(HQ.boardOfRemote(a.sentTask(id)), { status: 'lost', reason: 'unknown' });
+  // the dispatcher restarts while a task is out there: still never sent again
+  const r = a.sendCommand(PB, 'p1', 'out at the restart', { report: true });
+  await flush();
+  drop();
+  await a.destroy();
+  const a2 = make('A');
+  await connect(a2, b);
+  await flush();
+  assert.equal(typed.filter((x) => x === r.id).length, 1);
+  assert.equal(a2.sentTask(r.id).status, 'lost');
+});
+
+test('v3.48 review 2: a send refused as rate-limited is not remembered there; the paced retry is typed', async (t) => {
+  const { clock, make, connect } = world(t);
+  const a = make('A'); const b = make('B');
+  const got = runner(b);
+  const rec = a.sendCommand(PB, 'p1', 'retry me', { report: true, hold: true });
+  for (let i = 0; i < 3; i++) b.limiter.take(PA);   // its limit is used up
+  await connect(a, b);
+  await flush();
+  assert.equal(got.length, 0);
+  assert.deepEqual([a.sentTask(rec.id).status, a.sentTask(rec.id).reason], ['held', 'paced']);
+  assert.equal(b.seen.has(rec.id), false);
+  clock.now += 10001;
+  a.pumpOutbox();
+  await flush();
+  assert.deepEqual(got.map((c) => c.id), [rec.id]);
+  assert.equal(a.sentTask(rec.id).status, 'queued');
+});
+
+test('v3.48 review 3: 200+ refused commands from another device never evict a queued task; entries bounded per device', async (t) => {
+  const { clock, make, connect } = world(t);
+  const a = make('A'); const b = make('B');
+  runner(b);
+  await connect(a, b);
+  const rec = a.sendCommand(PB, 'p1', 'keep me', { report: true });
+  await flush();
+  assert.equal(b.seen.get(rec.id).state, 'queued');
+  const PC = 'cc'.repeat(32);
+  b.devices = [...b.devices, { ...b.devices[0], pub: PC, name: 'Junk' }];
+  b.secrets[PC] = 'cd'.repeat(32);
+  b.peers.set(PC, { v: 2, app: '', caps: ['report', 'task-status'] });
+  b.limiter = { take: () => true };
+  b.removeAllListeners('command');
+  b.on('command', (c) => c.reply('rejected', 'unknown-project'));   // refused by main after acceptance: recorded
+  const fake = { destroyed: false, write: () => true };
+  for (let i = 0; i < 250; i++) { clock.now += 1; b.receiveCommand(fake, b.devices[1], { t: 'cmd', id: `junk${i}`, project: 'x', text: 'junk', report: true }); }
+  assert.equal(b.seen.get(rec.id)?.state, 'queued');
+  assert.equal([...b.seen.values()].filter((s) => s.pub === PC).length, 200);
+  // refusals before acceptance are not recorded at all
+  b.limiter = { take: () => false };
+  b.receiveCommand(fake, b.devices[1], { t: 'cmd', id: 'limited', project: 'x', text: 'x', report: true });
+  b.devices[1].allowCommands = false;
+  b.receiveCommand(fake, b.devices[1], { t: 'cmd', id: 'off', project: 'x', text: 'x', report: true });
+  assert.equal(b.seen.has('limited') || b.seen.has('off'), false);
+});
+
+test('v3.48 review 4: typed, then a crash before tasks-seen was saved → delivered from reports-out, never typed again; save failures logged', async (t) => {
+  const { dir, make, connect } = world(t);
+  const a = make('A'); const b = make('B');
+  const typed = [];
+  // link-host order: type → expectReport (reports-out saved) → reply('delivered'); the crash comes before the reply
+  b.on('command', (c) => { typed.push(c.id); b.expectReport(c.id, c.device.pub, c.project); });
+  const drop = await connect(a, b);
+  const rec = a.sendCommand(PB, 'p1', 'typed then crash', { report: true });
+  await flush();
+  assert.equal(b.seen.has(rec.id), false);
+  drop();
+  await b.destroy();
+  const b2 = make('B');
+  b2.on('command', (c) => typed.push(c.id));
+  assert.deepEqual(b2.statusMsg(rec.id, PA), { t: 'task-status', id: rec.id, state: 'delivered' });
+  await connect(a, b2);
+  await flush();
+  assert.deepEqual(typed, [rec.id]);
+  assert.equal(a.sentTask(rec.id).status, 'delivered');
+  a.writeCmd(a.conns.get(PB), a.sentTask(rec.id), 'typed then crash');   // a repeat of the id
+  await flush();
+  assert.deepEqual(typed, [rec.id]);
+  const logs = [];
+  b2.log = (...x) => logs.push(x.join(' '));
+  fs.writeFileSync(path.join(dir, 'plain'), '');
+  b2.seenFile = path.join(dir, 'plain', 'tasks-seen.json');
+  b2.saveSeen();
+  assert.match(logs[0] || '', /tasks-seen not saved/);
+});
+
+test('v3.48 review 7: task-status / task-query floods are limited per device; a status burst is one tasks-out write', async (t) => {
+  const { make, connect } = world(t);
+  const a = make('A'); const b = make('B');
+  runner(b);
+  await connect(a, b);
+  const rec = a.sendCommand(PB, 'p1', 'x', { report: true });
+  await flush();
+  let writes = 0; let handled = 0; let changes = 0;
+  const save = a.saveTasks.bind(a); a.saveTasks = () => { writes++; save(); };
+  const on = a.onTaskStatus.bind(a); a.onTaskStatus = (...x) => { handled++; on(...x); };
+  a.on('change', () => changes++);
+  const conn = b.conns.get(PA);
+  for (let i = 0; i < 1000; i++) b.write(conn, { t: 'task-status', id: rec.id, state: 'queued', why: WHY });
+  await flush();
+  assert.equal(handled, 400);   // the per-device burst; the rest dropped
+  assert.equal(writes, 0);      // coalesced
+  assert.ok(changes <= 2, `changes ${changes}`);
+  a.flushTasks();
+  assert.equal(writes, 1);
+  const before = a.wire.filter((m) => m.t === 'task-status').length;
+  for (let i = 0; i < 100; i++) b.write(conn, { t: 'task-query', ids: [rec.id] });
+  await flush();
+  assert.equal(a.wire.filter((m) => m.t === 'task-status').length - before, 8);
+});

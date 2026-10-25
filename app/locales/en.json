@@ -820,7 +820,14 @@
       "queued": "queued until the tab is idle",
       "unknown": "connection lost, outcome unknown",
       "delivered": "delivered",
-      "rejected": "rejected: {reason}"
+      "rejected": "rejected: {reason}",
+      "held": "waiting to be sent",
+      "running": "running",
+      "needs-approval": "waiting for an approval there",
+      "expired": "expired, never sent",
+      "lost": "lost, outcome unknown",
+      "cancelled": "cancelled",
+      "reported": "reported"
     },
     "reason": {
       "not-allowed": "commands from this device are off there",
@@ -833,7 +840,15 @@
       "rate-limited": "too many commands, wait a little",
       "queue-full": "5 commands already waiting",
       "expired": "waited 30 min, dropped",
-      "removed": "device removed"
+      "removed": "device removed",
+      "cancelled": "cancelled",
+      "logged-out": "logged out there",
+      "offline": "the device is offline",
+      "no-report": "that device is too old for tasks",
+      "locked": "the project is moving to another device",
+      "paced": "sending slowly, under its limit",
+      "resend": "sending again",
+      "unknown": "outcome unknown"
     },
     "error": {
       "no-keychain": "No system keychain to keep the device keys safely: the device link is off",

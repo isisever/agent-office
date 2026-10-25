@@ -12,12 +12,14 @@ const OWED_MS = 4 * 3600 * 1000 + 30 * 60 * 1000;
 const OUTBOX_TTL_MS = 24 * 3600 * 1000;
 const TASK_REC = ['held', 'sent', 'queued', 'delivered', 'running', 'needs-approval', 'unknown', 'reported', 'rejected', 'expired', 'lost'];
 const TASK_DONE = new Set(['reported', 'rejected', 'expired', 'lost']);
+const SEEN_OPEN = ['queued', 'delivered', 'running', 'needs-approval'];   // tasks-seen entries never evicted while young
+const SEEN_PER_DEVICE = 200;
 
 class Link extends EventEmitter {
   /**
    * @param {{ keyPair: { publicKey: Buffer, secretKey: Buffer }, name: string, devices?: C.Device[], secrets?: Record<string, string>,
    *   bootstrap?: any[], now?: () => number, swarmFactory?: (opts: any) => any, heartbeatMs?: number,
-   *   handoffAskMs?: number, handoffIdleMs?: number, resultsFile?: string | null, reportsFile?: string | null, tasksFile?: string | null, seenFile?: string | null, outboxTtlMs?: number, app?: string, projOpMs?: number, loginTimeoutMs?: number }} o
+   *   handoffAskMs?: number, handoffIdleMs?: number, resultsFile?: string | null, reportsFile?: string | null, tasksFile?: string | null, seenFile?: string | null, outboxTtlMs?: number, app?: string, projOpMs?: number, loginTimeoutMs?: number, log?: (...a: any[]) => void }} o
    */
   constructor(o) {
     super();
@@ -85,6 +87,10 @@ class Link extends EventEmitter {
     this.seenFile = o.seenFile || null;
     this.seen = this.loadSeen();
     this.statusSent = new Map();   // id → { sig, at } of the last task-status sent (at most one per 5 s per task)
+    // v3.48 incoming task-status / task-query are limited per device (a resync answers ≤300 open tasks at once)
+    this.statusLimiter = new C.RateLimiter({ burst: 400, everyMs: 50, now: this.now });
+    this.queryLimiter = new C.RateLimiter({ burst: 8, everyMs: 2000, now: this.now });
+    this.log = o.log || ((...a) => console.warn('[link]', ...a));
     this.destroyed = false;
   }
 
@@ -238,13 +244,19 @@ class Link extends EventEmitter {
       if (this.conns.get(device.pub) !== conn) return;
       this.conns.delete(device.pub);
       this.remotes.delete(device.pub);
+      const seenCheck = this.peerHas(device.pub, 'task-status');   // before the peer is forgotten
       this.forgetPeer(device.pub);
       this.dropLogins(device.pub);
       for (const [id, o] of [...this.projOps]) if (o.pub === device.pub) this.endProjOp(id, { ok: false, reason: 'offline' });
       // its answers came on this connection: a command still sent or queued will never hear its outcome
-      for (const o of this.outgoing) if (o.pub === device.pub && (o.status === 'sent' || o.status === 'queued')) o.status = 'unknown';
+      // (a task's record is the same object: the tasks-out rules below decide it)
+      for (const o of this.outgoing) if (o.pub === device.pub && !this.tasks.has(o.id) && (o.status === 'sent' || o.status === 'queued')) o.status = 'unknown';
       // v3.48 a task sent but never confirmed goes back to the outbox; the others are asked about on the next hello
-      for (const r of this.tasks.values()) if (r.pub === device.pub && (r.status === 'sent' || r.status === 'queued')) Object.assign(r, r.status === 'sent' && r.text ? { status: 'held', reason: 'offline' } : { status: 'unknown' });
+      // An older runner (no cap task-status) has no repeat check and may type it meanwhile: what reached it is never
+      // sent again (unknown → lost on the next hello)
+      for (const r of this.tasks.values()) if (r.pub === device.pub && (r.status === 'sent' || r.status === 'queued')) {
+        if (!seenCheck) { r.status = 'unknown'; delete r.text; } else Object.assign(r, r.status === 'sent' && r.text ? { status: 'held', reason: 'offline' } : { status: 'unknown' });
+      }
       this.saveTasks();
       for (const h of this.handoffsOut.values()) if (h.pub === device.pub) h.finish?.({ ok: false, reason: 'offline' });
       // an offer or transfer dies with the connection; one being applied finishes and reports on the next connection
@@ -307,9 +319,9 @@ class Link extends EventEmitter {
       }
       if (o || r) this.emit('change');
     } else if (m.t === 'task-status') {
-      this.onTaskStatus(d, m);
+      if (this.statusLimiter.take(d.pub)) this.onTaskStatus(d, m);
     } else if (m.t === 'task-query') {
-      if (this.peerHas(d.pub, 'task-status')) for (const id of m.ids) this.write(conn, this.statusMsg(id, d.pub));
+      if (this.peerHas(d.pub, 'task-status') && this.queryLimiter.take(d.pub)) for (const id of m.ids) this.write(conn, this.statusMsg(id, d.pub));
     } else if (m.t === 'task-cancel') {
       const s = this.seen.get(m.id);
       if (!this.peerHas(d.pub, 'task-status') || !s || s.pub !== d.pub) { if (this.peerHas(d.pub, 'task-status')) this.write(conn, this.statusMsg(m.id, d.pub)); }
@@ -534,21 +546,26 @@ class Link extends EventEmitter {
   receiveCommand(conn, d, m) {
     const task = m.report === true && this.peerHas(d.pub, 'report');
     // v3.48 the answer goes on the device's current connection; a task's status is kept (seen) for task-query
-    const reply = (status, reason) => {
-      if (task) this.noteTask(m.id, d.pub, m.project, status, reason);
+    const send = (status, reason) => {
       const c = this.conns.get(d.pub) || conn;
       if (!c.destroyed) this.write(c, { t: 'cmd-status', id: m.id, status, ...(reason ? { reason } : {}) });
     };
-    if (!C.mayCommand(this.devices, this.secrets, d.pub)) return reply('rejected', 'not-allowed');
-    // v3.48 idempotent: a task id this device already sent (outbox resend, resync) is answered, never typed twice
-    const seen = this.seen.get(m.id);
-    if (seen && seen.pub === d.pub) {
+    const reply = (status, reason) => {
+      if (task) this.noteTask(m.id, d.pub, m.project, status, reason);
+      send(status, reason);
+    };
+    // v3.48 a refusal before acceptance (not allowed, rate limited, bad text) is never kept: the same id may come again
+    if (!C.mayCommand(this.devices, this.secrets, d.pub)) return send('rejected', 'not-allowed');
+    // v3.48 idempotent: a task id this device already sent (outbox resend, resync) is answered, never typed twice. A
+    // report still owed for it (reports-out, saved before 'delivered') means it was typed, even if tasks-seen was not saved.
+    const st = this.seenState(m.id, d.pub);
+    if (st) {
       if (this.peerHas(d.pub, 'task-status')) return this.write(conn, this.statusMsg(m.id, d.pub));
-      return this.write(conn, { t: 'cmd-status', id: m.id, status: seen.state === 'queued' ? 'queued' : seen.state === 'rejected' ? 'rejected' : 'delivered', ...(seen.state === 'rejected' && seen.reason ? { reason: seen.reason } : {}) });
+      return this.write(conn, { t: 'cmd-status', id: m.id, status: st.state === 'queued' ? 'queued' : st.state === 'rejected' ? 'rejected' : 'delivered', ...(st.state === 'rejected' && st.reason ? { reason: st.reason } : {}) });
     }
-    if (!this.limiter.take(d.pub)) return reply('rejected', 'rate-limited');
+    if (!this.limiter.take(d.pub)) return send('rejected', 'rate-limited');
     const s = C.sanitizeCommand(m.text);
-    if (!s.ok) return reply('rejected', s.reason);
+    if (!s.ok) return send('rejected', s.reason);
     // main decides (project, engine, busy tab) and answers through reply()
     this.emit('command', { device: d, id: m.id, project: m.project, text: s.text, reply, report: task, ...(m.ttl && this.peerHas(d.pub, 'task-status') ? { ttl: m.ttl } : {}) });
   }
@@ -626,12 +643,14 @@ class Link extends EventEmitter {
         expiresAt: Number(r.expiresAt) || 0, ...(r.reason ? { reason: C.cleanLine(r.reason, 40) } : {}), ...(Number(r.ttl) > 0 ? { ttl: Math.min(Number(r.ttl), C.TASK_TTL_MAX) } : {}),
         ...(r.held ? { held: true } : {}), ...(typeof r.text === 'string' && C.sanitizeCommand(r.text).ok ? { text: C.sanitizeCommand(r.text).text } : {}) };
       // a restart: what was sent or queued is asked about again on the next hello
-      if (rec.status === 'sent' || rec.status === 'queued') rec.status = rec.text && rec.status === 'sent' ? 'held' : 'unknown';
+      // (it reached the wire: an older runner may have typed it, so resync decides: task-query, or lost for an old peer)
+      if (rec.status === 'sent' || rec.status === 'queued') rec.status = 'unknown';
       out.set(rec.id, rec);
     }
     return out;
   }
   saveTasks() {
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     const now = this.now();
     const all = [...this.tasks.values()].sort((x, y) => y.at - x.at);
     const keep = all.filter((r) => !TASK_DONE.has(r.status) || now - r.at < 7 * 24 * 3600 * 1000).slice(0, 300);
@@ -671,7 +690,8 @@ class Link extends EventEmitter {
     const open = [...this.tasks.values()].filter((r) => r.pub === pub && ['sent', 'queued', 'delivered', 'running', 'needs-approval', 'unknown'].includes(r.status));
     if (!this.peerHas(pub, 'task-status')) {
       let changed = false;
-      for (const r of open) if (r.status === 'unknown') { if (r.text && r.expiresAt > this.now()) Object.assign(r, { status: 'held', reason: 'resend' }); else { r.status = 'lost'; delete r.text; } changed = true; }
+      // no repeat check there: a task that reached it may have been typed meanwhile, so it is never sent again
+      for (const r of open) if (r.status === 'unknown') { Object.assign(r, { status: 'lost', reason: 'unknown' }); delete r.text; changed = true; }
       if (changed) this.saveTasks();
       return;
     }
@@ -691,9 +711,17 @@ class Link extends EventEmitter {
       if (m.why) r.why = { state: m.why.state, pos: m.why.pos, len: m.why.len, expiresAt: this.now() + m.why.expiresIn }; else delete r.why;
       if (m.state !== 'queued') delete r.text;
     }
-    this.saveTasks();
-    this.emit('change');
+    this.saveTasksSoon();
   }
+  /** v3.48 a burst of task-status (a resync) is one write of tasks-out and one 'change'. */
+  saveTasksSoon() {
+    if (!this.saveTimer) {
+      this.saveTimer = setTimeout(() => this.flushTasks(), 250);
+      this.saveTimer.unref?.();
+    }
+    if (!this.changeSoon) { this.changeSoon = true; setImmediate(() => { this.changeSoon = false; if (!this.destroyed) this.emit('change'); }); }
+  }
+  flushTasks() { if (this.saveTimer) this.saveTasks(); }
   /** Cancel of a task this device sent: a held one ends here; a queued one there is asked to leave its queue (cap task-status). */
   cancelTask(id) {
     const r = this.tasks.get(id);
@@ -720,14 +748,23 @@ class Link extends EventEmitter {
     return out;
   }
   saveSeen() {
-    const keep = [...this.seen].sort((x, y) => y[1].at - x[1].at).slice(0, 200);
+    // newest 200 per device; a task still queued or typed (owes its report) is never evicted while young, so another
+    // device's traffic can never push it out (a repeat of it would be typed again)
+    const per = new Map();
+    const keep = [...this.seen].sort((x, y) => y[1].at - x[1].at).filter(([, s]) => {
+      const n = per.get(s.pub) || 0;
+      const open = SEEN_OPEN.includes(s.state) && this.now() - s.at < OWED_MS;
+      if (!open && n >= SEEN_PER_DEVICE) return false;
+      per.set(s.pub, n + 1);
+      return true;
+    });
     this.seen = new Map(keep);
     if (!this.seenFile) return;
     try {
       fs.mkdirSync(path.dirname(this.seenFile), { recursive: true, mode: 0o700 });
       fs.writeFileSync(`${this.seenFile}.tmp`, JSON.stringify(Object.fromEntries(keep.map(([id, s]) => [id, { pub: s.pub, project: s.project, state: s.state, at: s.at, ...(s.reason ? { reason: s.reason } : {}) }]))), { mode: 0o600 });
       fs.renameSync(`${this.seenFile}.tmp`, this.seenFile);
-    } catch { /* best effort */ }
+    } catch (e) { this.log('tasks-seen not saved:', e?.code || e?.message || e); }
   }
   noteTask(id, pub, project, status, reason) {
     const prev = this.seen.get(id);
@@ -735,9 +772,17 @@ class Link extends EventEmitter {
     this.seen.set(id, { pub, project, state, at: prev?.at || this.now(), ...(reason ? { reason } : {}) });
     this.saveSeen();
   }
-  statusMsg(id, pub) {
+  /** What this runner knows of a task that device sent: tasks-seen, or a report owed / kept for it (it was typed). */
+  seenState(id, pub) {
     const s = this.seen.get(id);
-    if (!s || s.pub !== pub) return { t: 'task-status', id, state: 'unknown' };
+    const own = s && s.pub === pub ? s : null;
+    const owed = this.reportsOut.get(id);
+    if (owed && owed.pub === pub && (!own || own.state === 'queued' || own.state === 'unknown')) return { pub, state: owed.report ? 'reported' : 'delivered' };
+    return own;
+  }
+  statusMsg(id, pub) {
+    const s = this.seenState(id, pub);
+    if (!s) return { t: 'task-status', id, state: 'unknown' };
     const why = s.state === 'queued' && s.why ? { why: { state: s.why.state, pos: s.why.pos, len: s.why.len, expiresIn: Math.max(0, Math.min(C.TASK_TTL_MAX, Math.round(s.why.expiresAt - this.now()))) } } : {};
     return { t: 'task-status', id, state: s.state, ...(s.reason && s.state === 'rejected' ? { reason: s.reason } : {}), ...why };
   }
@@ -1049,6 +1094,7 @@ class Link extends EventEmitter {
 
   async destroy() {
     this.destroyed = true;
+    this.flushTasks();
     clearTimeout(this.pubTimer);
     for (const id of [...this.projOps.keys()]) this.endProjOp(id, { ok: false, reason: 'offline' });
     if (this.pairing) { clearTimeout(this.pairing.timer); clearInterval(this.pairing.retry); this.pairing.reject?.(new Error('cancelled')); this.pairing = null; }

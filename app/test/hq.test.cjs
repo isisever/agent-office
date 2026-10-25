@@ -526,3 +526,16 @@ test('shell status: tabStateOf types into a shell tab; tabWorkRunning still sees
   // v3.33 sleep/stop refuse a tab with work running ('ready' includes shell)
   assert.match(fnBody('projectOp'), /if \(tabWorkRunning\(id\)\) return \{ ok: false, reason: 'busy' \}/);
 });
+
+test('v3.48 review 5: report.md keeps report2 sizes (40 KB summary cut with the marker, 30 commits) and fences the summary', () => {
+  const C = require('../src/link-core.js');
+  const board = { tasks: [{ id: 't1', title: 'Big', project: 'p', machine: 'self', status: 'queued', commits: [], prs: [], at: 1 }], requests: [] };
+  const commits = Array.from({ length: 40 }, (_, i) => ({ hash: `h${i}`, subject: `s${i}` }));
+  const task = HQ.applyReport(board, 't1', { summary: 'x', commits }).tasks[0];
+  assert.equal(task.commits.length, C.REPORT2_COMMITS);
+  const md = HQ.reportMd(task, { summary: `# not a heading\n\`\`\`\n${'y'.repeat(50000)}` });
+  assert.ok(md.includes('y'.repeat(30000)));
+  assert.ok(md.includes(C.TRUNC_MARK));
+  assert.match(md, /\n````text\n# not a heading\n```\n/);   // fenced longer than the backticks inside: stays data
+  assert.match(md, /\n````\n/);
+});
