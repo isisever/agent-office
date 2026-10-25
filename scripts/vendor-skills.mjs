@@ -127,6 +127,13 @@ export function check(root = ROOT, manifest = readManifest(path.join(root, 'mani
     for (const s of skillsOf(dir)) if (FORBIDDEN_SKILLS.includes(s)) bad.push(`${pack.id}: skill ${s} must not ship`);
     const pj = JSON.parse(fs.readFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), 'utf8'));
     for (const k of ['hooks', 'mcpServers', 'lspServers', 'monitors', 'commands', 'agents', 'settings']) if (pj[k]) bad.push(`${pack.id}: plugin.json has ${k}`);
+    // every recorded patch is in the vendored tree (no hand-only edit, no patch lost on a rebuild)
+    for (const p of pack.patches || []) {
+      let text = '';
+      try { text = fs.readFileSync(path.join(dir, p.file), 'utf8'); } catch { bad.push(`${pack.id}: patched ${p.file} is missing`); continue; }
+      if (!text.includes(p.replace)) bad.push(`${pack.id}: patch for ${p.file} is not applied (rebuild the pack)`);
+    }
+    if (up && (up.patches || []).length !== (pack.patches || []).length) bad.push(`${pack.id}: UPSTREAM.json lists ${(up.patches || []).length} patches, manifest ${(pack.patches || []).length}`);
   }
   return bad;
 }

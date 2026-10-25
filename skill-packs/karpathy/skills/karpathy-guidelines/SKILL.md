@@ -15,10 +15,10 @@ Behavioral guidelines to reduce common LLM coding mistakes, derived from [Andrej
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
 
 Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
+- State your assumptions explicitly. If uncertain, pick the most reasonable option, say why in one line, and proceed.
+- If multiple interpretations exist, name them, pick the most reasonable one and say which - don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+- If something is unclear, name what's confusing and the assumption you make, then proceed. Ask only when the choice is genuinely the user's (scope, outward-facing or destructive actions, credentials), and batch those questions at the end.
 
 ## 2. Simplicity First
 
