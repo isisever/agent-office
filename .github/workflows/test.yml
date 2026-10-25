@@ -55,6 +55,8 @@ jobs:
         run: node --test app/test/hq.test.cjs app/test/hq-link.test.cjs
       - name: Routines (scheduler, held approvals)
         run: node --test app/test/routines.test.cjs
+      - name: Effective model (what Auto runs on)
+        run: node --test app/test/effective-model.test.cjs
       - name: node-pty quit-crash patch + pty guard
         run: node --test app/test/node-pty-patch.test.cjs
       - name: pty wiring (attachPty)

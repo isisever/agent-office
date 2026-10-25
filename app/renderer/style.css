@@ -1014,6 +1014,9 @@ label.sb-langrow { cursor: pointer; }
 .sb-modal .sb-acct-wrap { display: flex; justify-content: space-between; flex-wrap: wrap; padding: 5px 0; font-size: 12px; }
 .sb-modal .sb-acct { font-size: 12px; max-width: 220px; min-width: 150px; padding-top: 3px; padding-bottom: 3px; }
 .sb-modal .sb-na { display: block; max-width: none; }
+.sb-acct-wrap:has(> .sb-model-hint) { flex-wrap: wrap; }
+.sb-model-hint { flex-basis: 100%; font-size: 10px; line-height: 1.3; opacity: .8; white-space: normal; color: var(--warn, #c98a1b); }
+.sb-model-hint[hidden] { display: none; }
 .sb-modal .sb-files { width: 14px; height: 14px; }
 .sb-modal-global .sb-botcolor { padding: 7px 0; font-size: 12px; opacity: 1; }
 .sb-modal-global .sb-lang, .sb-modal-global .sb-theme { max-width: 200px; font-size: 12px; }
