@@ -27,12 +27,16 @@
 // waits on it. The ask wins: a sentence with an ask topic (approve, deploy, publish, delete, spend, credentials,
 // login, a product decision phrased as theirs: "hangisini tercih edersiniz?") is never a menu, so "Shall I proceed
 // with the production deploy?" or "Should we use Stripe or Paddle for billing?" stops. Asking leave for its own next
-// step ("kapatmamı istersiniz", "odaklanmamı ister misiniz", "should I focus on…", "do you want me to … first?") and
-// "hangisini … önce" are menus too, even beside an offer to let the person try it first. A pick ("Hangisini
+// step ("odaklanmamı ister misiniz", "should I focus on…", "do you want me to … first/now?") is no menu but an
+// ordinary work cue (LEAVE_CUES): the judge tells its own work (label 1: blocks) from an outward-facing or destructive
+// step (drop a column, delete branches, make the repo public, restart a server, push notifications: label 2, stops),
+// and without the judge a work cue with no ask blocks. "hangisini … önce" stays a menu. A pick ("Hangisini
 // istersiniz?", "which do you want?", "hangisini tercih edersiniz?") is the person's product decision unless the
 // assistant recommends an option in the pick's paragraph or the one just before it ("Önerim bu", "Bence sırası:",
 // "bence ilki", "I'd go with A", "I recommend option 1"): then it has decided already and the pick is a menu. A general
-// opinion ("Bence hata cache kaynaklıydı", "I suggest we keep an eye on…") or a recommendation further up is none.
+// opinion ("Bence hata cache kaynaklıydı", "I suggest we keep an eye on…") or a recommendation further up is none,
+// nor one whose sentence, or the pick's, leaves the decision to the person ("but it is your brand", "your call",
+// "up to you", "sizin kararınız", "size kalmış", "sizin markanız").
 // The order or approach of the work ("nereden başlayalım?", "which approach do you want: A or B?") is a menu.
 // Outward-facing steps are asks: mail to people, customers, invoices, buying, a merge to main, a migration on live data. Turkish menu cues count only in a sentence with "?" ("devam edelim dedim"
 // is narrative), and the "mı/mi" particle only as a whole word.
@@ -53,8 +57,8 @@ export const FINISH_REASON_MENU_SOLO =
 
 // the judge's labels: the classifier answers with one of them, so each says what it means
 export const JUDGE_LABELS = [
-  'lists or offers more work the assistant could still do itself now, or asks the user to pick among options, choose what to do first, or confirm continuing or committing',
-  "asks the user for an approval of an outward-facing or destructive step (deploy, publish, delete, spend), credentials or a login, or a product decision that is theirs, or leaves them a step only they can take; technical choices and the order of the work are not the user's decision",
+  "lists or offers more work the assistant could still do itself now, or asks the user to pick among options or choose what to do first, or asks leave to continue, commit, or take its own next step (fix, focus on, tackle something), or to choose the order of the assistant's own work",
+  "asks the user for an approval of an outward-facing or destructive step (deploy, publish, delete data or branches, drop a column, force-push, rotate keys, make a repo public, start a paid trial, post in Slack, send push notifications to users, restart a server, open a PR, spend), credentials or a login, or a product decision that is theirs, or leaves them a step only they can take; technical choices and the order of the work are not the user's decision",
   'reports finished work with nothing left to do',
 ] as const
 
@@ -133,8 +137,6 @@ const MENU_CUES_TR: RegExp[] = [
   // "devam edelim mi", "devam etmemi ister misiniz", "kaydetmemi / commit etmemi / commit atmamı ister misiniz"
   re(String.raw`<devam (?:edeyim|edelim|etmemi|edilsin|etmeli miyim|etmeli miyiz)>`),
   re(String.raw`<(?:kaydet|commit (?:et|at)|commitle)\p{L}*(?:memi|mamı|eyim|ayım|elim|alım)>`),
-  // permission for its own next step: "kapatmamı istersiniz", "odaklanmamı ister misiniz", "yapmamı ister misin"
-  re(String.raw`\p{L}(?:mamı|memi|mamızı|memizi) (?:ister mi(?:siniz|sin)|istersiniz|istersin)>`),
   // which first: "hangisini önce kapatayım", "bunlardan hangisiyle önce"
   re(String.raw`<hangisi\p{L}*[^.?!\n]{0,40}?<önce>`),
 ]
@@ -148,10 +150,9 @@ const MENU_CUES_EN: RegExp[] = [
   re(String.raw`<(?:do you want|would you like) (?:me to |us to )?(?:continue|proceed|keep going|commit)>`),
   re(String.raw`<let me know how (?:you(?:'d| would) like|you want) (?:me |us )?(?:to )?(?:proceed|continue|go on)>`),
   // "should I do A or B?"
-  re(String.raw`<(?:shall|should) (?:i|we) [^.?!\n]{1,60} or [^.?!\n]{1,60}\?`),
-  // permission for its own next step: "should I focus on…", "do you want me to fix the parser first?"
-  re(String.raw`<(?:shall|should) (?:i|we) (?:focus|start|begin|tackle|work on|look (?:at|into)|fix|move on)>`),
-  re(String.raw`<(?:do you want|would you like) (?:me|us) to [^.?!\n]{1,60}?<(?:first|next|now)>`),
+  // (not "should I fix X now, or do you want to try it yourself first?": the other way is the person's own, so that
+  // is leave for its own next step, a LEAVE_CUES)
+  re(String.raw`<(?:shall|should) (?:i|we) [^.?!\n]{1,60} or (?!(?:do |would |will |can )?you>)[^.?!\n]{1,60}\?`),
   // the technical approach or the order: "which approach do you want: A or B?", "what order should…"
   re(String.raw`<(?:which|what) (?:approach|method|strategy|order|path)(?:es|s)?>[^.!\n]{0,60}\?`),
 ]
@@ -160,13 +161,21 @@ const MENU_CUES_EN: RegExp[] = [
 const RECOMMENDS = re(
   String.raw`<(?:önerim|önerimiz|tavsiyem|tavsiyemiz|bence (?:sırası|sıra|önce|ilki|ikincisi|üçüncüsü|birinci|ikinci|üçüncü|ilk)>|my recommendation|i'?d go with|i would go with|i(?:'?d| would)? recommend (?:option|the first|the second|the third|starting|going with|[abc](?=\s*(?:[.,;:)!?]|$)))|i(?:'?d| would)? suggest (?:option|starting|going with|the first|the second|the third))`,
 )
+// the decision explicitly left to the person ("but it is your brand", "your call", "size kalmış"): a recommendation
+// in that sentence, or a pick that says so, leaves the pick theirs
+const LEAVES_DECISION = re(
+  String.raw`<(?:your (?:brand|call|decision|choice)|up to you|sizin (?:kararınız|markanız|tercihiniz)|senin (?:kararın|markan)|size kalmış|sana kalmış)>`,
+)
 // a recommendation counts for a pick only in the pick's paragraph or the one just before it (a list block, then
 // "Hangisini istersiniz?"); one far up the message is about something else
 function recommendationNear(message: string) {
   const paragraphs = message.split(/\n[ \t]*\n/u)
-  const recommends = paragraphs.map(paragraph => RECOMMENDS.test(fold(prose(paragraph))))
+  const recommends = paragraphs.map(paragraph =>
+    sentencesOf(fold(prose(paragraph))).some(sentence => RECOMMENDS.test(sentence) && !LEAVES_DECISION.test(sentence)),
+  )
   return (sentence: string) => {
     const needle = sentence.trim()
+    if (LEAVES_DECISION.test(fold(prose(needle)))) return false
     return paragraphs.some((paragraph, index) => paragraph.includes(needle) && (recommends[index] || (index > 0 && recommends[index - 1])))
   }
 }
@@ -192,8 +201,18 @@ function isMenu(sentence: string, isRecommended = false) {
   return MENU_CUES_TR.some(cue => cue.test(text)) || (PAIRED_QUESTION.test(text) && OWN_ACTION.test(text))
 }
 
-// the work cues: a list of what is left, next steps, or an offer to do more
-const WORK_CUES: RegExp[] = [HEADING_CUE, ...OFFER_CUES, ...NOT_DONE_CUES]
+// leave for its own next step: an ordinary work cue, not a menu, so the judge decides (fix it now: label 1; drop the
+// column, delete the branches, restart the server: label 2) and without the judge a work cue with no ask blocks
+const LEAVE_CUES: RegExp[] = [
+  // "kapatmamı istersiniz", "odaklanmamı ister misiniz", "yapmamı ister misin"
+  re(String.raw`\p{L}(?:mamı|memi|mamızı|memizi) (?:ister mi(?:siniz|sin)|istersiniz|istersin)>`),
+  // "should I focus on…", "do you want me to fix the parser first?"
+  re(String.raw`<(?:shall|should) (?:i|we) (?:focus|start|begin|tackle|work on|look (?:at|into)|fix|move on)>`),
+  re(String.raw`<(?:do you want|would you like) (?:me|us) to [^.?!\n]{1,60}?<(?:first|next|now)>`),
+]
+
+// the work cues: a list of what is left, next steps, an offer to do more, or leave for its own next step
+const WORK_CUES: RegExp[] = [HEADING_CUE, ...OFFER_CUES, ...LEAVE_CUES, ...NOT_DONE_CUES]
 
 // what only the person can give: approvals for outward-facing or destructive steps, credentials, their decisions
 const ASK_TOPICS: RegExp[] = [
@@ -248,7 +267,7 @@ const NOT_VERIFIED = re(
 
 function isUserOnly(sentence: string, isRecommended: boolean) {
   const text = fold(prose(sentence))
-  if (HEADING_CUE.test(text) || OFFER_CUES.some(offer => offer.test(text)) || isMenu(sentence, isRecommended)) return false
+  if (HEADING_CUE.test(text) || [...OFFER_CUES, ...LEAVE_CUES].some(offer => offer.test(text)) || isMenu(sentence, isRecommended)) return false
   if (LATER.some(marker => marker.test(text))) return true
   // work announced as not done stays against a mere "you can": "not implemented yet; you can use the old one"
   if (NOT_DONE_CUES.some(cue => cue.test(text))) return false

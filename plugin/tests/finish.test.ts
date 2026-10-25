@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
-import { FINISH_REASON_MANAGER, FINISH_REASON_MENU_MANAGER, FINISH_REASON_MENU_SOLO, FINISH_REASON_SOLO, JUDGE_LABELS, assistantsPart, finishCues, heuristicBlocks } from '../hooks/finish'
+import { FINISH_REASON_MANAGER, FINISH_REASON_MENU_MANAGER, FINISH_REASON_MENU_SOLO, FINISH_REASON_SOLO, JUDGE_LABELS, assistantsPart, finishCues, finishPrompt, finishVerdict, heuristicBlocks } from '../hooks/finish'
 
 // the finish guard (app contract v3.10): classic.Stop blocks a main-loop stop whose final message lists work
 // the loop could still do, in manager mode and with AGENT_OFFICE_FINISH=1
@@ -245,13 +245,10 @@ const MENUS: string[] = [
   'Ne yapalım?',
   'A mı yoksa B mi olsun?',
   'Which would you like first, A or B?',
-  // permission for its own next step, which-first, and a pick after its own recommendation (S3D, v3.52)
+  // which-first, and a pick after its own recommendation (S3D, v3.52)
   'Boolean sonuçlarında en fazla 3 açık kenar kalabiliyor; hacim doğru.\n\nBunların hangisini önce kapatmamı istersiniz? Commit yapmadım.',
-  'En son değişikliklere reviewer çalıştırmadım.\n\nCommit yapmadım. Küre sorununa şimdi odaklanmamı ister misiniz, yoksa önce uygulamayı kendiniz deneyip geri bildirim mi vermek istersiniz?',
   '1. **Voksel booleanı:** Sonuç her zaman kapalı. Önerim bu. 2. **Tam üçgen-üçgen yeniden yazım:** uzun sürer.\n\nHangisini istersiniz?',
   "Geçmiş paneli: bizde yalnız metin listesi var.\n\nBunlardan hangisini önce yapmamı istersiniz? Bence sırası: menü/araç grupları, sonra taşıma gizmo'su.",
-  'The sphere still leaks. Should I focus on the sphere now, or do you want to try the app yourself first?',
-  'Two gaps remain. Do you want me to close the open edges first?',
   'Option 1 is a voxel boolean, option 2 a full rewrite. I recommend option 1. Which do you want?',
   "A: menus, B: the move gizmo. I'd go with A. Which would you prefer?",
   // the order or the technical approach of the work is the assistant's
@@ -287,6 +284,23 @@ const REAL_ASKS: string[] = [
   'Do you want me to run the migration on the live database now?',
   'Bitti; şirket hesabından domain almamı ister misiniz?',
   'Should I fix the invoice amounts in the customer accounts?',
+]
+// leave for its own next step: a work cue, no menu, so the judge decides; label 1 blocks, label 2 stops, and without
+// the judge a work cue with no ask blocks
+const S3D_LEAVE =
+  'En son değişikliklere reviewer çalıştırmadım.\n\nCommit yapmadım. Küre sorununa şimdi odaklanmamı ister misiniz, yoksa önce uygulamayı kendiniz deneyip geri bildirim mi vermek istersiniz?'
+const LEAVE_OUTWARD: string[] = [
+  'Do you want me to drop the old column now?',
+  'Eski branchleri temizlememi ister misiniz?',
+  'Repoyu public yapmamı ister misiniz?',
+  'Sunucuyu yeniden başlatmamı ister misiniz?',
+  'Kullanıcılara push bildirimi atmamı ister misiniz?',
+]
+const LEAVE: string[] = [
+  S3D_LEAVE,
+  'The sphere still leaks. Should I focus on the sphere now, or do you want to try the app yourself first?',
+  'Two gaps remain. Do you want me to close the open edges first?',
+  ...LEAVE_OUTWARD,
 ]
 // narrative, not a question: Turkish menu cues need a "?", and "mı/mi" is a whole word
 const NARRATIVE: string[] = [
@@ -333,6 +347,43 @@ test('a menu in the "does it itself" mode gets the solo wording', async ($, on) 
   await $.session.start(start)
   await prompt($, 'model the S3D part')
   expect((await stop($, MENU_S3D)).block).toBe(FINISH_REASON_MENU_SOLO)
+})
+
+test('leave for its own next step is a work cue the judge decides, not a menu', () => {
+  expect(LEAVE.filter(message => finishCues(message).isMenu)).toEqual([])
+  expect(LEAVE.filter(message => !finishCues(message).isWork || finishCues(message).isAsk)).toEqual([])
+  // the judge off or failed: a work cue with no ask blocks
+  expect(LEAVE.filter(message => !heuristicBlocks(message))).toEqual([])
+  const verdict = (message: string, label: string | undefined) => {
+    finishPrompt(undefined, '')
+    return finishVerdict({ mode: 'manager', cues: finishCues(message) }, label)
+  }
+  // label 2: an outward-facing or destructive step is the person's to approve
+  for (const message of LEAVE) expect(verdict(message, JUDGE_LABELS[1])).toBeUndefined()
+  // label 1: leave for its own work blocks with the ordinary reason
+  expect(verdict(S3D_LEAVE, JUDGE_LABELS[0])).toEqual({ block: FINISH_REASON_MANAGER })
+  expect(verdict(S3D_LEAVE, undefined)).toEqual({ block: FINISH_REASON_MANAGER })
+  // the labels say which is which
+  expect(JUDGE_LABELS[0]).toContain('asks leave to continue')
+  expect(JUDGE_LABELS[0]).toContain("order of the assistant's own work")
+  for (const step of ['drop a column', 'force-push', 'rotate keys', 'delete data or branches', 'make a repo public', 'paid trial', 'post in Slack', 'push notifications to users', 'restart a server', 'open a PR'])
+    expect(JUDGE_LABELS[1]).toContain(step)
+})
+
+test('a recommendation that leaves the decision to the person does not make the pick a menu', () => {
+  const LEFT_TO_THEM = [
+    'Logo: I would go with blue, but it is your brand. Which do you prefer?',
+    "I'd go with A, but it is your call. Which would you prefer?",
+    'Önerim mavi. Sizin markanız, logo için hangisini istersiniz?',
+    'Önerim mavi, ama karar size kalmış. Hangisini istersiniz?',
+    "My recommendation is A, but it's up to you. Which do you prefer?",
+  ]
+  expect(LEFT_TO_THEM.filter(message => finishCues(message).isMenu || heuristicBlocks(message))).toEqual([])
+  expect(LEFT_TO_THEM.filter(message => !finishCues(message).isAsk)).toEqual([])
+  finishPrompt(undefined, '')
+  expect(finishVerdict({ mode: 'manager', cues: finishCues(LEFT_TO_THEM[0]) }, JUDGE_LABELS[1])).toBeUndefined()
+  // without the hand-back the recommendation still decides
+  expect(finishCues("I'd go with A. Which would you prefer?").isMenu).toBe(true)
 })
 
 // the heuristic alone (the judge's fallback), Turkish and English
