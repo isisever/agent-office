@@ -948,6 +948,8 @@
       "not-running": "waiting — {project} boss is not running, starting it",
       "pos": "{n} of {len} in its queue",
       "expires": "expires in {min} min",
+      "offline": "waiting — {machine} is offline; sent when it is back",
+      "sending": "sending to {machine}…",
       "cancel": "Cancel",
       "cancelTip": "Remove this task from the project's queue"
     }

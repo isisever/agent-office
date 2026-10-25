@@ -920,6 +920,8 @@
       "not-running": "bekliyor — {project} patronu çalışmıyor, başlatılıyor",
       "pos": "kuyrukta {len} görevden {n}.",
       "expires": "{min} dk sonra düşer",
+      "offline": "bekliyor — {machine} çevrimdışı; geri gelince gönderilecek",
+      "sending": "{machine} makinesine gönderiliyor…",
       "cancel": "İptal",
       "cancelTip": "Bu görevi projenin kuyruğundan çıkar"
     }

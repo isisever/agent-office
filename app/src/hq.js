@@ -239,10 +239,23 @@ function setStatus(board, id, status, reason, now = Date.now()) {
 }
 const PR_RE = /https:\/\/(?:github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+|gitlab\.com\/[\w./-]+\/-\/merge_requests\/\d+)/g;
 const extractPrs = (text) => [...new Set(String(text || '').match(PR_RE) || [])].slice(0, 10);
+/** v3.48 a remote task's link record (status of the dispatcher's tasks-out entry) → its board status, or null while unknown. */
+function boardOfRemote(r) {
+  if (!r || typeof r.status !== 'string') return null;
+  if (r.status === 'held') return { status: 'queued', reason: r.reason === 'resend' ? 'resend' : 'offline' };
+  if (r.status === 'sent') return { status: 'queued' };
+  if (r.status === 'unknown') return null;   // asked about on the device's next hello (task-query): the card stays
+  if (['queued', 'delivered', 'running', 'needs-approval', 'expired', 'lost'].includes(r.status)) return { status: r.status, ...(r.reason && r.status !== 'queued' ? { reason: r.reason } : {}) };
+  if (r.status === 'rejected') return { status: 'rejected', reason: r.reason || 'failed' };
+  return null;   // reported: the report itself moves the card
+}
+/** v3.48 a remote task's record is still open (kept open across a restart; resync on hello). */
+const remoteOpen = (r) => Boolean(r && typeof r.status === 'string' && !['reported', 'rejected', 'expired', 'lost'].includes(r.status));
 function applyReport(board, id, report, now = Date.now()) {
   return { ...board, tasks: board.tasks.map((t) => (t.id !== id ? t : {
     ...t, status: report?.partial ? 'partial' : 'reported', finishedAt: now, report: `tasks/${id}/report.md`, read: false,
-    commits: (report?.commits || []).slice(0, 12).map((c) => ({ hash: line(c.hash, 40), subject: line(c.subject, 200) })), prs: extractPrs(report?.summary),
+    commits: (report?.commits || []).slice(0, 12).map((c) => ({ hash: line(c.hash, 40), subject: line(c.subject, 200) })), prs: [...new Set([...(Array.isArray(report?.prs) ? report.prs.filter((u) => typeof u === 'string' && /^https:\/\/\S+$/.test(u)) : []), ...extractPrs(report?.summary)])].slice(0, 10),
+    ...(report?.transcriptRef ? { transcript: line(report.transcriptRef, 64) } : {}), ...(report?.truncated ? { truncated: true } : {}),
   })) };
 }
 /** Request ids whose tasks are all terminal and not yet marked done → the board with them marked, and the list. */
@@ -364,6 +377,7 @@ You may edit this file: Agent Office writes it only when it is missing.
 `;
 
 module.exports = {
+  boardOfRemote, remoteOpen,
   waitState, WAIT_STATES,
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
