@@ -223,6 +223,17 @@ function pinnedModel(force: string | undefined, model: string | undefined): stri
 // folder and X's servers without searching the disk. The file does not change while the session runs, so the text
 // stays the same on every request (prompt cache).
 const PROJECTS_SECTION_ID = 'agent-office:projects'
+// the host (app contract v3.51): every loop inside the app (AGENT_OFFICE_APP, not nested; manager on or off,
+// subagents and teammates too) learns that Agent Office, not a terminal or an editor, is the process it runs in, so
+// it names the right app for an OS permission and never quits it. A fixed text per platform: the prompt cache keeps it.
+const HOST_SECTION_ID = 'agent-office:host'
+const HOST_TEXT = `# Host (Agent Office)
+
+You run inside the Agent Office desktop app (its built-in terminal), not Terminal, iTerm or VS Code.`
+const HOST_MAC = ` Agent Office is the host process: macOS permissions (Screen Recording, Accessibility, Automation, Files) are granted to Agent Office, and a newly granted one takes effect only after the person quits and reopens Agent Office.`
+const HOST_END = ' Never quit or restart Agent Office yourself.'
+/** The host section's text; Windows has no macOS permissions sentence. */
+const hostText = (isWin: boolean) => `${HOST_TEXT}${isWin ? '' : HOST_MAC}${HOST_END}`
 // one boss (app contract v3.35): with AGENT_OFFICE_REMOTE=1 (the app links this office to other machines; decided at
 // the tab's start) the boss loop learns its agent-office MCP tools. A fixed text: the prompt cache keeps it.
 const MACHINES_SECTION_ID = 'agent-office:machines'
@@ -281,11 +292,16 @@ When the person names one of these projects, they mean that folder: read and wor
 // Manager mode's nudge: when the main loop has made NUDGE_AFTER tool calls of its own in a row this turn without
 // handing anything off, the reminder rides that call's result (tool.call `context`, read like a PostToolUse
 // hook's additionalContext). It is a message in the conversation, not system prompt text, so the cached prompt
-// stays as it is. At most once per turn; a turn's start and a delegating call reset the count, and calls that
-// neither do work nor delegate (planning, tool search, questions to the person) leave it alone. Never for a
-// subagent or a teammate (their calls carry agentId).
+// stays as it is. A turn's start and a delegating call reset the count, and calls that neither do work nor delegate
+// (planning, tool search, questions to the person) leave it alone. Escalation (app contract v3.51): a boss that keeps
+// working alone gets a firmer reminder, with the count, every NUDGE_REPEAT own calls after that (never on every
+// call); once nudged in a turn, every later reminder of that turn is the firm one. Never for a subagent or a
+// teammate (their calls carry agentId).
 const NUDGE_AFTER = 6
+const NUDGE_REPEAT = 10
 const NUDGE_TEXT = `Agent Office manager mode: you've done ${NUDGE_AFTER} steps of this turn yourself without handing any off. Hand the rest of the work to background agents (Agent tool), in parallel where the pieces are independent, and stay available to the person; keep your own steps to orientation, reviewing results and the final check. If the person asked you to do this yourself, carry on.`
+const nudgeFirmText = (steps: number, nudges: number) =>
+  `Agent Office manager mode, reminder ${nudges + 1} this turn: ${steps} steps in a row are your own and you were already told to hand off. Stop doing the work yourself now: your next call should be the Agent tool, briefing background agents with the rest of the work (in parallel where the pieces are independent). Only if the person asked you to do this yourself, carry on.`
 // calls that hand work off
 const DELEGATING_TOOLS = new Set(['Agent', 'Task', 'SendMessage'])
 // bookkeeping calls: neither the work itself nor a hand-off
@@ -364,9 +380,11 @@ let isInApp = false // AGENT_OFFICE_APP: the session runs inside the Agent Offic
 // the parent's env, AGENT_OFFICE_* included, so it must not act as an office session (app contract v3.12, nested)
 let isNested = false
 let isManager = false // AGENT_OFFICE_MANAGER=1: manager mode, with its nudge
-// manager mode's nudge (NUDGE_AFTER): the main loop's own calls in a row this turn, and whether it was nudged
+// manager mode's nudge (NUDGE_AFTER): the main loop's own calls in a row this turn, the reminders given this turn,
+// and whether one is owed (its call was refused, so the next call carries it)
 let ownSteps = 0
-let isNudged = false
+let nudges = 0
+let isNudgeOwed = false
 // the subagents' step budget (STEP_BUDGET_MIN): N, 0 = off; whether calls past 2N are refused; reminders whose call was
 // refused, for that agent's next call; agents stopped for calling on after refusals (true once the boss was told)
 let stepBudget = 0
@@ -1158,22 +1176,25 @@ function countStep(tool: string) {
   if (!isManager) return false
   if (DELEGATING_TOOLS.has(tool)) {
     ownSteps = 0
+    isNudgeOwed = false
     return false
   }
   if (NEUTRAL_TOOLS.has(tool)) return false
   ownSteps++
-  if (isNudged || ownSteps < NUDGE_AFTER) return false
-  isNudged = true
-  return true
+  return isNudgeOwed || (ownSteps >= NUDGE_AFTER && (ownSteps - NUDGE_AFTER) % NUDGE_REPEAT === 0)
 }
 
-// the call's answer with the nudge after its result; a refused call has no result to carry it, so the next one does
+// the call's answer with the nudge after its result (the first of the turn, else the firm one); a refused call has
+// no result to carry it, so the next one does
 function withNudge(answer: ToolCallResult): ToolCallResult {
   if (answer.deny !== undefined) {
-    isNudged = false
+    isNudgeOwed = true
     return answer
   }
-  return { ...answer, context: [...(answer.context ?? []), NUDGE_TEXT] }
+  isNudgeOwed = false
+  const text = nudges ? nudgeFirmText(ownSteps, nudges) : NUDGE_TEXT
+  nudges++
+  return { ...answer, context: [...(answer.context ?? []), text] }
 }
 
 type StepAction = { kind: 'remind'; text: string } | { kind: 'deny'; text: string; isStop: boolean }
@@ -1370,7 +1391,10 @@ export const register: Register = on => {
       const pinned = pinnedModel(await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL_FORCE'), await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL'))
       sections.push({ id: MANAGER_SECTION_ID, text: managerText(pinned), scope: 'session' as const })
     }
-    const directoryFile = (await $.env.get('AGENT_OFFICE_APP')) ? await $.env.get('AGENT_OFFICE_DIRECTORY') : undefined
+    const isApp = Boolean(await $.env.get('AGENT_OFFICE_APP'))
+    if (isApp && !sections.some(section => section.id === HOST_SECTION_ID))
+      sections.push({ id: HOST_SECTION_ID, text: hostText((await $.env.get('OS')) === 'Windows_NT'), scope: 'session' as const })
+    const directoryFile = isApp ? await $.env.get('AGENT_OFFICE_DIRECTORY') : undefined
     if (directoryFile && !sections.some(section => section.id === PROJECTS_SECTION_ID)) {
       const journal = rootDir && (await $.env.get('AGENT_OFFICE_JOURNAL')) !== '0' ? `${rootDir}/${JOURNAL_FILE}` : ''
       const text = directoryText(await $.fs.read(directoryFile).catch(() => ''), journal)
@@ -1609,7 +1633,8 @@ export const register: Register = on => {
     finishTurnStart()
     turnPrompt = e.text
     ownSteps = 0
-    isNudged = false
+    nudges = 0
+    isNudgeOwed = false
     // a new turn starts where the main loop runs, not where the last one ended
     const bossDir = sessionCwd !== sessionRoot ? sessionCwd : undefined
     if (!stats.isBossBusy || stats.bossDir !== bossDir)
