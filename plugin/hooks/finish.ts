@@ -30,8 +30,11 @@
 // step ("kapatmamı istersiniz", "odaklanmamı ister misiniz", "should I focus on…", "do you want me to … first?") and
 // "hangisini … önce" are menus too, even beside an offer to let the person try it first. A pick ("Hangisini
 // istersiniz?", "which do you want?", "hangisini tercih edersiniz?") is the person's product decision unless the
-// message carries the assistant's own recommendation ("Önerim", "Bence", "I recommend", "I'd go with"): then it has
-// decided already and the pick is a menu. Turkish menu cues count only in a sentence with "?" ("devam edelim dedim"
+// assistant recommends an option in the pick's paragraph or the one just before it ("Önerim bu", "Bence sırası:",
+// "bence ilki", "I'd go with A", "I recommend option 1"): then it has decided already and the pick is a menu. A general
+// opinion ("Bence hata cache kaynaklıydı", "I suggest we keep an eye on…") or a recommendation further up is none.
+// The order or approach of the work ("nereden başlayalım?", "which approach do you want: A or B?") is a menu.
+// Outward-facing steps are asks: mail to people, customers, invoices, buying, a merge to main, a migration on live data. Turkish menu cues count only in a sentence with "?" ("devam edelim dedim"
 // is narrative), and the "mı/mi" particle only as a whole word.
 
 export const FINISH_BLOCKS_MAX = 2
@@ -124,6 +127,9 @@ const MENU_CUES_TR: RegExp[] = [
   re(String.raw`<(?:önce|ilk olarak|ilk) (?:hangi|ne)\p{L}*[^.?!\n]{0,30}?\p{L}(?:elim|alım|eyim|ayım)>`),
   // "ne yapalım", "nasıl ilerleyelim" ("sizce hangisi daha uygun?" stays with the judge: it may be the person's decision)
   re(String.raw`<(?:ne|nasıl) (?:yapalım|yapayım|edelim|edeyim|ilerleyelim|ilerleyeyim)>`),
+  // the order or the technical approach of the work: "nereden başlayalım?", "hangi yaklaşımla / yöntemi…?"
+  re(String.raw`<nereden (?:başla|devam ed|devam et|gir|ilerle)\p{L}*(?:elim|alım|eyim|ayım)>`),
+  re(String.raw`<hangi (?:yaklaşım|yöntem|yol|sıra)\p{L}*`),
   // "devam edelim mi", "devam etmemi ister misiniz", "kaydetmemi / commit etmemi / commit atmamı ister misiniz"
   re(String.raw`<devam (?:edeyim|edelim|etmemi|edilsin|etmeli miyim|etmeli miyiz)>`),
   re(String.raw`<(?:kaydet|commit (?:et|at)|commitle)\p{L}*(?:memi|mamı|eyim|ayım|elim|alım)>`),
@@ -146,11 +152,24 @@ const MENU_CUES_EN: RegExp[] = [
   // permission for its own next step: "should I focus on…", "do you want me to fix the parser first?"
   re(String.raw`<(?:shall|should) (?:i|we) (?:focus|start|begin|tackle|work on|look (?:at|into)|fix|move on)>`),
   re(String.raw`<(?:do you want|would you like) (?:me|us) to [^.?!\n]{1,60}?<(?:first|next|now)>`),
+  // the technical approach or the order: "which approach do you want: A or B?", "what order should…"
+  re(String.raw`<(?:which|what) (?:approach|method|strategy|order|path)(?:es|s)?>[^.!\n]{0,60}\?`),
 ]
-// the assistant's own recommendation in the message: it already decided, so "Hangisini istersiniz?" is a menu
+// the assistant's recommendation of an option ("önerim bu", "bence ilki", "I'd go with A"), not a general opinion
+// ("Bence hata cache kaynaklıydı", "I suggest we keep an eye on memory"): it already decided, so a pick beside it is a menu
 const RECOMMENDS = re(
-  String.raw`<(?:önerim|tavsiyem|bence|i recommend|i'?d recommend|my recommendation|i'?d go with|i would go with|i suggest|i'?d suggest)>`,
+  String.raw`<(?:önerim|önerimiz|tavsiyem|tavsiyemiz|bence (?:sırası|sıra|önce|ilki|ikincisi|üçüncüsü|birinci|ikinci|üçüncü|ilk)>|my recommendation|i'?d go with|i would go with|i(?:'?d| would)? recommend (?:option|the first|the second|the third|starting|going with|[abc](?=\s*(?:[.,;:)!?]|$)))|i(?:'?d| would)? suggest (?:option|starting|going with|the first|the second|the third))`,
 )
+// a recommendation counts for a pick only in the pick's paragraph or the one just before it (a list block, then
+// "Hangisini istersiniz?"); one far up the message is about something else
+function recommendationNear(message: string) {
+  const paragraphs = message.split(/\n[ \t]*\n/u)
+  const recommends = paragraphs.map(paragraph => RECOMMENDS.test(fold(prose(paragraph))))
+  return (sentence: string) => {
+    const needle = sentence.trim()
+    return paragraphs.some((paragraph, index) => paragraph.includes(needle) && (recommends[index] || (index > 0 && recommends[index - 1])))
+  }
+}
 // a pick handed to the person: a preference of theirs, unless the message recommends one
 const PICK = re(
   String.raw`<(?:hangisini (?:istersin|istersiniz|tercih edersin|tercih edersiniz)|tercihin|which (?:one |option )?(?:do you want|would you like|do you prefer|would you prefer)(?! (?:me|us|to|first)>)|(?:do|would) you prefer)`,
@@ -179,8 +198,11 @@ const WORK_CUES: RegExp[] = [HEADING_CUE, ...OFFER_CUES, ...NOT_DONE_CUES]
 // what only the person can give: approvals for outward-facing or destructive steps, credentials, their decisions
 const ASK_TOPICS: RegExp[] = [
   re(String.raw`<(?:approv|confirm|deploy|production>|prod>|go live|publish|release|push(?:ed|ing)? to (?:main|master|origin|remote|prod)|delet|drop (?:the )?(?:table|database)|wipe|erase|spend|billing|payment|purchase|pay for|credential|password|passphrase|token|api key|secret|log ?in>|sign ?in>|2fa|otp>)`),
+  // outward-facing: mail to people, customers, money, a merge to main, a migration on live data
+  re(String.raw`<(?:e-?mail|mail>|send(?:ing)? (?:it |this |the |an? )?(?:\p{L}+ )?(?:e-?mail|mail|message|newsletter|notification|invoice)|customer|invoice|buy>|buying|merg(?:e|ing) (?:the |this |my |your )?(?:pr|pull request|branch|it into)>|merg(?:e|ing)[^.?!\n]{0,30}<(?:into|to) (?:main|master)>|<pr>[^.?!\n]{0,20}<merg|(?:live|prod|production) (?:database|db|data|server|site|environment)|on live>)`),
   // "sizin kararınız"; a product decision phrased as theirs ("hangisini istersin", "tercihiniz") is PICK
   re(String.raw`<(?:onay|canlı|yayın|deploy|prod>|sil(?:mek|me|eyim|elim|inecek|insin|ineceğ)|kaldırayım|şifre|parola|token|anahtar|giriş yap|oturum aç|kimlik|karar|ödeme|para>|satın|ücret|maliyet)`),
+  re(String.raw`<(?:e-?posta|mail\p{L}*|gönder(?:me|mem|eyim|elim|ilsin|ilecek)|müşteri|fatura|domain al|alan adı al|merge|migrasyon|migration)`),
 ]
 // a request in that same sentence: a question, or an explicit ask of the person ("you need to log in")
 const REQUEST = re(
@@ -236,7 +258,7 @@ function isUserOnly(sentence: string, isRecommended: boolean) {
 
 // the message with the person's part taken out: what the cues and the judge read. Untouched lines stay as they are
 export function assistantsPart(message: string) {
-  const isRecommended = RECOMMENDS.test(fold(prose(message)))
+  const isRecommended = recommendationNear(message)
   const kept: string[] = []
   let isSkipping = false
   for (const line of message.split('\n')) {
@@ -251,7 +273,7 @@ export function assistantsPart(message: string) {
       continue
     }
     const sentences = line.split(/(?<=[.!?])\s+/u)
-    const left = sentences.filter(sentence => !isUserOnly(sentence, isRecommended))
+    const left = sentences.filter(sentence => !isUserOnly(sentence, isRecommended(sentence)))
     if (left.length === sentences.length) kept.push(line)
     else if (left.length) kept.push(left.join(' '))
   }
@@ -271,14 +293,17 @@ export type FinishCues = { isWork: boolean; isAsk: boolean; isSoft: boolean; isM
 export function finishCues(message: string): FinishCues {
   const part = assistantsPart(message)
   const text = fold(prose(part)).replace(NOTHING_LEFT, ' ')
-  const isRecommended = RECOMMENDS.test(fold(prose(message)))
-  const hasMenu = sentencesOf(part).some(sentence => isMenu(sentence, isRecommended))
+  const isRecommended = recommendationNear(message)
+  const hasMenu = sentencesOf(part).some(sentence => isMenu(sentence, isRecommended(sentence)))
   const isWork = hasMenu || WORK_CUES.some(cue => cue.test(text))
   // an ask is read in the whole message: a request to the person is theirs, and stays one (a sentence with an ask
   // topic is never a menu)
-  const isAsk = sentencesOf(fold(prose(message))).some(
-    sentence => isAskTopic(sentence, isRecommended) && REQUEST.test(sentence),
-  )
+  const asProse = prose(message)
+  const isRecommendedInProse = recommendationNear(asProse)
+  const isAsk = sentencesOf(asProse).some(sentence => {
+    const text = fold(sentence)
+    return isAskTopic(text, isRecommendedInProse(sentence)) && REQUEST.test(text)
+  })
   return { isWork, isAsk, isSoft: !isWork && SOFT_CUES.test(text), isMenu: hasMenu }
 }
 

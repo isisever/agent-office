@@ -254,6 +254,9 @@ const MENUS: string[] = [
   'Two gaps remain. Do you want me to close the open edges first?',
   'Option 1 is a voxel boolean, option 2 a full rewrite. I recommend option 1. Which do you want?',
   "A: menus, B: the move gizmo. I'd go with A. Which would you prefer?",
+  // the order or the technical approach of the work is the assistant's
+  'Nereden başlayalım?',
+  'Which approach do you want: A or B?',
 ]
 // the ask wins: a sentence with an ask topic is never a menu, even in a menu's shape
 const REAL_ASKS: string[] = [
@@ -272,12 +275,25 @@ const REAL_ASKS: string[] = [
   // a pick with no recommendation of the assistant's may be a product decision
   '1. Voksel booleanı: sonuç her zaman kapalı. 2. Tam yeniden yazım: uzun sürer.\n\nHangisini istersiniz?',
   'Option 1 is a voxel boolean, option 2 a full rewrite. Which would you prefer?',
+  // a general opinion is no recommendation of an option, and one far from the pick is about something else
+  'Bence hata cache kaynaklıydı, düzelttim ve test ettim. Logo için hangisini istersiniz: mavi mi yeşil mi?',
+  'I recommend keeping the old API for a month; done. For the landing page headline, which do you prefer?',
+  'Fixed. I suggest we keep an eye on memory. Which would you prefer for the pricing page, monthly or yearly default?',
+  'Önerim: önce cache katmanı.\n\nTestler geçti.\n\nRaporlar hazır.\n\nLogo için hangisini istersiniz: mavi mi yeşil mi?',
+  // leave for an outward-facing step: mail, customers, money, a merge to main, a migration on live data
+  'Müşteriye bilgilendirme mailini göndermemi ister misiniz?',
+  'Do you want me to email the customer now?',
+  'Do you want me to merge the PR now?',
+  'Do you want me to run the migration on the live database now?',
+  'Bitti; şirket hesabından domain almamı ister misiniz?',
+  'Should I fix the invoice amounts in the customer accounts?',
 ]
 // narrative, not a question: Turkish menu cues need a "?", and "mı/mi" is a whole word
 const NARRATIVE: string[] = [
   'Testler geçti; devam edelim dedim ve ikinci modülü de bitirdim.',
   'Mümkün olduğunca mimari sadeleştirildi, şimdi sonuca gelelim: build yeşil.',
   'Mutlu yol test edildi, diyelim ki eksik yok.',
+  'Hangisinin önce geldiğini kontrol ettim: event A önce tetikleniyor, düzeltildi.',
 ]
 
 test('the ask wins over a menu, and narrative is no menu', () => {
