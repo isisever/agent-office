@@ -136,7 +136,7 @@ const langInfo = () => ({ setting: langSetting, lang: langSetting === 'auto' ? s
 const langEv = listeners();
 
 // theme gallery (themes/*.json, as main reads it; names listed because a browser cannot list the folder) and the setting
-const GALLERY = ['desert', 'graphite', 'latte', 'lavender', 'midnight', 'ocean', 'sakura', 'terminal'];
+const GALLERY = ['desert', 'graphite', 'latte', 'lavender', 'light', 'midnight', 'ocean', 'sakura', 'terminal'];
 const galleryFiles = (await Promise.all(GALLERY.map((n) => fetch(`../../themes/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
 const mockThemes = mergeThemes(galleryThemes(galleryFiles), {});
 let themeSetting = q.get('theme') || 'auto';
