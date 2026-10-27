@@ -121,18 +121,21 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
     } },
     h('input', { name: 'code', id: 'sb-join-code', placeholder: t('devices.enterCode'), autocomplete: 'off', spellcheck: 'false', disabled: joinState.busy }),
     h('button', { class: 'sb-x', type: 'submit', disabled: joinState.busy }, t(joinState.busy ? 'devices.pairing' : 'devices.pair')));
-    section.replaceChildren(...[
-      h('summary', { class: 'sb-head' }, t('devices.title'), view.devices.length ? ` (${view.devices.filter((/** @type {any} */ d) => d.online).length}/${view.devices.length})` : ''),
+    // summary and body like the sidebar's other panels (sb-head-row header, sb-panel-body content): see sidebar.js panel()
+    const summary = h('summary', { class: 'sb-head sb-head-row' },
+      h('span', {}, t('devices.title') + (view.devices.length ? ` (${view.devices.filter((/** @type {any} */ d) => d.online).length}/${view.devices.length})` : '')));
+    const body = h('div', { class: 'sb-panel-body sb-dev-body' }, ...[
       view.error && view.error !== 'off' ? h('div', { class: 'sb-note warn' }, t(`devices.error.${view.error}`)) : null,
       h('label', { class: 'sb-row sb-dev-self' }, h('span', {}, t('devices.thisDevice')),
         h('input', { class: 'sb-dev-name', value: view.name, maxlength: 40, onchange: (/** @type {Event} */ e) => apply(api.link.setName(val(e))) })),
       view.devices.length ? h('ul', { class: 'sb-list' }, list) : h('div', { class: 'sb-note' }, t('devices.none')),
-      view.devices.length ? h('button', { class: 'sb-x sb-machines', id: 'sb-machines', onclick: () => onMachines() }, t('devices.machines')) : null,
+      view.devices.length ? h('button', { class: 'sb-add sb-machines', id: 'sb-machines', onclick: () => onMachines() }, t('devices.machines')) : null,
       ...incoming, ...outgoing,
       owners.length ? h('div', { class: 'sb-sub' }, t('devices.handedOffTitle')) : null, ...owners,
       h('div', { class: 'sb-dev-pair' }, pairing, p?.code ? null : join),
       joinState.error ? h('div', { class: 'sb-note warn' }, t('devices.pairFailed', { error: joinState.error })) : null,
     ].filter((c) => c != null));                   // replaceChildren would show a null as the text "null"
+    section.replaceChildren(summary, body);
     /** @type {HTMLDetailsElement} */ (section).open = wasOpen || Boolean(p) || joinState.busy || ho.in.length > 0;
   }
 
