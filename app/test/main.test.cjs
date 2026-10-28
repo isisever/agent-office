@@ -3952,7 +3952,8 @@ test('startOpenCode: ortam yalnız ocEnv; Claude Code ve ofis hiçbir şey verme
   const start = src.indexOf('function startOpenCode(');
   assert.ok(start > 0);
   const body = src.slice(start, src.indexOf('\n}\n', start)).replace(/\/\/.*$/gm, '');
-  assert.match(body, /const env = EN\.ocEnv\(process\.env\);/);
+  // v3.55: ocEnv still the only env source; for a fixcloud account the decrypted key is forced in via ocEnv's 3rd arg
+  assert.match(body, /const env = EN\.ocEnv\(process\.env, process\.platform, fixKey \? \{ \[FC\.FIXCLOUD_KEY_ENV\]: fixKey \} : \{\}\);/);
   assert.match(body, /engine: 'opencode', label: 'OpenCode'/);
   for (const banned of ['sessionEnv', 'ptyEnv', 'officeDirectoryFile', 'AGENT_OFFICE_', 'sharedConfig', 'pluginDir', 'usageStatusLine', 'managerOf', 'savings', 'CLAUDE_', 'env.', 'env['])
     assert.equal(body.includes(banned), false, `startOpenCode uses ${banned}`);
@@ -4237,42 +4238,67 @@ test('düz terminal sekmesi: ortamdan CLAUDE*/ANTHROPIC_*/AGENT_OFFICE_* düşer
   });
 }
 
-// ---- FixCloud account type (v3.54) ----
-test('fixcloud (v3.54): normalizeAccounts ve addAccount provider alanını korur, default korumaz', () => {
-  const MS = require('../src/mcp-servers.js');
-  // addAccount tags only when provider is 'fixcloud'
-  const r = A.addAccount(empty(), 'FixCloud', { id: 'fc', root: '/u/accounts', provider: 'fixcloud' });
-  assert.equal(r.account.provider, 'fixcloud');
-  assert.deepEqual(r.account, { id: 'fc', label: 'FixCloud', configDir: '/u/accounts/fc', provider: 'fixcloud' });
-  assert.equal('provider' in A.addAccount(empty(), 'İş', { id: 'w', root: '/r' }).account, false);
-  // normalizeAccounts keeps it across a state load; the default account keeps none
-  const norm = A.normalizeAccounts([{ id: 'fc', label: 'FixCloud', configDir: '/u/accounts/fc', provider: 'fixcloud' }, { id: 'x', label: 'X', configDir: '/u/x', provider: 'nope' }]);
-  assert.equal(norm[0].id, 'default');
+// ---- FixCloud account type (v3.55: login-less, OpenCode-backed) ----
+test('fixcloud (v3.55): normalizeAccounts ve addAccount provider/model/baseUrl korur, default korumaz', () => {
+  // addAccount keeps provider + model + baseUrl only for a fixcloud account
+  const r = A.addAccount(empty(), 'FixCloud', { id: 'fc', root: '/u/accounts', provider: 'fixcloud', model: 'qwen3.6-35b-a3b', baseUrl: 'https://llm.fixcloud.ai/v1' });
+  assert.deepEqual(r.account, { id: 'fc', label: 'FixCloud', configDir: '/u/accounts/fc', provider: 'fixcloud', model: 'qwen3.6-35b-a3b', baseUrl: 'https://llm.fixcloud.ai/v1' });
+  const plain = A.addAccount(empty(), 'İş', { id: 'w', root: '/r' }).account;
+  assert.equal('provider' in plain, false);
+  assert.equal('model' in plain, false);
+  assert.equal('baseUrl' in plain, false);
+  // normalizeAccounts keeps the three fields across a state load; a non-fixcloud provider keeps none
+  const norm = A.normalizeAccounts([
+    { id: 'fc', label: 'FixCloud', configDir: '/u/accounts/fc', provider: 'fixcloud', model: 'm1', baseUrl: 'https://e/v1' },
+    { id: 'x', label: 'X', configDir: '/u/x', provider: 'nope', model: 'm2' },
+  ]);
   assert.equal('provider' in norm[0], false);
-  assert.equal(norm.find((a) => a.id === 'fc').provider, 'fixcloud');
-  assert.equal('provider' in norm.find((a) => a.id === 'x'), false); // only 'fixcloud' is whitelisted
-  void MS;
-});
-
-test('fixcloud (v3.54): fixcloudEnv AUTH_TOKEN enjekte eder ve API_KEY siler, yalnız fixcloud için', () => {
-  const base = { PATH: '/bin', ANTHROPIC_API_KEY: 'inherited' };
-  const fix = A.fixcloudEnv(base, { provider: 'fixcloud' }, 'sk-key');
-  assert.equal(fix.ANTHROPIC_AUTH_TOKEN, 'sk-key');
-  assert.equal(fix[A.FIXCLOUD_TOKEN_ENV], 'sk-key');
-  assert.equal('ANTHROPIC_API_KEY' in fix, false);          // dropped for fixcloud (mandatory)
-  // non-fixcloud account: env untouched
-  const plain = A.fixcloudEnv(base, { provider: undefined }, 'sk-key');
-  assert.equal(plain.ANTHROPIC_API_KEY, 'inherited');
-  assert.equal('ANTHROPIC_AUTH_TOKEN' in plain, false);
-  assert.equal(base.ANTHROPIC_API_KEY, 'inherited');         // input unchanged
-  // the rc re-export snippet unsets the key and exports the token from the carrier, after the rc files
-  assert.match(A.FIXCLOUD_REEXPORT, /unset ANTHROPIC_API_KEY/);
-  assert.match(A.FIXCLOUD_REEXPORT, /export ANTHROPIC_AUTH_TOKEN="\$AGENT_OFFICE_FIXCLOUD_TOKEN"/);
+  const fc = norm.find((a) => a.id === 'fc');
+  assert.deepEqual([fc.provider, fc.model, fc.baseUrl], ['fixcloud', 'm1', 'https://e/v1']);
+  const x = norm.find((a) => a.id === 'x');
+  assert.equal('provider' in x, false);
+  assert.equal('model' in x, false); // model/baseUrl only ride along with provider:'fixcloud'
   assert.equal(A.isFixcloud({ provider: 'fixcloud' }), true);
   assert.equal(A.isFixcloud({ provider: 'x' }), false);
+  // the old Claude-path helpers are gone
+  assert.equal('fixcloudEnv' in A, false);
+  assert.equal('FIXCLOUD_REEXPORT' in A, false);
 });
 
-test('fixcloud (v3.54): provider-tokens roundtrip ve remove', () => {
+test('fixcloud (v3.55): opencode.json deep-merge fixcloud sağlayıcısını yazar, başka anahtarları ezmez, anahtarı env-referansı tutar', () => {
+  const FC = require('../src/fixcloud.js');
+  const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-oc-'));
+  // config path: XDG_CONFIG_HOME wins, else ~/.config
+  assert.equal(FC.ocConfigPath({ XDG_CONFIG_HOME: '/xdg' }, '/home/u'), path.join('/xdg', 'opencode', 'opencode.json'));
+  assert.equal(FC.ocConfigPath({}, '/home/u'), path.join('/home/u', '.config', 'opencode', 'opencode.json'));
+  // pre-existing config with another provider and top-level keys: nothing clobbered
+  const file = path.join(dir, 'opencode.json');
+  fs.writeFileSync(file, JSON.stringify({ theme: 'x', provider: { anthropic: { options: { apiKey: 'keep' } } }, model: 'anthropic/foo' }));
+  const out = FC.writeFixcloudProvider(file, 'https://llm.fixcloud.ai/v1', 'qwen3.6-35b-a3b');
+  const read = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(read, out);
+  assert.equal(read.theme, 'x');                                   // top-level kept
+  assert.equal(read.model, 'anthropic/foo');                       // kept
+  assert.deepEqual(read.provider.anthropic, { options: { apiKey: 'keep' } }); // other provider kept
+  assert.equal(read.provider.fixcloud.npm, '@ai-sdk/openai-compatible');
+  assert.equal(read.provider.fixcloud.name, 'FixCloud');
+  assert.equal(read.provider.fixcloud.options.baseURL, 'https://llm.fixcloud.ai/v1');
+  assert.equal(read.provider.fixcloud.options.apiKey, '{env:FIXCLOUD_API_KEY}'); // env reference, NOT the real key
+  assert.deepEqual(read.provider.fixcloud.models, { 'qwen3.6-35b-a3b': { name: 'qwen3.6-35b-a3b (FixCloud)' } });
+  // the real key must never land in the file
+  assert.equal(fs.readFileSync(file, 'utf8').includes('sk-'), false);
+  // a second model merges in without dropping the first
+  FC.writeFixcloudProvider(file, 'https://llm.fixcloud.ai/v1', 'other-model');
+  const read2 = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(Object.keys(read2.provider.fixcloud.models).sort(), ['other-model', 'qwen3.6-35b-a3b']);
+  // create-from-missing: dir/file made
+  const file2 = path.join(dir, 'sub', 'opencode.json');
+  FC.writeFixcloudProvider(file2, 'https://e/v1', 'm');
+  assert.ok(fs.existsSync(file2));
+});
+
+test('fixcloud (v3.55): provider-tokens roundtrip ve remove', () => {
   const MS = require('../src/mcp-servers.js');
   const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
   const fakeSafe = { isEncryptionAvailable: () => true, encryptString: (s) => Buffer.from(`enc:${Buffer.from(s).toString('base64')}`), decryptString: (b) => Buffer.from(String(b).slice(4), 'base64').toString() };
@@ -4286,7 +4312,48 @@ test('fixcloud (v3.54): provider-tokens roundtrip ve remove', () => {
   assert.equal(store.load('fc'), '');
 });
 
-test('fixcloud (v3.54): auto yedek havuzu provider hesabını dışlar', () => {
+test('fixcloud (v3.55): bir fixcloud hesabı atamak motoru opencode, boss modelini fixcloud/<model> yapar', () => {
+  const FC = require('../src/fixcloud.js');
+  // the pure binding the projects:setAccount handler applies: engine first, then the fixcloud boss model
+  let s = P.addProject(empty(), '/p/fx', { id: () => 'px' }).state;
+  s = P.setProjectEngine(s, 'px', 'opencode');
+  s = P.setProjectBossModel(s, 'px', FC.fixcloudBossModel('qwen3.6-35b-a3b'));
+  const p = P.findProject(s, 'px');
+  assert.equal(P.engineOf(p), 'opencode');
+  assert.equal(P.bossModelOf(p), 'fixcloud/qwen3.6-35b-a3b');
+  assert.deepEqual(P.bossModelArgs(p), ['-m', 'fixcloud/qwen3.6-35b-a3b']); // OpenCode -m provider/model
+  // the value survives a state reload (anyEngineBossModel keeps it)
+  const rel = P.normalizeState({ projects: [{ id: 'px', dir: '/p/fx', engine: 'opencode', bossModel: 'fixcloud/qwen3.6-35b-a3b' }] });
+  assert.equal(P.bossModelOf(rel.projects[0]), 'fixcloud/qwen3.6-35b-a3b');
+  // the fixcloud model is valid only under the opencode engine
+  assert.equal(P.bossModelOf({ engine: 'claude', bossModel: 'fixcloud/qwen3.6-35b-a3b' }), null);
+  // the setAccount handler wires it
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
+  const h = src.slice(src.indexOf("ipcMain.handle('projects:setAccount'"), src.indexOf("ipcMain.handle('projects:setManager'"));
+  assert.match(h, /setProjectEngine\(next, id, 'opencode'\)/);
+  assert.match(h, /setProjectBossModel\(next, id, FC\.fixcloudBossModel/);
+});
+
+test('fixcloud (v3.55): OpenCode başlatma ortamı fixcloud hesabı için FIXCLOUD_API_KEY içerir, başkası için içermez', () => {
+  const EN = require('../src/engine.js');
+  const FC = require('../src/fixcloud.js');
+  // ocEnv forces the injected key in AFTER the filter (a plain env var would be dropped)
+  const dropped = EN.ocEnv({ PATH: '/b', FIXCLOUD_API_KEY: 'leak' });
+  assert.equal('FIXCLOUD_API_KEY' in dropped, false);                 // a stray one is filtered out
+  const withKey = EN.ocEnv({ PATH: '/b' }, process.platform, { [FC.FIXCLOUD_KEY_ENV]: 'sk-secret' });
+  assert.equal(withKey.FIXCLOUD_API_KEY, 'sk-secret');                 // forced in for a fixcloud account
+  assert.equal(withKey.OPENCODE_DISABLE_CLAUDE_CODE, '1');            // OC_FORCED_ENV still applied
+  const none = EN.ocEnv({ PATH: '/b' }, process.platform, {});
+  assert.equal('FIXCLOUD_API_KEY' in none, false);                    // not for a non-fixcloud project
+  // the launch site decrypts only at launch and forces the key in via ocEnv's extra
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
+  const body = src.slice(src.indexOf('function startOpenCode'), src.indexOf('function startOpenCode') + 1200);
+  assert.match(body, /A\.isFixcloud\(ocAccount\)/);
+  assert.match(body, /providerTokens\(\)\.load\(ocAccount\.id\)/);
+  assert.match(body, /EN\.ocEnv\(process\.env, process\.platform, fixKey \? \{ \[FC\.FIXCLOUD_KEY_ENV\]: fixKey \} : \{\}\)/);
+});
+
+test('fixcloud (v3.55): auto yedek havuzu provider hesabını dışlar', () => {
   const FB = require('../src/fallback.js');
   const now = 1_000_000_000_000;
   const accounts = [
@@ -4299,18 +4366,20 @@ test('fixcloud (v3.54): auto yedek havuzu provider hesabını dışlar', () => {
   assert.deepEqual(FB.pickBackup({ choice: 'auto', current: 'default', accounts: [accounts[0], accounts[2]], now }), { reason: 'none' });
 });
 
-test('fixcloud (v3.54): addFixcloud settings.json base+model yazar, anahtarı yazmaz; remove token siler', () => {
+test('fixcloud (v3.55): addFixcloud opencode.json sağlayıcısını yazar, anahtarı yazmaz, OpenCode yoksa noOpencode; remove token siler', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
   const start = src.indexOf("ipcMain.handle('accounts:addFixcloud'");
   assert.ok(start > 0, 'addFixcloud handler yok');
   const body = src.slice(start, src.indexOf("ipcMain.handle('accounts:rename'"));
-  assert.match(body, /ANTHROPIC_BASE_URL: baseUrl/);
-  assert.match(body, /ANTHROPIC_MODEL: model/);
+  assert.match(body, /ok: false, error: 'noOpencode'/);                 // OpenCode not installed → noOpencode
+  assert.match(body, /ocAuth\?\.installed/);                            // detected the OpenCode-row way
+  assert.match(body, /FC\.writeFixcloudProvider\(FC\.ocConfigPath\(process\.env, app\.getPath\('home'\)\), baseUrl, model\)/);
+  assert.match(body, /provider: A\.FIXCLOUD, model, baseUrl/);          // account carries model+baseUrl
   assert.match(body, /providerTokens\(\)\.save\(r\.account\.id, apiKey\)/);
-  assert.match(body, /mode: 0o600/);
-  assert.equal(/JSON\.stringify\([^)]*apiKey/.test(body), false, 'the key must not be written to settings.json');
+  assert.equal(/ANTHROPIC_BASE_URL|ANTHROPIC_MODEL|ANTHROPIC_AUTH_TOKEN/.test(body), false, 'no Claude/Anthropic path remains');
+  assert.equal(/writeFileSync[^;]*apiKey/.test(body), false, 'the key must not be written to a file');
   // remove cleans the stored token
   assert.match(src, /providerTokens\(\)\.remove\(id\);/);
-  // the session launch line re-exports the token after the rc files
-  assert.match(src, /A\.FIXCLOUD_REEXPORT/);
+  // the old Claude re-export is gone from the launch line
+  assert.equal(src.includes('A.FIXCLOUD_REEXPORT'), false);
 });

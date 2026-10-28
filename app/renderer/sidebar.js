@@ -927,8 +927,8 @@ export function mountSidebar(el, on) {
     const forProject = fixForm?.forProject;
     const name = h('input', { class: 'sb-input', value: 'FixCloud', maxLength: 40, placeholder: t('sidebar.accountName'), onkeydown: (e) => e.stopPropagation() });
     const apiKey = h('input', { class: 'sb-input', type: 'password', placeholder: t('sidebar.fixApiKey'), onkeydown: (e) => e.stopPropagation() });
-    const model = h('input', { class: 'sb-input', placeholder: t('sidebar.fixModel'), onkeydown: (e) => e.stopPropagation() });
-    const baseUrl = h('input', { class: 'sb-input', value: 'https://llm.fixcloud.ai', placeholder: t('sidebar.fixBaseUrl'), onkeydown: (e) => e.stopPropagation() });
+    const model = h('input', { class: 'sb-input', value: 'qwen3.6-35b-a3b', placeholder: t('sidebar.fixModel'), onkeydown: (e) => e.stopPropagation() });
+    const baseUrl = h('input', { class: 'sb-input', value: 'https://llm.fixcloud.ai/v1', placeholder: t('sidebar.fixBaseUrl'), onkeydown: (e) => e.stopPropagation() });
     const close = () => { fixForm = null; renderAccounts(); };
     const field = (label, input) => h('label', { class: 'sb-fix-field' }, h('span', {}, label), input);
     const save = () => {

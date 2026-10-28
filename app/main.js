@@ -29,6 +29,7 @@ const TU = require('./src/token-usage.js');
 const PD = require('./src/project-data.js');
 const FB = require('./src/fallback.js');
 const EN = require('./src/engine.js');
+const FC = require('./src/fixcloud.js');
 const AW = require('./src/agy-watch.js');
 const CS = require('./src/cmd-spool.js');
 const AG = require('./src/agy-auth.js');
@@ -309,9 +310,9 @@ const directoryDir = () => path.join(app.getPath('userData'), 'directory');
 // has no keyring). It reaches claude only inside the tab's 0600 MCP file (userData/mcp), removed when that claude ends.
 const tokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'mcp-tokens'), safeStorage);
 const oldTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'connector-tokens'), safeStorage); // v3.43, migration only
-// v3.54: a FixCloud account's API key, per account id in userData/provider-tokens, encrypted with safeStorage (same store
-// shape as the MCP tokens). Decrypted only here at pty launch and injected as ANTHROPIC_AUTH_TOKEN; never to the renderer,
-// state.json, settings.json, argv or a log.
+// v3.55: a FixCloud account's API key, per account id in userData/provider-tokens, encrypted with safeStorage (same store
+// shape as the MCP tokens). Decrypted only here, at the OpenCode launch, and injected into the engine env as
+// FIXCLOUD_API_KEY (engine.js ocEnv's forced-env); never to the renderer, state.json, opencode.json, argv or a log.
 const providerTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'provider-tokens'), safeStorage);
 const appServers = () => state.mcpServers || [];
 /** A project is removed from this machine: its own servers and their tokens go; ones for all stay. (A handed-off
@@ -460,8 +461,7 @@ const shell = () => OS.defaultShell();
 const accountById = (id) => state.accounts.find((a) => a.id === id) || null;
 function accountEnv(account) {
   if (account.configDir) try { fs.mkdirSync(account.configDir, { recursive: true }); } catch {}
-  // v3.54: a fixcloud account's login/relay/status ptys also get its key injected and ANTHROPIC_API_KEY dropped.
-  return A.fixcloudEnv(A.ptyEnv(process.env, account.configDir), account, A.isFixcloud(account) ? providerTokens().load(account.id) : '');
+  return A.ptyEnv(process.env, account.configDir);
 }
 
 // --- Windows: no login shell; claude is found on PATH and started directly (see src/platform.js)
@@ -1110,7 +1110,6 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
   const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; '
-    + A.FIXCLOUD_REEXPORT   // v3.54: for fixcloud accounts only (no-op otherwise); its key beats a rc-set ANTHROPIC_API_KEY
     + '[ -n "$AGENT_OFFICE_AGENT_MODEL" ] && export CLAUDE_CODE_SUBAGENT_MODEL="$AGENT_OFFICE_AGENT_MODEL" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1; '
     + '[ -n "$AGENT_OFFICE_CONTEXT_CAP" ] && export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$AGENT_OFFICE_CONTEXT_CAP"; '
     + '[ -n "$AGENT_OFFICE_BASH_OUTPUT" ] && export BASH_MAX_OUTPUT_LENGTH="$AGENT_OFFICE_BASH_OUTPUT"; '
@@ -1129,8 +1128,6 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   if (project.hq) env.AGENT_OFFICE_HQ = '1';   // v3.46 the plugin gives the HQ section instead of the manager one
   if (bossMcp && (linkHost?.link()?.devices.length || 0) > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
   if (sl?.userCommand) env.AGENT_OFFICE_STATUSLINE = sl.userCommand;
-  // v3.54: a fixcloud account's key is injected here (decrypted only now) and any inherited ANTHROPIC_API_KEY dropped.
-  if (A.isFixcloud(account)) env = A.fixcloudEnv(env, account, providerTokens().load(account.id));
   if (IS_WIN) env = windowsStatusLineEnv(env, sl);
   let t;
   try {
@@ -1422,8 +1419,12 @@ function startOpenCode(id, { project, tab, dir: cwd }, { resume = false, prompt 
   const isResume = resume && (!tab || Boolean(tab.worktree));
   const args = EN.ocArgs({ resume: isResume, prompt, model: P.bossModelOf(project) }); // boss model: v3.36
   const startedAt = Date.now();
-  // an allowlist of the user's env (engine.js ocEnv): no Claude, Anthropic, office or MCP variable
-  const env = EN.ocEnv(process.env);
+  // an allowlist of the user's env (engine.js ocEnv): no Claude, Anthropic, office or MCP variable. v3.55: for a
+  // fixcloud account, the decrypted key is forced in after the filter as FIXCLOUD_API_KEY (opencode.json's {env:...}
+  // reference reads it); decrypted only here, never in argv/state/opencode.json/a log.
+  const ocAccount = A.accountOf(state, project);
+  const fixKey = A.isFixcloud(ocAccount) ? providerTokens().load(ocAccount.id) : '';
+  const env = EN.ocEnv(process.env, process.platform, fixKey ? { [FC.FIXCLOUD_KEY_ENV]: fixKey } : {});
   let t;
   try {
     const win32 = IS_WIN ? windowsOpenCode(args, env) : null;
@@ -2924,8 +2925,14 @@ ipcMain.handle('projects:setAccount', (_e, id, accountId) => {
   const p = P.findProject(state, id);
   if (!p || p.accountId === accountId) return;
   const from = A.accountOf(state, p);
-  const next = P.setProjectAccount(state, id, accountId);
+  let next = P.setProjectAccount(state, id, accountId);
   if (next === state) return;
+  // v3.55: a fixcloud account binds the project to OpenCode with the fixcloud model (set engine first, then the model).
+  const acc = accountById(accountId);
+  if (A.isFixcloud(acc)) {
+    next = P.setProjectEngine(next, id, 'opencode');
+    next = P.setProjectBossModel(next, id, FC.fixcloudBossModel(acc.model || A.FIXCLOUD_DEFAULT_MODEL));
+  }
   commit(next);
   moveProject(id, from);
 });
@@ -3069,25 +3076,25 @@ ipcMain.handle('accounts:add', (_e, label) => {
   checkAuth(r.account.id);
   return A.withAuth([r.account], (id) => auths.get(id))[0];
 });
-// v3.54: add a FixCloud account. payload carries label, apiKey (required), model, baseUrl. The key travels
-// renderer→main exactly once, here: it is stored encrypted in providerTokens and never written to settings.json or state.
+// v3.55: add a FixCloud account — a login-less account whose projects run on the OpenCode engine against a FixCloud
+// (OpenAI-compatible) endpoint. payload carries label, apiKey (required), model, baseUrl. OpenCode must be installed
+// (same detection as the OpenCode account row, ocAuth.installed); the fixcloud provider is deep-merged into the user's
+// opencode.json with apiKey={env:FIXCLOUD_API_KEY} (never the real key); the real key travels renderer→main exactly
+// once, here, and is stored encrypted in providerTokens. The key is never written to opencode.json, state or a log.
 ipcMain.handle('accounts:addFixcloud', (_e, payload) => {
   const p = payload || {};
   const apiKey = typeof p.apiKey === 'string' ? p.apiKey.trim() : '';
   if (!apiKey) return { ok: false, error: 'apiKey' };
+  if (!ocAuth?.installed) return { ok: false, error: 'noOpencode' };   // step 1: no OpenCode → renderer shows its install hint
   const baseUrl = (typeof p.baseUrl === 'string' && p.baseUrl.trim()) || A.FIXCLOUD_DEFAULT_BASE;
-  const model = typeof p.model === 'string' ? p.model.trim() : '';
-  const r = A.addAccount(state, p.label, { id: crypto.randomBytes(6).toString('hex'), root: accountsRoot(), provider: A.FIXCLOUD });
+  const model = (typeof p.model === 'string' && p.model.trim()) || A.FIXCLOUD_DEFAULT_MODEL;
+  // step 2: deep-merge the fixcloud provider into opencode.json ($XDG_CONFIG_HOME else ~/.config), never clobbering others.
+  try { FC.writeFixcloudProvider(FC.ocConfigPath(process.env, app.getPath('home')), baseUrl, model); }
+  catch (e) { console.error('fixcloud opencode.json:', e.message); return { ok: false, error: 'opencode' }; }
+  // step 4: a login-less account row carrying provider/model/baseUrl.
+  const r = A.addAccount(state, p.label, { id: crypto.randomBytes(6).toString('hex'), root: accountsRoot(), provider: A.FIXCLOUD, model, baseUrl });
   try { fs.mkdirSync(r.account.configDir, { recursive: true }); } catch (e) { console.error('hesap klasörü:', e.message); }
-  // settings.json: merge env into any existing file (0600). base URL + model only; the key is NOT written here.
-  try {
-    const file = path.join(r.account.configDir, 'settings.json');
-    let cur = {}; try { cur = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
-    if (!cur || typeof cur !== 'object') cur = {};
-    const env = { ...(cur.env && typeof cur.env === 'object' ? cur.env : {}), ANTHROPIC_BASE_URL: baseUrl, ...(model ? { ANTHROPIC_MODEL: model } : {}) };
-    fs.writeFileSync(file, JSON.stringify({ ...cur, env }, null, 2), { mode: 0o600 });
-  } catch (e) { console.error('fixcloud settings.json:', e.message); return { ok: false, error: 'settings' }; }
-  if (!providerTokens().save(r.account.id, apiKey)) return { ok: false, error: 'token' };   // nothing committed
+  if (!providerTokens().save(r.account.id, apiKey)) return { ok: false, error: 'token' };   // step 3; nothing committed
   commit(r.state, { accounts: true });
   checkAuth(r.account.id);
   return { ok: true, account: A.withAuth([r.account], (id) => auths.get(id))[0] };
