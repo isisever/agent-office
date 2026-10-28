@@ -2929,10 +2929,9 @@ ipcMain.handle('projects:setAccount', (_e, id, accountId) => {
   if (next === state) return;
   // v3.55: a fixcloud account binds the project to OpenCode with the fixcloud model (set engine first, then the model).
   const acc = accountById(accountId);
-  if (A.isFixcloud(acc)) {
-    next = P.setProjectEngine(next, id, 'opencode');
-    next = P.setProjectBossModel(next, id, FC.fixcloudBossModel(acc.model || A.FIXCLOUD_DEFAULT_MODEL));
-  }
+  const toFix = A.isFixcloud(acc);
+  // moving off a fixcloud account undoes that binding (engine back to default, `fixcloud/<model>` cleared)
+  next = P.bindFixcloudAccount(next, id, { fromFix: A.isFixcloud(from), toFix, bossModel: toFix ? FC.fixcloudBossModel(acc.model || A.FIXCLOUD_DEFAULT_MODEL) : null });
   commit(next);
   moveProject(id, from);
 });

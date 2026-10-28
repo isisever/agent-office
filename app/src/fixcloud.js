@@ -60,7 +60,13 @@ function mergeFixcloud(config, baseUrl, model) {
 // only the {env:FIXCLOUD_API_KEY} reference — so it keeps OpenCode's normal mode. Returns the written config object.
 function writeFixcloudProvider(file, baseUrl, model) {
   let cur = {};
-  try { cur = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+  let raw = '';
+  try { raw = fs.readFileSync(file, 'utf8'); } catch {}   // missing file: start from {}
+  // an existing non-empty file that doesn't parse (malformed / JSONC) is NOT overwritten: throw, write nothing
+  if (raw.trim()) {
+    try { cur = JSON.parse(raw); } catch (e) { throw new Error(`opencode.json is not valid JSON, left untouched: ${e.message}`); }
+    if (!cur || typeof cur !== 'object' || Array.isArray(cur)) throw new Error('opencode.json is not a JSON object, left untouched');
+  }
   const next = mergeFixcloud(cur, baseUrl, model);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(next, null, 2) + '\n');

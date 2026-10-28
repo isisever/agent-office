@@ -4330,8 +4330,8 @@ test('fixcloud (v3.55): bir fixcloud hesabı atamak motoru opencode, boss modeli
   // the setAccount handler wires it
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
   const h = src.slice(src.indexOf("ipcMain.handle('projects:setAccount'"), src.indexOf("ipcMain.handle('projects:setManager'"));
-  assert.match(h, /setProjectEngine\(next, id, 'opencode'\)/);
-  assert.match(h, /setProjectBossModel\(next, id, FC\.fixcloudBossModel/);
+  assert.match(h, /bindFixcloudAccount\(next, id/);
+  assert.match(h, /FC\.fixcloudBossModel/);
 });
 
 test('fixcloud (v3.55): OpenCode başlatma ortamı fixcloud hesabı için FIXCLOUD_API_KEY içerir, başkası için içermez', () => {
@@ -4364,6 +4364,47 @@ test('fixcloud (v3.55): auto yedek havuzu provider hesabını dışlar', () => {
   assert.deepEqual(FB.pickBackup({ choice: 'auto', current: 'default', accounts, now }), { id: 'b' });
   // only the fixcloud account present → no candidate
   assert.deepEqual(FB.pickBackup({ choice: 'auto', current: 'default', accounts: [accounts[0], accounts[2]], now }), { reason: 'none' });
+});
+
+test('fixcloud (v3.55): a project moving TO a fixcloud account binds opencode + fixcloud/<model>; moving AWAY undoes it (keeps other models)', () => {
+  const FC = require('../src/fixcloud.js');
+  const mk = (dir) => P.addProject({ projects: [], activeId: null, accounts: [] }, dir).state;
+  let s = mk('/tmp/ao-fc-proj');
+  const id = s.projects[0].id;
+  const bm = FC.fixcloudBossModel('qwen3.6-35b-a3b');
+  s = P.bindFixcloudAccount(s, id, { fromFix: false, toFix: true, bossModel: bm });
+  assert.equal(P.findProject(s, id).engine, 'opencode');
+  assert.equal(P.findProject(s, id).bossModel, bm);
+  s = P.bindFixcloudAccount(s, id, { fromFix: true, toFix: false, bossModel: null });
+  assert.equal('engine' in P.findProject(s, id), false);
+  assert.equal('bossModel' in P.findProject(s, id), false);
+  // a legitimate non-fixcloud opencode model is not wiped
+  let k = mk('/tmp/ao-fc-proj2');
+  const id2 = k.projects[0].id;
+  k = P.setProjectBossModel(P.setProjectEngine(k, id2, 'opencode'), id2, 'opencode/big-pickle');
+  k = P.bindFixcloudAccount(k, id2, { fromFix: true, toFix: false, bossModel: null });
+  assert.equal(P.findProject(k, id2).bossModel, 'opencode/big-pickle');
+  // non-fixcloud -> non-fixcloud is a no-op
+  assert.equal(P.bindFixcloudAccount(s, id, { fromFix: false, toFix: false, bossModel: null }), s);
+  // the handler uses it with the old and new account
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /P\.bindFixcloudAccount\(next, id, \{ fromFix: A\.isFixcloud\(from\), toFix/);
+});
+
+test('fixcloud (v3.55): a malformed/JSONC opencode.json is never overwritten; empty/missing starts from {}', () => {
+  const FC = require('../src/fixcloud.js');
+  const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-oc-bad-'));
+  const file = path.join(dir, 'opencode.json');
+  const jsonc = '{\n  // my config\n  "theme": "x",\n}\n';
+  fs.writeFileSync(file, jsonc);
+  assert.throws(() => FC.writeFixcloudProvider(file, 'https://e/v1', 'm'), /not valid JSON/);
+  assert.equal(fs.readFileSync(file, 'utf8'), jsonc);          // untouched
+  fs.writeFileSync(file, '[1]');
+  assert.throws(() => FC.writeFixcloudProvider(file, 'https://e/v1', 'm'));
+  assert.equal(fs.readFileSync(file, 'utf8'), '[1]');
+  fs.writeFileSync(file, '  \n');                             // empty: fine
+  assert.equal(FC.writeFixcloudProvider(file, 'https://e/v1', 'm').provider.fixcloud.options.baseURL, 'https://e/v1');
 });
 
 test('fixcloud (v3.55): addFixcloud opencode.json sağlayıcısını yazar, anahtarı yazmaz, OpenCode yoksa noOpencode; remove token siler', () => {

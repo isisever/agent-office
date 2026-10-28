@@ -380,6 +380,19 @@ function setProjectEngine(state, id, value) {
   }) };
 }
 
+/** v3.55: keep a project's engine/model in step with a move between accounts. Moving onto a fixcloud account binds
+ *  OpenCode + `fixcloud/<model>` (bossModel is validated against the engine, so the engine is set first); moving off
+ *  one resets the engine to the default and clears a `fixcloud/...` bossModel (any other bossModel is kept). */
+function bindFixcloudAccount(state, id, { fromFix, toFix, bossModel }) {
+  if (toFix) return setProjectBossModel(setProjectEngine(state, id, 'opencode'), id, bossModel);
+  if (!fromFix) return state;
+  const p = findProject(state, id);
+  let next = state;
+  if (p && isFixcloudModel(p.bossModel)) next = setProjectBossModel(next, id, null);   // engine still opencode here
+  if (p && engineValue(p.engine) === 'opencode') next = setProjectEngine(next, id, null);
+  return next;
+}
+
 /** The program the project's tabs run: 'claude' | 'agy' | 'commandcode' | 'opencode'. */
 const engineOf = (project) => engineValue(project?.engine) || 'claude';
 
@@ -483,7 +496,7 @@ module.exports = {
   AGENT_MODELS, setProjectAgentModel, agentModelOf,
   CONTEXT_CAPS, setProjectContextCap, contextCapOf,
   setProjectSavings, savingsOf,
-  ENGINES, setProjectEngine, engineOf,
+  ENGINES, setProjectEngine, bindFixcloudAccount, engineOf,
   setProjectFiles, projectFilesOf,
   setProjectBackup, backupOf, fallbackTo, returnHome,
 };
