@@ -49,7 +49,8 @@
       "in": "Giriş yapıldı",
       "out": "Giriş yapılmadı",
       "checking": "Giriş durumu kontrol ediliyor",
-      "error": "Giriş durumu okunamadı"
+      "error": "Giriş durumu okunamadı",
+      "ready": "Önceden ayarlı (giriş yok)"
     },
     "days": {
       "0": "Paz",
@@ -291,6 +292,18 @@
     "ocAsleep": "Henüz başlamadı: bu projeyi açınca OpenCode son oturumundan devam ederek başlar",
     "addOc": "OpenCode",
     "addOcTitle": "OpenCode'u burada göster. Girişsiz çalışır (ücretsiz modeller); yalnızca kendi modellerini kullanmak için bir sağlayıcıya giriş yap.",
+    "addFix": "FixCloud",
+    "addFixTitle": "FixCloud'a önceden bağlı bir Claude motoru hesabı ekle: bir API anahtarı ve (isteğe bağlı) model ile uç nokta gir.",
+    "fixApiKey": "API anahtarı",
+    "fixModel": "Model",
+    "fixBaseUrl": "Temel URL",
+    "fixBaseNote": "Claude/Anthropic uyumlu bir uç nokta ya da yerel bir proxy adresi olmalı (örn. http://localhost:4000).",
+    "fixSave": "Hesap oluştur",
+    "fixCancel": "Vazgeç",
+    "fixBadge": "FixCloud",
+    "fixBadgeTitle": "Bir FixCloud uç noktasına önceden bağlı bir Claude hesabı (API anahtarı şifreli saklanır).",
+    "fixReady": "Önceden ayarlı · giriş yok",
+    "fixReadyTitle": "Bu hesap, uç noktasına karşı saklanan bir API anahtarı kullanır; giriş yoktur.",
     "ocTitle": "OpenCode (opencode): sağlayıcıları ve girişleri OpenCode'un kendisinde tutulur (~/.local/share/opencode). Ücretsiz modeller için giriş gerekmez.",
     "ocMissing": "opencode kurulu değil",
     "ocMissingTitle": "Bir OpenCode projesi için OpenCode CLI gerekir. Terminalde kur, sonra Tekrar kontrol et'e bas.",

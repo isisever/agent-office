@@ -49,7 +49,8 @@
       "in": "Logged in",
       "out": "Not logged in",
       "checking": "Checking login",
-      "error": "Could not read login status"
+      "error": "Could not read login status",
+      "ready": "Pre-configured (no login)"
     },
     "days": {
       "0": "Sun",
@@ -292,6 +293,18 @@
     "ocAsleep": "Not started yet: OpenCode starts, continuing its last session, when you open this project",
     "addOc": "OpenCode",
     "addOcTitle": "Show OpenCode here. It works without a login (free models); sign in to a provider only to use your own models.",
+    "addFix": "FixCloud",
+    "addFixTitle": "Add a Claude-engine account pre-wired to FixCloud: enter an API key and (optionally) a model and endpoint.",
+    "fixApiKey": "API key",
+    "fixModel": "Model",
+    "fixBaseUrl": "Base URL",
+    "fixBaseNote": "Must be a Claude/Anthropic-compatible endpoint, or a local proxy address (e.g. http://localhost:4000).",
+    "fixSave": "Create account",
+    "fixCancel": "Cancel",
+    "fixBadge": "FixCloud",
+    "fixBadgeTitle": "A Claude account pre-wired to a FixCloud endpoint (its API key is stored encrypted).",
+    "fixReady": "Pre-configured · no login",
+    "fixReadyTitle": "This account uses a stored API key against its endpoint; there is no login.",
     "ocTitle": "OpenCode (opencode): its providers and logins are kept by OpenCode itself (~/.local/share/opencode). No login is needed for its free models.",
     "ocMissing": "opencode not installed",
     "ocMissingTitle": "An OpenCode project needs the OpenCode CLI. Install it in a terminal, then press Check again.",

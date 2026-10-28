@@ -500,6 +500,14 @@ async function addAccount(label, projectId) {
   if (a?.id) openLogin(a.id, a);
 }
 
+// v3.54: create a FixCloud account (a Claude account pre-wired to a FixCloud endpoint). The key travels to main once here.
+async function addFixcloud(payload, projectId) {
+  let r = null;
+  try { r = await api.accounts.addFixcloud(payload); } catch (e) { console.error(e); }
+  if (r?.ok && r.account?.id && projectId) try { await api.projects.setAccount(projectId, r.account.id); } catch (e) { console.error(e); }
+  await refreshAccounts();
+}
+
 function openLogin(id, fallback) {
   const a = accounts.find((x) => x.id === id) || fallback;
   if (a) login.open(a);
@@ -572,6 +580,7 @@ sidebar = mountSidebar($('sidebar'), {
   ocLogout: () => openOc('logout'),
   ocRefresh: () => api.oc?.auth(true).then(setOcAuth, (e) => console.error(e)),
   cmdRefresh: () => api.cmd?.auth(true).then(setCmdAuth, (e) => console.error(e)),
+  addFixcloud,
   addAgy: () => addEngineAccount('agy'),
   addCmd: () => addEngineAccount('cmd'),
   addOc: () => addEngineAccount('oc'),

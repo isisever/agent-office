@@ -17,6 +17,31 @@ const path = require('path');
 const DEFAULT_ID = 'default';
 const DEFAULT_ACCOUNT = Object.freeze({ id: DEFAULT_ID, label: 'Varsayılan', configDir: null });
 
+// FixCloud accounts (contract v3.54): a Claude-engine account pre-wired to a FixCloud (or any Claude/Anthropic-compatible)
+// endpoint. Its own settings.json carries ANTHROPIC_BASE_URL/ANTHROPIC_MODEL; the API key is stored encrypted and injected
+// at pty launch as ANTHROPIC_AUTH_TOKEN. Carried in the env as AGENT_OFFICE_FIXCLOUD_TOKEN and re-exported after the login
+// shell's rc files (which run after the built env), so the account's key beats anything the rc files export.
+const FIXCLOUD = 'fixcloud';
+const FIXCLOUD_DEFAULT_BASE = 'https://llm.fixcloud.ai';
+const FIXCLOUD_TOKEN_ENV = 'AGENT_OFFICE_FIXCLOUD_TOKEN';
+const isFixcloud = (account) => account?.provider === FIXCLOUD;
+// Appended to the session launch command AFTER the rc files (like the CLAUDE_CONFIG_DIR / subagent-model re-exports):
+// a no-op unless AGENT_OFFICE_FIXCLOUD_TOKEN is set (so only fixcloud accounts are touched). Unsets any ANTHROPIC_API_KEY
+// the rc files exported (an API key would otherwise win over the token) and sets ANTHROPIC_AUTH_TOKEN from the carrier.
+const FIXCLOUD_REEXPORT = '[ -n "$AGENT_OFFICE_FIXCLOUD_TOKEN" ] && { unset ANTHROPIC_API_KEY; export ANTHROPIC_AUTH_TOKEN="$AGENT_OFFICE_FIXCLOUD_TOKEN"; }; ';
+
+// Inject a fixcloud account's token into a pty env (the decrypted key, passed by main only — accounts.js never reads it).
+// For a fixcloud account: drop any inherited ANTHROPIC_API_KEY (mandatory, so the token wins), and when a token is given
+// set ANTHROPIC_AUTH_TOKEN directly (Windows has no rc files) and carry it as AGENT_OFFICE_FIXCLOUD_TOKEN for the re-export.
+// A non-fixcloud account's env is returned untouched (existing accounts are unaffected).
+function fixcloudEnv(env, account, token = '') {
+  const out = { ...env };
+  if (!isFixcloud(account)) return out;
+  delete out.ANTHROPIC_API_KEY;
+  if (token) { out.ANTHROPIC_AUTH_TOKEN = token; out[FIXCLOUD_TOKEN_ENV] = token; }
+  return out;
+}
+
 // The default account is always first and its configDir is null.
 function normalizeAccounts(list) {
   const out = [{ ...DEFAULT_ACCOUNT }];
@@ -25,7 +50,7 @@ function normalizeAccounts(list) {
     if (!a || typeof a.id !== 'string' || !a.id || seen.has(a.id)) continue;
     if (typeof a.configDir !== 'string' || !a.configDir) continue;
     seen.add(a.id);
-    out.push({ id: a.id, label: cleanLabel(a.label, a.id), configDir: a.configDir, ...(a.shareDefault === false ? { shareDefault: false } : {}) });
+    out.push({ id: a.id, label: cleanLabel(a.label, a.id), configDir: a.configDir, ...(a.shareDefault === false ? { shareDefault: false } : {}), ...(a.provider === FIXCLOUD ? { provider: FIXCLOUD } : {}) });
   }
   return out;
 }
@@ -33,8 +58,11 @@ function normalizeAccounts(list) {
 const cleanLabel = (label, fallback) => (typeof label === 'string' && label.trim()) || fallback;
 
 // configDir = <root>/<id>; in main, root is userData/accounts. main creates the folder.
-function addAccount(state, label, { id, root }) {
-  const account = { id, label: cleanLabel(label, `Hesap ${state.accounts.length}`), configDir: path.join(root, id) };
+// provider (contract v3.54): 'fixcloud' marks a Claude-engine account pre-wired to a FixCloud endpoint; the default
+// account and ordinary added accounts keep no provider field.
+/** @param {any} state @param {any} label @param {{ id: string, root: string, provider?: string }} opts */
+function addAccount(state, label, { id, root, provider }) {
+  const account = { id, label: cleanLabel(label, `Hesap ${state.accounts.length}`), configDir: path.join(root, id), ...(provider === FIXCLOUD ? { provider: FIXCLOUD } : {}) };
   return { state: { ...state, accounts: [...state.accounts, account] }, account };
 }
 
@@ -272,6 +300,7 @@ const loginAccountId = (ptyId) =>
 
 module.exports = {
   shellEnv, DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, setAccountShare, removeAccount, accountOf, ptyEnv, sessionEnv,
+  FIXCLOUD, FIXCLOUD_DEFAULT_BASE, FIXCLOUD_TOKEN_ENV, FIXCLOUD_REEXPORT, isFixcloud, fixcloudEnv,
   SAVINGS, SAVINGS_LEVELS, SAVINGS_DEFAULT,
   lastJsonObject, authFromStatus, authFromRun, localizeAuth, claudeCommand, withAuth, loginPtyId, loginAccountId,
 };

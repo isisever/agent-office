@@ -30,6 +30,7 @@ const accounts = [
   { id: 'default', label: 'Varsayılan', configDir: null, auth: { state: 'in', email: 'you@example.com', method: 'claude.ai' },
     usage: { updatedAt: Date.now() - 4 * 60e3, fiveHour: { pct: 74, resetsAt: Date.now() + 2.5 * 3600e3 }, sevenDay: { pct: 24, resetsAt: Date.now() + 4 * 86400e3 } } },
   { id: 'is', label: 'İş', configDir: '/tmp/accounts/is', auth: { state: 'out' } },
+  { id: 'fix', label: 'FixCloud', configDir: '/tmp/accounts/fix', provider: 'fixcloud', auth: { state: 'ready' } },
 ];
 if (q.has('authError')) {
   accounts.push({ id: 'kisisel', label: 'Kişisel', configDir: '/tmp/accounts/kisisel',
@@ -271,6 +272,13 @@ window.agentOffice = {
       realAuth.set(a.id, { state: 'out' });
       setTimeout(() => setAuth(a.id, { state: 'out' }), 1500);
       return { ...a, auth: { ...a.auth } };
+    },
+    addFixcloud: async (payload) => {
+      const a = { id: rid(), label: (payload?.label || 'FixCloud'), configDir: `/tmp/accounts/${payload?.label || 'fixcloud'}`, provider: 'fixcloud', auth: { state: 'ready' } };
+      accounts.push(a);
+      realAuth.set(a.id, { state: 'ready' });
+      accountsChanged();
+      return { ok: true, account: { ...a, auth: { ...a.auth } } };
     },
     rename: async (id, label) => { const a = accounts.find((x) => x.id === id); if (a) a.label = label; },
     setShare: async (id, on) => {
