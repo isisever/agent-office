@@ -17,30 +17,17 @@ const path = require('path');
 const DEFAULT_ID = 'default';
 const DEFAULT_ACCOUNT = Object.freeze({ id: DEFAULT_ID, label: 'Varsayılan', configDir: null });
 
-// FixCloud accounts (contract v3.54): a Claude-engine account pre-wired to a FixCloud (or any Claude/Anthropic-compatible)
-// endpoint. Its own settings.json carries ANTHROPIC_BASE_URL/ANTHROPIC_MODEL; the API key is stored encrypted and injected
-// at pty launch as ANTHROPIC_AUTH_TOKEN. Carried in the env as AGENT_OFFICE_FIXCLOUD_TOKEN and re-exported after the login
-// shell's rc files (which run after the built env), so the account's key beats anything the rc files export.
+// FixCloud accounts (contract v3.55, supersedes the v3.54 Claude path): a login-less account that runs its projects on
+// the OpenCode engine against a FixCloud (OpenAI-compatible) endpoint. The account carries provider:'fixcloud' plus the
+// chosen model and base URL; its API key is stored encrypted (providerTokens) and injected into the OpenCode launch env
+// as FIXCLOUD_API_KEY after the engine's env filter. The OpenCode-side wiring (opencode.json merge, env reference,
+// boss-model helper) lives in src/fixcloud.js; accounts.js only knows the account's own fields. The old 0.22.6 Claude
+// path (ANTHROPIC_BASE_URL/ANTHROPIC_MODEL in settings.json and an ANTHROPIC_AUTH_TOKEN re-export) is gone: FixCloud is
+// OpenAI-wire, so it never worked.
 const FIXCLOUD = 'fixcloud';
-const FIXCLOUD_DEFAULT_BASE = 'https://llm.fixcloud.ai';
-const FIXCLOUD_TOKEN_ENV = 'AGENT_OFFICE_FIXCLOUD_TOKEN';
+const FIXCLOUD_DEFAULT_BASE = 'https://llm.fixcloud.ai/v1';
+const FIXCLOUD_DEFAULT_MODEL = 'qwen3.6-35b-a3b';
 const isFixcloud = (account) => account?.provider === FIXCLOUD;
-// Appended to the session launch command AFTER the rc files (like the CLAUDE_CONFIG_DIR / subagent-model re-exports):
-// a no-op unless AGENT_OFFICE_FIXCLOUD_TOKEN is set (so only fixcloud accounts are touched). Unsets any ANTHROPIC_API_KEY
-// the rc files exported (an API key would otherwise win over the token) and sets ANTHROPIC_AUTH_TOKEN from the carrier.
-const FIXCLOUD_REEXPORT = '[ -n "$AGENT_OFFICE_FIXCLOUD_TOKEN" ] && { unset ANTHROPIC_API_KEY; export ANTHROPIC_AUTH_TOKEN="$AGENT_OFFICE_FIXCLOUD_TOKEN"; }; ';
-
-// Inject a fixcloud account's token into a pty env (the decrypted key, passed by main only — accounts.js never reads it).
-// For a fixcloud account: drop any inherited ANTHROPIC_API_KEY (mandatory, so the token wins), and when a token is given
-// set ANTHROPIC_AUTH_TOKEN directly (Windows has no rc files) and carry it as AGENT_OFFICE_FIXCLOUD_TOKEN for the re-export.
-// A non-fixcloud account's env is returned untouched (existing accounts are unaffected).
-function fixcloudEnv(env, account, token = '') {
-  const out = { ...env };
-  if (!isFixcloud(account)) return out;
-  delete out.ANTHROPIC_API_KEY;
-  if (token) { out.ANTHROPIC_AUTH_TOKEN = token; out[FIXCLOUD_TOKEN_ENV] = token; }
-  return out;
-}
 
 // The default account is always first and its configDir is null.
 function normalizeAccounts(list) {
@@ -50,19 +37,25 @@ function normalizeAccounts(list) {
     if (!a || typeof a.id !== 'string' || !a.id || seen.has(a.id)) continue;
     if (typeof a.configDir !== 'string' || !a.configDir) continue;
     seen.add(a.id);
-    out.push({ id: a.id, label: cleanLabel(a.label, a.id), configDir: a.configDir, ...(a.shareDefault === false ? { shareDefault: false } : {}), ...(a.provider === FIXCLOUD ? { provider: FIXCLOUD } : {}) });
+    out.push({ id: a.id, label: cleanLabel(a.label, a.id), configDir: a.configDir, ...(a.shareDefault === false ? { shareDefault: false } : {}), ...fixcloudFields(a) });
   }
   return out;
 }
 
 const cleanLabel = (label, fallback) => (typeof label === 'string' && label.trim()) || fallback;
 
+// The fields a fixcloud account carries (contract v3.55): provider:'fixcloud', and the chosen model and base URL (kept
+// so the project's OpenCode boss model and the opencode.json provider can be rebuilt). A non-fixcloud account keeps none.
+const fixcloudFields = (a) => (a?.provider === FIXCLOUD
+  ? { provider: FIXCLOUD, ...(typeof a.model === 'string' && a.model ? { model: a.model } : {}), ...(typeof a.baseUrl === 'string' && a.baseUrl ? { baseUrl: a.baseUrl } : {}) }
+  : {});
+
 // configDir = <root>/<id>; in main, root is userData/accounts. main creates the folder.
-// provider (contract v3.54): 'fixcloud' marks a Claude-engine account pre-wired to a FixCloud endpoint; the default
-// account and ordinary added accounts keep no provider field.
-/** @param {any} state @param {any} label @param {{ id: string, root: string, provider?: string }} opts */
-function addAccount(state, label, { id, root, provider }) {
-  const account = { id, label: cleanLabel(label, `Hesap ${state.accounts.length}`), configDir: path.join(root, id), ...(provider === FIXCLOUD ? { provider: FIXCLOUD } : {}) };
+// provider (contract v3.55): 'fixcloud' marks a login-less OpenCode-backed account; it also carries model and baseUrl.
+// The default account and ordinary added accounts keep no provider/model/baseUrl.
+/** @param {any} state @param {any} label @param {{ id: string, root: string, provider?: string, model?: string, baseUrl?: string }} opts */
+function addAccount(state, label, { id, root, provider, model, baseUrl }) {
+  const account = { id, label: cleanLabel(label, `Hesap ${state.accounts.length}`), configDir: path.join(root, id), ...fixcloudFields({ provider, model, baseUrl }) };
   return { state: { ...state, accounts: [...state.accounts, account] }, account };
 }
 
@@ -300,7 +293,7 @@ const loginAccountId = (ptyId) =>
 
 module.exports = {
   shellEnv, DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, setAccountShare, removeAccount, accountOf, ptyEnv, sessionEnv,
-  FIXCLOUD, FIXCLOUD_DEFAULT_BASE, FIXCLOUD_TOKEN_ENV, FIXCLOUD_REEXPORT, isFixcloud, fixcloudEnv,
+  FIXCLOUD, FIXCLOUD_DEFAULT_BASE, FIXCLOUD_DEFAULT_MODEL, isFixcloud,
   SAVINGS, SAVINGS_LEVELS, SAVINGS_DEFAULT,
   lastJsonObject, authFromStatus, authFromRun, localizeAuth, claudeCommand, withAuth, loginPtyId, loginAccountId,
 };

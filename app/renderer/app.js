@@ -500,10 +500,12 @@ async function addAccount(label, projectId) {
   if (a?.id) openLogin(a.id, a);
 }
 
-// v3.54: create a FixCloud account (a Claude account pre-wired to a FixCloud endpoint). The key travels to main once here.
+// v3.55: create a FixCloud account (login-less, OpenCode-backed against a FixCloud endpoint). The key travels to main
+// once here. If OpenCode isn't installed, main returns { error: 'noOpencode' }; show the OpenCode row with its install hint.
 async function addFixcloud(payload, projectId) {
   let r = null;
   try { r = await api.accounts.addFixcloud(payload); } catch (e) { console.error(e); }
+  if (r?.error === 'noOpencode') { await setEngineRow('showOcAccount', true); try { setOcAuth(await api.oc?.auth(true)); } catch (e) { console.error(e); } }
   if (r?.ok && r.account?.id && projectId) try { await api.projects.setAccount(projectId, r.account.id); } catch (e) { console.error(e); }
   await refreshAccounts();
 }

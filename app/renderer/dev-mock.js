@@ -274,7 +274,7 @@ window.agentOffice = {
       return { ...a, auth: { ...a.auth } };
     },
     addFixcloud: async (payload) => {
-      const a = { id: rid(), label: (payload?.label || 'FixCloud'), configDir: `/tmp/accounts/${payload?.label || 'fixcloud'}`, provider: 'fixcloud', auth: { state: 'ready' } };
+      const a = { id: rid(), label: (payload?.label || 'FixCloud'), configDir: `/tmp/accounts/${payload?.label || 'fixcloud'}`, provider: 'fixcloud', model: (payload?.model || 'qwen3.6-35b-a3b'), baseUrl: (payload?.baseUrl || 'https://llm.fixcloud.ai/v1'), auth: { state: 'ready' } };
       accounts.push(a);
       realAuth.set(a.id, { state: 'ready' });
       accountsChanged();

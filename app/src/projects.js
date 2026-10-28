@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT } = require('./accounts.js');
 const { withSkillPacks } = require('./skill-packs.js');
+const { isFixcloudModel } = require('./fixcloud.js');
 const HQ = require('./hq.js');
 const ROUT = require('./routines.js');
 
@@ -255,9 +256,15 @@ const BOSS_MODELS_BY_ENGINE = {
   commandcode: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'deepseek/deepseek-v4-flash'],
   opencode: ['opencode/big-pickle'], // v3.40: `-m provider/model`; OpenCode's free model, no login needed
 };
-const bossModelValue = (v, engine) => ((BOSS_MODELS_BY_ENGINE[engineValue(engine) || 'claude'] || []).includes(v) ? v : null);
+// v3.55: a fixcloud account binds its project to OpenCode with `-m fixcloud/<model>`; the model is the account's own,
+// so any `fixcloud/<model>` value is valid for the opencode engine (beyond the fixed list above).
+const bossModelValue = (v, engine) => {
+  const e = engineValue(engine) || 'claude';
+  if (e === 'opencode' && isFixcloudModel(v)) return v;
+  return (BOSS_MODELS_BY_ENGINE[e] || []).includes(v) ? v : null;
+};
 // normalizeState keeps a model valid for ANY engine (switching back finds it again); only the launch args check the active engine
-const anyEngineBossModel = (v) => Object.values(BOSS_MODELS_BY_ENGINE).some((l) => l.includes(v));
+const anyEngineBossModel = (v) => isFixcloudModel(v) || Object.values(BOSS_MODELS_BY_ENGINE).some((l) => l.includes(v));
 const withBossModel = (v) => (anyEngineBossModel(v) ? { bossModel: v } : {});
 
 /** value: one of the project's engine's models, or null (Auto). Same state when nothing changes. */
@@ -373,6 +380,19 @@ function setProjectEngine(state, id, value) {
   }) };
 }
 
+/** v3.55: keep a project's engine/model in step with a move between accounts. Moving onto a fixcloud account binds
+ *  OpenCode + `fixcloud/<model>` (bossModel is validated against the engine, so the engine is set first); moving off
+ *  one resets the engine to the default and clears a `fixcloud/...` bossModel (any other bossModel is kept). */
+function bindFixcloudAccount(state, id, { fromFix, toFix, bossModel }) {
+  if (toFix) return setProjectBossModel(setProjectEngine(state, id, 'opencode'), id, bossModel);
+  if (!fromFix) return state;
+  const p = findProject(state, id);
+  let next = state;
+  if (p && isFixcloudModel(p.bossModel)) next = setProjectBossModel(next, id, null);   // engine still opencode here
+  if (p && engineValue(p.engine) === 'opencode') next = setProjectEngine(next, id, null);
+  return next;
+}
+
 /** The program the project's tabs run: 'claude' | 'agy' | 'commandcode' | 'opencode'. */
 const engineOf = (project) => engineValue(project?.engine) || 'claude';
 
@@ -476,7 +496,7 @@ module.exports = {
   AGENT_MODELS, setProjectAgentModel, agentModelOf,
   CONTEXT_CAPS, setProjectContextCap, contextCapOf,
   setProjectSavings, savingsOf,
-  ENGINES, setProjectEngine, engineOf,
+  ENGINES, setProjectEngine, bindFixcloudAccount, engineOf,
   setProjectFiles, projectFilesOf,
   setProjectBackup, backupOf, fallbackTo, returnHome,
 };

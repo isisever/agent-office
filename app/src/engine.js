@@ -195,11 +195,13 @@ const OC_FORCED_ENV = {
 
 /**
  * The env OpenCode starts with: agyEnv's base allowlist (without agy's own names and families) plus OpenCode's own
- * variables and provider API keys; the same deny rule (Claude, Anthropic, the office, MCP).
- * @param {Record<string, string | undefined>} base @param {string} [platform]
+ * variables and provider API keys; the same deny rule (Claude, Anthropic, the office, MCP). `extra` (v3.55): values
+ * forced in AFTER the filter, beside OC_FORCED_ENV, so the filter cannot drop them — main passes a fixcloud account's
+ * decrypted FIXCLOUD_API_KEY here (engine.js never reads a key itself; the decryption happens only in main).
+ * @param {Record<string, string | undefined>} base @param {string} [platform] @param {Record<string, string>} [extra]
  * @returns {Record<string, string>}
  */
-function ocEnv(base, platform = process.platform) {
+function ocEnv(base, platform = process.platform, extra = {}) {
   const win = platform === 'win32';
   const norm = (/** @type {string} */ n) => (win ? n.toUpperCase() : n);
   const names = new Set([...AGY_ENV_NAMES.filter((n) => n !== 'AGY_ADC_AUTH'), ...OC_PROVIDER_KEYS, ...(win ? AGY_ENV_WINDOWS : [])].map(norm));
@@ -213,9 +215,12 @@ function ocEnv(base, platform = process.platform) {
   }
   out.TERM = 'xterm-256color';
   out.COLORTERM = 'truecolor';
-  // Windows names ignore case: a user `Opencode_Disable_Claude_Code=0` must not sit beside the forced value
-  for (const k of Object.keys(out)) if (norm(k) in OC_FORCED_ENV) delete out[k];
-  Object.assign(out, OC_FORCED_ENV);
+  // Forced after the filter, so a user value can't unset them (OC_FORCED_ENV) and the filter can't drop the injected
+  // key (extra). Windows names ignore case: a user `Opencode_Disable_Claude_Code=0` must not sit beside a forced value.
+  const forced = { ...OC_FORCED_ENV, ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? extra : {}) };
+  const forcedNorm = new Set(Object.keys(forced).map(norm));
+  for (const k of Object.keys(out)) if (forcedNorm.has(norm(k))) delete out[k];
+  Object.assign(out, forced);
   return out;
 }
 
