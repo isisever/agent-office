@@ -74,6 +74,7 @@ export function mountSidebar(el, on) {
   let projKey = '';
   let acctKey = '';
   let editing = null; // { id: string | null } — account name being edited (null id = new account)
+  let fixForm = null; // v3.54: the inline FixCloud add form is open; { forProject? }
   let langSetting = 'auto';
   /** @type {{ code: string, name: string }[]} */
   let languages = []; // locales/*.json (from main, LanguageInfo.languages)
@@ -710,6 +711,8 @@ export function mountSidebar(el, on) {
   function authRow(a, isDefault) {
     const auth = a.auth;
     if (!auth?.state) return null;
+    // v3.54: a fixcloud account has no login; show a neutral line, no Giriş/Çıkış buttons.
+    if (a.provider === 'fixcloud') return h('div', { class: 'sb-auth' }, h('span', { class: 'sb-auth-text', title: t('sidebar.fixReadyTitle') }, t('sidebar.fixReady')));
     const btn = (cls, text, title, fn) => h('button', { class: 'sb-btn ' + cls, title, onclick: (e) => { e.stopPropagation(); fn(); } }, text);
     const loginBtn = () => btn('primary', t('sidebar.login'), t('sidebar.loginTitle', { label: labelOf(a) }), () => on.login(a.id));
     switch (auth.state) {
@@ -915,7 +918,34 @@ export function mountSidebar(el, on) {
       item(t('sidebar.addClaude'), t('sidebar.newAccountTitle'), () => { editing = { id: null, ...(addFor ? { forProject: addFor } : {}) }; renderAccounts(); }),
       item(t('sidebar.addAgy'), t('sidebar.addAgyTitle'), () => { renderAccounts(); on.addAgy?.(); }),
       item(t('sidebar.addCmd'), t('sidebar.addCmdTitle'), () => { renderAccounts(); on.addCmd?.(); }),
-      item(t('sidebar.addOc'), t('sidebar.addOcTitle'), () => { renderAccounts(); on.addOc?.(); }));
+      item(t('sidebar.addOc'), t('sidebar.addOcTitle'), () => { renderAccounts(); on.addOc?.(); }),
+      item(t('sidebar.addFix'), t('sidebar.addFixTitle'), () => { fixForm = { ...(addFor ? { forProject: addFor } : {}) }; renderAccounts(); }));
+  }
+
+  /** v3.54: the inline FixCloud add form in Accounts — Name, API key (required), Model, Base URL (editable). */
+  function fixcloudForm() {
+    const forProject = fixForm?.forProject;
+    const name = h('input', { class: 'sb-input', value: 'FixCloud', maxLength: 40, placeholder: t('sidebar.accountName'), onkeydown: (e) => e.stopPropagation() });
+    const apiKey = h('input', { class: 'sb-input', type: 'password', placeholder: t('sidebar.fixApiKey'), onkeydown: (e) => e.stopPropagation() });
+    const model = h('input', { class: 'sb-input', placeholder: t('sidebar.fixModel'), onkeydown: (e) => e.stopPropagation() });
+    const baseUrl = h('input', { class: 'sb-input', value: 'https://llm.fixcloud.ai', placeholder: t('sidebar.fixBaseUrl'), onkeydown: (e) => e.stopPropagation() });
+    const close = () => { fixForm = null; renderAccounts(); };
+    const field = (label, input) => h('label', { class: 'sb-fix-field' }, h('span', {}, label), input);
+    const save = () => {
+      if (!apiKey.value.trim()) return apiKey.focus();
+      on.addFixcloud?.({ label: name.value.trim() || 'FixCloud', apiKey: apiKey.value.trim(), model: model.value.trim(), baseUrl: baseUrl.value.trim() }, forProject);
+      fixForm = null; renderAccounts();
+    };
+    requestAnimationFrame(() => apiKey.focus());
+    return h('li', { class: 'sb-acc sb-fix-form', onkeydown: (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } } },
+      field(t('sidebar.accountName'), name),
+      field(t('sidebar.fixApiKey'), apiKey),
+      field(t('sidebar.fixModel'), model),
+      field(t('sidebar.fixBaseUrl'), baseUrl),
+      h('p', { class: 'sb-fix-note' }, t('sidebar.fixBaseNote')),
+      h('div', { class: 'sb-fix-actions' },
+        h('button', { class: 'sb-btn primary', onclick: save }, t('sidebar.fixSave')),
+        h('button', { class: 'sb-btn', onclick: close }, t('sidebar.fixCancel'))));
   }
 
   function renderAccounts() {
@@ -932,6 +962,7 @@ export function mountSidebar(el, on) {
           h('span', { class: 'sb-adot', title: hasText(`sidebar.authDot.${state}`) ? t(`sidebar.authDot.${state}`) : '' }),
           h('span', { class: 'sb-name' }, labelOf(a)),
           isDefault ? h('span', { class: 'sb-tag' }, t('sidebar.system')) : null,
+          a.provider === 'fixcloud' ? h('span', { class: 'sb-tag', title: t('sidebar.fixBadgeTitle') }, t('sidebar.fixBadge')) : null,
           h('button', {
             class: 'sb-x', title: t('sidebar.refreshAuth'), disabled: state === 'checking',
             onclick: () => on.refreshAuth(a.id),
@@ -952,6 +983,7 @@ export function mountSidebar(el, on) {
         if (label) on.addAccount(label, forProject);
       })));
     }
+    if (fixForm) rows.push(fixcloudForm());
     const agy = agyRow();
     const cmd = cmdRow();
     const oc = ocRow();

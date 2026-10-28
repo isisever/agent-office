@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
   accounts: {
     list: () => ipcRenderer.invoke('accounts:list'),
     add: (label) => ipcRenderer.invoke('accounts:add', label),
+    addFixcloud: (payload) => ipcRenderer.invoke('accounts:addFixcloud', payload),   // v3.54: { label, apiKey, model, baseUrl } → { ok, account } | { ok: false, error }
     rename: (id, label) => ipcRenderer.invoke('accounts:rename', id, label),
     setShare: (id, on) => ipcRenderer.invoke('accounts:setShare', id, on),   // use Default's plugins, skills, MCP servers (v3.6)
     remove: (id) => ipcRenderer.invoke('accounts:remove', id),

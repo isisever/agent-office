@@ -4236,3 +4236,81 @@ test('düz terminal sekmesi: ortamdan CLAUDE*/ANTHROPIC_*/AGENT_OFFICE_* düşer
     rtAssert.match(fn('saveRt'), /SF\.writeAtomic\(rtFileName\(\), text\)/);
   });
 }
+
+// ---- FixCloud account type (v3.54) ----
+test('fixcloud (v3.54): normalizeAccounts ve addAccount provider alanını korur, default korumaz', () => {
+  const MS = require('../src/mcp-servers.js');
+  // addAccount tags only when provider is 'fixcloud'
+  const r = A.addAccount(empty(), 'FixCloud', { id: 'fc', root: '/u/accounts', provider: 'fixcloud' });
+  assert.equal(r.account.provider, 'fixcloud');
+  assert.deepEqual(r.account, { id: 'fc', label: 'FixCloud', configDir: '/u/accounts/fc', provider: 'fixcloud' });
+  assert.equal('provider' in A.addAccount(empty(), 'İş', { id: 'w', root: '/r' }).account, false);
+  // normalizeAccounts keeps it across a state load; the default account keeps none
+  const norm = A.normalizeAccounts([{ id: 'fc', label: 'FixCloud', configDir: '/u/accounts/fc', provider: 'fixcloud' }, { id: 'x', label: 'X', configDir: '/u/x', provider: 'nope' }]);
+  assert.equal(norm[0].id, 'default');
+  assert.equal('provider' in norm[0], false);
+  assert.equal(norm.find((a) => a.id === 'fc').provider, 'fixcloud');
+  assert.equal('provider' in norm.find((a) => a.id === 'x'), false); // only 'fixcloud' is whitelisted
+  void MS;
+});
+
+test('fixcloud (v3.54): fixcloudEnv AUTH_TOKEN enjekte eder ve API_KEY siler, yalnız fixcloud için', () => {
+  const base = { PATH: '/bin', ANTHROPIC_API_KEY: 'inherited' };
+  const fix = A.fixcloudEnv(base, { provider: 'fixcloud' }, 'sk-key');
+  assert.equal(fix.ANTHROPIC_AUTH_TOKEN, 'sk-key');
+  assert.equal(fix[A.FIXCLOUD_TOKEN_ENV], 'sk-key');
+  assert.equal('ANTHROPIC_API_KEY' in fix, false);          // dropped for fixcloud (mandatory)
+  // non-fixcloud account: env untouched
+  const plain = A.fixcloudEnv(base, { provider: undefined }, 'sk-key');
+  assert.equal(plain.ANTHROPIC_API_KEY, 'inherited');
+  assert.equal('ANTHROPIC_AUTH_TOKEN' in plain, false);
+  assert.equal(base.ANTHROPIC_API_KEY, 'inherited');         // input unchanged
+  // the rc re-export snippet unsets the key and exports the token from the carrier, after the rc files
+  assert.match(A.FIXCLOUD_REEXPORT, /unset ANTHROPIC_API_KEY/);
+  assert.match(A.FIXCLOUD_REEXPORT, /export ANTHROPIC_AUTH_TOKEN="\$AGENT_OFFICE_FIXCLOUD_TOKEN"/);
+  assert.equal(A.isFixcloud({ provider: 'fixcloud' }), true);
+  assert.equal(A.isFixcloud({ provider: 'x' }), false);
+});
+
+test('fixcloud (v3.54): provider-tokens roundtrip ve remove', () => {
+  const MS = require('../src/mcp-servers.js');
+  const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
+  const fakeSafe = { isEncryptionAvailable: () => true, encryptString: (s) => Buffer.from(`enc:${Buffer.from(s).toString('base64')}`), decryptString: (b) => Buffer.from(String(b).slice(4), 'base64').toString() };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-prov-'));
+  const store = MS.tokenStore(path.join(dir, 'provider-tokens'), fakeSafe);
+  assert.ok(store.save('fc', 'sk-secret'));
+  assert.equal(store.load('fc'), 'sk-secret');
+  assert.equal(store.has('fc'), true);
+  store.remove('fc');
+  assert.equal(store.has('fc'), false);
+  assert.equal(store.load('fc'), '');
+});
+
+test('fixcloud (v3.54): auto yedek havuzu provider hesabını dışlar', () => {
+  const FB = require('../src/fallback.js');
+  const now = 1_000_000_000_000;
+  const accounts = [
+    { id: 'default', auth: { state: 'in' } },
+    { id: 'b', auth: { state: 'in' }, usage: { updatedAt: now, fiveHour: { pct: 10 } } },
+    { id: 'fc', auth: { state: 'ready' }, provider: 'fixcloud' },
+  ];
+  assert.deepEqual(FB.pickBackup({ choice: 'auto', current: 'default', accounts, now }), { id: 'b' });
+  // only the fixcloud account present → no candidate
+  assert.deepEqual(FB.pickBackup({ choice: 'auto', current: 'default', accounts: [accounts[0], accounts[2]], now }), { reason: 'none' });
+});
+
+test('fixcloud (v3.54): addFixcloud settings.json base+model yazar, anahtarı yazmaz; remove token siler', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
+  const start = src.indexOf("ipcMain.handle('accounts:addFixcloud'");
+  assert.ok(start > 0, 'addFixcloud handler yok');
+  const body = src.slice(start, src.indexOf("ipcMain.handle('accounts:rename'"));
+  assert.match(body, /ANTHROPIC_BASE_URL: baseUrl/);
+  assert.match(body, /ANTHROPIC_MODEL: model/);
+  assert.match(body, /providerTokens\(\)\.save\(r\.account\.id, apiKey\)/);
+  assert.match(body, /mode: 0o600/);
+  assert.equal(/JSON\.stringify\([^)]*apiKey/.test(body), false, 'the key must not be written to settings.json');
+  // remove cleans the stored token
+  assert.match(src, /providerTokens\(\)\.remove\(id\);/);
+  // the session launch line re-exports the token after the rc files
+  assert.match(src, /A\.FIXCLOUD_REEXPORT/);
+});

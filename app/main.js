@@ -309,6 +309,10 @@ const directoryDir = () => path.join(app.getPath('userData'), 'directory');
 // has no keyring). It reaches claude only inside the tab's 0600 MCP file (userData/mcp), removed when that claude ends.
 const tokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'mcp-tokens'), safeStorage);
 const oldTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'connector-tokens'), safeStorage); // v3.43, migration only
+// v3.54: a FixCloud account's API key, per account id in userData/provider-tokens, encrypted with safeStorage (same store
+// shape as the MCP tokens). Decrypted only here at pty launch and injected as ANTHROPIC_AUTH_TOKEN; never to the renderer,
+// state.json, settings.json, argv or a log.
+const providerTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'provider-tokens'), safeStorage);
 const appServers = () => state.mcpServers || [];
 /** A project is removed from this machine: its own servers and their tokens go; ones for all stay. (A handed-off
  *  project keeps them here, held for its folder: release / adopt, MS.holdProject / MS.adoptHeld.) */
@@ -456,7 +460,8 @@ const shell = () => OS.defaultShell();
 const accountById = (id) => state.accounts.find((a) => a.id === id) || null;
 function accountEnv(account) {
   if (account.configDir) try { fs.mkdirSync(account.configDir, { recursive: true }); } catch {}
-  return A.ptyEnv(process.env, account.configDir);
+  // v3.54: a fixcloud account's login/relay/status ptys also get its key injected and ANTHROPIC_API_KEY dropped.
+  return A.fixcloudEnv(A.ptyEnv(process.env, account.configDir), account, A.isFixcloud(account) ? providerTokens().load(account.id) : '');
 }
 
 // --- Windows: no login shell; claude is found on PATH and started directly (see src/platform.js)
@@ -539,6 +544,8 @@ const again = new Set();
 function checkAuth(id, { showChecking = false } = {}) {
   const account = accountById(id);
   if (!account) return Promise.resolve();
+  // v3.54: a fixcloud account has no login (its key is pre-configured): skip `claude auth status` and show a neutral dot.
+  if (A.isFixcloud(account)) { if (auths.get(id)?.state !== 'ready') { auths.set(id, { state: 'ready' }); sendAccounts(); } return Promise.resolve(); }
   if (showChecking && auths.get(id)?.state !== 'checking') { auths.set(id, { state: 'checking' }); sendAccounts(); }
   if (checking.has(id)) { again.add(id); return checking.get(id); }
   const run = (async () => {
@@ -609,6 +616,7 @@ function startLogin(accountId) {
   const id = A.loginPtyId(accountId);
   const account = accountById(accountId);
   if (!account || !win) return;
+  if (A.isFixcloud(account)) return;   // v3.54: fixcloud accounts have no login flow
   if ([...relays.values()].some((r) => r.accountId === accountId)) { send('pty:data', id, '\r\n[a remote sign-in for this account is running; try again when it is done]\r\n'); send('pty:exit', id, -1); return; }
   startLoginPty({
     id, label: 'giriş pty\'si başlatılamadı',
@@ -1102,6 +1110,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
   const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; '
+    + A.FIXCLOUD_REEXPORT   // v3.54: for fixcloud accounts only (no-op otherwise); its key beats a rc-set ANTHROPIC_API_KEY
     + '[ -n "$AGENT_OFFICE_AGENT_MODEL" ] && export CLAUDE_CODE_SUBAGENT_MODEL="$AGENT_OFFICE_AGENT_MODEL" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1; '
     + '[ -n "$AGENT_OFFICE_CONTEXT_CAP" ] && export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$AGENT_OFFICE_CONTEXT_CAP"; '
     + '[ -n "$AGENT_OFFICE_BASH_OUTPUT" ] && export BASH_MAX_OUTPUT_LENGTH="$AGENT_OFFICE_BASH_OUTPUT"; '
@@ -1120,6 +1129,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   if (project.hq) env.AGENT_OFFICE_HQ = '1';   // v3.46 the plugin gives the HQ section instead of the manager one
   if (bossMcp && (linkHost?.link()?.devices.length || 0) > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
   if (sl?.userCommand) env.AGENT_OFFICE_STATUSLINE = sl.userCommand;
+  // v3.54: a fixcloud account's key is injected here (decrypted only now) and any inherited ANTHROPIC_API_KEY dropped.
+  if (A.isFixcloud(account)) env = A.fixcloudEnv(env, account, providerTokens().load(account.id));
   if (IS_WIN) env = windowsStatusLineEnv(env, sl);
   let t;
   try {
@@ -2682,7 +2693,7 @@ function transcriptLimit(id, dir, configDir) {
 }
 const accountName = (a) => (a.id === A.DEFAULT_ID ? T('main.defaultAccount') : a.label);
 /** Accounts as FB.pickBackup reads them: login state and quota. */
-const fallbackAccounts = () => state.accounts.map((a) => ({ id: a.id, auth: auths.get(a.id), usage: usages.get(a.id) }));
+const fallbackAccounts = () => state.accounts.map((a) => ({ id: a.id, provider: a.provider, auth: auths.get(a.id), usage: usages.get(a.id) }));
 function setLimitMark(accountId, mark) {
   const old = limitMarks()[accountId];
   if (old && old.until >= mark.until) return;
@@ -3058,6 +3069,29 @@ ipcMain.handle('accounts:add', (_e, label) => {
   checkAuth(r.account.id);
   return A.withAuth([r.account], (id) => auths.get(id))[0];
 });
+// v3.54: add a FixCloud account. payload carries label, apiKey (required), model, baseUrl. The key travels
+// renderer→main exactly once, here: it is stored encrypted in providerTokens and never written to settings.json or state.
+ipcMain.handle('accounts:addFixcloud', (_e, payload) => {
+  const p = payload || {};
+  const apiKey = typeof p.apiKey === 'string' ? p.apiKey.trim() : '';
+  if (!apiKey) return { ok: false, error: 'apiKey' };
+  const baseUrl = (typeof p.baseUrl === 'string' && p.baseUrl.trim()) || A.FIXCLOUD_DEFAULT_BASE;
+  const model = typeof p.model === 'string' ? p.model.trim() : '';
+  const r = A.addAccount(state, p.label, { id: crypto.randomBytes(6).toString('hex'), root: accountsRoot(), provider: A.FIXCLOUD });
+  try { fs.mkdirSync(r.account.configDir, { recursive: true }); } catch (e) { console.error('hesap klasörü:', e.message); }
+  // settings.json: merge env into any existing file (0600). base URL + model only; the key is NOT written here.
+  try {
+    const file = path.join(r.account.configDir, 'settings.json');
+    let cur = {}; try { cur = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+    if (!cur || typeof cur !== 'object') cur = {};
+    const env = { ...(cur.env && typeof cur.env === 'object' ? cur.env : {}), ANTHROPIC_BASE_URL: baseUrl, ...(model ? { ANTHROPIC_MODEL: model } : {}) };
+    fs.writeFileSync(file, JSON.stringify({ ...cur, env }, null, 2), { mode: 0o600 });
+  } catch (e) { console.error('fixcloud settings.json:', e.message); return { ok: false, error: 'settings' }; }
+  if (!providerTokens().save(r.account.id, apiKey)) return { ok: false, error: 'token' };   // nothing committed
+  commit(r.state, { accounts: true });
+  checkAuth(r.account.id);
+  return { ok: true, account: A.withAuth([r.account], (id) => auths.get(id))[0] };
+});
 ipcMain.handle('accounts:rename', (_e, id, label) => { commit(A.renameAccount(state, id, label), { accounts: true }); });
 // "Use Default's plugins, skills and MCP servers": applies when the account's sessions start next (nothing restarts).
 ipcMain.handle('accounts:setShare', (_e, id, on) => { commit(A.setAccountShare(state, id, on), { accounts: true }); });
@@ -3069,6 +3103,7 @@ ipcMain.handle('accounts:remove', (_e, id) => {
   killPty(A.loginPtyId(id));
   auths.delete(id);
   usages.delete(id);
+  providerTokens().remove(id);   // v3.54: a fixcloud account's stored key goes with it
   try { fs.rmSync(path.join(usageRoot(), id), { recursive: true, force: true }); } catch {}
   commit(r.state, { accounts: true });
   for (const pid of r.moved) moveProject(pid, from);
