@@ -2693,7 +2693,7 @@ function transcriptLimit(id, dir, configDir) {
 }
 const accountName = (a) => (a.id === A.DEFAULT_ID ? T('main.defaultAccount') : a.label);
 /** Accounts as FB.pickBackup reads them: login state and quota. */
-const fallbackAccounts = () => state.accounts.map((a) => ({ id: a.id, auth: auths.get(a.id), usage: usages.get(a.id) }));
+const fallbackAccounts = () => state.accounts.map((a) => ({ id: a.id, provider: a.provider, auth: auths.get(a.id), usage: usages.get(a.id) }));
 function setLimitMark(accountId, mark) {
   const old = limitMarks()[accountId];
   if (old && old.until >= mark.until) return;
