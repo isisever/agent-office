@@ -4,7 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT } = require('./accounts.js');
 const { withSkillPacks } = require('./skill-packs.js');
-const { isFixcloudModel } = require('./fixcloud.js');
+const { isFixcloudModel, fixcloudBossModel } = require('./fixcloud.js');
 const { withDelegates, delegatesValue } = require('./delegate.js');
 const HQ = require('./hq.js');
 const ROUT = require('./routines.js');
@@ -287,6 +287,14 @@ function setProjectBossModel(state, id, value) {
   }) };
 }
 
+/** v3.57: point every fixcloud-model project on the account at the account's new model. Same state when nothing changes. */
+function retargetFixcloudBossModel(state, accountId, model) {
+  const target = fixcloudBossModel(model);
+  const hit = (p) => p.accountId === accountId && isFixcloudModel(p.bossModel) && p.bossModel !== target;
+  if (!state.projects.some(hit)) return state;
+  return { ...state, projects: state.projects.map((p) => (hit(p) ? { ...p, bossModel: target } : p)) };
+}
+
 /** The model the project pins its boss session to (for its engine), or null (Auto). */
 const bossModelOf = (project) => bossModelValue(project?.bossModel, project?.engine);
 
@@ -522,7 +530,7 @@ module.exports = {
   /** state.hq (v3.46) normalized next to the rest */
   normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq), routines: ROUT.normalizeRoutines(raw?.routines), routinesCfg: ROUT.normalizeCfg(raw?.routinesCfg) }), findByDir,
   addProject, removeProject, setActive, setProjectAccount, setProjectManager, managerOf,
-  BOSS_MODELS, BOSS_MODELS_BY_ENGINE, setProjectBossModel, bossModelOf, bossModelArgs,
+  BOSS_MODELS, BOSS_MODELS_BY_ENGINE, setProjectBossModel, retargetFixcloudBossModel, bossModelOf, bossModelArgs,
   AGENT_MODELS, setProjectAgentModel, agentModelOf,
   CONTEXT_CAPS, setProjectContextCap, contextCapOf,
   setProjectSavings, savingsOf,

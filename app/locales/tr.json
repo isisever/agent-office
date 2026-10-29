@@ -302,6 +302,8 @@
     "fixBaseNote": "OpenAI uyumlu bir uç nokta. FixCloud'un varsayılanı https://llm.fixcloud.ai/v1; OpenCode kurulu olmalı.",
     "fixSave": "Hesap oluştur",
     "fixCancel": "Vazgeç",
+    "fixChangeModel": "Modeli değiştir",
+    "fixModelSave": "Kaydet",
     "fixBadge": "FixCloud",
     "fixBadgeTitle": "Projelerini OpenCode üzerinde bir FixCloud uç noktasına karşı çalıştıran girişsiz bir hesap (API anahtarı şifreli saklanır).",
     "fixReady": "OpenCode · giriş yok",

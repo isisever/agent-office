@@ -3182,6 +3182,24 @@ ipcMain.handle('accounts:addFixcloud', (_e, payload) => {
 ipcMain.handle('accounts:rename', (_e, id, label) => { commit(A.renameAccount(state, id, label), { accounts: true }); });
 // "Use Default's plugins, skills and MCP servers": applies when the account's sessions start next (nothing restarts).
 ipcMain.handle('accounts:setShare', (_e, id, on) => { commit(A.setAccountShare(state, id, on), { accounts: true }); });
+// v3.57: change a FixCloud account's model in place — rewrites opencode.json (deep-merge), updates the account, retargets
+// its projects' fixcloud/<model> boss model and restarts their idle tabs. No key is re-entered.
+ipcMain.handle('accounts:setFixcloudModel', (_e, id, model, baseUrl) => {
+  const acc = accountById(id);
+  if (!acc || !A.isFixcloud(acc)) return { ok: false, error: 'notFixcloud' };
+  const m = typeof model === 'string' ? model.trim() : '';
+  if (!m) return { ok: false, error: 'model' };
+  const url = (typeof baseUrl === 'string' && baseUrl.trim()) || acc.baseUrl || A.FIXCLOUD_DEFAULT_BASE;
+  try { FC.writeFixcloudProvider(FC.ocConfigPath(process.env, app.getPath('home')), url, m); }
+  catch (e) { console.error('fixcloud opencode.json:', e.message); return { ok: false, error: 'opencode' }; }
+  let next = A.setAccountModel(state, id, m, baseUrl);
+  next = P.retargetFixcloudBossModel(next, id, m);
+  if (next === state) return { ok: true, account: A.withAuth([acc], (x) => auths.get(x))[0], restarted: [] };
+  const affected = state.projects.filter((p) => p.accountId === id).map((p) => p.id);
+  commit(next, { accounts: true });
+  const restarted = state.projects.filter((p) => affected.includes(p.id)).flatMap((p) => restartIdle(p));
+  return { ok: true, account: A.withAuth([accountById(id)], (x) => auths.get(x))[0], restarted };
+});
 // The folder is not deleted: its login and history are not lost if an account is deleted by mistake.
 ipcMain.handle('accounts:remove', (_e, id) => {
   const from = accountById(id);

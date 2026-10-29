@@ -4295,6 +4295,34 @@ test('fixcloud (v3.55): normalizeAccounts ve addAccount provider/model/baseUrl k
   assert.equal('FIXCLOUD_REEXPORT' in A, false);
 });
 
+test('fixcloud (v3.57): setAccountModel changes model/baseUrl in place; retargetFixcloudBossModel follows; wiring present', () => {
+  const st = { accounts: [
+    { id: 'default', label: 'Default', configDir: '/d' },
+    { id: 'fc', label: 'FixCloud', configDir: '/u/fc', provider: 'fixcloud', model: 'old', baseUrl: 'https://e/v1' },
+    { id: 'fc2', label: 'Fix2', configDir: '/u/fc2', provider: 'fixcloud', model: 'old', baseUrl: 'https://e/v1' },
+  ], projects: [
+    { id: 'p1', accountId: 'fc', engine: 'opencode', bossModel: 'fixcloud/old' },
+    { id: 'p2', accountId: 'fc2', engine: 'opencode', bossModel: 'fixcloud/old' },
+    { id: 'p3', accountId: 'fc', engine: 'claude', bossModel: 'opus' },
+  ] };
+  const a1 = A.setAccountModel(st, 'fc', '  deepseek-v4.1-flash ');
+  const fc = a1.accounts.find((a) => a.id === 'fc');
+  assert.deepEqual([fc.model, fc.baseUrl], ['deepseek-v4.1-flash', 'https://e/v1']);
+  assert.equal(st.accounts[1].model, 'old'); // no mutation
+  assert.equal(A.setAccountModel(st, 'fc', 'm', '   ').accounts[1].baseUrl, 'https://e/v1');
+  assert.equal(A.setAccountModel(st, 'fc', 'm', 'https://n/v1').accounts[1].baseUrl, 'https://n/v1');
+  assert.equal(A.setAccountModel(st, 'default', 'm'), st);
+  assert.equal(A.setAccountModel(st, 'nope', 'm'), st);
+  assert.equal(A.setAccountModel(st, 'fc', '   '), st);
+  const r = P.retargetFixcloudBossModel(st, 'fc', 'deepseek-v4.1-flash');
+  assert.equal(r.projects.find((p) => p.id === 'p1').bossModel, 'fixcloud/deepseek-v4.1-flash');
+  assert.equal(r.projects.find((p) => p.id === 'p2').bossModel, 'fixcloud/old');
+  assert.equal(r.projects.find((p) => p.id === 'p3').bossModel, 'opus');
+  assert.equal(P.retargetFixcloudBossModel(st, 'default', 'x'), st);
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /ipcMain\.handle\('accounts:setFixcloudModel'/);
+});
+
 test('fixcloud (v3.55): opencode.json deep-merge fixcloud sağlayıcısını yazar, başka anahtarları ezmez, anahtarı env-referansı tutar', () => {
   const FC = require('../src/fixcloud.js');
   const fs = require('node:fs'), path = require('node:path'), os = require('node:os');

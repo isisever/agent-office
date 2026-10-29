@@ -284,6 +284,18 @@ window.agentOffice = {
       accountsChanged();
       return { ok: true, account: { ...a, auth: { ...a.auth } } };
     },
+    setFixcloudModel: async (id, model, baseUrl) => {
+      const a = accounts.find((x) => x.id === id);
+      const m = typeof model === 'string' ? model.trim() : '';
+      if (!a || a.provider !== 'fixcloud') return { ok: false, error: 'notFixcloud' };
+      if (!m) return { ok: false, error: 'model' };
+      a.model = m;
+      if (typeof baseUrl === 'string' && baseUrl.trim()) a.baseUrl = baseUrl.trim();
+      for (const p of projects) if (p.accountId === id && String(p.bossModel || '').startsWith('fixcloud/')) p.bossModel = `fixcloud/${m}`;
+      accountsChanged();
+      changed();
+      return { ok: true, account: { ...a, auth: { ...a.auth } }, restarted: [] };
+    },
     rename: async (id, label) => { const a = accounts.find((x) => x.id === id); if (a) a.label = label; },
     setShare: async (id, on) => {
       const a = accounts.find((x) => x.id === id);
