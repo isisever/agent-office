@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { doneText, HQ_SECTION_ID, hqText, sectionKind } from '../hooks/hq'
+import { DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from '../hooks/hq'
 
 test('HQ section only with AGENT_OFFICE_HQ, never together with the manager section', () => {
   expect(sectionKind({ hq: true, manager: true })).toBe('hq')
@@ -24,4 +24,14 @@ test('routines (v3.47): the HQ section explains [routine <request>] prompts, OK:
   expect(hqText()).toContain('ATTENTION:')
   expect(hqText()).toContain('awaiting-consent')
   expect(sectionKind({ hq: false, manager: true })).toBe('manager')   // the routine line never reaches a manager-only session
+})
+
+test('delegates section: present for a valid AGENT_OFFICE_DELEGATES array, absent when unset, empty or invalid', () => {
+  const raw = JSON.stringify([{ label: 'work', engine: 'claude', model: 'opus' }, { label: 'fx', engine: 'codex', model: 'gpt-5' }])
+  const text = delegatesText(parseDelegates(raw))
+  expect(DELEGATES_SECTION_ID).toBe('agent-office:delegates')
+  expect(text).toContain("ao-delegate <label> -- '<task>'")
+  expect(text).toContain('git diff --stat')
+  expect(text).toContain('work (claude·opus), fx (codex·gpt-5)')
+  for (const bad of [undefined, '', '[]', 'not json', '{"label":"x"}', '[1,null,{"engine":"x"}]']) expect(delegatesText(parseDelegates(bad))).toBe('')
 })

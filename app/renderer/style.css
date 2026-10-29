@@ -1132,3 +1132,6 @@ label.sb-langrow { cursor: pointer; }
 .rt-chip { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px; background: rgba(127,127,127,.25); margin: 0 4px; }
 select option.rt-off { color: #888; }
 .rt-chip.ok { background: rgba(34,197,94,.3); } .rt-chip.attention, .rt-chip.awaiting-consent { background: rgba(245,158,11,.35); } .rt-chip.failed { background: rgba(239,68,68,.35); }
+
+.sb-delegate-list { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+.sb-delegate { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }

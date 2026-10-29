@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setSkillPacks: (id, values) => ipcRenderer.invoke('projects:setSkillPacks', id, values), // { [packId]: 'inherit' | 'on' | 'off' } in one call; { restarted } (v3.45)
     setSavings: (id, value) => ipcRenderer.invoke('projects:setSavings', id, value), // 'off' | 'normal' | 'strict'; { restarted: pty ids } (v3.20)
     setBackup: (id, value) => ipcRenderer.invoke('projects:setBackup', id, value), // null (none) | 'auto' | account id (v3.17)
+    setDelegates: (id, ids) => ipcRenderer.invoke('projects:setDelegates', id, ids), // string[] of other account ids the boss may delegate to (v3.56)
     setEngine: (id, value) => ipcRenderer.invoke('projects:setEngine', id, value), // 'agy' | 'commandcode' | null (Claude Code); { restarted: pty ids }, every tab fresh, or { restarted: [], refused } when a tab is working (v3.22, v3.25)
     setProjectFiles: (id, value) => ipcRenderer.invoke('projects:setProjectFiles', id, value), // true | false; { restarted, written, removed, refused } (v3.38)
     openFolder: (id) => ipcRenderer.invoke('projects:openFolder', id),   // opens the project's folder in the file manager → boolean

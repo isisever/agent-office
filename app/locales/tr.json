@@ -256,6 +256,8 @@
     "backupTitle": "Projenin kendi hesabının kullanım limiti dolunca devam edeceği hesap. Boştaki herhangi biri, kotası kalan giriş yapılmış başka bir hesabı seçer. “Limit dolunca yedek hesaba geç” açık olmalı (varsayılan açık).",
     "backupNone": "Yok",
     "backupAuto": "Boştaki herhangi biri",
+    "delegates": "Vekil hesaplar",
+    "delegatesTitle": "Patronun ao-delegate ile dağıttığı işler, burada işaretlediğin hesapların kotasıyla o hesaplar altında çalışır. Yönetici yine patron kalır ve kendi hesabını kullanır.",
     "onBackup": "yedekte · {home} hesabına dönecek",
     "onBackupTitle": "{home} hesabının limiti dolunca buraya geçti. O limit sıfırlanıp tüm sekmeler boşta kalınca {home} hesabına geri döner.",
     "agyTitle": "Google Antigravity CLI (agy): bütün Antigravity projeleri için tek giriş. agy bunu sistem anahtar zincirinde tutar.",
@@ -339,7 +341,8 @@
       "ocCost": "OpenCode uygulamaya token sayısı bildirmez.",
       "ocProjectFiles": "Agent Office, OpenCode için proje dosyası yazmaz.",
       "claudeOnlyMcp": "Yalnız Claude Code: Agent Office'te eklenen sunucular ve tokenları Antigravity, Command Code ya da OpenCode'a verilmez.",
-      "claudeOnlySkills": "Yalnız Claude Code: beceri paketleri Claude Code eklentileridir; Antigravity, Command Code ve OpenCode almaz."
+      "claudeOnlySkills": "Yalnız Claude Code: beceri paketleri Claude Code eklentileridir; Antigravity, Command Code ve OpenCode almaz.",
+      "claudeOnlyDelegate": "Yalnız Claude Code: ao-delegate hesap devri bir Claude Code patronundan çalışır; diğer motorlar almaz."
     },
     "skills": "Beceriler",
     "skillsHint": "Agent Office ile gelen beceri paketleri, yalnız Claude Code için (Antigravity, Command Code ve OpenCode almaz). Boştaki oturumlar değişikliği almak için yeniden başlar; meşgul olanlar bir sonraki başlangıçta alır. Bir proje her paketi kendi ⚙ ayarlarında değiştirebilir.",

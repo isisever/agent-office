@@ -257,6 +257,8 @@
     "backupTitle": "The account this project continues on when its own account reaches the usage limit. Any free account picks another logged-in account that still has quota. Needs “Backup account at the usage limit” (on by default).",
     "backupNone": "None",
     "backupAuto": "Any free account",
+    "delegates": "Delegates",
+    "delegatesTitle": "Jobs the boss hands out with ao-delegate run under the accounts you tick here, on their quota. The boss stays the manager and keeps its own account.",
     "onBackup": "on backup · back to {home}",
     "onBackupTitle": "Moved here when {home} reached its usage limit. It goes back to {home} once that limit resets and every tab is idle.",
     "agyTitle": "Google Antigravity CLI (agy): one login for every Antigravity project. agy keeps it in the system keychain.",
@@ -340,7 +342,8 @@
       "ocCost": "OpenCode reports no token counts to the app.",
       "ocProjectFiles": "Agent Office writes no project files for OpenCode.",
       "claudeOnlyMcp": "Claude Code only: servers added in Agent Office and their tokens are not given to Antigravity, Command Code or OpenCode.",
-      "claudeOnlySkills": "Claude Code only: skill packs are Claude Code plugins; Antigravity, Command Code and OpenCode do not get them."
+      "claudeOnlySkills": "Claude Code only: skill packs are Claude Code plugins; Antigravity, Command Code and OpenCode do not get them.",
+      "claudeOnlyDelegate": "Claude Code only: the ao-delegate account delegation runs from a Claude Code boss; the other engines do not get it."
     },
     "skills": "Skills",
     "skillsHint": "Skill packs bundled with Agent Office, for Claude Code only (Antigravity, Command Code and OpenCode do not get them). Idle sessions restart to pick up a change; busy ones get it at their next start. A project can override each pack in its ⚙ settings.",
