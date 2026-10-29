@@ -30,6 +30,7 @@ const PD = require('./src/project-data.js');
 const FB = require('./src/fallback.js');
 const EN = require('./src/engine.js');
 const FC = require('./src/fixcloud.js');
+const D = require('./src/delegate.js');
 const AW = require('./src/agy-watch.js');
 const CS = require('./src/cmd-spool.js');
 const AG = require('./src/agy-auth.js');
@@ -315,6 +316,63 @@ const oldTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'connec
 // FIXCLOUD_API_KEY (engine.js ocEnv's forced-env); never to the renderer, state.json, opencode.json, argv or a log.
 const providerTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'provider-tokens'), safeStorage);
 const appServers = () => state.mcpServers || [];
+
+// --- account delegate (contract v3.56, src/delegate.js + src/delegate-cli.js). A claude boss with `delegates` runs the
+// `ao-delegate` CLI to hand a scoped job to another account's agent in a throwaway worktree. main.js owns the secrets:
+// - userData/bin/ao-delegate (0755): a launcher that execs node src/delegate-cli.js (installed once at startup).
+// - userData/delegate-keys/<id> (0600): the decrypted provider key for each opencode/fixcloud delegate account of a
+//   STARTED project, so the CLI's delegateLaunch can read it (the ONLY place a key is written to disk unencrypted).
+//   The whole dir is swept at startup (crash safety) and a file is removed when its account is removed. Never logged.
+// - userData/delegate-manifests/<project>.json (0600): the key-less manifest + repoTop + keyDir the CLI reads
+//   (AGENT_OFFICE_DELEGATE_MANIFEST points at it). No key, only labels/engine/model/configDir.
+const delegateBinDir = () => path.join(app.getPath('userData'), 'bin');
+const delegateKeysDir = () => path.join(app.getPath('userData'), 'delegate-keys');
+const delegateManifestDir = () => path.join(app.getPath('userData'), 'delegate-manifests');
+const delegateKeyFile = (id) => path.join(delegateKeysDir(), String(id).replace(/[^\w-]/g, '_'));
+// Isolated opencode config home for delegates: <userData>/delegate-oc/opencode/{opencode.json, agent/ao-delegate.md}.
+// No secret lives here (opencode.json references {env:FIXCLOUD_API_KEY}); it only isolates the delegate from the
+// user's own ~/.config/opencode and carries the restricted ao-delegate agent def (the permission guard).
+const delegateOcHome = () => path.join(app.getPath('userData'), 'delegate-oc');
+/** Crash safety: clear every at-rest key file. Call at startup BEFORE any session starts. */
+function sweepDelegateKeys() { try { fs.rmSync(delegateKeysDir(), { recursive: true, force: true }); } catch {} }
+/** Install the ao-delegate launcher (idempotent). Resolves src/delegate-cli.js so it works packaged and in dev. */
+function installDelegateLauncher() {
+  try {
+    fs.mkdirSync(delegateBinDir(), { recursive: true });
+    const cli = path.join(__dirname, 'src', 'delegate-cli.js');
+    fs.writeFileSync(path.join(delegateBinDir(), D.AO_DELEGATE_CMD), `#!/bin/sh\nexec node "${cli}" "$@"\n`, { mode: 0o755 });
+  } catch (e) { console.error('ao-delegate launcher could not be written:', e.message); }
+}
+/** For each opencode/fixcloud delegate of a started project, write its 0600 key file; write the key-less manifest JSON.
+ *  Returns { manifest, file } (manifest is key-less) or null when the project has no usable delegate. Never logs the key. */
+function prepareDelegates(project) {
+  const man = D.manifest(state.accounts, project);
+  if (!man.length) return null;
+  try { fs.mkdirSync(delegateKeysDir(), { recursive: true, mode: 0o700 }); } catch {}
+  const byId = new Map(state.accounts.map((a) => [a.id, a]));
+  /** @type {Array<{id:string,label:string,engine:string,model:string,configDir:string,keyFile?:string}>} */
+  const fileDelegates = man.map((m) => ({ ...m }));   // file manifest = the brief manifest + per-opencode keyFile
+  let ocConfigHome = '';
+  for (const entry of fileDelegates) {
+    if (entry.engine !== 'opencode') continue;   // only opencode/fixcloud delegates need a key; claude logins use configDir
+    const acc = byId.get(entry.id) || {};
+    const key = providerTokens().load(entry.id); // decrypt only here
+    if (key) try { fs.writeFileSync(delegateKeyFile(entry.id), key, { mode: 0o600 }); } catch (e) { console.error('delegate key could not be written for', entry.id, e.message); }
+    entry.keyFile = delegateKeyFile(entry.id);
+    // Write the isolated opencode config home (fixcloud provider + restricted ao-delegate agent def) the CLI points at.
+    ocConfigHome = delegateOcHome();
+    const ocDir = path.join(ocConfigHome, 'opencode');
+    try {
+      fs.mkdirSync(path.join(ocDir, 'agent'), { recursive: true });
+      FC.writeFixcloudProvider(path.join(ocDir, 'opencode.json'), acc.baseUrl || A.FIXCLOUD_DEFAULT_BASE, entry.model || A.FIXCLOUD_DEFAULT_MODEL);
+      fs.writeFileSync(path.join(ocDir, 'agent', `${D.DELEGATE_AGENT}.md`), D.OC_DELEGATE_AGENT);
+    } catch (e) { console.error('delegate opencode config could not be written:', e.message); }
+  }
+  try { fs.mkdirSync(delegateManifestDir(), { recursive: true, mode: 0o700 }); } catch {}
+  const file = path.join(delegateManifestDir(), `${usageKey(project.id)}.json`);
+  try { fs.writeFileSync(file, JSON.stringify({ delegates: fileDelegates, repoTop: project.dir, keyDir: delegateKeysDir(), ocConfigHome }), { mode: 0o600 }); } catch (e) { console.error('delegate manifest could not be written:', e.message); return null; }
+  return { manifest: man, file };
+}
 /** A project is removed from this machine: its own servers and their tokens go; ones for all stay. (A handed-off
  *  project keeps them here, held for its folder: release / adopt, MS.holdProject / MS.adoptHeld.) */
 function dropProjectServers(projectId) {
@@ -1110,6 +1168,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
   const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; '
+    + '[ -n "$AGENT_OFFICE_DELEGATE_BIN" ] && export PATH="$AGENT_OFFICE_DELEGATE_BIN:$PATH"; '  // v3.56: ao-delegate on PATH after rc (rc can clobber PATH)
     + '[ -n "$AGENT_OFFICE_AGENT_MODEL" ] && export CLAUDE_CODE_SUBAGENT_MODEL="$AGENT_OFFICE_AGENT_MODEL" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1; '
     + '[ -n "$AGENT_OFFICE_CONTEXT_CAP" ] && export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$AGENT_OFFICE_CONTEXT_CAP"; '
     + '[ -n "$AGENT_OFFICE_BASH_OUTPUT" ] && export BASH_MAX_OUTPUT_LENGTH="$AGENT_OFFICE_BASH_OUTPUT"; '
@@ -1128,6 +1187,19 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   if (project.hq) env.AGENT_OFFICE_HQ = '1';   // v3.46 the plugin gives the HQ section instead of the manager one
   if (bossMcp && (linkHost?.link()?.devices.length || 0) > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
   if (sl?.userCommand) env.AGENT_OFFICE_STATUSLINE = sl.userCommand;
+  delete env[D.DELEGATE_ENV];
+  delete env.AGENT_OFFICE_DELEGATE_BIN;
+  delete env.AGENT_OFFICE_DELEGATE_MANIFEST;
+  // v3.56 account delegate: a claude boss with delegates gets the key-less manifest (for the plugin brief), the
+  // per-session manifest file for the ao-delegate CLI, and ao-delegate on PATH (the cmd re-exports it after rc).
+  if (P.engineOf(project) === 'claude' && P.delegatesOf(project).length) {
+    const prep = prepareDelegates(project);
+    if (prep) {
+      env[D.DELEGATE_ENV] = JSON.stringify(prep.manifest);
+      env.AGENT_OFFICE_DELEGATE_MANIFEST = prep.file;
+      env.AGENT_OFFICE_DELEGATE_BIN = delegateBinDir();
+    }
+  }
   if (IS_WIN) env = windowsStatusLineEnv(env, sl);
   let t;
   try {
@@ -3041,6 +3113,15 @@ ipcMain.handle('projects:setProjectFiles', (_e, id, value) => {
   const restarted = next !== state && P.engineOf(p) !== 'claude' ? restartIdle(p) : [];
   return { restarted, written: r.written, removed: r.removed, refused: r.refused };
 });
+// Account delegates (contract v3.56): the account ids the project's claude boss may delegate to (never its own).
+// Applies at the next session start (the manifest + key files are prepared then); idle claude tabs restart to pick it up.
+ipcMain.handle('projects:setDelegates', (_e, projectId, ids) => {
+  const next = P.setProjectDelegates(state, projectId, ids);
+  if (next === state) return { restarted: [] };
+  commit(next);
+  const p = P.findProject(state, projectId);
+  return { restarted: p && P.engineOf(p) === 'claude' ? restartIdle(p) : [] };
+});
 /** Restarts the project's idle tabs, each resuming its own session; returns their pty ids. */
 function restartIdle(p) {
   const restarted = [];
@@ -3110,6 +3191,7 @@ ipcMain.handle('accounts:remove', (_e, id) => {
   auths.delete(id);
   usages.delete(id);
   providerTokens().remove(id);   // v3.54: a fixcloud account's stored key goes with it
+  try { fs.rmSync(delegateKeyFile(id), { force: true }); } catch {}   // v3.56: its delegate key file goes too
   try { fs.rmSync(path.join(usageRoot(), id), { recursive: true, force: true }); } catch {}
   commit(r.state, { accounts: true });
   for (const pid of r.moved) moveProject(pid, from);
@@ -3905,6 +3987,8 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // MCP files left by an earlier run (a crash, a forced quit): no tab is running yet, so none belongs to one
   SC.pruneMcpFiles(mcpDir(), [...terms.keys()].map(usageKey));
   SC.pruneMcpFiles(directoryDir(), [...terms.keys()].map(usageKey));
+  sweepDelegateKeys();        // v3.56 crash safety: clear at-rest delegate key files before any session starts
+  installDelegateLauncher();  // v3.56 (idempotent) install userData/bin/ao-delegate
   loadUsageCache();
   lastFocusCheck = Date.now();
   checkAllAuth();

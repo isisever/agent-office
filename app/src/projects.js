@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT } = require('./accounts.js');
 const { withSkillPacks } = require('./skill-packs.js');
 const { isFixcloudModel } = require('./fixcloud.js');
+const { withDelegates, delegatesValue } = require('./delegate.js');
 const HQ = require('./hq.js');
 const ROUT = require('./routines.js');
 
@@ -28,11 +29,17 @@ function normalizeState(raw, { id = newId } = {}) {
   for (const p of Array.isArray(r.projects) ? r.projects : []) {
     if (!p || typeof p.dir !== 'string' || !p.dir || seen.has(p.dir)) continue;
     seen.add(p.dir);
+    const accountId = known.has(p.accountId) ? p.accountId : DEFAULT_ID;
+    // v3.56 delegates: account ids this project may delegate to — known accounts, never the project's own.
+    const knownDelegates = new Set([...known].filter((x) => x !== accountId));
+    // explicit single-variant type: without it the many conditional spreads below make a union TS can't represent (TS2590)
+    /** @type {{ delegates?: string[] }} */
+    const delegatesField = withDelegates(p.delegates, knownDelegates);
     projects.push({
       id: typeof p.id === 'string' && p.id ? p.id : id(),
       dir: p.dir,
       name: projectName(p.dir),
-      accountId: known.has(p.accountId) ? p.accountId : DEFAULT_ID,
+      accountId,
       ...(Number.isFinite(p.addedAt) ? { addedAt: p.addedAt } : {}), // v3.13; projects from before have none
       ...withManager(p.manager),
       ...withBossModel(p.bossModel),
@@ -43,7 +50,8 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withProjectFiles(p.projectFiles),
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
       ...withBackup(p.backupAccount, known),
-      ...withHome(p.homeAccount, known, known.has(p.accountId) ? p.accountId : DEFAULT_ID),
+      ...withHome(p.homeAccount, known, accountId),
+      ...delegatesField, // v3.56
       ...withTabs(normalizeTabs(p.tabs)),
     });
   }
@@ -461,6 +469,28 @@ function returnHome(state, id) {
   return fallbackTo(state, id, p.homeAccount);
 }
 
+// --- per-project account delegates (contract v3.56, src/delegate.js)
+// Project.delegates: account ids whose agents the project's claude boss may delegate a scoped job to (never its own
+// account). Stored only known, deduped, capped; never written empty (delegate.js withDelegates/delegatesValue). The
+// boss sees them key-less (AGENT_OFFICE_DELEGATES) and runs them through the ao-delegate CLI; main.js owns the keys.
+/** value: string[] of account ids (unknown/own ids dropped). Same state when nothing changes. */
+function setProjectDelegates(state, id, ids) {
+  const p = findProject(state, id);
+  if (!p) return state;
+  const known = new Set(state.accounts.map((a) => a.id).filter((x) => x !== p.accountId));
+  const next = delegatesValue(ids, known);
+  const cur = Array.isArray(p.delegates) ? p.delegates : [];
+  if (cur.length === next.length && cur.every((v, i) => v === next[i])) return state;
+  return { ...state, projects: state.projects.map((x) => {
+    if (x.id !== id) return x;
+    const { delegates: _, ...rest } = x;
+    return next.length ? { ...rest, delegates: next } : rest;
+  }) };
+}
+
+/** The account ids this project may delegate to (never written empty). */
+const delegatesOf = (project) => (Array.isArray(project?.delegates) ? project.delegates : []);
+
 // Claude Code's session history folder: <account folder or ~/.claude>/projects/<path, non-alphanumerics → '-'>
 // (tried: /Users/a/.claude → -Users-a--claude). If it has a .jsonl, `claude --continue` finds a session to resume.
 // (Command Code names its folders differently: token-usage.js ccSlugOf, contract v3.25.)
@@ -499,4 +529,5 @@ module.exports = {
   ENGINES, setProjectEngine, bindFixcloudAccount, engineOf,
   setProjectFiles, projectFilesOf,
   setProjectBackup, backupOf, fallbackTo, returnHome,
+  setProjectDelegates, delegatesOf,
 };

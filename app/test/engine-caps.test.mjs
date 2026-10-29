@@ -53,6 +53,15 @@ test('boss model choices match projects.js per engine; launch arguments per engi
   assert.deepEqual(EN.cmdArgs({}), [])
 })
 
+test('delegate (v3.56): Claude Code only; agy, Command Code and OpenCode off with a reason', () => {
+  assert.ok(FEATURES.includes('delegate'))
+  assert.equal(cap('claude', 'delegate').ok, true)
+  for (const e of ['agy', 'commandcode', 'opencode']) {
+    assert.equal(cap(e, 'delegate').ok, false, e)
+    assert.equal(cap(e, 'delegate').reason, 'claudeOnlyDelegate', e)
+  }
+})
+
 test('setProjectBossModel validates against the project engine; normalizeState drops a misfit', () => {
   const s = { projects: [{ id: 'a', dir: '/a', engine: 'agy' }, { id: 'c', dir: '/c', engine: 'commandcode' }, { id: 'k', dir: '/k' }] }
   assert.equal(P.setProjectBossModel(s, 'a', 'opus'), s)

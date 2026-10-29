@@ -22,7 +22,7 @@ import type { StopInput } from './finish'
 import { appendEntry, directoryProjects, entryOf, JOURNAL_FILE, LOOKBACK_MS, newsText, parseJournal, placeOfDir, selectNews } from './journal'
 import type { Host, JournalSeen, OfficeProject } from './journal'
 import { readyText, ReportTracker, typedTaskId, writeReport } from './reports'
-import { doneText, HQ_SECTION_ID, hqText, sectionKind } from './hq'
+import { DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from './hq'
 
 // Claude Code side of Agent Office: writes agent arrivals, tools, deliveries and background shells to
 // ~/.claude/agent-office/sessions/<session>.json. The office itself is drawn by the
@@ -1398,6 +1398,11 @@ export const register: Register = on => {
     if (kind === 'manager' && !sections.some(section => section.id === MANAGER_SECTION_ID)) {
       const pinned = pinnedModel(await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL_FORCE'), await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL'))
       sections.push({ id: MANAGER_SECTION_ID, text: managerText(pinned), scope: 'session' as const })
+    }
+    // account delegates (v3.56): keyed only on AGENT_OFFICE_DELEGATES, independent of the manager flag
+    if (!e.traits.includes('teammate') && !sections.some(section => section.id === DELEGATES_SECTION_ID)) {
+      const text = delegatesText(parseDelegates(await $.env.get('AGENT_OFFICE_DELEGATES')))
+      if (text) sections.push({ id: DELEGATES_SECTION_ID, text, scope: 'session' as const })
     }
     const isApp = Boolean(await $.env.get('AGENT_OFFICE_APP'))
     if (isApp && !sections.some(section => section.id === HOST_SECTION_ID))

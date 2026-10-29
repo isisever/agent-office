@@ -5,7 +5,7 @@
 export const ENGINES = ['claude', 'agy', 'commandcode', 'opencode'];
 
 /** The features of a project row, in the order the sidebar shows them. */
-export const FEATURES = ['account', 'login', 'manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'backup', 'workers', 'approvals', 'cost', 'projectFiles', 'appMcp', 'skillPacks'];
+export const FEATURES = ['account', 'login', 'manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'backup', 'workers', 'approvals', 'cost', 'projectFiles', 'appMcp', 'skillPacks', 'delegate'];
 
 const OK = Object.freeze({ ok: true });
 const no = (reason) => Object.freeze({ ok: false, reason });
@@ -23,11 +23,13 @@ const TABLE = {
     cost: no('agyCost'),
     appMcp: no('claudeOnlyMcp'),
     skillPacks: no('claudeOnlySkills'),
+    delegate: no('claudeOnlyDelegate'), // v3.56 ao-delegate is a Claude-boss feature
   },
   commandcode: {
     backup: no('cmdBackup'),
     appMcp: no('claudeOnlyMcp'),
     skillPacks: no('claudeOnlySkills'),
+    delegate: no('claudeOnlyDelegate'), // v3.56
   },
   // OpenCode (contract v3.40): observed from its terminal only; no launch config or files from the app, no token counts.
   opencode: {
@@ -41,6 +43,7 @@ const TABLE = {
     projectFiles: no('ocProjectFiles'),
     appMcp: no('claudeOnlyMcp'),
     skillPacks: no('claudeOnlySkills'),
+    delegate: no('claudeOnlyDelegate'), // v3.56
   },
 };
 

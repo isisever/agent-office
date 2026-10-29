@@ -35,3 +35,37 @@ export function doneText(row: unknown, wrap: (request: string, n: number) => str
   const n = typeof r.n === 'number' && Number.isInteger(r.n) && r.n > 0 && r.n <= 99 ? r.n : 0
   return n ? wrap(r.request, n) : undefined
 }
+
+// Account delegates (v3.56): the app sets AGENT_OFFICE_DELEGATES to a JSON array of { label, engine, model } (never keys) for a
+// project that may hand jobs to other accounts' agents. Independent of AGENT_OFFICE_MANAGER.
+export const DELEGATES_SECTION_ID = 'agent-office:delegates'
+export type Delegate = { label: string; engine: string; model: string }
+
+/** The delegates in the env value; anything missing, empty or malformed gives []. */
+export function parseDelegates(raw: string | undefined): Delegate[] {
+  if (!raw) return []
+  try {
+    const list: unknown = JSON.parse(raw)
+    if (!Array.isArray(list)) return []
+    const clean = (v: unknown) => (typeof v === 'string' ? v.replace(/[\r\n`]+/g, ' ').trim().slice(0, 80) : '')
+    return list.flatMap((item: unknown) => {
+      const o = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
+      const label = clean(o.label)
+      return label ? [{ label, engine: clean(o.engine), model: clean(o.model) }] : []
+    })
+  } catch {
+    return []
+  }
+}
+
+/** The delegates section text, or '' when there are no delegates. */
+export function delegatesText(delegates: readonly Delegate[]): string {
+  if (!delegates.length) return ''
+  const available = delegates.map(d => `${d.label} (${d.engine}·${d.model})`).join(', ')
+  return `# Account delegates (Agent Office)
+
+You can delegate a well-scoped job to another account's agent: \`ao-delegate <label> -- '<task>'\`. It runs isolated in a throwaway git worktree and branch under that account with a restricted profile, and prints the result and \`git diff --stat\`. You stay the manager: read the diff, decide, and cherry-pick or merge it yourself. Never delegate destructive or outward-facing actions.
+Başka bir hesabın ajanına sınırı belli bir iş verebilirsin: \`ao-delegate <etiket> -- '<görev>'\`. İş o hesabın altında geçici bir git worktree ve dalında, kısıtlı profille çalışır; sonucu ve \`git diff --stat\` çıktısını verir. Yönetici sen kalırsın: diff'i oku, karar ver, cherry-pick veya merge işini kendin yap. Yıkıcı ya da dışarıya dönük işleri asla devretme.
+
+Available: ${available}`
+}

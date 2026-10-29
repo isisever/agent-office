@@ -323,6 +323,10 @@ test('selectNews keeps a cursor and the ids it saw, re-checking the last minute 
   expect(second.news.map(e => e.id)).toEqual(['y'])
 })
 
+test('a bare fxc- key is redacted', () => {
+  expect(redact('got fxc-ABC123def456GHI789 back')).toBe('got [redacted] back')
+})
+
 test('redact and summaryOf leave ordinary words alone', () => {
   expect(redact('the monkey: banana; author=jane; keyboard layout')).toBe('the monkey: banana; author=jane; keyboard layout')
   expect(summaryOf('# Done\n\nSee `src/a.ts`.\n```\ncode\n```')).toBe('Done See src/a.ts.')

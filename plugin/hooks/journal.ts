@@ -70,7 +70,7 @@ export type Host = {
 const SECRET_PATTERNS: [RegExp, string][] = [
   [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [redacted]'],
   [/\beyJ[\w-]{6,}\.[\w-]{6,}\.[\w-]{6,}/g, '[redacted]'], // a JWT
-  [/\b(?:sk|nsk|pk|rk|ak)[-_][A-Za-z0-9_-]{8,}/g, '[redacted]'], // sk-ant-…, nsk_…, pk_live_…
+  [/\b(?:sk|nsk|pk|rk|ak|fxc)[-_][A-Za-z0-9_-]{8,}/g, '[redacted]'], // sk-ant-…, nsk_…, pk_live_…, fxc-…
   [/\b(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-)[A-Za-z0-9_-]{8,}/g, '[redacted]'],
   [/\bAKIA[0-9A-Z]{16}\b/g, '[redacted]'],
   [/(:\/\/)[^\s/:@]+:[^\s/@]+@/g, '$1[redacted]@'], // user:password@ in a URL

@@ -476,6 +476,14 @@ async function setBackup(projectId, value) {
   } catch (e) { console.error(e); }
 }
 
+/** Per-project delegate accounts (account delegate): account ids; the boss stays manager; nothing restarts. */
+async function setDelegates(projectId, ids) {
+  try {
+    await api.projects.setDelegates?.(projectId, ids);
+    applyProjects(await api.projects.list());
+  } catch (e) { console.error(e); }
+}
+
 async function setAccount(projectId, accountId) {
   // a new claude starts in every tab with the new account
   const proj = projects.find((p) => p.id === projectId);
@@ -567,6 +575,7 @@ sidebar = mountSidebar($('sidebar'), {
   setSavings,
   setEngine,
   setBackup,
+  setDelegates,
   addAccount,
   renameAccount,
   removeAccount,

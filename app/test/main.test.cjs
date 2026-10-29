@@ -181,6 +181,36 @@ test('proje başına müdür modu: normalizeState, setProjectManager, managerOf 
   assert.deepEqual(again.projects.map((p) => p.manager), [false, undefined, undefined, false]);
 });
 
+test('proje başına vekiller (delegates, v3.56): normalize bilinmeyen/kendi id düşürür; setProjectDelegates, delegatesOf', () => {
+  // accounts: default + w + x; project 'p' is on account w, delegates to x (ok), w (own → drop), zz (unknown → drop)
+  let s = P.normalizeState({
+    accounts: [{ id: 'w', configDir: '/r/w' }, { id: 'x', configDir: '/r/x' }],
+    projects: [{ id: 'p', dir: '/p', accountId: 'w', delegates: ['x', 'w', 'zz', 'x'] }, { id: 'q', dir: '/q', delegates: 'nope' }],
+  });
+  assert.deepEqual(P.delegatesOf(P.findProject(s, 'p')), ['x']); // own + unknown + dup dropped
+  assert.equal('delegates' in P.findProject(s, 'q'), false);     // not an array → nothing written (never [])
+  // setter: round-trips, drops own/unknown, never stores []
+  s = P.setProjectDelegates(s, 'p', ['x', 'default', 'w', 'bad']);
+  assert.deepEqual(P.delegatesOf(P.findProject(s, 'p')), ['x', 'default']); // w is own, bad unknown
+  assert.equal(P.setProjectDelegates(s, 'p', ['x', 'default']), s); // same value (exact order) → same state
+  assert.equal(P.setProjectDelegates(s, 'zz', ['x']), s);          // unknown project → same state
+  const cleared = P.setProjectDelegates(s, 'p', []);
+  assert.equal('delegates' in P.findProject(cleared, 'p'), false); // cleared → field removed, not []
+  // survives a state.json round-trip
+  const again = P.normalizeState(JSON.parse(JSON.stringify(s)));
+  assert.deepEqual(P.delegatesOf(P.findProject(again, 'p')), ['x', 'default']);
+});
+
+test('hesap sil: silinen id her projenin vekillerinden (delegates) çıkar (v3.56)', () => {
+  let s = P.normalizeState({
+    accounts: [{ id: 'w', configDir: '/r/w' }, { id: 'x', configDir: '/r/x' }],
+    projects: [{ id: 'p', dir: '/p', accountId: 'x', delegates: ['w'] }, { id: 'q', dir: '/q', accountId: 'default', delegates: ['w', 'x'] }],
+  });
+  const r = A.removeAccount(s, 'w');
+  assert.equal('delegates' in P.findProject(r.state, 'p'), false); // only delegate was w → removed, never []
+  assert.deepEqual(P.delegatesOf(P.findProject(r.state, 'q')), ['x']); // w stripped, x kept
+});
+
 test('proje başına ajan modeli: normalizeState, setProjectAgentModel, agentModelOf (v3.14)', () => {
   let s = P.normalizeState({
     projects: [
