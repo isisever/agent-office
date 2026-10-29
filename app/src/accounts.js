@@ -65,6 +65,15 @@ function renameAccount(state, id, label) {
   return { ...state, accounts: state.accounts.map((a) => (a.id === id ? { ...a, label: l } : a)) };
 }
 
+/** v3.57: change a FixCloud account's model (and optionally its base URL) in place. Same state when nothing applies. */
+function setAccountModel(state, id, model, baseUrl) {
+  const a = state.accounts.find((x) => x.id === id);
+  const m = typeof model === 'string' ? model.trim() : '';
+  if (!a || !isFixcloud(a) || !m) return state;
+  const url = typeof baseUrl === 'string' ? baseUrl.trim() : '';
+  return { ...state, accounts: state.accounts.map((x) => (x.id === id ? { ...x, model: m, ...(url ? { baseUrl: url } : {}) } : x)) };
+}
+
 // "Use Default's plugins, skills and MCP servers": stored only when off; applies at the next session start.
 function setAccountShare(state, id, on) {
   if (id === DEFAULT_ID || typeof on !== 'boolean') return state;
@@ -294,7 +303,7 @@ const loginAccountId = (ptyId) =>
   typeof ptyId === 'string' && ptyId.startsWith(LOGIN_PREFIX) ? ptyId.slice(LOGIN_PREFIX.length) : null;
 
 module.exports = {
-  shellEnv, DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, setAccountShare, removeAccount, accountOf, ptyEnv, sessionEnv,
+  shellEnv, DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, setAccountShare, setAccountModel, removeAccount, accountOf, ptyEnv, sessionEnv,
   FIXCLOUD, FIXCLOUD_DEFAULT_BASE, FIXCLOUD_DEFAULT_MODEL, isFixcloud,
   SAVINGS, SAVINGS_LEVELS, SAVINGS_DEFAULT,
   lastJsonObject, authFromStatus, authFromRun, localizeAuth, claudeCommand, withAuth, loginPtyId, loginAccountId,

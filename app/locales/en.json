@@ -303,6 +303,8 @@
     "fixBaseNote": "An OpenAI-compatible endpoint. FixCloud's default is https://llm.fixcloud.ai/v1; needs OpenCode installed.",
     "fixSave": "Create account",
     "fixCancel": "Cancel",
+    "fixChangeModel": "Change model",
+    "fixModelSave": "Save",
     "fixBadge": "FixCloud",
     "fixBadgeTitle": "A login-less account that runs its projects on OpenCode against a FixCloud endpoint (its API key is stored encrypted).",
     "fixReady": "OpenCode · no login",

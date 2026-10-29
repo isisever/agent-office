@@ -543,6 +543,11 @@ async function renameAccount(id, label) {
   await refreshAccounts();
 }
 
+async function setFixcloudModel(id, model, baseUrl) {
+  try { await api.accounts.setFixcloudModel?.(id, model, baseUrl); } catch (e) { console.error(e); }
+  await refreshAccounts();
+}
+
 async function setAccountShare(id, on) {
   try { await api.accounts.setShare?.(id, on); } catch (e) { console.error(e); }
   await refreshAccounts();
@@ -580,6 +585,7 @@ sidebar = mountSidebar($('sidebar'), {
   renameAccount,
   removeAccount,
   setShare: setAccountShare,
+  setFixcloudModel,
   login: (id) => openLogin(id),
   logout: logoutAccount,
   refreshAuth,

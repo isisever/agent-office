@@ -74,6 +74,7 @@ export function mountSidebar(el, on) {
   let projKey = '';
   let acctKey = '';
   let editing = null; // { id: string | null } — account name being edited (null id = new account)
+  let fixModelEdit = null; // v3.57: id of the FixCloud account whose model is being edited
   let fixForm = null; // v3.54: the inline FixCloud add form is open; { forProject? }
   let langSetting = 'auto';
   /** @type {{ code: string, name: string }[]} */
@@ -730,12 +731,37 @@ export function mountSidebar(el, on) {
     return input;
   }
 
+  /** v3.57: a FixCloud account's row — the neutral ready line plus its model with an in-place edit. */
+  function fixcloudRow(a) {
+    const ready = h('div', { class: 'sb-auth' }, h('span', { class: 'sb-auth-text', title: t('sidebar.fixReadyTitle') }, t('sidebar.fixReady')));
+    if (fixModelEdit === a.id) {
+      const input = h('input', { class: 'sb-input', value: a.model || '', placeholder: t('sidebar.fixModel'), onkeydown: (e) => e.stopPropagation() });
+      const close = () => { fixModelEdit = null; renderAccounts(); };
+      const save = () => {
+        const v = input.value.trim();
+        if (!v) return input.focus();
+        if (v !== a.model) on.setFixcloudModel?.(a.id, v);
+        close();
+      };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); else if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+      requestAnimationFrame(() => { input.focus(); input.select(); });
+      return h('div', { class: 'sb-fix-field' }, ready, input,
+        h('div', { class: 'sb-fix-actions' },
+          h('button', { class: 'sb-btn primary', onclick: (e) => { e.stopPropagation(); save(); } }, t('sidebar.fixModelSave')),
+          h('button', { class: 'sb-btn', onclick: (e) => { e.stopPropagation(); close(); } }, t('sidebar.fixCancel'))));
+    }
+    return h('div', { class: 'sb-auth' },
+      h('span', { class: 'sb-auth-text', title: t('sidebar.fixReadyTitle') }, t('sidebar.fixReady')),
+      h('span', { class: 'sb-method', title: a.model || '' }, a.model || ''),
+      h('button', { class: 'sb-x', title: t('sidebar.fixChangeModel'), onclick: (e) => { e.stopPropagation(); fixModelEdit = a.id; renderAccounts(); } }, '✎'));
+  }
+
   /** The account's login row: email + method or state, with Giriş yap / Çıkış yap next to it. */
   function authRow(a, isDefault) {
     const auth = a.auth;
     if (!auth?.state) return null;
     // v3.54: a fixcloud account has no login; show a neutral line, no Giriş/Çıkış buttons.
-    if (a.provider === 'fixcloud') return h('div', { class: 'sb-auth' }, h('span', { class: 'sb-auth-text', title: t('sidebar.fixReadyTitle') }, t('sidebar.fixReady')));
+    if (a.provider === 'fixcloud') return fixcloudRow(a);
     const btn = (cls, text, title, fn) => h('button', { class: 'sb-btn ' + cls, title, onclick: (e) => { e.stopPropagation(); fn(); } }, text);
     const loginBtn = () => btn('primary', t('sidebar.login'), t('sidebar.loginTitle', { label: labelOf(a) }), () => on.login(a.id));
     switch (auth.state) {
@@ -1030,14 +1056,14 @@ export function mountSidebar(el, on) {
   });
 
   // reset times and "x dk önce" go stale on their own: redraw once a minute
-  setInterval(() => { if (!editing && accounts.some((a) => a.usage)) renderAccounts(); }, 60000);
+  setInterval(() => { if (!editing && !fixForm && !fixModelEdit && accounts.some((a) => a.usage)) renderAccounts(); }, 60000);
 
   // language changed: everything is redrawn; if an account name is being edited, accounts are drawn when editing ends
   // (so the typed name is not lost; nameInput calls renderAccounts when done)
   onLang(() => {
     renderChrome();
     renderProjects();
-    if (!editing) renderAccounts();
+    if (!editing && !fixForm && !fixModelEdit) renderAccounts();
   });
 
   return {
@@ -1104,33 +1130,33 @@ export function mountSidebar(el, on) {
       const pk = JSON.stringify([projects, activeId, [...status], [...asleep], [...attn], accounts.map((a) => [a.id, a.label, a.auth?.state])]);
       if (pk !== projKey) { projKey = pk; renderProjects(); }
       const ak = JSON.stringify([accounts, agyShown(), cmdShown(), ocShown()]);
-      if (ak !== acctKey && !editing) { acctKey = ak; renderAccounts(); }
+      if (ak !== acctKey && !editing && !fixForm && !fixModelEdit) { acctKey = ak; renderAccounts(); }
     },
     /** Antigravity's login state (contract v3.24, main's AgyAuth). */
     setAgyAuth(a) {
       const before = JSON.stringify([agyAuth?.state, agyAuth?.email]);
       agyAuth = a || null;
       if (before !== JSON.stringify([agyAuth?.state, agyAuth?.email])) renderProjects();
-      if (!editing) renderAccounts();
+      if (!editing && !fixForm && !fixModelEdit) renderAccounts();
     },
     /** Command Code's login state (contract v3.30, main's CmdAuth). */
     setCmdAuth(a) {
       const before = cmdAuth?.state;
       cmdAuth = a || null;
       if (before !== cmdAuth?.state) renderProjects();
-      if (!editing) renderAccounts();
+      if (!editing && !fixForm && !fixModelEdit) renderAccounts();
     },
     /** OpenCode's login state (contract v3.40, main's OcAuth). */
     setOcAuth(a) {
       ocAuth = a || null;
-      if (!editing) renderAccounts();
+      if (!editing && !fixForm && !fixModelEdit) renderAccounts();
     },
     /** The Antigravity / Command Code / OpenCode rows' setting (contract v3.30, prefs showAgyAccount / showCmdAccount). */
     setEngineRows(p) {
       showAgy = typeof p?.showAgyAccount === 'boolean' ? p.showAgyAccount : null;
       showCmd = typeof p?.showCmdAccount === 'boolean' ? p.showCmdAccount : null;
       showOc = typeof p?.showOcAccount === 'boolean' ? p.showOcAccount : null;
-      if (!editing) renderAccounts();
+      if (!editing && !fixForm && !fixModelEdit) renderAccounts();
     },
     /** Today's token usage per project: [{ id, usd, total, pct }] (contract v3.13); the line opens the usage panel. */
     setTokenBriefs(list) {
