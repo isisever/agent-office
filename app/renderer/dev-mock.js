@@ -284,6 +284,7 @@ window.agentOffice = {
       accountsChanged();
       return { ok: true, account: { ...a, auth: { ...a.auth } } };
     },
+    listFixcloudModels: async () => ({ ok: true, models: ['qwen3.6-35b-a3b', 'deepseek-v4.1-flash', 'big-pickle'] }),
     setFixcloudModel: async (id, model, baseUrl) => {
       const a = accounts.find((x) => x.id === id);
       const m = typeof model === 'string' ? model.trim() : '';

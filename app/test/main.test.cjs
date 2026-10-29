@@ -4323,6 +4323,17 @@ test('fixcloud (v3.57): setAccountModel changes model/baseUrl in place; retarget
   assert.match(src, /ipcMain\.handle\('accounts:setFixcloudModel'/);
 });
 
+test('fixcloud (v3.58): parseModels reads the OpenAI /models shape; handler never returns the key', () => {
+  const FC = require('../src/fixcloud.js');
+  assert.deepEqual(FC.parseModels({ data: [{ id: 'a' }, { id: 'b' }, { id: 'a' }] }), ['a', 'b']);
+  assert.deepEqual(FC.parseModels({ models: ['x'] }), ['x']);
+  assert.deepEqual(FC.parseModels(['y']), ['y']);
+  assert.deepEqual(FC.parseModels({ data: [{ id: 1 }, {}, null, { id: 'ok' }] }), ['ok']);
+  for (const bad of [null, undefined, 5, 'str', {}, { data: 'no' }]) assert.deepEqual(FC.parseModels(bad), []);
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /fixcloud:listModels/);
+});
+
 test('fixcloud (v3.55): opencode.json deep-merge fixcloud sağlayıcısını yazar, başka anahtarları ezmez, anahtarı env-referansı tutar', () => {
   const FC = require('../src/fixcloud.js');
   const fs = require('node:fs'), path = require('node:path'), os = require('node:os');

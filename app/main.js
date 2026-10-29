@@ -3182,6 +3182,28 @@ ipcMain.handle('accounts:addFixcloud', (_e, payload) => {
 ipcMain.handle('accounts:rename', (_e, id, label) => { commit(A.renameAccount(state, id, label), { accounts: true }); });
 // "Use Default's plugins, skills and MCP servers": applies when the account's sessions start next (nothing restarts).
 ipcMain.handle('accounts:setShare', (_e, id, on) => { commit(A.setAccountShare(state, id, on), { accounts: true }); });
+// v3.58: list the models a FixCloud endpoint serves (GET <baseUrl>/models). The key is read here — the typed one for the add
+// form (not stored yet), else the stored one by accountId — and is never returned to the renderer or logged.
+ipcMain.handle('fixcloud:listModels', async (_e, opts) => {
+  const o = opts || {};
+  const baseUrl = (typeof o.baseUrl === 'string' && o.baseUrl.trim()) || A.FIXCLOUD_DEFAULT_BASE;
+  let key = typeof o.apiKey === 'string' && o.apiKey.trim() ? o.apiKey.trim() : '';
+  if (!key && typeof o.accountId === 'string') {
+    const acc = accountById(o.accountId);
+    if (acc && A.isFixcloud(acc)) key = providerTokens().load(o.accountId) || '';
+  }
+  if (!key) return { ok: false, error: 'noKey' };
+  const url = baseUrl.replace(/\/+$/, '') + '/models';
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 10000);
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: ac.signal });
+    if (!res.ok) return { ok: false, error: 'http', status: res.status };
+    return { ok: true, models: FC.parseModels(await res.json()) };
+  } catch { return { ok: false, error: 'network' }; }
+  finally { clearTimeout(timer); }
+});
+
 // v3.57: change a FixCloud account's model in place — rewrites opencode.json (deep-merge), updates the account, retargets
 // its projects' fixcloud/<model> boss model and restarts their idle tabs. No key is re-entered.
 ipcMain.handle('accounts:setFixcloudModel', (_e, id, model, baseUrl) => {

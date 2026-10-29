@@ -731,6 +731,31 @@ export function mountSidebar(el, on) {
     return input;
   }
 
+  let fixListSeq = 0;
+  /** v3.58: a free-text model input plus a "Fetch models" button that fills its <datalist> from the endpoint. getOpts() returns the
+   *  IPC options, or null when the fetch cannot start yet (then onNeedKey runs). Failure shows an inline note; typing still works. */
+  function modelFetcher(input, getOpts, onNeedKey) {
+    const listId = `sb-fix-models-${++fixListSeq}`;
+    input.setAttribute('list', listId);
+    const datalist = h('datalist', { id: listId });
+    const note = h('span', { class: 'sb-fix-note' });
+    const btn = h('button', { class: 'sb-btn', type: 'button' }, t('sidebar.fixFetchModels'));
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      note.textContent = '';
+      const opts = getOpts();
+      if (!opts) { note.textContent = onNeedKey(); return; }
+      btn.disabled = true; btn.textContent = t('sidebar.fixFetchModelsLoading');
+      let r = null;
+      try { r = await on.listFixcloudModels?.(opts); } catch { r = null; }
+      btn.disabled = false; btn.textContent = t('sidebar.fixFetchModels');
+      if (!r || !r.ok) { note.textContent = t('sidebar.fixFetchModelsErr'); return; }
+      datalist.replaceChildren(...r.models.map((m) => h('option', { value: m })));
+      if (!input.value.trim() && r.models[0]) input.value = r.models[0];
+    });
+    return [btn, note, datalist];
+  }
+
   /** v3.57: a FixCloud account's row — the neutral ready line plus its model with an in-place edit. */
   function fixcloudRow(a) {
     const ready = h('div', { class: 'sb-auth' }, h('span', { class: 'sb-auth-text', title: t('sidebar.fixReadyTitle') }, t('sidebar.fixReady')));
@@ -745,10 +770,12 @@ export function mountSidebar(el, on) {
       };
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); else if (e.key === 'Escape') { e.stopPropagation(); close(); } });
       requestAnimationFrame(() => { input.focus(); input.select(); });
+      const fetcher = modelFetcher(input, () => ({ accountId: a.id, baseUrl: a.baseUrl }), () => '');
       return h('div', { class: 'sb-fix-field' }, ready, input,
-        h('div', { class: 'sb-fix-actions' },
+        h('div', { class: 'sb-fix-actions' }, fetcher[0],
           h('button', { class: 'sb-btn primary', onclick: (e) => { e.stopPropagation(); save(); } }, t('sidebar.fixModelSave')),
-          h('button', { class: 'sb-btn', onclick: (e) => { e.stopPropagation(); close(); } }, t('sidebar.fixCancel'))));
+          h('button', { class: 'sb-btn', onclick: (e) => { e.stopPropagation(); close(); } }, t('sidebar.fixCancel'))),
+        fetcher[1], fetcher[2]);
     }
     return h('div', { class: 'sb-auth' },
       h('span', { class: 'sb-auth-text', title: t('sidebar.fixReadyTitle') }, t('sidebar.fixReady')),
@@ -979,6 +1006,7 @@ export function mountSidebar(el, on) {
     const model = h('input', { class: 'sb-input', value: 'qwen3.6-35b-a3b', placeholder: t('sidebar.fixModel'), onkeydown: (e) => e.stopPropagation() });
     const baseUrl = h('input', { class: 'sb-input', value: 'https://llm.fixcloud.ai/v1', placeholder: t('sidebar.fixBaseUrl'), onkeydown: (e) => e.stopPropagation() });
     const close = () => { fixForm = null; renderAccounts(); };
+    const fetcher = modelFetcher(model, () => (apiKey.value.trim() ? { apiKey: apiKey.value.trim(), baseUrl: baseUrl.value.trim() } : null), () => { apiKey.focus(); return t('sidebar.fixApiKey'); });
     const field = (label, input) => h('label', { class: 'sb-fix-field' }, h('span', {}, label), input);
     const save = () => {
       if (!apiKey.value.trim()) return apiKey.focus();
@@ -990,6 +1018,7 @@ export function mountSidebar(el, on) {
       field(t('sidebar.accountName'), name),
       field(t('sidebar.fixApiKey'), apiKey),
       field(t('sidebar.fixModel'), model),
+      h('div', { class: 'sb-fix-actions' }, fetcher[0]), fetcher[1], fetcher[2],
       field(t('sidebar.fixBaseUrl'), baseUrl),
       h('p', { class: 'sb-fix-note' }, t('sidebar.fixBaseNote')),
       h('div', { class: 'sb-fix-actions' },

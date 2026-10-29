@@ -73,7 +73,21 @@ function writeFixcloudProvider(file, baseUrl, model) {
   return next;
 }
 
+/** Pure: the model ids from a parsed `<baseUrl>/models` response. OpenAI shape `{ data: [{ id }] }`; also `{ models: [...] }`
+ *  or a bare array (entries may be `{ id }` objects or plain strings). De-duplicated, order kept; [] for anything else. */
+function parseModels(json) {
+  const list = Array.isArray(json) ? json : json && typeof json === 'object' ? (Array.isArray(json.data) ? json.data : json.models) : null;
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const e of list) {
+    const id = typeof e === 'string' ? e : e && typeof e === 'object' ? e.id : null;
+    if (typeof id === 'string' && id.trim() && !out.includes(id.trim())) out.push(id.trim());
+  }
+  return out;
+}
+
 module.exports = {
+  parseModels,
   FIXCLOUD, FIXCLOUD_KEY_ENV, FIXCLOUD_API_KEY_REF,
   fixcloudBossModel, isFixcloudModel, ocConfigPath, fixcloudProvider, mergeFixcloud, writeFixcloudProvider,
 };

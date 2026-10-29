@@ -543,6 +543,10 @@ async function renameAccount(id, label) {
   await refreshAccounts();
 }
 
+async function listFixcloudModels(opts) {
+  try { return (await api.accounts.listFixcloudModels?.(opts)) || { ok: false, error: 'network' }; } catch (e) { console.error(e); return { ok: false, error: 'network' }; }
+}
+
 async function setFixcloudModel(id, model, baseUrl) {
   try { await api.accounts.setFixcloudModel?.(id, model, baseUrl); } catch (e) { console.error(e); }
   await refreshAccounts();
@@ -586,6 +590,7 @@ sidebar = mountSidebar($('sidebar'), {
   removeAccount,
   setShare: setAccountShare,
   setFixcloudModel,
+  listFixcloudModels,
   login: (id) => openLogin(id),
   logout: logoutAccount,
   refreshAuth,
