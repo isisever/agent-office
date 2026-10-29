@@ -1281,3 +1281,12 @@ An existing FixCloud account's model can be changed in place, without removing a
 - Updates the account record (`A.setAccountModel`; `baseUrl` is replaced only when a non-empty string is given).
 - Retargets `bossModel` of every project on the account that pins a `fixcloud/...` model to `fixcloud/<newModel>` (`P.retargetFixcloudBossModel`). The new model takes effect on each such project's next session launch; a running session keeps the old model until it is relaunched (opencode-engine tabs are not auto-restarted, so `restarted` is `[]` in practice).
 - No API key is re-entered; the stored key is untouched.
+
+## v3.58 — Fetch FixCloud models
+
+FixCloud has no fixed model (mirroring the nodesyai approach): the user picks from the live list. IPC `fixcloud:listModels({ baseUrl?, apiKey?, accountId? })` → `{ ok: true, models: string[] }` | `{ ok: false, error: 'noKey' | 'http' | 'network', status? }`.
+
+- main.js does `GET <baseUrl>/models` (OpenAI wire shape; `baseUrl` already includes `/v1`, default `A.FIXCLOUD_DEFAULT_BASE`) with a 10 s abort timeout and `Authorization: Bearer <key>`.
+- The key is read in main: the typed `apiKey` for the add form (not stored yet), else the stored key by `accountId` (`providerTokens().load`, FixCloud accounts only). It is NEVER returned to the renderer or logged; only model ids come back.
+- `FC.parseModels(json)` (pure, `src/fixcloud.js`) accepts `{ data: [{ id }] }`, `{ models: [...] }` or a bare array, de-duplicates, and returns `[]` for anything unexpected.
+- UI: the model field stays a free-text input (a failed fetch never blocks typing) with a `<datalist>` filled by the "Fetch models" button, in both the add-account form and the in-place model editor. Failure shows a brief inline note, never an alert.
