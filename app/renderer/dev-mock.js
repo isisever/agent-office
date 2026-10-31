@@ -235,10 +235,15 @@ window.agentOffice = {
     list: async () => ({ servers: [
       { name: 'github', source: 'user', type: 'http', host: 'api.githubcopilot.com', readOnly: true },
       { name: 'files', source: 'project', type: 'stdio', host: '', readOnly: true, approved: true },
-      ...mockMcp.map((s) => ({ ...s, source: 'app', readOnly: false, hasToken: true })),
+      ...mockMcp.map((s) => ({ ...s, source: 'app', readOnly: false, hasToken: s.type !== 'stdio' })),
     ] }),
     add: async (f) => {
       if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
+      if (f?.type === 'stdio') {
+        if (!String(f.command || '').trim()) return { ok: false, error: 'command' };
+        mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: 'stdio', host: '', scope: f.scope === 'all' ? 'all' : 'project' });
+        return { ok: true, restarted: [] };
+      }
       if (!/^https?:\/\//.test(String(f?.url || ''))) return { ok: false, error: 'url' };
       let host = ''; try { host = new URL(f.url).host; } catch {}
       mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: f.type === 'sse' ? 'sse' : 'http', host, scope: f.scope === 'all' ? 'all' : 'project' });

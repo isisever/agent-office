@@ -1290,3 +1290,15 @@ FixCloud has no fixed model (mirroring the nodesyai approach): the user picks fr
 - The key is read in main: the typed `apiKey` for the add form (not stored yet), else the stored key by `accountId` (`providerTokens().load`, FixCloud accounts only). It is NEVER returned to the renderer or logged; only model ids come back.
 - `FC.parseModels(json)` (pure, `src/fixcloud.js`) accepts `{ data: [{ id }] }`, `{ models: [...] }` or a bare array, de-duplicates, and returns `[]` for anything unexpected.
 - UI: the model field stays a free-text input (a failed fetch never blocks typing) with a `<datalist>` filled by the "Fetch models" button, in both the add-account form and the in-place model editor. Failure shows a brief inline note, never an alert.
+
+## stdio/CLI MCP servers (v3.59)
+
+The MCP panel now adds stdio/CLI servers too, not only remote http/sse ones. A stdio server is a local command that speaks MCP over stdin/stdout.
+
+- State record in `state.json`: `{ id, name, type: 'stdio', command, args: string[], env: { [k]: string }, scope }`. It carries NO token (the token store is untouched). `env` holds non-secret values only (paths, flags) and is kept in plain `state.json`; a key or password must not go there.
+- `serverConfig` emits `{ command, args?, env? }` into the tab's 0600 `--mcp-config` file (`args`/`env` omitted when empty), with no token.
+- Like remote app servers it reaches ONLY the claude engine, and only where no server of that name already applies.
+- The add form gained a "Server type" selector (Remote HTTP/SSE vs Command stdio). In stdio mode it shows command, arguments (one per line) and environment (`KEY=value` per line) instead of address and token.
+- `validate` returns `'command'` for a blank stdio command.
+- `normalizeServers` and `addServer` clean stdio records via `cleanCommand` / `cleanArgs` / `cleanEnv`: at most 64 args and 64 env entries; env keys must match `/^[A-Za-z_][A-Za-z0-9_]*$/`; non-string values are dropped.
+- `listing` shows a stdio server with host `''` (no address to display).

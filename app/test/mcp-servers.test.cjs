@@ -63,7 +63,7 @@ test('MCP: scopes — a server for all projects reaches every project, one for a
   assert.equal(MS.validate({ name: 'x', url: 'ftp://a', scope: 'all' }, []), 'url');
   assert.equal(MS.validate({ name: '!!', url: 'https://a', scope: 'all' }, []), 'name');
   assert.equal(MS.validate({ name: 'x', url: 'https://a', scope: 'p9' }, ['p1']), 'scope');
-  assert.equal(MS.validate({ name: 'x', url: 'https://a', scope: 'p1', type: 'stdio' }, ['p1']), 'type');
+  assert.equal(MS.validate({ name: 'x', url: 'https://a', scope: 'p1', type: 'ws' }, ['p1']), 'type');
   assert.equal(MS.serverName('Kişisel Notlar'), 'kisisel-notlar');
   assert.equal(MS.cleanToken(`Bearer ${SECRET}`), SECRET);
   const cfg = MS.appConfigs(servers, 'p1', (id) => (id === 's1' ? SECRET : ''));
@@ -411,4 +411,26 @@ test('MCP: the held folder and an added or adopted folder match however each is 
   assert.equal(MS.serversFor(MS.adoptHeld([{ ...servers[0], held: `${dir}/` }], dir, 'p2'), 'p2').length, 1);
   // a folder gone (handed off and moved away) still compares by its resolved spelling
   assert.equal(MS.dirKey('/nope/a/b/'), path.resolve('/nope/a/b'));
+});
+
+test('MCP: stdio servers (v3.59) build, emit, validate, normalize and list without a token or host', () => {
+  const rec = { id: 's1', name: 'ruflo', type: 'stdio', command: 'npx', args: ['-y', 'ruflo@latest', 'mcp', 'start'], env: { RUFLO_HOME: '/h' }, scope: 'all' };
+  const r = MS.addServer([], { name: 'ruflo', type: 'stdio', command: 'npx', args: ['-y', 'ruflo@latest', 'mcp', 'start'], env: { RUFLO_HOME: '/h' }, scope: 'all' }, 's1');
+  assert.deepEqual(r.servers[0], rec);
+  assert.deepEqual(MS.serverConfig(rec, ''), { command: 'npx', args: ['-y', 'ruflo@latest', 'mcp', 'start'], env: { RUFLO_HOME: '/h' } });
+  assert.deepEqual(MS.serverConfig({ type: 'stdio', command: 'x', args: [], env: {} }, ''), { command: 'x' });
+  assert.equal(MS.validate({ name: 'x', type: 'stdio', command: '' }), 'command');
+  assert.equal(MS.validate({ name: 'x', type: 'stdio', command: 'npx', scope: 'all' }), null);
+  const n = MS.normalizeServers([
+    { id: 'n1', name: 'ok', type: 'stdio', command: 'uvx', args: ['a', 2, ' ', 'b'], env: { GOOD: 'v', '1bad': 'x', n: 3 }, scope: 'all' },
+    { id: 'n2', name: 'nocmd', type: 'stdio', command: '  ', scope: 'all' },
+  ], []);
+  assert.equal(n.length, 1);
+  assert.deepEqual(n[0], { id: 'n1', name: 'ok', type: 'stdio', command: 'uvx', args: ['a', 'b'], env: { GOOD: 'v' }, scope: 'all' });
+  const home = tmp(), cwd = path.join(home, 'proj');
+  fs.mkdirSync(cwd, { recursive: true });
+  const item = MS.listing({ account: {}, home, cwd, servers: r.servers, projectId: 'p1' }).find((s) => s.source === 'app' && s.name === 'ruflo');
+  assert.ok(item);
+  assert.equal(item.host, '');
+  assert.equal(item.type, 'stdio');
 });

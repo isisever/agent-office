@@ -2948,13 +2948,16 @@ ipcMain.handle('projects:setSkillPacks', (_e, projectId, values) => {
   return { restarted: p && SP.changedProjects(before, state, skillPacks(), P.engineOf).includes(p.id) ? restartIdle(p) : [] };
 });
 ipcMain.handle('mcp:add', (_e, f) => {
-  const form = { name: String(f?.name || ''), url: String(f?.url || '').trim(), type: f?.type === 'sse' ? 'sse' : 'http', scope: f?.scope };
+  const type = f?.type === 'sse' ? 'sse' : f?.type === 'stdio' ? 'stdio' : 'http';
+  const form = type === 'stdio'
+    ? { name: String(f?.name || ''), type, command: String(f?.command || '').trim(), args: f?.args, env: f?.env, scope: f?.scope } // v3.59 stdio/CLI server (no token)
+    : { name: String(f?.name || ''), url: String(f?.url || '').trim(), type, scope: f?.scope };
   if (!stateWritable) return { ok: false, error: 'state' }; // it could not be saved: the next start would sweep its token
   const bad = MS.validate(form, state.projects.map((p) => p.id));
   if (bad) return { ok: false, error: bad };
   const r = MS.addServer(appServers(), form, `m-${crypto.randomUUID()}`);
   if (!r.servers) return { ok: false, error: r.error };
-  if (!tokens().save(r.server.id, MS.cleanToken(f?.token))) return { ok: false, error: 'token' }; // nothing added
+  if (!tokens().save(r.server.id, form.type === 'stdio' ? '' : MS.cleanToken(f?.token))) return { ok: false, error: 'token' }; // nothing added (stdio carries no token)
   commit({ ...state, mcpServers: r.servers });
   return { ok: true, restarted: restartFor(r.server.scope) };
 });
