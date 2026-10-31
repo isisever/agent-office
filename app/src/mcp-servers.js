@@ -2,9 +2,12 @@
 //
 // A project's Claude Code sessions get MCP servers from Claude Code's own files (read-only here: ~/.claude.json
 // top-level and projects[dir].mcpServers, the account's .claude.json, the project's approved .mcp.json), from other
-// office projects (v3.9 share) and from servers added in Agent Office. The last are kept in state.json as
-// `mcpServers: [{ id, name, type: 'http' | 'sse', url, scope: 'all' | <projectId> }]` with no token: the token is in
-// the token store below (safeStorage), keyed by the server id. They reach claude through the tab's 0600 --mcp-config
+// office projects (v3.9 share) and from servers added in Agent Office. The last are kept in state.json as either a
+// remote server `{ id, name, type: 'http' | 'sse', url, scope: 'all' | <projectId> }` whose token is in the token
+// store below (safeStorage, keyed by the server id), or (v3.59) a stdio/CLI server
+// `{ id, name, type: 'stdio', command, args: string[], env: { [k]: string }, scope }` whose command/args/env live in
+// state.json: stdio carries no token, and its env is for non-secret values (paths, flags), never a key or password.
+// They reach claude through the tab's 0600 --mcp-config
 // file (shared-config.js prepareShared `app`), only where no server of that name is already defined for the session.
 const fs = require('fs');
 const path = require('path');
@@ -46,6 +49,20 @@ const hostOf = (v) => { try { return new URL(String(v)).host; } catch { return '
 /** The token as typed: trimmed, a pasted leading 'Bearer ' dropped (the header adds it; no 'Bearer Bearer x'). */
 const cleanToken = (v) => (typeof v === 'string' ? v.trim().replace(/^bearer\s+/i, '').trim() : '');
 
+/** A stdio server's launch command (v3.59): trimmed, or ''. */
+const cleanCommand = (v) => (typeof v === 'string' ? v.trim() : '');
+/** stdio args → a clean string[] (non-strings and blank-after-trim dropped), at most 64. */
+const cleanArgs = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean).slice(0, 64) : []);
+/** stdio env → { KEY: value } with shell-safe names and string values; non-secret only (kept in state.json), at most 64. */
+const cleanEnv = (v) => {
+  /** @type {Record<string, string>} */
+  const out = {};
+  if (isObj(v)) for (const [k, val] of Object.entries(v)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && typeof val === 'string' && Object.keys(out).length < 64) out[k] = val;
+  }
+  return out;
+};
+
 /** A config's transport: its `type`, else 'http' with a url, else 'stdio'. */
 const typeOf = (c) => (isObj(c) && typeof c.type === 'string' && c.type ? c.type : isObj(c) && typeof c.url === 'string' ? 'http' : 'stdio');
 
@@ -53,32 +70,42 @@ const typeOf = (c) => (isObj(c) && typeof c.type === 'string' && c.type ? c.type
  * state.json `mcpServers` → the valid entries (unknown fields, a token among them, dropped). A server scoped to a
  * project that is not in `projectIds` is dropped; duplicate ids and duplicate names within one scope too.
  * @param {any} list @param {string[]} [projectIds]
- * @returns {{ id: string, name: string, type: 'http' | 'sse', url: string, scope: string, held?: string }[]}
+ * @returns {({ id: string, name: string, type: 'http' | 'sse', url: string, scope: string, held?: string }
+ *   | { id: string, name: string, type: 'stdio', command: string, args: string[], env: Record<string, string>, scope: string, held?: string })[]}
  */
 function normalizeServers(list, projectIds) {
   const known = projectIds ? new Set(projectIds) : null;
+  /** @type {({ id: string, name: string, type: 'http' | 'sse', url: string, scope: string, held?: string } | { id: string, name: string, type: 'stdio', command: string, args: string[], env: Record<string, string>, scope: string, held?: string })[]} */
   const out = [];
   const ids = new Set(), names = new Set();
   for (const s of Array.isArray(list) ? list : []) {
     if (!isObj(s) || typeof s.id !== 'string' || !/^[\w-]{1,64}$/.test(s.id) || ids.has(s.id)) continue;
-    const name = serverName(s.name), url = cleanUrl(s.url);
-    const type = TYPES.includes(s.type) ? s.type : 'http';
+    const name = serverName(s.name);
+    const stdio = s.type === 'stdio';
+    const command = stdio ? cleanCommand(s.command) : '';
+    const url = stdio ? '' : cleanUrl(s.url);
     // held: the folder of a project handed off from here (v3.44) — the server waits for it to come back
     const held = typeof s.held === 'string' && s.held && s.scope !== 'all' && (!known || !known.has(s.scope)) ? s.held : null;
     const scope = s.scope === 'all' || (typeof s.scope === 'string' && s.scope && (!known || known.has(s.scope) || held)) ? s.scope : null;
-    if (!name || !url || !scope || names.has(`${scope}\0${name}`)) continue;
+    if (!name || (stdio ? !command : !url) || !scope || names.has(`${scope}\0${name}`)) continue;
     ids.add(s.id); names.add(`${scope}\0${name}`);
-    out.push({ id: s.id, name, type, url, scope, ...(held ? { held } : {}) });
+    out.push(stdio
+      ? { id: s.id, name, type: 'stdio', command, args: cleanArgs(s.args), env: cleanEnv(s.env), scope, ...(held ? { held } : {}) }
+      : { id: s.id, name, type: TYPES.includes(s.type) ? s.type : 'http', url, scope, ...(held ? { held } : {}) });
   }
   return out;
 }
 
-/** Error code for the add form ('name' | 'url' | 'type' | 'scope') or null. */
+/** Error code for the add form ('name' | 'command' | 'url' | 'url-http' | 'url-secret' | 'type' | 'scope') or null. */
 function validate(f, projectIds = []) {
   if (!serverName(f?.name)) return 'name';
-  const bad = urlProblem(f?.url);
-  if (bad) return bad;
-  if (f?.type !== undefined && !TYPES.includes(f.type)) return 'type';
+  if (f?.type === 'stdio') {
+    if (!cleanCommand(f?.command)) return 'command';
+  } else {
+    const bad = urlProblem(f?.url);
+    if (bad) return bad;
+    if (f?.type !== undefined && !TYPES.includes(f.type)) return 'type';
+  }
   if (f?.scope !== 'all' && !projectIds.includes(f?.scope)) return 'scope';
   return null;
 }
@@ -93,7 +120,9 @@ const serversFor = (servers, projectId) => [
  * same sessions (same scope, or one side is 'all' and the other a project).
  */
 function addServer(servers, f, newId) {
-  const server = { id: newId, name: serverName(f.name), type: TYPES.includes(f.type) ? f.type : 'http', url: cleanUrl(f.url), scope: f.scope };
+  const server = f.type === 'stdio'
+    ? { id: newId, name: serverName(f.name), type: 'stdio', command: cleanCommand(f.command), args: cleanArgs(f.args), env: cleanEnv(f.env), scope: f.scope }
+    : { id: newId, name: serverName(f.name), type: TYPES.includes(f.type) ? f.type : 'http', url: cleanUrl(f.url), scope: f.scope };
   const clash = servers.some((s) => s.name === server.name && (s.scope === server.scope || s.scope === 'all' || server.scope === 'all'));
   return clash ? { error: 'name-used' } : { servers: [...servers, server], server };
 }
@@ -136,8 +165,12 @@ function adoptHeld(servers, dir, projectId) {
   });
 }
 
-/** The claude MCP entry: a remote server, the token as a bearer header. Lives only in the tab's 0600 MCP file. */
+/**
+ * The claude MCP entry (lives only in the tab's 0600 MCP file): a remote server with the token as a bearer header, or
+ * (v3.59) a stdio server with its command/args/env and no token.
+ */
 function serverConfig(s, token) {
+  if (s.type === 'stdio') return { command: s.command, ...(s.args?.length ? { args: s.args } : {}), ...(s.env && Object.keys(s.env).length ? { env: s.env } : {}) };
   return { type: s.type, url: s.url, ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}) };
 }
 /** `{ name: config }` of the app-added servers for a project's Claude Code session (tokenOf(id) → token or ''). */
@@ -309,10 +342,10 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
     const shadowed = seen.has(s.name);
     const bossShadowed = !shadowed && boss && s.name === 'agent-office';
     if (!shadowed) seen.add(s.name);
-    out.push({ name: s.name, source: 'app', type: s.type, host: hostOf(s.url), readOnly: false, id: s.id, scope: s.scope === 'all' ? 'all' : 'project', hasToken: Boolean(hasToken(s.id)), ...(shadowed ? { shadowed: true } : {}), ...(bossShadowed ? { bossShadowed: true } : {}) });
+    out.push({ name: s.name, source: 'app', type: s.type, host: s.type === 'stdio' ? '' : hostOf(s.url), readOnly: false, id: s.id, scope: s.scope === 'all' ? 'all' : 'project', hasToken: Boolean(hasToken(s.id)), ...(shadowed ? { shadowed: true } : {}), ...(bossShadowed ? { bossShadowed: true } : {}) });
   }
   for (const s of servers.filter((x) => x.held)) {
-    out.push({ name: s.name, source: 'app', type: s.type, host: hostOf(s.url), readOnly: false, id: s.id, scope: 'held', away: true, folder: path.basename(s.held), hasToken: Boolean(hasToken(s.id)) });
+    out.push({ name: s.name, source: 'app', type: s.type, host: s.type === 'stdio' ? '' : hostOf(s.url), readOnly: false, id: s.id, scope: 'held', away: true, folder: path.basename(s.held), hasToken: Boolean(hasToken(s.id)) });
   }
   return out;
 }

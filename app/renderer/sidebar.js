@@ -624,22 +624,56 @@ export function mountSidebar(el, on) {
     if (!list.length) mcpList.append(h('li', { class: 'sb-empty' }, p ? t('sidebar.mcpNone') : t('sidebar.mcpNoProject')));
   }
 
-  /** Add a remote MCP server (v3.44) for all projects or one; the token goes to main only (stored encrypted there). */
+  /** Add an MCP server: remote (HTTP/SSE, v3.44) or a local command (stdio); a remote token goes to main only (stored encrypted there). */
   function openMcpForm() {
     const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
+    const kind = h('select', {}, h('option', { value: 'remote' }, t('sidebar.mcpKindRemote')), h('option', { value: 'stdio' }, t('sidebar.mcpKindStdio')));
     const name = h('input', { maxLength: 48, placeholder: t('sidebar.mcpNamePh') });
     const url = h('input', { type: 'url', placeholder: 'https://…', spellcheck: false });
     const type = h('select', {}, h('option', { value: 'http' }, 'HTTP'), h('option', { value: 'sse' }, 'SSE'));
     const token = h('input', { type: 'password', autocomplete: 'off', spellcheck: false, placeholder: t('sidebar.mcpTokenPh') });
+    const command = h('input', { placeholder: t('sidebar.mcpCommandPh'), spellcheck: false });
+    const args = h('textarea', { rows: 3, placeholder: t('sidebar.mcpArgsPh'), spellcheck: false });
+    const env = h('textarea', { rows: 3, placeholder: t('sidebar.mcpEnvPh'), spellcheck: false });
     const scope = h('select', {}, h('option', { value: 'all' }, t('sidebar.mcpScopeAll')),
       ...projects.map((p) => h('option', { value: p.id, selected: p.id === activeId }, p.name)));
     const err = h('div', { class: 'sb-note warn', hidden: true });
+    const remoteFields = [
+      field(t('sidebar.mcpUrl'), url, t('sidebar.mcpUrlHint')),
+      field(t('sidebar.mcpType'), type),
+      field(t('sidebar.mcpToken'), token, t('sidebar.mcpTokenHint')),
+    ];
+    const stdioFields = [
+      field(t('sidebar.mcpCommand'), command, t('sidebar.mcpCommandHint')),
+      field(t('sidebar.mcpArgs'), args, t('sidebar.mcpArgsHint')),
+      field(t('sidebar.mcpEnv'), env, t('sidebar.mcpEnvHint')),
+    ];
+    const syncKind = () => {
+      const stdio = kind.value === 'stdio';
+      for (const f of remoteFields) f.hidden = stdio;
+      for (const f of stdioFields) f.hidden = !stdio;
+    };
+    kind.onchange = syncKind;
+    syncKind();
+    const parseArgs = () => args.value.split('\n').map((l) => l.trim()).filter(Boolean);
+    const parseEnv = () => {
+      const out = {};
+      for (const line of env.value.split('\n')) {
+        const i = line.indexOf('=');
+        if (i < 0) continue;
+        const key = line.slice(0, i).trim();
+        if (key) out[key] = line.slice(i + 1).trim();
+      }
+      return out;
+    };
     const save = h('button', {
       class: 'sb-btn primary',
       onclick: async () => {
         save.disabled = true;
         err.hidden = true;
-        const r = await on.mcp?.add({ name: name.value, url: url.value, type: type.value, token: token.value, scope: scope.value });
+        const r = kind.value === 'stdio'
+          ? await on.mcp?.add({ name: name.value, type: 'stdio', command: command.value, args: parseArgs(), env: parseEnv(), scope: scope.value })
+          : await on.mcp?.add({ name: name.value, url: url.value, type: type.value, token: token.value, scope: scope.value });
         if (r?.ok) { closeModal(); renderMcp(true); return; }
         save.disabled = false;
         err.textContent = t(`sidebar.mcpError.${{ 'name-used': 'nameUsed', 'url-http': 'urlHttp', 'url-secret': 'urlSecret' }[r?.error] || r?.error || 'failed'}`);
@@ -647,10 +681,10 @@ export function mountSidebar(el, on) {
       },
     }, t('sidebar.save'));
     openModal(t('sidebar.mcpAddTitle'), [
+      field(t('sidebar.mcpKind'), kind),
       field(t('sidebar.mcpName'), name),
-      field(t('sidebar.mcpUrl'), url, t('sidebar.mcpUrlHint')),
-      field(t('sidebar.mcpType'), type),
-      field(t('sidebar.mcpToken'), token, t('sidebar.mcpTokenHint')),
+      ...remoteFields,
+      ...stdioFields,
       field(t('sidebar.mcpScope'), scope, t('sidebar.mcpScopeHint')),
       err,
     ], [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');

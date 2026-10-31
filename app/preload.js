@@ -39,7 +39,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
   },
   mcp: {   // contract v3.44: one MCP list; the token goes in, never out
     list: (projectId) => ipcRenderer.invoke('mcp:list', projectId),   // { servers: [{ name, source, type, host, readOnly, id?, scope?, hasToken?, approved?, shadowed? }] }
-    add: (form) => ipcRenderer.invoke('mcp:add', form),   // { name, url, type: 'http' | 'sse', token?, scope: 'all' | projectId } → { ok, restarted } | { ok: false, error }
+    add: (form) => ipcRenderer.invoke('mcp:add', form),   // remote { name, url, type: 'http' | 'sse', token?, scope } | stdio { name, type: 'stdio', command, args: string[], env: {k: v}, scope }; scope: 'all' | projectId → { ok, restarted } | { ok: false, error }
     remove: (id) => ipcRenderer.invoke('mcp:remove', id),   // → { ok, restarted } | { ok: false, error: 'unknown' }
   },
   tabs: {
