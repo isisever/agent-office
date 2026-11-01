@@ -273,10 +273,13 @@ export function mountSidebar(el, on) {
         }
         queue('account', async () => {
           const eng = Object.keys(ENGINE_OPT).find((k) => ENGINE_OPT[k] === v) || null;
+          // v3.60: a fixcloud account runs on the claude engine (in-process proxy); setAccount binds it (engine→claude,
+          // any fixcloud/<model> cleared). Skip the setEngine reset for a fixcloud target so it does not override that.
+          const toFix = accounts.find((a) => a.id === v)?.provider === 'fixcloud';
           // leaving agy/cmd for another Claude account: the account first, so the restarted tabs use it
           const leaving = !eng && engine !== 'claude';
           if (leaving && v !== p.accountId) await on.setAccount(p.id, v);
-          if (eng || engine !== 'claude') {
+          if ((eng || engine !== 'claude') && !toFix) {
             const r = await on.setEngine?.(p.id, eng);
             if (!r || r.refused) { // failed: the old account again, if it was already moved
               if (leaving && v !== p.accountId) await on.setAccount(p.id, p.accountId);

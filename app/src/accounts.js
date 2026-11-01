@@ -17,16 +17,20 @@ const path = require('path');
 const DEFAULT_ID = 'default';
 const DEFAULT_ACCOUNT = Object.freeze({ id: DEFAULT_ID, label: 'Varsayılan', configDir: null });
 
-// FixCloud accounts (contract v3.55, supersedes the v3.54 Claude path): a login-less account that runs its projects on
-// the OpenCode engine against a FixCloud (OpenAI-compatible) endpoint. The account carries provider:'fixcloud' plus the
-// chosen model and base URL; its API key is stored encrypted (providerTokens) and injected into the OpenCode launch env
-// as FIXCLOUD_API_KEY after the engine's env filter. The OpenCode-side wiring (opencode.json merge, env reference,
-// boss-model helper) lives in src/fixcloud.js; accounts.js only knows the account's own fields. The old 0.22.6 Claude
-// path (ANTHROPIC_BASE_URL/ANTHROPIC_MODEL in settings.json and an ANTHROPIC_AUTH_TOKEN re-export) is gone: FixCloud is
-// OpenAI-wire, so it never worked.
+// FixCloud accounts (contract v3.60, supersedes the v3.55 OpenCode-session path): a login-less account whose PROJECT
+// SESSIONS run on the CLAUDE CODE engine against an in-process Anthropic→OpenAI proxy (main.js) that forwards to a
+// FixCloud (OpenAI-compatible) endpoint. The account carries provider:'fixcloud' plus the chosen model and base URL;
+// its API key is stored encrypted (providerTokens) and read only in main to call FixCloud — never logged, returned,
+// put in argv or written to state. The Claude launch gets ANTHROPIC_BASE_URL=<proxy> and a random ANTHROPIC_AUTH_TOKEN
+// (NOT the real key) that the proxy maps back to the account. The Anthropic↔OpenAI translation and the opencode.json
+// merge live in src/fixcloud.js; accounts.js only knows the account's own fields. This works via the proxy because
+// FixCloud is OpenAI-wire (POST /v1/chat/completions only); the direct 0.22.6 ANTHROPIC_BASE_URL path never did. The
+// ao-delegate CLI still launches OpenCode under a fixcloud account (opencode.json merge + FIXCLOUD_API_KEY), unchanged.
 const FIXCLOUD = 'fixcloud';
 const FIXCLOUD_DEFAULT_BASE = 'https://llm.fixcloud.ai/v1';
-const FIXCLOUD_DEFAULT_MODEL = 'qwen3.6-35b-a3b';
+// deepseek-v4.1-flash supports tool calling; qwen3.6-35b-a3b does not (the server lacks --tool-call-parser), and Claude
+// Code needs tools, so the default must be tool-capable.
+const FIXCLOUD_DEFAULT_MODEL = 'deepseek-v4.1-flash';
 const isFixcloud = (account) => account?.provider === FIXCLOUD;
 
 // The default account is always first and its configDir is null.
