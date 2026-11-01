@@ -4381,26 +4381,21 @@ test('fixcloud (v3.55): provider-tokens roundtrip ve remove', () => {
   assert.equal(store.load('fc'), '');
 });
 
-test('fixcloud (v3.55): bir fixcloud hesabı atamak motoru opencode, boss modelini fixcloud/<model> yapar', () => {
-  const FC = require('../src/fixcloud.js');
-  // the pure binding the projects:setAccount handler applies: engine first, then the fixcloud boss model
+test('fixcloud (v3.60): assigning a fixcloud account binds the claude engine and clears any fixcloud/<model> bossModel', () => {
+  // the pure binding the projects:setAccount handler applies: engine → claude (null), fixcloud/<model> bossModel cleared,
+  // so the project runs Claude Code against the in-process proxy (no OpenCode session any more)
   let s = P.addProject(empty(), '/p/fx', { id: () => 'px' }).state;
   s = P.setProjectEngine(s, 'px', 'opencode');
-  s = P.setProjectBossModel(s, 'px', FC.fixcloudBossModel('qwen3.6-35b-a3b'));
+  s = P.setProjectBossModel(s, 'px', 'fixcloud/deepseek-v4.1-flash');
+  s = P.bindFixcloudAccount(s, 'px', { fromFix: false, toFix: true });
   const p = P.findProject(s, 'px');
-  assert.equal(P.engineOf(p), 'opencode');
-  assert.equal(P.bossModelOf(p), 'fixcloud/qwen3.6-35b-a3b');
-  assert.deepEqual(P.bossModelArgs(p), ['-m', 'fixcloud/qwen3.6-35b-a3b']); // OpenCode -m provider/model
-  // the value survives a state reload (anyEngineBossModel keeps it)
-  const rel = P.normalizeState({ projects: [{ id: 'px', dir: '/p/fx', engine: 'opencode', bossModel: 'fixcloud/qwen3.6-35b-a3b' }] });
-  assert.equal(P.bossModelOf(rel.projects[0]), 'fixcloud/qwen3.6-35b-a3b');
-  // the fixcloud model is valid only under the opencode engine
-  assert.equal(P.bossModelOf({ engine: 'claude', bossModel: 'fixcloud/qwen3.6-35b-a3b' }), null);
-  // the setAccount handler wires it
+  assert.equal(P.engineOf(p), 'claude');
+  assert.equal('engine' in p, false);
+  assert.equal('bossModel' in p, false);
+  // the setAccount handler wires it (no FC.fixcloudBossModel retarget on the session path any more)
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
   const h = src.slice(src.indexOf("ipcMain.handle('projects:setAccount'"), src.indexOf("ipcMain.handle('projects:setManager'"));
-  assert.match(h, /bindFixcloudAccount\(next, id/);
-  assert.match(h, /FC\.fixcloudBossModel/);
+  assert.match(h, /bindFixcloudAccount\(next, id, \{ fromFix: A\.isFixcloud\(from\), toFix \}\)/);
 });
 
 test('fixcloud (v3.55): OpenCode başlatma ortamı fixcloud hesabı için FIXCLOUD_API_KEY içerir, başkası için içermez', () => {
@@ -4435,29 +4430,27 @@ test('fixcloud (v3.55): auto yedek havuzu provider hesabını dışlar', () => {
   assert.deepEqual(FB.pickBackup({ choice: 'auto', current: 'default', accounts: [accounts[0], accounts[2]], now }), { reason: 'none' });
 });
 
-test('fixcloud (v3.55): a project moving TO a fixcloud account binds opencode + fixcloud/<model>; moving AWAY undoes it (keeps other models)', () => {
-  const FC = require('../src/fixcloud.js');
+test('fixcloud (v3.60): a project moving TO a fixcloud account binds the claude engine (null) with no bossModel; moving AWAY undoes a left-over opencode binding', () => {
   const mk = (dir) => P.addProject({ projects: [], activeId: null, accounts: [] }, dir).state;
   let s = mk('/tmp/ao-fc-proj');
   const id = s.projects[0].id;
-  const bm = FC.fixcloudBossModel('qwen3.6-35b-a3b');
-  s = P.bindFixcloudAccount(s, id, { fromFix: false, toFix: true, bossModel: bm });
-  assert.equal(P.findProject(s, id).engine, 'opencode');
-  assert.equal(P.findProject(s, id).bossModel, bm);
-  s = P.bindFixcloudAccount(s, id, { fromFix: true, toFix: false, bossModel: null });
+  // a left-over opencode + fixcloud/<model> binding, then move TO fixcloud → claude engine, no bossModel
+  s = P.setProjectBossModel(P.setProjectEngine(s, id, 'opencode'), id, 'fixcloud/deepseek-v4.1-flash');
+  s = P.bindFixcloudAccount(s, id, { fromFix: false, toFix: true });
+  assert.equal(P.engineOf(P.findProject(s, id)), 'claude');
   assert.equal('engine' in P.findProject(s, id), false);
   assert.equal('bossModel' in P.findProject(s, id), false);
-  // a legitimate non-fixcloud opencode model is not wiped
+  // a legitimate non-fixcloud opencode model is not wiped when moving away from a fixcloud account
   let k = mk('/tmp/ao-fc-proj2');
   const id2 = k.projects[0].id;
   k = P.setProjectBossModel(P.setProjectEngine(k, id2, 'opencode'), id2, 'opencode/big-pickle');
-  k = P.bindFixcloudAccount(k, id2, { fromFix: true, toFix: false, bossModel: null });
+  k = P.bindFixcloudAccount(k, id2, { fromFix: true, toFix: false });
   assert.equal(P.findProject(k, id2).bossModel, 'opencode/big-pickle');
   // non-fixcloud -> non-fixcloud is a no-op
-  assert.equal(P.bindFixcloudAccount(s, id, { fromFix: false, toFix: false, bossModel: null }), s);
+  assert.equal(P.bindFixcloudAccount(s, id, { fromFix: false, toFix: false }), s);
   // the handler uses it with the old and new account
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
-  assert.match(src, /P\.bindFixcloudAccount\(next, id, \{ fromFix: A\.isFixcloud\(from\), toFix/);
+  assert.match(src, /P\.bindFixcloudAccount\(next, id, \{ fromFix: A\.isFixcloud\(from\), toFix \}\)/);
 });
 
 test('fixcloud (v3.55): a malformed/JSONC opencode.json is never overwritten; empty/missing starts from {}', () => {

@@ -396,16 +396,38 @@ function setProjectEngine(state, id, value) {
   }) };
 }
 
-/** v3.55: keep a project's engine/model in step with a move between accounts. Moving onto a fixcloud account binds
- *  OpenCode + `fixcloud/<model>` (bossModel is validated against the engine, so the engine is set first); moving off
- *  one resets the engine to the default and clears a `fixcloud/...` bossModel (any other bossModel is kept). */
-function bindFixcloudAccount(state, id, { fromFix, toFix, bossModel }) {
-  if (toFix) return setProjectBossModel(setProjectEngine(state, id, 'opencode'), id, bossModel);
-  if (!fromFix) return state;
+/** v3.60: keep a project's engine/model in step with a move between accounts. A fixcloud account's session now runs on
+ *  the CLAUDE CODE engine against the in-process proxy (not OpenCode), so moving onto one sets the engine to claude
+ *  (null) and clears any leftover `fixcloud/<model>` bossModel. Moving off one resets a left-over opencode engine to the
+ *  default and clears a `fixcloud/...` bossModel (any other bossModel is kept); for a claude-bound fixcloud project it is
+ *  a no-op, since there is nothing to undo. */
+function bindFixcloudAccount(state, id, { fromFix, toFix }) {
   const p = findProject(state, id);
+  if (toFix) {
+    let next = state;
+    if (p && isFixcloudModel(p.bossModel)) next = setProjectBossModel(next, id, null);
+    next = setProjectEngine(next, id, null);   // claude engine
+    return next;
+  }
+  if (!fromFix) return state;
   let next = state;
-  if (p && isFixcloudModel(p.bossModel)) next = setProjectBossModel(next, id, null);   // engine still opencode here
+  if (p && isFixcloudModel(p.bossModel)) next = setProjectBossModel(next, id, null);
   if (p && engineValue(p.engine) === 'opencode') next = setProjectEngine(next, id, null);
+  return next;
+}
+
+/** v3.60 migration: a fixcloud account's project left on the old OpenCode binding (engine 'opencode' + `fixcloud/<model>`
+ *  bossModel) moves to the claude engine (null) with no bossModel, so it runs via the in-process proxy. Idempotent;
+ *  non-fixcloud opencode projects are left untouched. */
+function migrateFixcloudProjects(state) {
+  const fix = new Set((state.accounts || []).filter((a) => a?.provider === 'fixcloud').map((a) => a.id));
+  const hit = (p) => fix.has(p.accountId) && engineValue(p.engine) === 'opencode' && isFixcloudModel(p.bossModel);
+  if (!state.projects.some(hit)) return state;
+  let next = state;
+  for (const p of state.projects.filter(hit)) {
+    next = setProjectBossModel(next, p.id, null);
+    next = setProjectEngine(next, p.id, null);
+  }
   return next;
 }
 
@@ -534,7 +556,7 @@ module.exports = {
   AGENT_MODELS, setProjectAgentModel, agentModelOf,
   CONTEXT_CAPS, setProjectContextCap, contextCapOf,
   setProjectSavings, savingsOf,
-  ENGINES, setProjectEngine, bindFixcloudAccount, engineOf,
+  ENGINES, setProjectEngine, bindFixcloudAccount, migrateFixcloudProjects, engineOf,
   setProjectFiles, projectFilesOf,
   setProjectBackup, backupOf, fallbackTo, returnHome,
   setProjectDelegates, delegatesOf,
