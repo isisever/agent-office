@@ -1315,3 +1315,11 @@ Supersedes the v3.55 OpenCode-session design for a FixCloud account's **project 
 - **Default model `deepseek-v4.1-flash`** (`accounts.js FIXCLOUD_DEFAULT_MODEL`): it supports tool calling; `qwen3.6-35b-a3b` does not (the server lacks `--tool-call-parser`), and Claude Code needs tools. A model change (`accounts:setFixcloudModel`) rewrites opencode.json (for delegates) and updates the account; the proxy reads `account.model` live per request, so no bossModel retarget is needed — idle claude sessions of the account's projects restart to refresh any cached model.
 - **Migration** (`P.migrateFixcloudProjects`, run at state load). Every project whose account is fixcloud AND `engine==='opencode'` with a `fixcloud/<model>` bossModel is converted to `engine=claude` (null) + no bossModel. Idempotent; non-fixcloud opencode projects are untouched.
 - **Security.** The real `fxc-` key is read only in the proxy (`providerTokens().load`), used only to call FixCloud, and never written to a log, the response body, argv, `state.json`, or `opencode.json` beyond the existing `{env:FIXCLOUD_API_KEY}` reference. `ANTHROPIC_AUTH_TOKEN` is a random non-key token; the renderer never sees a key.
+
+## FixCloud proxy: output clamp and upstream errors (v3.61)
+
+FixCloud/vLLM enforces `prompt_tokens + max_tokens <= model context_length`. Claude Code requests `max_tokens` 64000 every time and FixCloud has no prompt caching, so a growing session eventually exceeded the budget and every request failed with 400.
+
+- The in-process proxy (`FC.anthropicToOpenAI`) now sets `max_tokens = requested || 4096` and clamps it with `FC.clampOutputTokens` so prompt + output stays within the model's context window (`FC.contextLength(model)`; `deepseek-v4.1-flash` = 262144, unknown models 131072), with a floor of 1024.
+- On an upstream non-2xx the proxy parses the upstream error JSON and returns the real reason (`FixCloud <status>: <message>`, 400 as `invalid_request_error`) instead of a generic `upstream 400`.
+- The ao-delegate path is unchanged.

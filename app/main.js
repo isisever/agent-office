@@ -1697,7 +1697,14 @@ function startFixcloudProxy() {
         signal: ac.signal,
       });
       const text = await up.text();
-      if (!up.ok) { console.error('fixcloud proxy upstream', up.status); return proxyError(res, up.status, 'api_error', 'upstream ' + up.status); }
+      if (!up.ok) {
+        // Surface the upstream reason (e.g. "maximum context length ...") instead of an opaque "upstream 400": it tells
+        // the user what went wrong and lets Claude Code react (a 400 is mapped to invalid_request_error). Never a secret.
+        let detail = '';
+        try { const e = JSON.parse(text); detail = (e && e.error && e.error.message) || e.message || ''; } catch { detail = String(text || '').slice(0, 300); }
+        console.error('fixcloud proxy upstream', up.status, String(detail).slice(0, 200));
+        return proxyError(res, up.status, up.status === 400 ? 'invalid_request_error' : 'api_error', 'FixCloud ' + up.status + (detail ? ': ' + detail : ''));
+      }
       let oai = {};
       try { oai = JSON.parse(text); } catch { oai = {}; }
       const msg = FC.openaiToAnthropic(oai, model);
