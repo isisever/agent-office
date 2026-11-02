@@ -150,3 +150,26 @@ test('fixcloud (v3.60): migrateFixcloudProjects moves old opencode+fixcloud proj
 test('fixcloud (v3.60): the default model is tool-capable (deepseek), not the non-tool qwen', () => {
   assert.equal(A.FIXCLOUD_DEFAULT_MODEL, 'deepseek-v4.1-flash');
 });
+
+test('fixcloud (v3.61): contextLength knows deepseek-v4.1-flash and falls back for unknown models', () => {
+  assert.equal(FC.contextLength('deepseek-v4.1-flash'), 262144);
+  assert.equal(FC.contextLength('something-unknown'), 131072);
+});
+
+test('fixcloud (v3.61): anthropicToOpenAI keeps max_tokens for a tiny prompt', () => {
+  const out = FC.anthropicToOpenAI({ max_tokens: 64000, messages: [{ role: 'user', content: 'hi' }] }, 'deepseek-v4.1-flash');
+  assert.equal(out.max_tokens, 64000);
+});
+
+test('fixcloud (v3.61): anthropicToOpenAI clamps max_tokens for a very large prompt', () => {
+  const body = { max_tokens: 64000, messages: [{ role: 'user', content: 'word '.repeat(200000) }] };
+  const out = FC.anthropicToOpenAI(body, 'deepseek-v4.1-flash');
+  assert.ok(out.max_tokens < 64000, `expected a clamp, got ${out.max_tokens}`);
+  assert.ok(out.max_tokens >= 1024, `expected the floor, got ${out.max_tokens}`);
+  assert.ok(out.max_tokens <= 262144);
+});
+
+test('fixcloud (v3.61): a request without max_tokens still gets a positive output budget', () => {
+  const out = FC.anthropicToOpenAI({ messages: [{ role: 'user', content: 'hi' }] }, 'deepseek-v4.1-flash');
+  assert.ok(out.max_tokens >= 1024);
+});

@@ -98,10 +98,32 @@ function parseModels(json) {
 // Pure and testable; the in-process proxy (main.js) uses these to talk to FixCloud's OpenAI-wire endpoint on behalf of
 // Claude Code. Adapted from the proven feasibility proxy: non-streaming upstream, synthesized Anthropic SSE downstream.
 
+// FixCloud/vLLM enforces prompt_tokens + max_tokens <= the model's context window. Claude Code asks for up to 64000
+// output tokens on EVERY request, and FixCloud does NO prompt caching, so an agentic session's prompt grows unbounded;
+// once it passes (context - 64000) every request 400s ("maximum context length") and can no longer even compact. We
+// clamp the requested output down to the budget a generous prompt estimate leaves, so sessions keep working.
+const MODEL_CONTEXT = { 'deepseek-v4.1-flash': 262144, 'deepseek-v4-flash': 262144, 'gpt-oss-120b': 131072, 'qwen3.6-35b-a3b': 131072 };
+const DEFAULT_CONTEXT = 131072;   // conservative when the model id is unknown
+const MIN_OUTPUT_TOKENS = 1024;
+const PROMPT_SAFETY = 1024;       // headroom: our char-based estimate under-counts dense/non-English tokenization
+/** The context window (tokens) for a FixCloud model id; a conservative default when unknown. */
+function contextLength(model) { return MODEL_CONTEXT[model] || DEFAULT_CONTEXT; }
+/** Generous token estimate of an OpenAI request's prompt (messages + tools); chars/3 since dense text runs above chars/4. */
+function estimateTokens(oaiBody) { return Math.ceil(JSON.stringify({ m: oaiBody.messages || [], t: oaiBody.tools || [] }).length / 3); }
+/** Clamp oaiBody.max_tokens so prompt + output stays inside the model context (floor MIN_OUTPUT_TOKENS). Mutates + returns. */
+function clampOutputTokens(oaiBody, model) {
+  const want = oaiBody.max_tokens || 4096;
+  const budget = contextLength(model) - estimateTokens(oaiBody) - PROMPT_SAFETY;
+  // The floor applies to the budget side only: never raise a caller's small explicit max_tokens, and never exceed `want`.
+  oaiBody.max_tokens = Math.min(want, Math.max(MIN_OUTPUT_TOKENS, budget));
+  return oaiBody;
+}
+
 /** Anthropic Messages request body → OpenAI chat/completions request object. `model` is forced (the account's model).
  *  system + messages (incl. tool_use / tool_result blocks) are mapped; tools → function tools. tool_choice is OMITTED
  *  unless a SPECIFIC tool is forced (body.tool_choice.type === 'tool' with a name): FixCloud/vLLM rejects the strings
- *  "auto"/"required" unless started with --enable-auto-tool-choice/--tool-call-parser. Non-streaming (stream:false). */
+ *  "auto"/"required" unless started with --enable-auto-tool-choice/--tool-call-parser. Non-streaming (stream:false).
+ *  max_tokens is clamped to the context budget (clampOutputTokens) so a large (uncached, growing) prompt doesn't 400. */
 function anthropicToOpenAI(body, model) {
   const b = body && typeof body === 'object' ? body : {};
   const msgs = [];
@@ -132,7 +154,6 @@ function anthropicToOpenAI(body, model) {
     }
   }
   const out = { model, messages: msgs, stream: false };
-  if (b.max_tokens) out.max_tokens = b.max_tokens;
   if (b.temperature != null) out.temperature = b.temperature;
   if (b.stop_sequences) out.stop = b.stop_sequences;
   if (Array.isArray(b.tools) && b.tools.length) {
@@ -141,6 +162,8 @@ function anthropicToOpenAI(body, model) {
   if (b.tool_choice && b.tool_choice.type === 'tool' && b.tool_choice.name) {
     out.tool_choice = { type: 'function', function: { name: b.tool_choice.name } };
   }
+  out.max_tokens = b.max_tokens || 4096;   // Claude Code's requested ceiling; clamped to the context budget next
+  clampOutputTokens(out, model);
   return out;
 }
 
@@ -196,5 +219,5 @@ module.exports = {
   parseModels,
   FIXCLOUD, FIXCLOUD_KEY_ENV, FIXCLOUD_API_KEY_REF,
   fixcloudBossModel, isFixcloudModel, ocConfigPath, fixcloudProvider, mergeFixcloud, writeFixcloudProvider,
-  anthropicToOpenAI, openaiToAnthropic, anthropicSseString,
+  anthropicToOpenAI, openaiToAnthropic, anthropicSseString, contextLength, clampOutputTokens,
 };
