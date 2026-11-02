@@ -173,3 +173,17 @@ test('fixcloud (v3.61): a request without max_tokens still gets a positive outpu
   const out = FC.anthropicToOpenAI({ messages: [{ role: 'user', content: 'hi' }] }, 'deepseek-v4.1-flash');
   assert.ok(out.max_tokens >= 1024);
 });
+
+test('fixcloud (v3.62): autoCompactWindow sits below the model context wall, with a 100000 floor', () => {
+  const deepseek = FC.autoCompactWindow('deepseek-v4.1-flash');
+  assert.equal(deepseek, 170000);
+  assert.ok(deepseek < FC.contextLength('deepseek-v4.1-flash'));
+  assert.equal(FC.autoCompactWindow('something-unknown'), 100000);          // 131072 default - 90000 -> floored to 100000
+  assert.ok(FC.autoCompactWindow('something-unknown') < FC.contextLength('something-unknown'));
+});
+
+test('fixcloud (v3.62): main.js forces the auto-compact window for a fixcloud session', () => {
+  const src = mainSrc();
+  assert.match(src, /FC\.autoCompactWindow\(account\.model\)/);
+  assert.match(src, /env\.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win/);
+});

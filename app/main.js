@@ -1187,7 +1187,15 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     manager: P.managerOf(state, project), agentModel: P.agentModelOf(project), contextCap: P.contextCapOf(project),
     savings: P.savingsOf(project),
   });
-  if (fixcloud) { env.ANTHROPIC_BASE_URL = fixcloudBase; env.ANTHROPIC_AUTH_TOKEN = fixcloudTok; delete env.ANTHROPIC_API_KEY; }
+  if (fixcloud) {
+    env.ANTHROPIC_BASE_URL = fixcloudBase; env.ANTHROPIC_AUTH_TOKEN = fixcloudTok; delete env.ANTHROPIC_API_KEY;
+    // Force auto-compaction before FixCloud's hard prompt+output wall: Fable's assumed ~1M window would otherwise never
+    // compact in time. Never let a larger per-project cap (or Auto) exceed the model-safe window; a smaller cap stays.
+    const safeWin = FC.autoCompactWindow(account.model);
+    const curCap = Number(env.AGENT_OFFICE_CONTEXT_CAP) || 0;
+    const win = String(curCap > 0 ? Math.min(curCap, safeWin) : safeWin);
+    env.AGENT_OFFICE_CONTEXT_CAP = win; env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win;
+  }
   delete env.AGENT_OFFICE_STATUSLINE;
   delete env.AGENT_OFFICE_DIRECTORY;
   delete env.AGENT_OFFICE_REMOTE;

@@ -119,6 +119,13 @@ function clampOutputTokens(oaiBody, model) {
   return oaiBody;
 }
 
+// The clamp above protects the OUTPUT side, but FixCloud also 400s once the PROMPT alone nears the context window, and
+// Claude Code (which thinks it is claude-fable-5-1 with a ~1M window) would not auto-compact until ~967K — far past the
+// wall. So a FixCloud session is launched with CLAUDE_CODE_AUTO_COMPACT_WINDOW set to this: compact well before the wall,
+// leaving room for one large turn plus the clamped output. CLAUDE_CODE_AUTO_COMPACT_WINDOW's documented floor is 100000.
+/** The auto-compact window (tokens) a FixCloud session of this model should use so the prompt never reaches the context wall. */
+function autoCompactWindow(model) { return Math.min(170000, Math.max(100000, contextLength(model) - 90000)); }
+
 /** Anthropic Messages request body → OpenAI chat/completions request object. `model` is forced (the account's model).
  *  system + messages (incl. tool_use / tool_result blocks) are mapped; tools → function tools. tool_choice is OMITTED
  *  unless a SPECIFIC tool is forced (body.tool_choice.type === 'tool' with a name): FixCloud/vLLM rejects the strings
@@ -219,5 +226,5 @@ module.exports = {
   parseModels,
   FIXCLOUD, FIXCLOUD_KEY_ENV, FIXCLOUD_API_KEY_REF,
   fixcloudBossModel, isFixcloudModel, ocConfigPath, fixcloudProvider, mergeFixcloud, writeFixcloudProvider,
-  anthropicToOpenAI, openaiToAnthropic, anthropicSseString, contextLength, clampOutputTokens,
+  anthropicToOpenAI, openaiToAnthropic, anthropicSseString, contextLength, clampOutputTokens, autoCompactWindow,
 };
