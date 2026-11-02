@@ -1323,3 +1323,11 @@ FixCloud/vLLM enforces `prompt_tokens + max_tokens <= model context_length`. Cla
 - The in-process proxy (`FC.anthropicToOpenAI`) now sets `max_tokens = requested || 4096` and clamps it with `FC.clampOutputTokens` so prompt + output stays within the model's context window (`FC.contextLength(model)`; `deepseek-v4.1-flash` = 262144, unknown models 131072), with a floor of 1024.
 - On an upstream non-2xx the proxy parses the upstream error JSON and returns the real reason (`FixCloud <status>: <message>`, 400 as `invalid_request_error`) instead of a generic `upstream 400`.
 - The ao-delegate path is unchanged.
+
+## FixCloud session: force auto-compaction before the context wall (v3.62)
+
+The output clamp (v3.61) protects the output side, but FixCloud also 400s once the PROMPT alone nears the context window, and Claude Code (which sees `claude-fable-5-1`, a ~1M-window model that auto-compacts near ~967K) would never compact before the real wall. So a FixCloud session is now launched with a model-safe auto-compact window.
+
+- `startPty` sets `AGENT_OFFICE_CONTEXT_CAP` / `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for a fixcloud account to `FC.autoCompactWindow(account.model)` (`min(170000, max(100000, contextLength - 90000))`; deepseek-v4.1-flash → 170000), so the prompt is compacted well before the wall, leaving room for one large turn plus the clamped output.
+- A smaller per-project context cap still wins (the window is `min(existing cap, model-safe window)`); a larger cap or Auto is lowered to the model-safe window.
+- A session whose prompt is ALREADY past the wall cannot be compacted (the compaction call itself carries the full prompt) and must be restarted; this only prevents future sessions from reaching it.
