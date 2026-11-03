@@ -104,18 +104,23 @@ function parseModels(json) {
 // clamp the requested output down to the budget a generous prompt estimate leaves, so sessions keep working.
 const MODEL_CONTEXT = { 'deepseek-v4.1-flash': 262144, 'deepseek-v4-flash': 262144, 'gpt-oss-120b': 131072, 'qwen3.6-35b-a3b': 131072 };
 const DEFAULT_CONTEXT = 131072;   // conservative when the model id is unknown
-const MIN_OUTPUT_TOKENS = 1024;
+const MIN_OUTPUT_TOKENS = 1024;   // comfortable output floor while the prompt leaves room for it
+const NEAR_WALL_OUTPUT = 512;     // when the prompt nears the wall, the largest output we still send (never the 1024 floor)
 const PROMPT_SAFETY = 1024;       // headroom: our char-based estimate under-counts dense/non-English tokenization
 /** The context window (tokens) for a FixCloud model id; a conservative default when unknown. */
 function contextLength(model) { return MODEL_CONTEXT[model] || DEFAULT_CONTEXT; }
 /** Generous token estimate of an OpenAI request's prompt (messages + tools); chars/3 since dense text runs above chars/4. */
 function estimateTokens(oaiBody) { return Math.ceil(JSON.stringify({ m: oaiBody.messages || [], t: oaiBody.tools || [] }).length / 3); }
-/** Clamp oaiBody.max_tokens so prompt + output stays inside the model context (floor MIN_OUTPUT_TOKENS). Mutates + returns. */
+/** Clamp oaiBody.max_tokens so prompt + output stays inside the model context. Mutates + returns.
+ *  Healthy prompt: up to `want`, down to the comfortable MIN_OUTPUT_TOKENS floor. Near the wall (budget below that
+ *  floor): do NOT force the 1024 floor — prompt + 1024 would exceed the context by a hair and 400. Send the largest
+ *  output the remaining room allows (>= NEAR_WALL_OUTPUT), so even a nearly-full session can still answer and self-compact. */
 function clampOutputTokens(oaiBody, model) {
   const want = oaiBody.max_tokens || 4096;
   const budget = contextLength(model) - estimateTokens(oaiBody) - PROMPT_SAFETY;
-  // The floor applies to the budget side only: never raise a caller's small explicit max_tokens, and never exceed `want`.
-  oaiBody.max_tokens = Math.min(want, Math.max(MIN_OUTPUT_TOKENS, budget));
+  const room = budget >= MIN_OUTPUT_TOKENS ? budget : Math.max(NEAR_WALL_OUTPUT, budget);
+  // never raise a caller's small explicit max_tokens, and never exceed `room`.
+  oaiBody.max_tokens = Math.min(want, room);
   return oaiBody;
 }
 
