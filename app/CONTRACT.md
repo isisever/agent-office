@@ -1331,3 +1331,10 @@ The output clamp (v3.61) protects the output side, but FixCloud also 400s once t
 - `startPty` sets `AGENT_OFFICE_CONTEXT_CAP` / `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for a fixcloud account to `FC.autoCompactWindow(account.model)` (`min(170000, max(100000, contextLength - 90000))`; deepseek-v4.1-flash → 170000), so the prompt is compacted well before the wall, leaving room for one large turn plus the clamped output.
 - A smaller per-project context cap still wins (the window is `min(existing cap, model-safe window)`); a larger cap or Auto is lowered to the model-safe window.
 - A session whose prompt is ALREADY past the wall cannot be compacted (the compaction call itself carries the full prompt) and must be restarted; this only prevents future sessions from reaching it.
+
+## FixCloud proxy: near-wall output no longer overshoots the context (v3.63)
+
+The v3.61 clamp kept a 1024-token floor on `max_tokens`. When a prompt sat within ~1024 tokens of the wall, forcing that floor made `prompt + 1024` exceed the context by a hair, so the request still 400'd ("requested 1024 output tokens and your prompt contains at least N … total N+1024") — and such a near-full session could never send the compaction request that would rescue it.
+
+- `FC.clampOutputTokens` now applies the comfortable `MIN_OUTPUT_TOKENS` (1024) floor only while the budget leaves room for it. Once the budget drops below it (the prompt nears the wall), the floor becomes `NEAR_WALL_OUTPUT` (512) and the output is the largest the remaining room allows, so `prompt + output` stays under the context and the session can still answer and self-compact. Healthy prompts are unaffected (they take the full budget up to `want`).
+- This widens the recoverable band to roughly `context - 512`; only a prompt whose real token count is within ~512 of the wall is still physically unrecoverable and must be restarted.

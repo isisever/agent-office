@@ -165,7 +165,7 @@ test('fixcloud (v3.61): anthropicToOpenAI clamps max_tokens for a very large pro
   const body = { max_tokens: 64000, messages: [{ role: 'user', content: 'word '.repeat(200000) }] };
   const out = FC.anthropicToOpenAI(body, 'deepseek-v4.1-flash');
   assert.ok(out.max_tokens < 64000, `expected a clamp, got ${out.max_tokens}`);
-  assert.ok(out.max_tokens >= 1024, `expected the floor, got ${out.max_tokens}`);
+  assert.ok(out.max_tokens >= 512, `expected the near-wall floor, got ${out.max_tokens}`);
   assert.ok(out.max_tokens <= 262144);
 });
 
@@ -186,4 +186,17 @@ test('fixcloud (v3.62): main.js forces the auto-compact window for a fixcloud se
   const src = mainSrc();
   assert.match(src, /FC\.autoCompactWindow\(account\.model\)/);
   assert.match(src, /env\.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win/);
+});
+
+test('fixcloud (v3.63): a near-wall prompt gets a sub-floor output that still fits the context', () => {
+  // Near the wall the old code forced the 1024 floor, so prompt + 1024 overshot the context by a hair and 400'd.
+  // Size a prompt whose budget falls below the comfortable floor but whose prompt is still under the wall.
+  const ctx = FC.contextLength('deepseek-v4.1-flash');                 // 262144
+  // Size the prompt so the budget lands in the near-wall band (0 < budget < 1024): estimate ~ ctx - 1724 -> budget ~ 700.
+  const oai = { max_tokens: 64000, messages: [{ role: 'user', content: 'x'.repeat((ctx - 1724) * 3 - 44) }] };
+  FC.clampOutputTokens(oai, 'deepseek-v4.1-flash');
+  assert.ok(oai.max_tokens < 1024, `near the wall output must drop below the old 1024 floor, got ${oai.max_tokens}`);
+  assert.ok(oai.max_tokens >= 512, `near the wall output should use the remaining room (>= 512), got ${oai.max_tokens}`);
+  const estimate = Math.ceil(JSON.stringify({ m: oai.messages, t: oai.tools || [] }).length / 3);
+  assert.ok(estimate + oai.max_tokens <= ctx, `prompt + output must fit the context: ${estimate} + ${oai.max_tokens} > ${ctx}`);
 });
