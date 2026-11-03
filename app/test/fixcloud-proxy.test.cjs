@@ -188,6 +188,19 @@ test('fixcloud (v3.62): main.js forces the auto-compact window for a fixcloud se
   assert.match(src, /env\.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win/);
 });
 
+test('fixcloud (v3.64): fileReadCap bounds a Read and never raises a smaller existing cap', () => {
+  assert.equal(FC.fileReadCap(undefined), 15000);        // unset -> the FixCloud cap
+  assert.equal(FC.fileReadCap(0), 15000);                // 0/invalid -> the cap
+  assert.equal(FC.fileReadCap(25000), 15000);            // default 25000 -> lowered to the cap
+  assert.equal(FC.fileReadCap(8000), 8000);              // a smaller explicit value is kept, not raised
+  assert.ok(FC.fileReadCap(undefined) < FC.contextLength('deepseek-v4.1-flash'));
+});
+
+test('fixcloud (v3.64): main.js caps the file-read output for a fixcloud session', () => {
+  const src = mainSrc();
+  assert.match(src, /env\.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS = String\(FC\.fileReadCap\(/);
+});
+
 test('fixcloud (v3.63): a near-wall prompt gets a sub-floor output that still fits the context', () => {
   // Near the wall the old code forced the 1024 floor, so prompt + 1024 overshot the context by a hair and 400'd.
   // Size a prompt whose budget falls below the comfortable floor but whose prompt is still under the wall.

@@ -1195,6 +1195,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     const curCap = Number(env.AGENT_OFFICE_CONTEXT_CAP) || 0;
     const win = String(curCap > 0 ? Math.min(curCap, safeWin) : safeWin);
     env.AGENT_OFFICE_CONTEXT_CAP = win; env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win;
+    // Bound a single file-heavy turn (auto-compaction only runs between turns): cap a Read's output, the largest per-tool
+    // source Claude Code leaves uncapped (default 25000, vs the Bash/MCP Savings caps). Never raise a smaller existing cap.
+    env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS = String(FC.fileReadCap(env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS));
   }
   delete env.AGENT_OFFICE_STATUSLINE;
   delete env.AGENT_OFFICE_DIRECTORY;
