@@ -131,6 +131,14 @@ function clampOutputTokens(oaiBody, model) {
 /** The auto-compact window (tokens) a FixCloud session of this model should use so the prompt never reaches the context wall. */
 function autoCompactWindow(model) { return Math.min(170000, Math.max(100000, contextLength(model) - 90000)); }
 
+// Auto-compaction runs BETWEEN turns, so a single turn that reads many large files can still blow the prompt past the
+// wall before the next compaction checkpoint. Claude Code caps Bash and MCP output, but a Read defaults to 25000 tokens
+// and is otherwise uncapped — the largest per-tool source left. A FixCloud session caps it so one file-heavy turn stays
+// bounded (matching the Bash/MCP Savings caps). We never RAISE a smaller value the user/Savings already set.
+const FILE_READ_CAP = 15000;
+/** The per-Read output cap (tokens) a FixCloud session should apply; never raises an existing smaller cap. */
+function fileReadCap(existing) { const cur = Number(existing) || 0; return cur > 0 ? Math.min(cur, FILE_READ_CAP) : FILE_READ_CAP; }
+
 /** Anthropic Messages request body → OpenAI chat/completions request object. `model` is forced (the account's model).
  *  system + messages (incl. tool_use / tool_result blocks) are mapped; tools → function tools. tool_choice is OMITTED
  *  unless a SPECIFIC tool is forced (body.tool_choice.type === 'tool' with a name): FixCloud/vLLM rejects the strings
@@ -231,5 +239,5 @@ module.exports = {
   parseModels,
   FIXCLOUD, FIXCLOUD_KEY_ENV, FIXCLOUD_API_KEY_REF,
   fixcloudBossModel, isFixcloudModel, ocConfigPath, fixcloudProvider, mergeFixcloud, writeFixcloudProvider,
-  anthropicToOpenAI, openaiToAnthropic, anthropicSseString, contextLength, clampOutputTokens, autoCompactWindow,
+  anthropicToOpenAI, openaiToAnthropic, anthropicSseString, contextLength, clampOutputTokens, autoCompactWindow, fileReadCap,
 };

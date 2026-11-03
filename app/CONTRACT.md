@@ -1338,3 +1338,10 @@ The v3.61 clamp kept a 1024-token floor on `max_tokens`. When a prompt sat withi
 
 - `FC.clampOutputTokens` now applies the comfortable `MIN_OUTPUT_TOKENS` (1024) floor only while the budget leaves room for it. Once the budget drops below it (the prompt nears the wall), the floor becomes `NEAR_WALL_OUTPUT` (512) and the output is the largest the remaining room allows, so `prompt + output` stays under the context and the session can still answer and self-compact. Healthy prompts are unaffected (they take the full budget up to `want`).
 - This widens the recoverable band to roughly `context - 512`; only a prompt whose real token count is within ~512 of the wall is still physically unrecoverable and must be restarted.
+
+## FixCloud session: cap a Read so one file-heavy turn can't blow the wall (v3.64)
+
+Auto-compaction (v3.62) runs BETWEEN turns, so a single turn that reads many large files can still push the prompt past the wall before the next compaction checkpoint (observed: a subagent reached ~331000 tokens in one run and 400'd, despite the 170000 window). Claude Code caps Bash output (`BASH_MAX_OUTPUT_LENGTH`) and MCP output (`MAX_MCP_OUTPUT_TOKENS`) from Savings, but a `Read` defaults to 25000 tokens and is otherwise the largest uncapped per-tool source.
+
+- `startPty` sets `CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS` for a fixcloud account to `FC.fileReadCap(existing)` — the FixCloud cap (15000, matching the Bash/MCP Savings caps), or a smaller value the user/Savings already set (never raised).
+- This bounds how much a single turn can accumulate from file reads; it does not replace the operational pattern for large subagent jobs (write results to files, return a short summary, keep each subagent run small) — the documented remedy when one agent task is too big for the window.
