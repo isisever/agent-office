@@ -133,8 +133,8 @@ function autoCompactWindow(model) { return Math.min(170000, Math.max(100000, con
 
 // Auto-compaction runs BETWEEN turns, so a single turn that reads many large files can still blow the prompt past the
 // wall before the next compaction checkpoint. Claude Code caps Bash and MCP output, but a Read defaults to 25000 tokens
-// and is otherwise uncapped — the largest per-tool source left. A FixCloud session caps it so one file-heavy turn stays
-// bounded (matching the Bash/MCP Savings caps). We never RAISE a smaller value the user/Savings already set.
+// and is otherwise uncapped — the largest per-tool source left. A FixCloud session caps it to this fixed value (in the
+// same spirit as the Bash/MCP caps) so one file-heavy turn stays bounded, never RAISING a smaller cap already set.
 const FILE_READ_CAP = 15000;
 /** The per-Read output cap (tokens) a FixCloud session should apply; never raises an existing smaller cap. */
 function fileReadCap(existing) { const cur = Number(existing) || 0; return cur > 0 ? Math.min(cur, FILE_READ_CAP) : FILE_READ_CAP; }

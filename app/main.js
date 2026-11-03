@@ -1182,7 +1182,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     + '[ -n "$AGENT_OFFICE_AGENT_MODEL" ] && export CLAUDE_CODE_SUBAGENT_MODEL="$AGENT_OFFICE_AGENT_MODEL" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1; '
     + '[ -n "$AGENT_OFFICE_CONTEXT_CAP" ] && export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$AGENT_OFFICE_CONTEXT_CAP"; '
     + '[ -n "$AGENT_OFFICE_BASH_OUTPUT" ] && export BASH_MAX_OUTPUT_LENGTH="$AGENT_OFFICE_BASH_OUTPUT"; '
-    + '[ -n "$AGENT_OFFICE_MCP_OUTPUT" ] && export MAX_MCP_OUTPUT_TOKENS="$AGENT_OFFICE_MCP_OUTPUT"; exec claude "$@"';
+    + '[ -n "$AGENT_OFFICE_MCP_OUTPUT" ] && export MAX_MCP_OUTPUT_TOKENS="$AGENT_OFFICE_MCP_OUTPUT"; '
+    + '[ -n "$AGENT_OFFICE_FILE_READ" ] && export CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS="$AGENT_OFFICE_FILE_READ"; exec claude "$@"';
   let env = A.sessionEnv(A.ptyEnv(process.env, configDir), {
     manager: P.managerOf(state, project), agentModel: P.agentModelOf(project), contextCap: P.contextCapOf(project),
     savings: P.savingsOf(project),
@@ -1196,8 +1197,10 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     const win = String(curCap > 0 ? Math.min(curCap, safeWin) : safeWin);
     env.AGENT_OFFICE_CONTEXT_CAP = win; env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win;
     // Bound a single file-heavy turn (auto-compaction only runs between turns): cap a Read's output, the largest per-tool
-    // source Claude Code leaves uncapped (default 25000, vs the Bash/MCP Savings caps). Never raise a smaller existing cap.
-    env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS = String(FC.fileReadCap(env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS));
+    // source Claude Code leaves uncapped (default 25000). Never raise a smaller cap already in the environment. Set the
+    // AGENT_OFFICE_ indirection too so the cmd wrapper can re-export it after a login-shell rc, like the sibling caps.
+    const fileRead = String(FC.fileReadCap(env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS));
+    env.AGENT_OFFICE_FILE_READ = fileRead; env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS = fileRead;
   }
   delete env.AGENT_OFFICE_STATUSLINE;
   delete env.AGENT_OFFICE_DIRECTORY;

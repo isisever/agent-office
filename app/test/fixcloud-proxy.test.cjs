@@ -196,9 +196,12 @@ test('fixcloud (v3.64): fileReadCap bounds a Read and never raises a smaller exi
   assert.ok(FC.fileReadCap(undefined) < FC.contextLength('deepseek-v4.1-flash'));
 });
 
-test('fixcloud (v3.64): main.js caps the file-read output for a fixcloud session', () => {
+test('fixcloud (v3.64): main.js caps the file-read output for a fixcloud session and defends it after rc', () => {
   const src = mainSrc();
-  assert.match(src, /env\.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS = String\(FC\.fileReadCap\(/);
+  assert.match(src, /env\.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS = fileRead/);
+  assert.match(src, /env\.AGENT_OFFICE_FILE_READ = fileRead/);
+  // the cmd wrapper re-exports it from the AGENT_OFFICE_ indirection after the login-shell rc, like the sibling caps
+  assert.match(src, /AGENT_OFFICE_FILE_READ"?\s*\] && export CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS="\$AGENT_OFFICE_FILE_READ"/);
 });
 
 test('fixcloud (v3.63): a near-wall prompt gets a sub-floor output that still fits the context', () => {
