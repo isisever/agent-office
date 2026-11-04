@@ -1229,7 +1229,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     + '[ -n "$AGENT_OFFICE_CONTEXT_CAP" ] && export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$AGENT_OFFICE_CONTEXT_CAP"; '
     + '[ -n "$AGENT_OFFICE_BASH_OUTPUT" ] && export BASH_MAX_OUTPUT_LENGTH="$AGENT_OFFICE_BASH_OUTPUT"; '
     + '[ -n "$AGENT_OFFICE_MCP_OUTPUT" ] && export MAX_MCP_OUTPUT_TOKENS="$AGENT_OFFICE_MCP_OUTPUT"; '
-    + '[ -n "$AGENT_OFFICE_FILE_READ" ] && export CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS="$AGENT_OFFICE_FILE_READ"; exec claude "$@"';
+    + '[ -n "$AGENT_OFFICE_FILE_READ" ] && export CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS="$AGENT_OFFICE_FILE_READ"; '
+    + '[ -n "$AGENT_OFFICE_API_TIMEOUT" ] && export API_TIMEOUT_MS="$AGENT_OFFICE_API_TIMEOUT"; '
+    + '[ -n "$AGENT_OFFICE_STREAM_IDLE" ] && export CLAUDE_STREAM_IDLE_TIMEOUT_MS="$AGENT_OFFICE_STREAM_IDLE"; exec claude "$@"';
   let env = A.sessionEnv(A.ptyEnv(process.env, configDir), {
     manager: P.managerOf(state, project), agentModel: P.agentModelOf(project), contextCap: P.contextCapOf(project),
     savings: P.savingsOf(project),
@@ -1247,6 +1249,14 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     // AGENT_OFFICE_ indirection too so the cmd wrapper can re-export it after a login-shell rc, like the sibling caps.
     const fileRead = String(FC.fileReadCap(env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS));
     env.AGENT_OFFICE_FILE_READ = fileRead; env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS = fileRead;
+    // Give Claude Code's own side room so a slow large-prompt completion through the buffering proxy is not aborted
+    // (API_TIMEOUT_MS, and the ~300s byte-level stream watchdog on a custom base URL) before the upstream returns. Only
+    // set a value when the environment carries none (never override the user's explicit choice). Mirror to AGENT_OFFICE_
+    // so the cmd wrapper re-exports it after a login-shell rc, like the sibling caps.
+    const apiTimeout = String(Number(env.API_TIMEOUT_MS) > 0 ? env.API_TIMEOUT_MS : FIXCLOUD_CLIENT_TIMEOUT_MS);
+    env.AGENT_OFFICE_API_TIMEOUT = apiTimeout; env.API_TIMEOUT_MS = apiTimeout;
+    const streamIdle = String(Number(env.CLAUDE_STREAM_IDLE_TIMEOUT_MS) > 0 ? env.CLAUDE_STREAM_IDLE_TIMEOUT_MS : FIXCLOUD_CLIENT_TIMEOUT_MS);
+    env.AGENT_OFFICE_STREAM_IDLE = streamIdle; env.CLAUDE_STREAM_IDLE_TIMEOUT_MS = streamIdle;
   }
   delete env.AGENT_OFFICE_STATUSLINE;
   delete env.AGENT_OFFICE_DIRECTORY;
@@ -1715,6 +1725,13 @@ let linkHost = null;
 // ANTHROPIC_AUTH_TOKEN (NOT the real key). The proxy maps that token back to an account, decrypts the real fxc- key
 // HERE (providerTokens) only to call FixCloud's OpenAI-wire endpoint, and translates Anthropic↔OpenAI (src/fixcloud.js).
 // The real key never appears in a log, the response, argv or state; only the random per-account token does.
+// FixCloud reliability timeouts (v3.67): the proxy buffers a non-streaming upstream call, so during a slow large-prompt
+// completion no bytes flow and both Claude Code (API_TIMEOUT_MS, and the ~300s byte-level stream watchdog on a custom base
+// URL) and the proxy's own AbortController could abort it as a 502 "operation was aborted". Give the client side a
+// generous request + stream-idle timeout and keep the proxy's own abort just above it, so a legitimate multi-minute
+// completion finishes instead of 502'ing (streaming the upstream incrementally is the larger follow-up fix).
+const FIXCLOUD_CLIENT_TIMEOUT_MS = 900000;    // Claude Code API_TIMEOUT_MS / CLAUDE_STREAM_IDLE_TIMEOUT_MS (15 min)
+const FIXCLOUD_UPSTREAM_TIMEOUT_MS = 960000;  // the proxy's own abort, above the client timeout so the client governs
 let fixcloudProxyPort = 0;
 const tokenForAccount = new Map();   // accountId → random hex token (created lazily)
 /** The random proxy token for a fixcloud account (created on first use). It is NOT the real key: safe in the cmd/argv. */
@@ -1748,7 +1765,7 @@ function startFixcloudProxy() {
     const key = providerTokens().load(accountId);   // decrypt the real key ONLY here; never log/return/argv/state it
     const wantStream = body.stream === true;
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 120000);
+    const timer = setTimeout(() => ac.abort(), FIXCLOUD_UPSTREAM_TIMEOUT_MS);
     try {
       const up = await fetch(baseUrl + '/chat/completions', {
         method: 'POST',

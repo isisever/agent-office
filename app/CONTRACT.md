@@ -1357,3 +1357,12 @@ The manager brief (`plugin/hooks/register.tsx` `MANAGER_TEMPLATE`) kept two clau
 - `src/project-settings.js` (pure, atomic temp+rename, mode-preserving, never clobbering other keys): `setProjectModel`, `stripAccountModel`, `captureAccountModel` (move account `model` → project file, then delete from the account file; returns the moved value or null). It only ever DELETES `model` from the account file — never writes one — so the watcher cannot self-trigger.
 - `startPty` drains at launch for the focused/active claude project only (`project.id === state.activeId`, local dir), leaving the `--model`/`bossModelArgs` pin authoritative as before.
 - A `checkModelLeak()` pass on the existing ~1.5 s poll (beside `checkMcp`) with a `modelSeen` baseline relocates a live `/model` write to the project that ran it (focused active project, else the most-recently-active claude pty on that account), and never touches a project on a different account. The pre-existing (already-leaked) value is baseline-ignored and migrated per project by the launch drain, not auto-distributed. FixCloud is unaffected (the proxy forces `account.model`, app state, which this never touches).
+
+## FixCloud session: generous client timeouts so a slow completion isn't aborted as a 502 (v3.67)
+
+The FixCloud proxy buffers a non-streaming upstream call (`await up.text()`), so during a slow large-prompt completion no bytes flow back to Claude Code. Claude Code's `API_TIMEOUT_MS`, the ~300s byte-level stream watchdog it applies on a custom `ANTHROPIC_BASE_URL`, and the proxy's own 120s `AbortController` all aborted that wait as a 502 "operation was aborted" (retried 10x, each retry re-hitting the same wall), even with context room to spare (0% used until auto-compact).
+
+- The proxy's abort is raised to `FIXCLOUD_UPSTREAM_TIMEOUT_MS` (960000).
+- `startPty` sets `API_TIMEOUT_MS` and `CLAUDE_STREAM_IDLE_TIMEOUT_MS` to `FIXCLOUD_CLIENT_TIMEOUT_MS` (900000) only when the environment carries no positive value (never overriding a user's explicit choice). Both are mirrored to `AGENT_OFFICE_API_TIMEOUT` / `AGENT_OFFICE_STREAM_IDLE` and re-exported by the cmd wrapper after the login-shell rc, like the sibling caps.
+- The proxy abort stays above the client timeout, so the client governs.
+- Follow-up (not done): truly streaming the upstream (relay OpenAI deltas as Anthropic SSE) would remove the idle wait entirely.

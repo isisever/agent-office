@@ -61,6 +61,8 @@ jobs:
         run: node --test app/test/node-pty-patch.test.cjs
       - name: pty wiring (attachPty)
         run: node --test app/test/pty-attach.test.cjs
+      - name: FixCloud proxy (Anthropic/OpenAI translation, clamps, timeouts)
+        run: node --test app/test/fixcloud-proxy.test.cjs
 
   plugin:
     runs-on: ubuntu-latest
