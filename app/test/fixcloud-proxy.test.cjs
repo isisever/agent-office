@@ -204,6 +204,27 @@ test('fixcloud (v3.64): main.js caps the file-read output for a fixcloud session
   assert.match(src, /AGENT_OFFICE_FILE_READ"?\s*\] && export CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS="\$AGENT_OFFICE_FILE_READ"/);
 });
 
+test('fixcloud (v3.67): main.js gives a slow completion generous client timeouts and a proxy abort above them', () => {
+  const src = mainSrc();
+  const client = Number((src.match(/const FIXCLOUD_CLIENT_TIMEOUT_MS = (\d+)/) || [])[1]);
+  const upstream = Number((src.match(/const FIXCLOUD_UPSTREAM_TIMEOUT_MS = (\d+)/) || [])[1]);
+  assert.ok(client > 0 && upstream > 0, 'both timeout consts must exist');
+  assert.ok(upstream > client, 'the proxy abort must stay above the client timeout so the client governs');
+  // the proxy abort uses the const, not the old 120s literal
+  assert.match(src, /setTimeout\(\(\) => ac\.abort\(\), FIXCLOUD_UPSTREAM_TIMEOUT_MS\)/);
+  assert.doesNotMatch(src, /ac\.abort\(\), 120000/);
+  // set only when the env carries no positive value, mirrored to the AGENT_OFFICE_ indirection
+  assert.match(src, /apiTimeout = String\(Number\(env\.API_TIMEOUT_MS\) > 0 \? env\.API_TIMEOUT_MS : FIXCLOUD_CLIENT_TIMEOUT_MS\)/);
+  assert.match(src, /env\.API_TIMEOUT_MS = apiTimeout/);
+  assert.match(src, /env\.AGENT_OFFICE_API_TIMEOUT = apiTimeout/);
+  assert.match(src, /streamIdle = String\(Number\(env\.CLAUDE_STREAM_IDLE_TIMEOUT_MS\) > 0 \? env\.CLAUDE_STREAM_IDLE_TIMEOUT_MS : FIXCLOUD_CLIENT_TIMEOUT_MS\)/);
+  assert.match(src, /env\.CLAUDE_STREAM_IDLE_TIMEOUT_MS = streamIdle/);
+  assert.match(src, /env\.AGENT_OFFICE_STREAM_IDLE = streamIdle/);
+  // the cmd wrapper re-exports both after the login-shell rc, like the sibling caps
+  assert.match(src, /AGENT_OFFICE_API_TIMEOUT"?\s*\] && export API_TIMEOUT_MS="\$AGENT_OFFICE_API_TIMEOUT"/);
+  assert.match(src, /AGENT_OFFICE_STREAM_IDLE"?\s*\] && export CLAUDE_STREAM_IDLE_TIMEOUT_MS="\$AGENT_OFFICE_STREAM_IDLE"/);
+});
+
 test('fixcloud (v3.63): a near-wall prompt gets a sub-floor output that still fits the context', () => {
   // Near the wall the old code forced the 1024 floor, so prompt + 1024 overshot the context by a hair and 400'd.
   // Size a prompt whose budget falls below the comfortable floor but whose prompt is still under the wall.
