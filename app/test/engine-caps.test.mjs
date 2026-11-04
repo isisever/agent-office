@@ -41,6 +41,17 @@ test('Command Code: manager, context cap, savings, workers, approvals and cost o
 test('boss model choices match projects.js per engine; launch arguments per engine', () => {
   for (const e of ENGINES) assert.deepEqual(bossModelChoices(e).map((c) => c.value), P.BOSS_MODELS_BY_ENGINE[e], e)
   assert.deepEqual(BOSS_MODEL_CHOICES.claude.map((c) => c.value), P.BOSS_MODELS)
+  // v3.68: explicit Claude 5.5 ids next to the aliases, accepted and passed as `--model <id>`
+  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+    assert.ok(BOSS_MODEL_CHOICES.claude.some((c) => c.value === id), id)
+    assert.ok(P.BOSS_MODELS_BY_ENGINE.claude.includes(id), id)
+    assert.deepEqual(P.bossModelArgs({ bossModel: id }), ['--model', id])
+    assert.equal(P.bossModelOf({ engine: 'claude', bossModel: id }), id)
+    assert.equal(P.agentModelOf({ agentModel: id }), id)
+  }
+  assert.deepEqual(P.bossModelArgs({ bossModel: 'opus' }), ['--model', 'opus']) // aliases stay
+  assert.deepEqual(BOSS_MODEL_CHOICES.claude.map((c) => c.label).slice(3), ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
+  assert.deepEqual(P.setProjectBossModel({ projects: [{ id: 'a', engine: 'claude' }] }, 'a', 'claude-opus-5-5').projects[0].bossModel, 'claude-opus-5-5')
   assert.deepEqual(P.bossModelArgs({ engine: 'agy', bossModel: 'pro' }), ['--model', 'pro'])
   assert.deepEqual(P.bossModelArgs({ engine: 'agy', bossModel: 'opus' }), []) // not an agy model: Auto
   assert.deepEqual(P.bossModelArgs({ engine: 'commandcode', bossModel: 'claude-opus-5-5' }), ['-m', 'claude-opus-5-5'])
@@ -67,7 +78,8 @@ test('setProjectBossModel validates against the project engine; normalizeState d
   assert.equal(P.setProjectBossModel(s, 'a', 'opus'), s)
   assert.equal(P.findProject(P.setProjectBossModel(s, 'a', 'pro'), 'a').bossModel, 'pro')
   assert.equal(P.findProject(P.setProjectBossModel(s, 'c', 'deepseek/deepseek-v4-flash'), 'c').bossModel, 'deepseek/deepseek-v4-flash')
-  assert.equal(P.setProjectBossModel(s, 'k', 'claude-opus-5-5'), s)
+  assert.equal(P.setProjectBossModel(s, 'k', 'claude-opus-5-5').projects[2].bossModel, 'claude-opus-5-5') // v3.68: a Claude 5.5 id fits the default (claude) engine
+  assert.equal(P.setProjectBossModel(s, 'k', 'deepseek/deepseek-v4-flash'), s)
   const n = P.normalizeState({ projects: [{ dir: '/x', engine: 'agy', bossModel: 'opus' }, { dir: '/y', engine: 'agy', bossModel: 'flash' }] })
   assert.deepEqual(n.projects.map((p) => p.bossModel ?? null), ['opus', 'flash']) // kept for another engine; bossModelOf says Auto for agy
   assert.deepEqual(n.projects.map((p) => P.bossModelOf(p)), [null, 'flash'])

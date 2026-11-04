@@ -76,7 +76,12 @@ export const cap = (engine, feature, opts) => caps(engine, opts)[feature] || OK;
 // (antigravity.google/docs/subagents). Command Code: full model ids (commandcode.ai/docs/reference/cli/models).
 // projects.js BOSS_MODELS_BY_ENGINE holds the same values (the test checks it).
 export const BOSS_MODEL_CHOICES = {
-  claude: [{ value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }, { value: 'haiku', label: 'Haiku' }],
+  claude: [
+    { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }, { value: 'haiku', label: 'Haiku' },
+    // v3.68: explicit ids pin the 5.5 models (an alias resolves to Claude Code's default of the family)
+    { value: 'claude-opus-5-5', label: 'Opus 5.5' }, { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
+    { value: 'claude-haiku-5-5', label: 'Haiku 5.5' },
+  ],
   agy: [{ value: 'flash', label: 'Gemini Flash' }, { value: 'pro', label: 'Gemini Pro' }],
   commandcode: [
     { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' }, { value: 'claude-opus-5-5', label: 'Opus 5.5' },

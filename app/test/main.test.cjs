@@ -3652,7 +3652,7 @@ test('proje başına müdür modeli: normalizeState, setProjectBossModel, bossMo
       { id: 'd', dir: '/d' },
     ],
   });
-  assert.deepEqual(P.BOSS_MODELS, ['sonnet', 'opus', 'haiku']);
+  assert.deepEqual(P.BOSS_MODELS, ['sonnet', 'opus', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
   assert.deepEqual(s.projects.map((p) => P.bossModelOf(p)), ['sonnet', 'opus', null, null]);
   assert.equal('bossModel' in s.projects[2], false);
   assert.equal(P.setProjectBossModel(s, 'a', 'sonnet'), s);

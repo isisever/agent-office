@@ -1366,3 +1366,11 @@ The FixCloud proxy buffers a non-streaming upstream call (`await up.text()`), so
 - `startPty` sets `API_TIMEOUT_MS` and `CLAUDE_STREAM_IDLE_TIMEOUT_MS` to `FIXCLOUD_CLIENT_TIMEOUT_MS` (900000) only when the environment carries no positive value (never overriding a user's explicit choice). Both are mirrored to `AGENT_OFFICE_API_TIMEOUT` / `AGENT_OFFICE_STREAM_IDLE` and re-exported by the cmd wrapper after the login-shell rc, like the sibling caps.
 - The proxy abort stays above the client timeout, so the client governs.
 - Follow-up (not done): truly streaming the upstream (relay OpenAI deltas as Anthropic SSE) would remove the idle wait entirely.
+
+## Claude engine: pin the new 5.5 models so the choice sticks (v3.68)
+
+The Claude boss/agent model pickers only offered the aliases `sonnet` / `opus` / `haiku`. An alias resolves to Claude Code's default of that family (`opus` -> claude-opus-4-8), and `--model` outranks an in-session `/model claude-opus-5-5`, so a pinned "Opus" reverted to 4.8 on every restart and the 5.5 models could not be pinned.
+
+- `BOSS_MODELS` (claude), `AGENT_MODELS` and `engine-caps.mjs` `BOSS_MODEL_CHOICES.claude` now also list `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` (labels "Opus 5.5" / "Sonnet 5.5" / "Haiku 5.5"); the aliases stay.
+- Selecting "Opus 5.5" persists `bossModel: 'claude-opus-5-5'`, and `bossModelArgs` passes `--model claude-opus-5-5`. A pinned agent model flows unchanged into `CLAUDE_CODE_SUBAGENT_MODEL`.
+- The sidebar's boss select reads `bossModelChoices`; the agent select adds the same three ids. FixCloud boss model handling is untouched.

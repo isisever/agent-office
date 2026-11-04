@@ -257,7 +257,10 @@ const managerOf = (state, project) => (typeof project?.manager === 'boolean' ? p
 // (`--model <slug>`), Command Code's full model ids (`-m <id>`). Absent = Auto: the program's own default. Never
 // written for Auto; a value that doesn't fit the engine counts as Auto (switching back finds it again).
 // src/engine-caps.mjs BOSS_MODEL_CHOICES holds the same values for the sidebar.
-const BOSS_MODELS = ['sonnet', 'opus', 'haiku'];
+// v3.68: the explicit 5.5 ids are offered next to the aliases: an alias resolves to Claude Code's default of that family
+// (opus -> 4.8), and `--model` outranks an in-session `/model`, so only a full id pins the 5.5 models.
+const CLAUDE_55_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+const BOSS_MODELS = ['sonnet', 'opus', 'haiku', ...CLAUDE_55_MODELS];
 const BOSS_MODELS_BY_ENGINE = {
   claude: BOSS_MODELS,
   agy: ['flash', 'pro'],
@@ -309,7 +312,7 @@ const bossModelArgs = (project) => {
 // --- per-project subagent model (contract v3.14)
 // Project.agentModel: 'sonnet' | 'haiku' | 'opus' runs every subagent of the project's sessions on that model;
 // absent = Auto: the boss picks per agent (the plugin's manager brief). Never written for Auto.
-const AGENT_MODELS = ['sonnet', 'haiku', 'opus'];
+const AGENT_MODELS = ['sonnet', 'haiku', 'opus', ...CLAUDE_55_MODELS]; // v3.68: full ids flow unchanged into CLAUDE_CODE_SUBAGENT_MODEL
 const agentModelValue = (v) => (AGENT_MODELS.includes(v) ? v : null);
 const withAgentModel = (v) => (agentModelValue(v) ? { agentModel: v } : {});
 
