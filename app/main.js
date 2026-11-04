@@ -28,6 +28,7 @@ const SP = require('./src/skill-packs.js');
 const R = require('./src/resume.js');
 const TU = require('./src/token-usage.js');
 const PD = require('./src/project-data.js');
+const PS = require('./src/project-settings.js');
 const FB = require('./src/fallback.js');
 const EN = require('./src/engine.js');
 const FC = require('./src/fixcloud.js');
@@ -465,6 +466,7 @@ function checkTurns() {
   }
   setMarks(next);
   checkMcp();
+  checkModelLeak();
   checkLimits();
 }
 
@@ -512,6 +514,44 @@ function checkMcp() {
     if (!sid) continue;
     send('pty:reloaded', id);
     startPty(id, { sessionId: sid });
+  }
+}
+
+// --- relocate a leaked `/model` account default into the project that ran it (contract: per-project persistent main model)
+// The account settings.json is already watched by mcp-reload (watchFiles), but the MCP fingerprint logic is kept separate
+// from this pass. modelSeen is a per-account baseline: a PRE-EXISTING account model is NOT treated as a fresh /model, only
+// a live change is. captureAccountModel only ever DELETES `model` from the account file, so after a strip the next poll
+// reads '' and does nothing — no self-write can re-arm the trigger.
+const accountSettingsFile = (account) => path.join(account.configDir || path.join(app.getPath('home'), '.claude'), 'settings.json');
+let modelSeen = new Map(); // account settings file → last observed `model` string ('' = none)
+/** The claude project on this account that should own a just-written /model: the focused active project, else the most
+ *  recently active one (its pty's last start/input/output). May be null → relocation is skipped. */
+function modelLeakTarget(account) {
+  const onAcct = (p) => A.accountOf(state, p).id === account.id && P.engineOf(p) === 'claude';
+  const active = P.findProject(state, state.activeId);
+  if (active && onAcct(active) && win && !win.isDestroyed() && win.isFocused()) return active; // primary: focused project
+  let best = null, bestAt = -1;
+  for (const p of state.projects.filter(onAcct)) {
+    for (const pid of P.ptyIdsOf(p)) {
+      const at = activity.get(pid)?.at || 0;
+      if (at > bestAt) { bestAt = at; best = p; }
+    }
+  }
+  return best;
+}
+/** Every 1.5 s (checkTurns): move a newly-written account `model` into the project that ran `/model`; fully loop-safe. */
+function checkModelLeak() {
+  if (!win || win.isDestroyed()) return;
+  for (const account of state.accounts) {
+    const f = accountSettingsFile(account);
+    const now = readJson(f)?.model || '';
+    const prev = modelSeen.get(f);
+    if (prev === undefined) { modelSeen.set(f, now); continue; } // startup baseline: a pre-existing model is not a fresh /model
+    if (now && now !== prev) {
+      const target = modelLeakTarget(account); // relocation is meaningful for claude engine; fixcloud forces account.model anyway
+      if (target && isDir(target.dir)) { try { PS.captureAccountModel(f, target.dir); } catch {} }
+    }
+    modelSeen.set(f, readJson(f)?.model || ''); // after our strip this is '' → next poll is a no-op
   }
 }
 
@@ -1134,6 +1174,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const account = A.accountOf(state, project);
   const { configDir } = account;
   if (configDir) try { fs.mkdirSync(configDir, { recursive: true }); } catch {}
+  // Drain any /model-written account default into the launching project's own settings.json so it cannot leak to sibling
+  // Auto projects (contract: per-project persistent main model). Only the focused/active project claims it so a background
+  // restart cannot steal the account model; claude engine only. The --model arg below (bossModelArgs) is unchanged.
+  if (!isAgy(project) && !isCmd(project) && !isOc(project) && project.id === state.activeId && isDir(cwd)) {
+    try { PS.captureAccountModel(accountSettingsFile(account), cwd); } catch {}
+  }
   const { cols, rows } = sizes.get(id) || lastSize;
   // the plugin path is passed as $1: paths with spaces (Application Support) cause no quoting trouble.
   // The account folder is set again after the rc files (see accounts.js ptyEnv).

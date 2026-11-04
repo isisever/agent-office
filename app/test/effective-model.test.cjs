@@ -48,6 +48,19 @@ test('effective model: project settings come before the account', async () => {
   assert.equal((await EM.readEffectiveModel({ projectDir: dir, home: HOME, read: local })).family, 'sonnet');
 });
 
+test('effective model: project scope outranks the account model; after the account model is removed it falls back to project or null', async () => {
+  const dir = '/p';
+  const proj = path.join(dir, '.claude', 'settings.json');
+  // model in BOTH the project and the account settings → project wins
+  const both = files({ [proj]: '{"model":"opus"}', [acct]: '{"model":"haiku"}' });
+  assert.deepEqual(await EM.readEffectiveModel({ projectDir: dir, home: HOME, read: both }), { model: 'opus', family: 'opus', source: 'project' });
+  // account model removed → falls back to the project's own
+  const projOnly = files({ [proj]: '{"model":"opus"}', [acct]: '{"theme":"dark"}' });
+  assert.deepEqual(await EM.readEffectiveModel({ projectDir: dir, home: HOME, read: projOnly }), { model: 'opus', family: 'opus', source: 'project' });
+  // neither has a model → null (Auto → Claude Code's built-in default)
+  assert.equal(await EM.readEffectiveModel({ projectDir: dir, home: HOME, read: files({ [proj]: '{"theme":"dark"}', [acct]: '{"theme":"dark"}' }) }), null);
+});
+
 test('model family from aliases and full names', async () => {
   assert.equal(EM.modelFamily('opusplan'), 'opus');
   assert.equal(EM.modelFamily('claude-haiku-4-5-20251001'), 'haiku');
