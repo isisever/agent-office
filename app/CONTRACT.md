@@ -1374,3 +1374,10 @@ The Claude boss/agent model pickers only offered the aliases `sonnet` / `opus` /
 - `BOSS_MODELS` (claude), `AGENT_MODELS` and `engine-caps.mjs` `BOSS_MODEL_CHOICES.claude` now also list `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` (labels "Opus 5.5" / "Sonnet 5.5" / "Haiku 5.5"); the aliases stay.
 - Selecting "Opus 5.5" persists `bossModel: 'claude-opus-5-5'`, and `bossModelArgs` passes `--model claude-opus-5-5`. A pinned agent model flows unchanged into `CLAUDE_CODE_SUBAGENT_MODEL`.
 - The sidebar's boss select reads `bossModelChoices`; the agent select adds the same three ids. FixCloud boss model handling is untouched.
+
+## FixCloud session: disable the 1M context so auto-compaction actually fires (v3.69)
+
+Claude Code labels a FixCloud session (served by the in-process proxy) as `claude-fable-5-1`, a model that natively runs with a ~1,000,000-token window. It therefore measured context usage against 1M and never compacted before the real upstream wall (deepseek 262,144). `CLAUDE_CODE_AUTO_COMPACT_WINDOW` alone did not help: real transcripts showed 0 `compact_boundary` events although it was set.
+
+- A FixCloud session now also sets `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` (mirrored as `AGENT_OFFICE_DISABLE_1M`, re-exported by the cmd launch wrapper after a login-shell rc). Per the Claude Code docs this holds native-1M models such as Fable to a 200K window.
+- With the window capped at 200K, `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (unchanged) takes effect and compaction triggers below the 262,144 wall.

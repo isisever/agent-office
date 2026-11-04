@@ -204,6 +204,13 @@ test('fixcloud (v3.64): main.js caps the file-read output for a fixcloud session
   assert.match(src, /AGENT_OFFICE_FILE_READ"?\s*\] && export CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS="\$AGENT_OFFICE_FILE_READ"/);
 });
 
+test('fixcloud (v3.69): main.js disables the 1M context so auto-compaction fires, and defends it after rc', () => {
+  const src = mainSrc();
+  assert.match(src, /env\.CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'/);
+  assert.match(src, /env\.AGENT_OFFICE_DISABLE_1M = '1'/);
+  assert.match(src, /AGENT_OFFICE_DISABLE_1M"?\s*\] && export CLAUDE_CODE_DISABLE_1M_CONTEXT="\$AGENT_OFFICE_DISABLE_1M"/);
+});
+
 test('fixcloud (v3.67): main.js gives a slow completion generous client timeouts and a proxy abort above them', () => {
   const src = mainSrc();
   const client = Number((src.match(/const FIXCLOUD_CLIENT_TIMEOUT_MS = (\d+)/) || [])[1]);
