@@ -371,8 +371,9 @@ export function mountSidebar(el, on) {
 
   // The model the project's agents run on (contract v3.14): Auto (the boss picks per agent) or one pinned model.
   // Applies like the boss setting: next start, idle tabs right away.
+  const CLAUDE_55_AGENT = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']; // v3.68
   function agentModelSelect(p) {
-    const now = ['sonnet', 'haiku', 'opus'].includes(p.agentModel) ? p.agentModel : 'auto';
+    const now = ['sonnet', 'haiku', 'opus', ...CLAUDE_55_AGENT].includes(p.agentModel) ? p.agentModel : 'auto';
     const opt = (v, label) => h('option', { value: v, selected: now === v }, label);
     const sel = h('select', {
       class: 'sb-acct sb-mode',
@@ -381,7 +382,8 @@ export function mountSidebar(el, on) {
       onchange: (e) => queue('agentModel', () => on.setAgentModel?.(p.id, e.target.value === 'auto' ? null : e.target.value)),
     },
     opt('auto', t('sidebar.agentModelAuto')), opt('sonnet', t('sidebar.agentModelSonnet')),
-    opt('haiku', t('sidebar.agentModelHaiku')), opt('opus', t('sidebar.agentModelOpus')));
+    opt('haiku', t('sidebar.agentModelHaiku')), opt('opus', t('sidebar.agentModelOpus')),
+    ...bossModelChoices('claude').filter((c) => CLAUDE_55_AGENT.includes(c.value)).map((c) => opt(c.value, c.label)));
     return control(p, 'agentModel', t('sidebar.agentModel'), sel);
   }
 
