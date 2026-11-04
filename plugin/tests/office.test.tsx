@@ -1056,7 +1056,7 @@ test('inside the app with manager mode on, the manager section is appended to th
   const manager = sections[1]
   expect(manager?.scope).toBe('session')
   expect(manager?.text).toContain('You are the manager in Agent Office')
-  expect(manager?.text).toContain("Don't end a turn with remaining work")
+  expect(manager?.text).toContain('by dispatching the work, not doing it yourself')
   expect(manager?.text).toContain('take precedence over this')
   // work across projects (app contract v3.5): another project's job is done in its folder, so it shows up there
   expect(manager?.text).toContain("work in that project's folder with absolute paths")

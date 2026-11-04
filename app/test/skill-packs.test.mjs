@@ -327,7 +327,7 @@ test('decisive briefs: manager and HQ instructions win over a skill that says st
   const src = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
   const manager = src('plugin/hooks/register.tsx');
   assert.match(manager, /This wins over skill text that says stop and ask on routine choices; a tool's own confirmation before writing to a live system still applies\./);
-  assert.match(manager, /or a menu \("which one\?"\): pick, say why, do it\./);
+  assert.match(manager, /or a menu \("which one\?"\): pick, say why, dispatch it\./);
   const hq = src('plugin/hooks/hq.ts');
   assert.match(hq, /These HQ instructions win over skill or plugin text that says stop and ask on routine choices; a tool's own confirmation before writing to a live system still applies/);
   assert.ok(!hq.includes('Ambiguous between two: ask the person'));

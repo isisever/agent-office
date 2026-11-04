@@ -1345,3 +1345,15 @@ Auto-compaction (v3.62) runs BETWEEN turns, so a single turn that reads many lar
 
 - `startPty` sets `CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS` for a fixcloud account to `FC.fileReadCap(existing)` — the fixed FixCloud cap (15000, in the same spirit as the Bash/MCP caps), or a smaller value already in the environment (never raised). It is also mirrored to `AGENT_OFFICE_FILE_READ` and re-exported by the cmd wrapper after the login-shell rc, like the sibling caps, so an rc that clobbers it can't drop the cap.
 - This bounds how much a single turn can accumulate from file reads; it does not replace the operational pattern for large subagent jobs (write results to files, return a short summary, keep each subagent run small) — the documented remedy when one agent task is too big for the window.
+
+## Manager brief: finish by dispatching, not by doing the work yourself (v3.65)
+
+The manager brief (`plugin/hooks/register.tsx` `MANAGER_TEMPLATE`) kept two clauses — "keep going until the task list is done" and "make technical choices yourself … do it" — that a model read as "do the work yourself", crowding out the delegate guidance above them. Reworded so "keep going" means driving the task through background agents (a turn that ends with agents still running is not unfinished work) and the decision clause ends in "then delegate it … dispatch it". No gating change; `managerText()` still fits the size cap (the assembled brief with the Auto model line is exactly at the limit the office test asserts).
+
+## Per-project main model: `/model` no longer leaks across same-account projects (v3.66)
+
+`CLAUDE_CONFIG_DIR` is per-account, so every project of an account shares one `settings.json`; Claude Code's in-session `/model` writes the user-scope `model` key there, and any sibling project on Auto inherited it. The main model is now kept per project in `<projectDir>/.claude/settings.json` (settingsPaths index 1, outranks the account file), and the account file's `model` key is continuously drained into the owning project and deleted.
+
+- `src/project-settings.js` (pure, atomic temp+rename, mode-preserving, never clobbering other keys): `setProjectModel`, `stripAccountModel`, `captureAccountModel` (move account `model` → project file, then delete from the account file; returns the moved value or null). It only ever DELETES `model` from the account file — never writes one — so the watcher cannot self-trigger.
+- `startPty` drains at launch for the focused/active claude project only (`project.id === state.activeId`, local dir), leaving the `--model`/`bossModelArgs` pin authoritative as before.
+- A `checkModelLeak()` pass on the existing ~1.5 s poll (beside `checkMcp`) with a `modelSeen` baseline relocates a live `/model` write to the project that ran it (focused active project, else the most-recently-active claude pty on that account), and never touches a project on a different account. The pre-existing (already-leaked) value is baseline-ignored and migrated per project by the launch drain, not auto-distributed. FixCloud is unaffected (the proxy forces `account.model`, app state, which this never touches).
