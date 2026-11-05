@@ -601,17 +601,36 @@ export function mountSidebar(el, on) {
       s.host || '',
     ].filter(Boolean).join(' · ');
     const hint = (s) => [
-      s.readOnly ? t('sidebar.mcpReadOnly') : null,
+      s.readOnly && !s.where ? t('sidebar.mcpReadOnly') : null,
       s.source === 'project' && s.approved === false ? t('sidebar.mcpUnapproved') : null,
       s.shadowed ? t('sidebar.mcpShadowed') : null,
       s.bossShadowed ? t('sidebar.mcpBossShadowed') : null,
       s.away ? t('sidebar.mcpAwayHint', { folder: s.folder || '' }) : null,
       s.source === 'app' && !s.away && !gate.ok ? t('sidebar.na.claudeOnlyMcp') : null,
     ].filter(Boolean).join('\n');
-    mcpList.replaceChildren(...list.map((s) => h('li', { class: 'sb-mcp-row' + (s.shadowed ? ' shadowed' : '') + (s.away ? ' away' : '') + (s.readOnly ? ' ro' : ''), title: hint(s) || null },
+    // laid out like a project row (.sb-proj grid): dot, name, buttons; transport and source on the line below.
+    // The dot is lit when the server reaches the session (not shadowed, not handed off, not waiting for approval).
+    const reaches = (s) => !s.shadowed && !s.away && !(s.source === 'project' && s.approved === false);
+    mcpList.replaceChildren(...list.map((s) => h('li', { class: 'sb-proj sb-mcp-row' + (s.shadowed ? ' shadowed' : '') + (s.away ? ' away' : '') + (s.readOnly ? ' ro' : ''), title: hint(s) || null },
+      h('span', { class: 'sb-dot' + (reaches(s) ? ' live' : '') }),
       h('span', { class: 'sb-name' }, s.name),
-      h('span', { class: 'sb-tag' }, s.type),
-      h('span', { class: 'sb-mcp-src' }, where(s)),
+      h('span', { class: 'sb-icons' },
+      (s.readOnly && !s.where && !s.originId) || s.away ? null : h('button', {
+        class: 'sb-x sb-edit',
+        title: s.originId ? t('sidebar.mcpEditOrigin', { project: projects.find((x) => x.id === s.originId)?.name || '' })
+          : s.where ? t('sidebar.mcpEditFile', { file: t(`sidebar.mcpSrc.${s.source}`) }) : t('sidebar.mcpEdit'),
+        onclick: async () => {
+          // v3.69: a server in Claude Code's own files is edited in that file (values masked), another project's in
+          // that project's file; one added here in state.json
+          const pid = s.originId || p.id;
+          const file = Boolean(s.where || s.originId);
+          const r = file ? await on.mcp?.getFile(pid, s.originId ? 'origin' : s.where, s.name) : await on.mcp?.get(s.id);
+          // the file named in the form: the row's own label, or for another project's row the file it lives in there
+          const source = s.originId ? String(r?.server?.where || '').replace(/^default-/, '') : s.source;
+          if (r?.ok) openMcpForm(file ? { ...r.server, projectId: pid, source } : r.server);
+          else { alert(t('sidebar.mcpError.unknown')); renderMcp(true); }
+        },
+      }, '✎'),
       s.readOnly ? null : h('button', {
         class: 'sb-x', title: t('sidebar.mcpRemove'),
         onclick: async () => {
@@ -620,33 +639,50 @@ export function mountSidebar(el, on) {
           if (!r?.ok) alert(t('sidebar.mcpRemoveFailed', { name: s.name }));
           renderMcp(true);
         },
-      }, '×'))));
+      }, '×')),
+      h('div', { class: 'sb-meta' },
+        h('span', { class: 'sb-tag sb-mcp-type' }, String(s.type).toUpperCase()), // not CSS uppercase: with lang tr, stdio → STDİO
+        h('span', { class: 'sb-stats sb-mcp-src' }, where(s))))));
     if (!list.length) mcpList.append(h('li', { class: 'sb-empty' }, p ? t('sidebar.mcpNone') : t('sidebar.mcpNoProject')));
   }
 
-  /** Add an MCP server: remote (HTTP/SSE, v3.44) or a local command (stdio); a remote token goes to main only (stored encrypted there). */
-  function openMcpForm() {
+  /**
+   * Add an MCP server: remote (HTTP/SSE, v3.44) or a local command (stdio); a remote token goes to main only (stored
+   * encrypted there). With `edit` (v3.69, from mcp:get) the same form edits an app-added server: filled with its fields
+   * but never its token; a blank token keeps the stored one, "remove the saved token" clears it.
+   */
+  function openMcpForm(edit = null) {
     const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
-    const kind = h('select', {}, h('option', { value: 'remote' }, t('sidebar.mcpKindRemote')), h('option', { value: 'stdio' }, t('sidebar.mcpKindStdio')));
-    const name = h('input', { maxLength: 48, placeholder: t('sidebar.mcpNamePh') });
-    const url = h('input', { type: 'url', placeholder: 'https://…', spellcheck: false });
-    const type = h('select', {}, h('option', { value: 'http' }, 'HTTP'), h('option', { value: 'sse' }, 'SSE'));
-    const token = h('input', { type: 'password', autocomplete: 'off', spellcheck: false, placeholder: t('sidebar.mcpTokenPh') });
-    const command = h('input', { placeholder: t('sidebar.mcpCommandPh'), spellcheck: false });
+    // v3.69 a server in Claude Code's own files (edit.where): no token or scope; headers and env with masked values
+    const inFile = Boolean(edit?.where);
+    const stdioEdit = edit?.type === 'stdio';
+    const kind = h('select', {}, h('option', { value: 'remote' }, t('sidebar.mcpKindRemote')), h('option', { value: 'stdio', selected: stdioEdit }, t('sidebar.mcpKindStdio')));
+    const name = h('input', { maxLength: inFile ? 64 : 48, placeholder: t('sidebar.mcpNamePh'), value: edit?.name || '' });
+    const url = h('input', { type: 'url', placeholder: edit?.urlHidden ? t('sidebar.mcpUrlKept') : 'https://…', spellcheck: false, value: edit?.url || '' });
+    const type = h('select', {}, h('option', { value: 'http' }, 'HTTP'), h('option', { value: 'sse', selected: edit?.type === 'sse' }, 'SSE'));
+    const token = h('input', { type: 'password', autocomplete: 'off', spellcheck: false, placeholder: edit?.hasToken ? t('sidebar.mcpTokenKeep') : t('sidebar.mcpTokenPh') });
+    const clearToken = h('input', { type: 'checkbox', class: 'sb-check', onchange: () => { token.disabled = clearToken.checked; } });
+    const command = h('input', { placeholder: t('sidebar.mcpCommandPh'), spellcheck: false, value: edit?.command || '' });
     const args = h('textarea', { rows: 3, placeholder: t('sidebar.mcpArgsPh'), spellcheck: false });
+    args.value = (edit?.args || []).join('\n');
     const env = h('textarea', { rows: 3, placeholder: t('sidebar.mcpEnvPh'), spellcheck: false });
-    const scope = h('select', {}, h('option', { value: 'all' }, t('sidebar.mcpScopeAll')),
-      ...projects.map((p) => h('option', { value: p.id, selected: p.id === activeId }, p.name)));
+    env.value = Object.entries(edit?.env || {}).map(([k, v]) => `${k}=${v}`).join('\n');
+    const headers = h('textarea', { rows: 3, placeholder: t('sidebar.mcpHeadersPh'), spellcheck: false });
+    headers.value = Object.entries(edit?.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+    const scopeOf = edit ? edit.scope : activeId;
+    const scope = h('select', {}, h('option', { value: 'all', selected: scopeOf === 'all' }, t('sidebar.mcpScopeAll')),
+      ...projects.map((p) => h('option', { value: p.id, selected: p.id === scopeOf }, p.name)));
     const err = h('div', { class: 'sb-note warn', hidden: true });
     const remoteFields = [
-      field(t('sidebar.mcpUrl'), url, t('sidebar.mcpUrlHint')),
+      field(t('sidebar.mcpUrl'), url, edit?.urlHidden ? t('sidebar.mcpUrlKeptHint') : t('sidebar.mcpUrlHint')),
       field(t('sidebar.mcpType'), type),
-      field(t('sidebar.mcpToken'), token, t('sidebar.mcpTokenHint')),
-    ];
+      inFile ? field(t('sidebar.mcpHeaders'), headers, t('sidebar.mcpMaskedHint')) : field(t('sidebar.mcpToken'), token, t('sidebar.mcpTokenHint')),
+      !inFile && edit?.hasToken ? h('label', { class: 'sb-botcolor sb-langrow' }, h('span', {}, t('sidebar.mcpTokenClear')), clearToken) : null,
+    ].filter(Boolean);
     const stdioFields = [
       field(t('sidebar.mcpCommand'), command, t('sidebar.mcpCommandHint')),
       field(t('sidebar.mcpArgs'), args, t('sidebar.mcpArgsHint')),
-      field(t('sidebar.mcpEnv'), env, t('sidebar.mcpEnvHint')),
+      field(t('sidebar.mcpEnv'), env, inFile ? t('sidebar.mcpMaskedHint') : t('sidebar.mcpEnvHint')),
     ];
     const syncKind = () => {
       const stdio = kind.value === 'stdio';
@@ -666,26 +702,41 @@ export function mountSidebar(el, on) {
       }
       return out;
     };
+    const parseHeaders = () => {
+      const out = {};
+      for (const line of headers.value.split('\n')) {
+        const i = line.indexOf(':');
+        if (i < 0) continue;
+        const key = line.slice(0, i).trim();
+        if (key) out[key] = line.slice(i + 1).trim();
+      }
+      return out;
+    };
     const save = h('button', {
       class: 'sb-btn primary',
       onclick: async () => {
         save.disabled = true;
         err.hidden = true;
-        const r = kind.value === 'stdio'
-          ? await on.mcp?.add({ name: name.value, type: 'stdio', command: command.value, args: parseArgs(), env: parseEnv(), scope: scope.value })
-          : await on.mcp?.add({ name: name.value, url: url.value, type: type.value, token: token.value, scope: scope.value });
+        const form = kind.value === 'stdio'
+          ? { name: name.value, type: 'stdio', command: command.value, args: parseArgs(), env: parseEnv(), scope: scope.value }
+          : { name: name.value, url: url.value, type: type.value, token: clearToken.checked ? '' : token.value, scope: scope.value, ...(edit ? { clearToken: clearToken.checked } : {}) };
+        const r = inFile
+          ? await on.mcp?.updateFile(edit.projectId, edit.where, edit.name, kind.value === 'stdio' ? form : { name: name.value, url: url.value, type: type.value, headers: parseHeaders() })
+          : edit ? await on.mcp?.update(edit.id, form) : await on.mcp?.add(form);
         if (r?.ok) { closeModal(); renderMcp(true); return; }
         save.disabled = false;
-        err.textContent = t(`sidebar.mcpError.${{ 'name-used': 'nameUsed', 'url-http': 'urlHttp', 'url-secret': 'urlSecret' }[r?.error] || r?.error || 'failed'}`);
+        const code = { 'name-used': 'nameUsed', 'url-http': 'urlHttp', 'url-secret': 'urlSecret' }[r?.error] || r?.error || 'failed';
+        err.textContent = t(`sidebar.mcpError.${edit && ['failed', 'token', 'read', 'write'].includes(code) ? 'editFailed' : code}`);
         err.hidden = false;
       },
     }, t('sidebar.save'));
-    openModal(t('sidebar.mcpAddTitle'), [
+    openModal(edit ? t('sidebar.mcpEditTitle', { name: edit.name }) : t('sidebar.mcpAddTitle'), [
+      inFile ? h('div', { class: 'sb-note' }, t(edit.where === 'project' ? 'sidebar.mcpFileNoteProject' : 'sidebar.mcpFileNote', { file: t(`sidebar.mcpSrc.${edit.source}`) })) : null,
       field(t('sidebar.mcpKind'), kind),
       field(t('sidebar.mcpName'), name),
       ...remoteFields,
       ...stdioFields,
-      field(t('sidebar.mcpScope'), scope, t('sidebar.mcpScopeHint')),
+      inFile ? null : field(t('sidebar.mcpScope'), scope, t('sidebar.mcpScopeHint')),
       err,
     ], [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
   }

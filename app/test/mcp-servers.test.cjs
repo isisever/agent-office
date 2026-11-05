@@ -434,3 +434,50 @@ test('MCP: stdio servers (v3.59) build, emit, validate, normalize and list witho
   assert.equal(item.host, '');
   assert.equal(item.type, 'stdio');
 });
+
+test('MCP: editing (v3.69) keeps the id, validates like add, keeps the stored address when blank and never hands out a token or keyed address', () => {
+  const remote = { id: 'r1', name: 'notion', type: 'http', url: 'https://mcp.notion.com/mcp', scope: 'p1' };
+  const other = { id: 'r2', name: 'linear', type: 'sse', url: 'https://mcp.linear.app/sse', scope: 'all' };
+  const held = { id: 'h1', name: 'gone', type: 'http', url: 'https://h.example/mcp', scope: 'p9', held: '/w/gone' };
+  const list = [remote, other, held];
+  // rename, new address, new scope: same id, same place in the list
+  let r = MS.updateServer(list, 'r1', { name: 'Notion Work', type: 'sse', url: 'https://mcp.notion.com/sse', scope: 'all' }, ['p1']);
+  assert.deepEqual(r.server, { id: 'r1', name: 'notion-work', type: 'sse', url: 'https://mcp.notion.com/sse', scope: 'all' });
+  assert.equal(r.servers[0].id, 'r1');
+  assert.equal(r.servers.length, 3);
+  assert.equal(r.before, remote);
+  // a blank address keeps the stored one; its own name is no clash, another server's is
+  r = MS.updateServer(list, 'r1', { name: 'notion', type: 'http', url: '', scope: 'p1' }, ['p1']);
+  assert.equal(r.server.url, remote.url);
+  assert.equal(MS.updateServer(list, 'r1', { name: 'linear', type: 'http', url: '', scope: 'p1' }, ['p1']).error, 'name-used');
+  // the add form's checks still apply to a new address; the stored one unchanged passes even if add would refuse it
+  assert.equal(MS.updateServer(list, 'r1', { name: 'n', type: 'http', url: 'https://x.example/?key=1', scope: 'p1' }, ['p1']).error, 'url-secret');
+  assert.equal(MS.updateServer(list, 'r1', { name: 'n', type: 'http', url: 'http://x.example/', scope: 'p1' }, ['p1']).error, 'url-http');
+  const old = { id: 'c-p1', name: 'legacy', type: 'http', url: 'https://x.example/mcp?key=SECRET', scope: 'p1' };
+  r = MS.updateServer([old], 'c-p1', { name: 'legacy2', type: 'http', url: '', scope: 'p1' }, ['p1']);
+  assert.equal(r.server.url, old.url);
+  assert.equal(MS.updateServer(list, 'r1', { name: 'n', type: 'http', url: '', scope: 'p2' }, ['p1']).error, 'scope');
+  // unknown and held ids are refused
+  assert.equal(MS.updateServer(list, 'nope', { name: 'n', type: 'http', url: '', scope: 'all' }).error, 'unknown');
+  assert.equal(MS.updateServer(list, 'h1', { name: 'n', type: 'http', url: '', scope: 'all' }).error, 'unknown');
+  // remote → stdio
+  r = MS.updateServer(list, 'r1', { name: 'notion', type: 'stdio', command: ' npx ', args: ['-y', 'x'], env: { A: '1' }, scope: 'p1' }, ['p1']);
+  assert.deepEqual(r.server, { id: 'r1', name: 'notion', type: 'stdio', command: 'npx', args: ['-y', 'x'], env: { A: '1' }, scope: 'p1' });
+  assert.equal(MS.updateServer(list, 'r1', { name: 'notion', type: 'stdio', command: '', scope: 'p1' }, ['p1']).error, 'command');
+  // stdio → remote needs a real address
+  const st = r.servers;
+  assert.equal(MS.updateServer(st, 'r1', { name: 'notion', type: 'http', url: '', scope: 'p1' }, ['p1']).error, 'url');
+  // what the form gets: no token, no keyed address
+  assert.deepEqual(MS.editable(remote, true), { id: 'r1', name: 'notion', type: 'http', url: remote.url, scope: 'p1', hasToken: true });
+  const e = MS.editable(old, true);
+  assert.equal(e.url, '');
+  assert.equal(e.urlHidden, true);
+  assert.ok(!JSON.stringify(e).includes('SECRET'));
+  assert.deepEqual(MS.editable(st[0]), { id: 'r1', name: 'notion', type: 'stdio', command: 'npx', args: ['-y', 'x'], env: { A: '1' }, scope: 'p1' });
+  // main: the token is saved before state, kept when blank, cleared on request or when the server becomes stdio
+  const main = src('../main.js');
+  const upd = main.slice(main.indexOf("ipcMain.handle('mcp:update'"), main.indexOf("ipcMain.handle('mcp:remove'"));
+  assert.ok(upd.indexOf('tokens().save') < upd.indexOf('commit('));
+  assert.match(upd, /stdio \|\| token \|\| f\?\.clearToken === true/);
+  assert.match(upd, /restartFor\(r\.before\.scope, r\.server\.scope\)/);
+});
