@@ -59,7 +59,7 @@ function editable(name, conf) {
     return { name, type: 'stdio', command: typeof conf.command === 'string' ? conf.command : '', args: Array.isArray(conf.args) ? conf.args.filter((a) => typeof a === 'string') : [], env: masked(conf.env) };
   }
   const url = typeof conf.url === 'string' ? conf.url : '';
-  const hidden = Boolean(url) && MS.urlProblem(url) === 'url-secret';
+  const hidden = Boolean(url) && MS.urlDisplaySecret(url);
   return { name, type: conf.type === 'sse' ? 'sse' : 'http', url: hidden ? '' : url, ...(hidden ? { urlHidden: true } : {}), headers: masked(conf.headers) };
 }
 

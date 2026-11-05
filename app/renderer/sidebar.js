@@ -731,7 +731,7 @@ export function mountSidebar(el, on) {
       },
     }, t('sidebar.save'));
     openModal(edit ? t('sidebar.mcpEditTitle', { name: edit.name }) : t('sidebar.mcpAddTitle'), [
-      inFile ? h('div', { class: 'sb-note' }, t(edit.where === 'project' ? 'sidebar.mcpFileNoteProject' : 'sidebar.mcpFileNote', { file: t(`sidebar.mcpSrc.${edit.source}`) })) : null,
+      inFile ? h('div', { class: 'sb-note' }, t(edit.where === 'project' ? 'sidebar.mcpFileNoteProject' : 'sidebar.mcpFileNote', { file: t(`sidebar.mcpSrc.${edit.where === 'default-user' ? 'user' : edit.where === 'default-local' ? 'local' : edit.source}`) })) : null,
       field(t('sidebar.mcpKind'), kind),
       field(t('sidebar.mcpName'), name),
       ...remoteFields,

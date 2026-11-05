@@ -18,6 +18,17 @@ test('MCP files: the form gets names, transport, address and args; never a heade
   const k = MF.editable('old', { url: `https://x.example/mcp?key=${SECRET}` });
   assert.equal(k.url, '');
   assert.equal(k.urlHidden, true);
+  for (const u of ['https://h/abc123def456ghi789jkl0/sse', 'https://h/01234567-89ab-cdef-0123-456789abcdef/sse']) {
+    const pe = MF.editable('p', { url: u });
+    assert.equal(pe.url, '');
+    assert.equal(pe.urlHidden, true);
+    assert.ok(!JSON.stringify(pe).includes('abc123def') && !JSON.stringify(pe).includes('89ab-cdef'));
+  }
+  for (const u of ['https://h/sse', 'https://h/mcp', 'https://h/v1/messages', 'https://h/api/mcp', 'https://host']) {
+    const pe = MF.editable('p', { url: u });
+    assert.equal(pe.url, u);
+    assert.ok(!pe.urlHidden, u);
+  }
   const s = MF.editable('files', { command: 'npx', args: ['-y', 'srv'], env: { API_KEY: SECRET } });
   assert.deepEqual(s, { name: 'files', type: 'stdio', command: 'npx', args: ['-y', 'srv'], env: { API_KEY: MF.MASK } });
   assert.ok(!JSON.stringify([r, k, s]).includes(SECRET));

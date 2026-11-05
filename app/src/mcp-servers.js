@@ -30,6 +30,8 @@ function cleanUrl(v) {
     return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : '';
   } catch { return ''; }
 }
+// A path segment that looks like a token: 20+ opaque chars with a digit, or a UUID-shaped one (hex and hyphens, 32+).
+const isTokenSegment = (seg) => (/^[A-Za-z0-9_-]{20,}$/.test(seg) && /\d/.test(seg)) || /^[0-9a-f-]{32,}$/i.test(seg) && seg.includes('-');
 const LOOPBACK = ['localhost', '127.0.0.1', '[::1]'];
 /**
  * Why an address typed in the add form is refused (v3.44), or null: 'url' (not an http(s) URL), 'url-http' (plain
@@ -42,6 +44,12 @@ function urlProblem(v) {
   if (u.username || u.password || u.search) return 'url-secret';
   if (u.protocol === 'http:' && !LOOPBACK.includes(u.hostname)) return 'url-http';
   return null;
+}
+/** True when an address carries a secret (user:password@, a query string or a token-like path segment); used only to HIDE it in the edit form, never to reject input. */
+function urlDisplaySecret(v) {
+  if (!cleanUrl(v)) return false;
+  const u = new URL(String(v).trim());
+  return Boolean(u.username || u.password || u.search || u.pathname.split('/').some(isTokenSegment));
 }
 /** The host of an address (never its path, query or credentials), or ''. */
 const hostOf = (v) => { try { return new URL(String(v)).host; } catch { return ''; } };
@@ -158,7 +166,7 @@ function updateServer(servers, id, f, projectIds = []) {
  */
 function editable(s, hasToken = false) {
   if (s.type === 'stdio') return { id: s.id, name: s.name, type: 'stdio', command: s.command, args: [...(s.args || [])], env: { ...(s.env || {}) }, scope: s.scope };
-  const hidden = urlProblem(s.url) === 'url-secret';
+  const hidden = urlDisplaySecret(s.url);
   return { id: s.id, name: s.name, type: s.type, url: hidden ? '' : s.url, ...(hidden ? { urlHidden: true } : {}), scope: s.scope, hasToken: Boolean(hasToken) };
 }
 /** The servers of a project removed from this machine: → { servers, gone: ids whose token must go } */
@@ -391,7 +399,7 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
 }
 
 module.exports = {
-  TYPES, serverName, cleanUrl, urlProblem, hostOf, cleanToken, typeOf, normalizeServers, validate, serversFor, addServer, removeServer, updateServer, editable,
+  TYPES, serverName, cleanUrl, urlProblem, urlDisplaySecret, hostOf, cleanToken, typeOf, normalizeServers, validate, serversFor, addServer, removeServer, updateServer, editable,
   dropProject, dirKey, holdProject, adoptHeld, serverConfig, appConfigs, sessionServers, migrateConnections, tokenStore, moveToken,
   pendingMoves, settleTokens, listing,
 };
