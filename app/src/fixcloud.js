@@ -139,6 +139,57 @@ const FILE_READ_CAP = 15000;
 /** The per-Read output cap (tokens) a FixCloud session should apply; never raises an existing smaller cap. */
 function fileReadCap(existing) { const cur = Number(existing) || 0; return cur > 0 ? Math.min(cur, FILE_READ_CAP) : FILE_READ_CAP; }
 
+// A single base64 IMAGE content block (e.g. a browser screenshot, ~627 KB / ~157K tokens) used to blow the FixCloud
+// context wall: anthropicToOpenAI JSON.stringify'd a tool_result-nested image VERBATIM into the tool message text.
+// capImageBlocks is a safety net run BEFORE the translation so no single image can contribute more than a small bounded
+// amount: top-level user images are downscaled (by the injected resizeFn) and forwarded as OpenAI image_url; images that
+// can't be shrunk, and all tool_result-nested images, collapse to a short text note (never base64 text).
+const DEFAULT_MAX_B64_CHARS = 16000;   // ~12 KB of image bytes ≈ ~4k tokens: the per-image cap before we resize/omit
+/** Approx kilobytes of image bytes for a base64 string of `b64len` chars (base64 is 4 chars per 3 bytes). */
+function b64Kb(b64len) { return Math.round((b64len * 0.75) / 1024); }
+/** The short text that stands in for an image we won't forward as pixels. */
+function imageOmittedNote(mediaType, b64len) { return `[image omitted: ${mediaType || 'image'}, ~${b64Kb(b64len)} KB]`; }
+
+/** Bound every base64 image in a parsed Anthropic request body so one image can't blow the context. Walks each message's
+ *  content[] AND each tool_result's nested content[]; for every `{type:'image', source:{type:'base64', media_type, data}}`
+ *  whose base64 char length exceeds `opts.maxB64Chars` it calls the INJECTED `resizeFn({data, mediaType})` (returns a
+ *  downscaled {data, mediaType}, or null). A smaller result is swapped in place; a null result, or one still over the cap,
+ *  replaces the image block with a short text note (`opts.note` or `[image omitted: <media_type>, ~<kb> KB]`). Images
+ *  already under the cap are left untouched and resizeFn is not called. No base64 is decoded here — the size test is the
+ *  base64 char length. Pure/synchronous apart from mutating `body` in place; returns {scanned, reduced, removed}. */
+function capImageBlocks(body, resizeFn, opts = {}) {
+  const maxB64Chars = Number(opts.maxB64Chars) > 0 ? Number(opts.maxB64Chars) : DEFAULT_MAX_B64_CHARS;
+  const info = { scanned: 0, reduced: 0, removed: 0 };
+  const b = body && typeof body === 'object' ? body : {};
+  const capBlocks = (blocks) => {
+    if (!Array.isArray(blocks)) return;
+    for (let i = 0; i < blocks.length; i++) {
+      const it = blocks[i];
+      if (!it || it.type !== 'image' || !it.source || it.source.type !== 'base64') continue;
+      const data = typeof it.source.data === 'string' ? it.source.data : '';
+      const mediaType = it.source.media_type || 'image/png';
+      info.scanned++;
+      if (data.length <= maxB64Chars) continue;                       // already small enough: forward as-is
+      let out = null;
+      try { out = typeof resizeFn === 'function' ? resizeFn({ data, mediaType }) : null; } catch { out = null; }
+      if (out && typeof out.data === 'string' && out.data.length <= maxB64Chars) {
+        it.source.data = out.data;
+        it.source.media_type = out.mediaType || mediaType;
+        info.reduced++;
+      } else {
+        blocks[i] = { type: 'text', text: opts.note || imageOmittedNote(mediaType, data.length) };
+        info.removed++;
+      }
+    }
+  };
+  for (const m of Array.isArray(b.messages) ? b.messages : []) {
+    if (!m || !Array.isArray(m.content)) continue;
+    capBlocks(m.content);
+    for (const tr of m.content) { if (tr && tr.type === 'tool_result' && Array.isArray(tr.content)) capBlocks(tr.content); }
+  }
+  return info;
+}
+
 /** Anthropic Messages request body → OpenAI chat/completions request object. `model` is forced (the account's model).
  *  system + messages (incl. tool_use / tool_result blocks) are mapped; tools → function tools. tool_choice is OMITTED
  *  unless a SPECIFIC tool is forced (body.tool_choice.type === 'tool' with a name): FixCloud/vLLM rejects the strings
@@ -156,13 +207,29 @@ function anthropicToOpenAI(body, model) {
     const blocks = Array.isArray(m.content) ? m.content : [];
     if (m.role === 'user') {
       for (const tr of blocks.filter((x) => x.type === 'tool_result')) {
+        // An OpenAI role:'tool' message's content MUST be a string — it can't carry an image_url. So a tool_result-nested
+        // image becomes a short text note (NEVER JSON.stringify'd base64, the old context-wall bug), not forwarded pixels.
         const c = Array.isArray(tr.content)
-          ? tr.content.map((x) => (x.type === 'text' ? x.text : JSON.stringify(x))).join('\n')
+          ? tr.content.map((x) => (
+              x.type === 'text' ? x.text
+                : x.type === 'image' && x.source && x.source.type === 'base64'
+                  ? imageOmittedNote(x.source.media_type, typeof x.source.data === 'string' ? x.source.data.length : 0)
+                  : JSON.stringify(x))).join('\n')
           : typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content);
         msgs.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: c });
       }
       const t = blocks.filter((x) => x.type === 'text').map((x) => x.text).join('\n');
-      if (t) msgs.push({ role: 'user', content: t });
+      // Top-level user images CAN be forwarded as OpenAI vision image_url data URIs (capImageBlocks already downscaled
+      // them to a few KB). Only then is the user content an array of parts; otherwise it stays a plain string.
+      const imgs = blocks.filter((x) => x.type === 'image' && x.source && x.source.type === 'base64');
+      if (imgs.length) {
+        const parts = [];
+        if (t) parts.push({ type: 'text', text: t });
+        for (const im of imgs) parts.push({ type: 'image_url', image_url: { url: `data:${im.source.media_type || 'image/png'};base64,${im.source.data}` } });
+        msgs.push({ role: 'user', content: parts });
+      } else if (t) {
+        msgs.push({ role: 'user', content: t });
+      }
     } else if (m.role === 'assistant') {
       const texts = blocks.filter((x) => x.type === 'text').map((x) => x.text).join('\n');
       const toolUses = blocks.filter((x) => x.type === 'tool_use');
@@ -239,5 +306,5 @@ module.exports = {
   parseModels,
   FIXCLOUD, FIXCLOUD_KEY_ENV, FIXCLOUD_API_KEY_REF,
   fixcloudBossModel, isFixcloudModel, ocConfigPath, fixcloudProvider, mergeFixcloud, writeFixcloudProvider,
-  anthropicToOpenAI, openaiToAnthropic, anthropicSseString, contextLength, clampOutputTokens, autoCompactWindow, fileReadCap,
+  anthropicToOpenAI, openaiToAnthropic, anthropicSseString, contextLength, clampOutputTokens, autoCompactWindow, fileReadCap, capImageBlocks,
 };
