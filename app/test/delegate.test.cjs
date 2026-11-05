@@ -1,7 +1,6 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const D = require('../src/delegate.js');
@@ -20,14 +19,14 @@ test('withDelegates: {} when empty, never stores []', () => {
   assert.deepEqual(D.withDelegates(['b', 'b'], known), { delegates: ['b'] });
 });
 
-test('manifest: provider maps to engine and carries no key/secret field', () => {
+test('manifest: delegates are claude-only and carry no key/secret field', () => {
   const accounts = [
     { id: 'a', label: 'Work', provider: 'anthropic', model: 'opus', configDir: '/cfg/a', key: 'SECRET' },
-    { id: 'b', label: 'Fix', provider: 'fixcloud', model: 'glm', apiKey: 'SECRET' },
+    { id: 'b', label: 'Other', provider: 'x', model: 'glm', apiKey: 'SECRET' },
     { id: 'c', label: 'OC', provider: 'opencode', model: 'm' },
   ];
   const m = D.manifest(accounts, { delegates: ['a', 'b', 'c', 'gone'] });
-  assert.deepEqual(m.map((x) => x.engine), ['claude', 'opencode', 'opencode']);
+  assert.deepEqual(m.map((x) => x.engine), ['claude', 'claude', 'claude']);
   for (const x of m) {
     assert.deepEqual(Object.keys(x).sort(), ['configDir', 'engine', 'id', 'label', 'model']);
     assert.ok(!('key' in x) && !('apiKey' in x));
@@ -47,38 +46,6 @@ test('delegateLaunch claude: clean env, CLAUDE_CONFIG_DIR set, cwd is the worktr
   assert.ok(!Object.keys(r.env).some((k) => /^(AGENT_OFFICE|ANTHROPIC)/.test(k)));
   assert.ok(!Object.keys(r.env).some((k) => /^CLAUDE_/.test(k) && k !== 'CLAUDE_CONFIG_DIR'));
   assert.equal(D.delegateLaunch({ account: { provider: 'anthropic', configDir: '/c' }, task: 't', worktree: '/wt', env }).args[3], 'sonnet');
-});
-
-test('delegateLaunch opencode: disable vars, no CLAUDE_CONFIG_DIR, key only in env.FIXCLOUD_API_KEY', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-deleg-'));
-  const keyFile = path.join(dir, 'k');
-  const KEY = 'fxc-TESTKEY-0123456789abcdef';
-  fs.writeFileSync(keyFile, KEY + '\n', { mode: 0o600 });
-  try {
-    const env = { PATH: '/bin', HOME: '/h', CLAUDE_CONFIG_DIR: '/boss', ANTHROPIC_API_KEY: 'zzz', AGENT_OFFICE_X: '1' };
-    const r = D.delegateLaunch({ account: { provider: 'fixcloud', model: 'glm-5', configDir: '/x' }, task: 'go', worktree: '/wt', keyFile, ocConfigHome: '/oc/home', env });
-    assert.equal(r.cmd, 'opencode');
-    assert.deepEqual(r.args, ['run', 'go', '-m', 'fixcloud/glm-5', '--agent', 'ao-delegate']);
-    assert.equal(r.cwd, '/wt');
-    assert.equal(r.env.OPENCODE_DISABLE_CLAUDE_CODE, '1');
-    assert.equal(r.env.OPENCODE_DISABLE_CLAUDE_CODE_MCP, '1');
-    assert.equal(r.env.XDG_CONFIG_HOME, '/oc/home');   // isolated opencode config home (carries the ao-delegate agent def)
-    assert.ok(!('CLAUDE_CONFIG_DIR' in r.env));
-    assert.ok(!('ANTHROPIC_API_KEY' in r.env));
-    assert.equal(r.env.FIXCLOUD_API_KEY, KEY);
-    assert.ok(!r.args.join(' ').includes(KEY));
-    const { env: e, ...rest } = r;
-    assert.ok(!JSON.stringify(rest).includes(KEY));
-    assert.equal(Object.entries(e).filter(([, v]) => v.includes(KEY)).length, 1);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('OC_DELEGATE_AGENT: deny-by-default bash with a permission block', () => {
-  assert.match(D.OC_DELEGATE_AGENT, /^---\n/);
-  assert.match(D.OC_DELEGATE_AGENT, /webfetch: deny/);
-  assert.match(D.OC_DELEGATE_AGENT, /"\*": deny/);
-  assert.match(D.OC_DELEGATE_AGENT, /"git push\*": deny/);
-  assert.match(D.OC_DELEGATE_AGENT, /current git worktree/);
 });
 
 test('worktree helpers: path outside the repo under tmpBase, throwaway branch', () => {

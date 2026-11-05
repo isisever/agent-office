@@ -4,7 +4,6 @@ const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const http = require('node:http');
 const P = require('./src/projects.js');
 const MS = require('./src/mcp-servers.js');
 const SF = require('./src/state-file.js');
@@ -31,7 +30,6 @@ const PD = require('./src/project-data.js');
 const PS = require('./src/project-settings.js');
 const FB = require('./src/fallback.js');
 const EN = require('./src/engine.js');
-const FC = require('./src/fixcloud.js');
 const D = require('./src/delegate.js');
 const AW = require('./src/agy-watch.js');
 const CS = require('./src/cmd-spool.js');
@@ -313,28 +311,19 @@ const directoryDir = () => path.join(app.getPath('userData'), 'directory');
 // has no keyring). It reaches claude only inside the tab's 0600 MCP file (userData/mcp), removed when that claude ends.
 const tokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'mcp-tokens'), safeStorage);
 const oldTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'connector-tokens'), safeStorage); // v3.43, migration only
-// v3.55: a FixCloud account's API key, per account id in userData/provider-tokens, encrypted with safeStorage (same store
-// shape as the MCP tokens). Decrypted only here, at the OpenCode launch, and injected into the engine env as
-// FIXCLOUD_API_KEY (engine.js ocEnv's forced-env); never to the renderer, state.json, opencode.json, argv or a log.
-const providerTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'provider-tokens'), safeStorage);
 const appServers = () => state.mcpServers || [];
 
 // --- account delegate (contract v3.56, src/delegate.js + src/delegate-cli.js). A claude boss with `delegates` runs the
 // `ao-delegate` CLI to hand a scoped job to another account's agent in a throwaway worktree. main.js owns the secrets:
 // - userData/bin/ao-delegate (0755): a launcher that execs node src/delegate-cli.js (installed once at startup).
-// - userData/delegate-keys/<id> (0600): the decrypted provider key for each opencode/fixcloud delegate account of a
-//   STARTED project, so the CLI's delegateLaunch can read it (the ONLY place a key is written to disk unencrypted).
-//   The whole dir is swept at startup (crash safety) and a file is removed when its account is removed. Never logged.
+// - userData/delegate-keys/<id> (0600): a legacy at-rest key dir kept only for crash-safety sweeping and per-account
+//   cleanup; claude delegates use the account's configDir, so no key is written here. Swept at startup. Never logged.
 // - userData/delegate-manifests/<project>.json (0600): the key-less manifest + repoTop + keyDir the CLI reads
 //   (AGENT_OFFICE_DELEGATE_MANIFEST points at it). No key, only labels/engine/model/configDir.
 const delegateBinDir = () => path.join(app.getPath('userData'), 'bin');
 const delegateKeysDir = () => path.join(app.getPath('userData'), 'delegate-keys');
 const delegateManifestDir = () => path.join(app.getPath('userData'), 'delegate-manifests');
 const delegateKeyFile = (id) => path.join(delegateKeysDir(), String(id).replace(/[^\w-]/g, '_'));
-// Isolated opencode config home for delegates: <userData>/delegate-oc/opencode/{opencode.json, agent/ao-delegate.md}.
-// No secret lives here (opencode.json references {env:FIXCLOUD_API_KEY}); it only isolates the delegate from the
-// user's own ~/.config/opencode and carries the restricted ao-delegate agent def (the permission guard).
-const delegateOcHome = () => path.join(app.getPath('userData'), 'delegate-oc');
 /** Crash safety: clear every at-rest key file. Call at startup BEFORE any session starts. */
 function sweepDelegateKeys() { try { fs.rmSync(delegateKeysDir(), { recursive: true, force: true }); } catch {} }
 /** Install the ao-delegate launcher (idempotent). Resolves src/delegate-cli.js so it works packaged and in dev. */
@@ -345,34 +334,15 @@ function installDelegateLauncher() {
     fs.writeFileSync(path.join(delegateBinDir(), D.AO_DELEGATE_CMD), `#!/bin/sh\nexec node "${cli}" "$@"\n`, { mode: 0o755 });
   } catch (e) { console.error('ao-delegate launcher could not be written:', e.message); }
 }
-/** For each opencode/fixcloud delegate of a started project, write its 0600 key file; write the key-less manifest JSON.
- *  Returns { manifest, file } (manifest is key-less) or null when the project has no usable delegate. Never logs the key. */
+/** Write the key-less manifest JSON for a started project's claude delegates. Returns { manifest, file } or null when
+ *  the project has no usable delegate. Delegates are claude-only (they use the account's configDir; no key at rest). */
 function prepareDelegates(project) {
   const man = D.manifest(state.accounts, project);
   if (!man.length) return null;
-  try { fs.mkdirSync(delegateKeysDir(), { recursive: true, mode: 0o700 }); } catch {}
-  const byId = new Map(state.accounts.map((a) => [a.id, a]));
-  /** @type {Array<{id:string,label:string,engine:string,model:string,configDir:string,keyFile?:string}>} */
-  const fileDelegates = man.map((m) => ({ ...m }));   // file manifest = the brief manifest + per-opencode keyFile
-  let ocConfigHome = '';
-  for (const entry of fileDelegates) {
-    if (entry.engine !== 'opencode') continue;   // only opencode/fixcloud delegates need a key; claude logins use configDir
-    const acc = byId.get(entry.id) || {};
-    const key = providerTokens().load(entry.id); // decrypt only here
-    if (key) try { fs.writeFileSync(delegateKeyFile(entry.id), key, { mode: 0o600 }); } catch (e) { console.error('delegate key could not be written for', entry.id, e.message); }
-    entry.keyFile = delegateKeyFile(entry.id);
-    // Write the isolated opencode config home (fixcloud provider + restricted ao-delegate agent def) the CLI points at.
-    ocConfigHome = delegateOcHome();
-    const ocDir = path.join(ocConfigHome, 'opencode');
-    try {
-      fs.mkdirSync(path.join(ocDir, 'agent'), { recursive: true });
-      FC.writeFixcloudProvider(path.join(ocDir, 'opencode.json'), acc.baseUrl || A.FIXCLOUD_DEFAULT_BASE, entry.model || A.FIXCLOUD_DEFAULT_MODEL);
-      fs.writeFileSync(path.join(ocDir, 'agent', `${D.DELEGATE_AGENT}.md`), D.OC_DELEGATE_AGENT);
-    } catch (e) { console.error('delegate opencode config could not be written:', e.message); }
-  }
+  const fileDelegates = man.map((m) => ({ ...m }));
   try { fs.mkdirSync(delegateManifestDir(), { recursive: true, mode: 0o700 }); } catch {}
   const file = path.join(delegateManifestDir(), `${usageKey(project.id)}.json`);
-  try { fs.writeFileSync(file, JSON.stringify({ delegates: fileDelegates, repoTop: project.dir, keyDir: delegateKeysDir(), ocConfigHome }), { mode: 0o600 }); } catch (e) { console.error('delegate manifest could not be written:', e.message); return null; }
+  try { fs.writeFileSync(file, JSON.stringify({ delegates: fileDelegates, repoTop: project.dir, keyDir: delegateKeysDir() }), { mode: 0o600 }); } catch (e) { console.error('delegate manifest could not be written:', e.message); return null; }
   return { manifest: man, file };
 }
 /** A project is removed from this machine: its own servers and their tokens go; ones for all stay. (A handed-off
@@ -548,7 +518,7 @@ function checkModelLeak() {
     const prev = modelSeen.get(f);
     if (prev === undefined) { modelSeen.set(f, now); continue; } // startup baseline: a pre-existing model is not a fresh /model
     if (now && now !== prev) {
-      const target = modelLeakTarget(account); // relocation is meaningful for claude engine; fixcloud forces account.model anyway
+      const target = modelLeakTarget(account); // relocation is meaningful for claude engine
       if (target && isDir(target.dir)) { try { PS.captureAccountModel(f, target.dir); } catch {} }
     }
     modelSeen.set(f, readJson(f)?.model || ''); // after our strip this is '' → next poll is a no-op
@@ -643,8 +613,6 @@ const again = new Set();
 function checkAuth(id, { showChecking = false } = {}) {
   const account = accountById(id);
   if (!account) return Promise.resolve();
-  // v3.54: a fixcloud account has no login (its key is pre-configured): skip `claude auth status` and show a neutral dot.
-  if (A.isFixcloud(account)) { if (auths.get(id)?.state !== 'ready') { auths.set(id, { state: 'ready' }); sendAccounts(); } return Promise.resolve(); }
   if (showChecking && auths.get(id)?.state !== 'checking') { auths.set(id, { state: 'checking' }); sendAccounts(); }
   if (checking.has(id)) { again.add(id); return checking.get(id); }
   const run = (async () => {
@@ -715,7 +683,6 @@ function startLogin(accountId) {
   const id = A.loginPtyId(accountId);
   const account = accountById(accountId);
   if (!account || !win) return;
-  if (A.isFixcloud(account)) return;   // v3.54: fixcloud accounts have no login flow
   if ([...relays.values()].some((r) => r.accountId === accountId)) { send('pty:data', id, '\r\n[a remote sign-in for this account is running; try again when it is done]\r\n'); send('pty:exit', id, -1); return; }
   startLoginPty({
     id, label: 'giriş pty\'si başlatılamadı',
@@ -1214,55 +1181,16 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
-  // v3.60 fixcloud: this claude session talks to the in-process Anthropic→OpenAI proxy. The login shell's rc files can
-  // reset env, so (like CLAUDE_CONFIG_DIR) the base URL and the random AUTH token are re-exported at the last moment and
-  // ANTHROPIC_API_KEY unset. The token is NOT the real key (the real fxc- key is only read in the proxy), so the cmd is safe.
-  const fixcloud = A.isFixcloud(account);
-  const fixcloudBase = fixcloud ? 'http://127.0.0.1:' + fixcloudProxyPort : '';
-  const fixcloudTok = fixcloud ? fixcloudProxyToken(account.id) : '';
-  const fixPrefix = fixcloud
-    ? `export ANTHROPIC_BASE_URL='${fixcloudBase}'; export ANTHROPIC_AUTH_TOKEN='${fixcloudTok}'; unset ANTHROPIC_API_KEY; `
-    : '';
-  const cmd = fixPrefix + '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; '
+  const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; '
     + '[ -n "$AGENT_OFFICE_DELEGATE_BIN" ] && export PATH="$AGENT_OFFICE_DELEGATE_BIN:$PATH"; '  // v3.56: ao-delegate on PATH after rc (rc can clobber PATH)
     + '[ -n "$AGENT_OFFICE_AGENT_MODEL" ] && export CLAUDE_CODE_SUBAGENT_MODEL="$AGENT_OFFICE_AGENT_MODEL" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1; '
     + '[ -n "$AGENT_OFFICE_CONTEXT_CAP" ] && export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$AGENT_OFFICE_CONTEXT_CAP"; '
     + '[ -n "$AGENT_OFFICE_BASH_OUTPUT" ] && export BASH_MAX_OUTPUT_LENGTH="$AGENT_OFFICE_BASH_OUTPUT"; '
-    + '[ -n "$AGENT_OFFICE_MCP_OUTPUT" ] && export MAX_MCP_OUTPUT_TOKENS="$AGENT_OFFICE_MCP_OUTPUT"; '
-    + '[ -n "$AGENT_OFFICE_FILE_READ" ] && export CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS="$AGENT_OFFICE_FILE_READ"; '
-    + '[ -n "$AGENT_OFFICE_DISABLE_1M" ] && export CLAUDE_CODE_DISABLE_1M_CONTEXT="$AGENT_OFFICE_DISABLE_1M"; '
-    + '[ -n "$AGENT_OFFICE_API_TIMEOUT" ] && export API_TIMEOUT_MS="$AGENT_OFFICE_API_TIMEOUT"; '
-    + '[ -n "$AGENT_OFFICE_STREAM_IDLE" ] && export CLAUDE_STREAM_IDLE_TIMEOUT_MS="$AGENT_OFFICE_STREAM_IDLE"; exec claude "$@"';
+    + '[ -n "$AGENT_OFFICE_MCP_OUTPUT" ] && export MAX_MCP_OUTPUT_TOKENS="$AGENT_OFFICE_MCP_OUTPUT"; exec claude "$@"';
   let env = A.sessionEnv(A.ptyEnv(process.env, configDir), {
     manager: P.managerOf(state, project), agentModel: P.agentModelOf(project), contextCap: P.contextCapOf(project),
     savings: P.savingsOf(project),
   });
-  if (fixcloud) {
-    env.ANTHROPIC_BASE_URL = fixcloudBase; env.ANTHROPIC_AUTH_TOKEN = fixcloudTok; delete env.ANTHROPIC_API_KEY;
-    // Force auto-compaction before FixCloud's hard prompt+output wall: Fable's assumed ~1M window would otherwise never
-    // compact in time. Never let a larger per-project cap (or Auto) exceed the model-safe window; a smaller cap stays.
-    const safeWin = FC.autoCompactWindow(account.model);
-    const curCap = Number(env.AGENT_OFFICE_CONTEXT_CAP) || 0;
-    const win = String(curCap > 0 ? Math.min(curCap, safeWin) : safeWin);
-    env.AGENT_OFFICE_CONTEXT_CAP = win; env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win;
-    // Claude Code labels the proxied session as claude-fable-5-1 (native 1M window), so AUTO_COMPACT_WINDOW alone never
-    // lowers the effective window and compaction never fires before the 262144 wall (0 compact_boundary events observed).
-    // Disabling 1M caps Fable at 200K so AUTO_COMPACT_WINDOW then takes effect. Mirror to AGENT_OFFICE_ for the cmd wrapper.
-    env.AGENT_OFFICE_DISABLE_1M = '1'; env.CLAUDE_CODE_DISABLE_1M_CONTEXT = '1';
-    // Bound a single file-heavy turn (auto-compaction only runs between turns): cap a Read's output, the largest per-tool
-    // source Claude Code leaves uncapped (default 25000). Never raise a smaller cap already in the environment. Set the
-    // AGENT_OFFICE_ indirection too so the cmd wrapper can re-export it after a login-shell rc, like the sibling caps.
-    const fileRead = String(FC.fileReadCap(env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS));
-    env.AGENT_OFFICE_FILE_READ = fileRead; env.CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS = fileRead;
-    // Give Claude Code's own side room so a slow large-prompt completion through the buffering proxy is not aborted
-    // (API_TIMEOUT_MS, and the ~300s byte-level stream watchdog on a custom base URL) before the upstream returns. Only
-    // set a value when the environment carries none (never override the user's explicit choice). Mirror to AGENT_OFFICE_
-    // so the cmd wrapper re-exports it after a login-shell rc, like the sibling caps.
-    const apiTimeout = String(Number(env.API_TIMEOUT_MS) > 0 ? env.API_TIMEOUT_MS : FIXCLOUD_CLIENT_TIMEOUT_MS);
-    env.AGENT_OFFICE_API_TIMEOUT = apiTimeout; env.API_TIMEOUT_MS = apiTimeout;
-    const streamIdle = String(Number(env.CLAUDE_STREAM_IDLE_TIMEOUT_MS) > 0 ? env.CLAUDE_STREAM_IDLE_TIMEOUT_MS : FIXCLOUD_CLIENT_TIMEOUT_MS);
-    env.AGENT_OFFICE_STREAM_IDLE = streamIdle; env.CLAUDE_STREAM_IDLE_TIMEOUT_MS = streamIdle;
-  }
   delete env.AGENT_OFFICE_STATUSLINE;
   delete env.AGENT_OFFICE_DIRECTORY;
   delete env.AGENT_OFFICE_REMOTE;
@@ -1577,12 +1505,8 @@ function startOpenCode(id, { project, tab, dir: cwd }, { resume = false, prompt 
   const isResume = resume && (!tab || Boolean(tab.worktree));
   const args = EN.ocArgs({ resume: isResume, prompt, model: P.bossModelOf(project) }); // boss model: v3.36
   const startedAt = Date.now();
-  // an allowlist of the user's env (engine.js ocEnv): no Claude, Anthropic, office or MCP variable. v3.55: for a
-  // fixcloud account, the decrypted key is forced in after the filter as FIXCLOUD_API_KEY (opencode.json's {env:...}
-  // reference reads it); decrypted only here, never in argv/state/opencode.json/a log.
-  const ocAccount = A.accountOf(state, project);
-  const fixKey = A.isFixcloud(ocAccount) ? providerTokens().load(ocAccount.id) : '';
-  const env = EN.ocEnv(process.env, process.platform, fixKey ? { [FC.FIXCLOUD_KEY_ENV]: fixKey } : {});
+  // an allowlist of the user's env (engine.js ocEnv): no Claude, Anthropic, office or MCP variable.
+  const env = EN.ocEnv(process.env, process.platform);
   let t;
   try {
     const win32 = IS_WIN ? windowsOpenCode(args, env) : null;
@@ -1725,97 +1649,6 @@ function typePrompt(id, text, { taskId = '' } = {}) {
 let linkHost = null;
 
 // --- v3.35 one boss (src/office-mcp.js): office_machines / office_dispatch / office_reports for the boss tab
-// --- FixCloud in-process proxy (contract v3.60): one http server bound to 127.0.0.1 on an ephemeral port, started at
-// app startup. Claude Code sessions of a fixcloud account point ANTHROPIC_BASE_URL at it and send a random
-// ANTHROPIC_AUTH_TOKEN (NOT the real key). The proxy maps that token back to an account, decrypts the real fxc- key
-// HERE (providerTokens) only to call FixCloud's OpenAI-wire endpoint, and translates Anthropic↔OpenAI (src/fixcloud.js).
-// The real key never appears in a log, the response, argv or state; only the random per-account token does.
-// FixCloud reliability timeouts (v3.67): the proxy buffers a non-streaming upstream call, so during a slow large-prompt
-// completion no bytes flow and both Claude Code (API_TIMEOUT_MS, and the ~300s byte-level stream watchdog on a custom base
-// URL) and the proxy's own AbortController could abort it as a 502 "operation was aborted". Give the client side a
-// generous request + stream-idle timeout and keep the proxy's own abort just above it, so a legitimate multi-minute
-// completion finishes instead of 502'ing (streaming the upstream incrementally is the larger follow-up fix).
-const FIXCLOUD_CLIENT_TIMEOUT_MS = 900000;    // Claude Code API_TIMEOUT_MS / CLAUDE_STREAM_IDLE_TIMEOUT_MS (15 min)
-const FIXCLOUD_UPSTREAM_TIMEOUT_MS = 960000;  // the proxy's own abort, above the client timeout so the client governs
-let fixcloudProxyPort = 0;
-const tokenForAccount = new Map();   // accountId → random hex token (created lazily)
-/** The random proxy token for a fixcloud account (created on first use). It is NOT the real key: safe in the cmd/argv. */
-function fixcloudProxyToken(accountId) {
-  let t = tokenForAccount.get(accountId);
-  if (!t) { t = crypto.randomBytes(24).toString('hex'); tokenForAccount.set(accountId, t); }
-  return t;
-}
-const proxyReadBody = (req) => new Promise((resolve) => { let d = ''; req.on('data', (c) => (d += c)); req.on('end', () => resolve(d)); req.on('error', () => resolve(d)); });
-function proxyBearer(req) {
-  const auth = req.headers['authorization'];
-  if (typeof auth === 'string' && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
-  const x = req.headers['x-api-key'];
-  return typeof x === 'string' ? x.trim() : '';
-}
-const proxyError = (res, status, type, message) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'error', error: { type, message } })); };
-function startFixcloudProxy() {
-  const srv = http.createServer(async (req, res) => {
-    const url = req.url || '';
-    if (req.method !== 'POST' || !url.includes('/v1/messages')) { res.writeHead(404); return res.end('nope'); }
-    const tok = proxyBearer(req);
-    const accountId = tok ? [...tokenForAccount].find(([, v]) => v === tok)?.[0] : null;
-    const account = accountId ? accountById(accountId) : null;
-    if (!account || !A.isFixcloud(account)) return proxyError(res, 401, 'authentication_error', 'unknown token'); // the key must NEVER leak: just 401
-    const raw = await proxyReadBody(req);
-    if (url.includes('/count_tokens')) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ input_tokens: Math.ceil((raw || '').length / 4) })); }
-    let body = {};
-    try { body = JSON.parse(raw); } catch { return proxyError(res, 400, 'invalid_request_error', 'bad json'); }
-    const model = account.model || A.FIXCLOUD_DEFAULT_MODEL;
-    const baseUrl = (account.baseUrl || A.FIXCLOUD_DEFAULT_BASE).replace(/\/+$/, '');
-    const key = providerTokens().load(accountId);   // decrypt the real key ONLY here; never log/return/argv/state it
-    const wantStream = body.stream === true;
-    // Safety net: bound every base64 image before translation so one screenshot can't blow the 262K context wall. Top-level
-    // user images are downscaled (Electron nativeImage) and forwarded as image_url; tool_result-nested and un-shrinkable
-    // images collapse to a short text note. resizeFn: decode → resize to 1024px longest side → JPEG q70; null on any failure.
-    const resizeFn = ({ data }) => {
-      try {
-        const img = nativeImage.createFromBuffer(Buffer.from(data, 'base64'));
-        if (img.isEmpty()) return null;
-        const { width, height } = img.getSize();
-        const longest = Math.max(width, height);
-        const sized = longest > 1024
-          ? img.resize(width >= height ? { width: 1024 } : { height: 1024 })
-          : img;
-        const jpeg = sized.toJPEG(70);
-        return { data: jpeg.toString('base64'), mediaType: 'image/jpeg' };
-      } catch { return null; }
-    };
-    try { FC.capImageBlocks(body, resizeFn, { maxB64Chars: 16000 }); } catch {}
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), FIXCLOUD_UPSTREAM_TIMEOUT_MS);
-    try {
-      const up = await fetch(baseUrl + '/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key },
-        body: JSON.stringify(FC.anthropicToOpenAI(body, model)),
-        signal: ac.signal,
-      });
-      const text = await up.text();
-      if (!up.ok) {
-        // Surface the upstream reason (e.g. "maximum context length ...") instead of an opaque "upstream 400": it tells
-        // the user what went wrong and lets Claude Code react (a 400 is mapped to invalid_request_error). Never a secret.
-        let detail = '';
-        try { const e = JSON.parse(text); detail = (e && e.error && e.error.message) || e.message || ''; } catch { detail = String(text || '').slice(0, 300); }
-        console.error('fixcloud proxy upstream', up.status, String(detail).slice(0, 200));
-        return proxyError(res, up.status, up.status === 400 ? 'invalid_request_error' : 'api_error', 'FixCloud ' + up.status + (detail ? ': ' + detail : ''));
-      }
-      let oai = {};
-      try { oai = JSON.parse(text); } catch { oai = {}; }
-      const msg = FC.openaiToAnthropic(oai, model);
-      if (wantStream) { res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); return res.end(FC.anthropicSseString(msg)); }
-      res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(msg));
-    } catch (e) { return proxyError(res, 502, 'api_error', String(e?.message || e)); }
-    finally { clearTimeout(timer); }
-  });
-  srv.on('error', (e) => console.error('fixcloud proxy:', e.message));
-  srv.listen(0, '127.0.0.1', () => { const addr = srv.address(); fixcloudProxyPort = addr && typeof addr === 'object' ? addr.port : 0; });
-}
-
 let officeSock = null;
 let officeScript = '';   // the server script written to userData (never run from app.asar)
 /** At startup, before any tab: writes the script, listens and waits; on failure no tab gets the server (a notice says so). */
@@ -3177,12 +3010,8 @@ ipcMain.handle('projects:setAccount', (_e, id, accountId) => {
   const p = P.findProject(state, id);
   if (!p || p.accountId === accountId) return;
   const from = A.accountOf(state, p);
-  let next = P.setProjectAccount(state, id, accountId);
+  const next = P.setProjectAccount(state, id, accountId);
   if (next === state) return;
-  // v3.60: a fixcloud account's session runs on the claude engine (in-process proxy), so binding to it sets the claude
-  // engine and clears any leftover `fixcloud/<model>` bossModel; moving off one undoes a left-over opencode binding.
-  const toFix = A.isFixcloud(accountById(accountId));
-  next = P.bindFixcloudAccount(next, id, { fromFix: A.isFixcloud(from), toFix });
   commit(next);
   moveProject(id, from);
 });
@@ -3335,72 +3164,9 @@ ipcMain.handle('accounts:add', (_e, label) => {
   checkAuth(r.account.id);
   return A.withAuth([r.account], (id) => auths.get(id))[0];
 });
-// v3.55: add a FixCloud account — a login-less account whose projects run on the OpenCode engine against a FixCloud
-// (OpenAI-compatible) endpoint. payload carries label, apiKey (required), model, baseUrl. OpenCode must be installed
-// (same detection as the OpenCode account row, ocAuth.installed); the fixcloud provider is deep-merged into the user's
-// opencode.json with apiKey={env:FIXCLOUD_API_KEY} (never the real key); the real key travels renderer→main exactly
-// once, here, and is stored encrypted in providerTokens. The key is never written to opencode.json, state or a log.
-ipcMain.handle('accounts:addFixcloud', (_e, payload) => {
-  const p = payload || {};
-  const apiKey = typeof p.apiKey === 'string' ? p.apiKey.trim() : '';
-  if (!apiKey) return { ok: false, error: 'apiKey' };
-  if (!ocAuth?.installed) return { ok: false, error: 'noOpencode' };   // step 1: no OpenCode → renderer shows its install hint
-  const baseUrl = (typeof p.baseUrl === 'string' && p.baseUrl.trim()) || A.FIXCLOUD_DEFAULT_BASE;
-  const model = (typeof p.model === 'string' && p.model.trim()) || A.FIXCLOUD_DEFAULT_MODEL;
-  // step 2: deep-merge the fixcloud provider into opencode.json ($XDG_CONFIG_HOME else ~/.config), never clobbering others.
-  try { FC.writeFixcloudProvider(FC.ocConfigPath(process.env, app.getPath('home')), baseUrl, model); }
-  catch (e) { console.error('fixcloud opencode.json:', e.message); return { ok: false, error: 'opencode' }; }
-  // step 4: a login-less account row carrying provider/model/baseUrl.
-  const r = A.addAccount(state, p.label, { id: crypto.randomBytes(6).toString('hex'), root: accountsRoot(), provider: A.FIXCLOUD, model, baseUrl });
-  try { fs.mkdirSync(r.account.configDir, { recursive: true }); } catch (e) { console.error('hesap klasörü:', e.message); }
-  if (!providerTokens().save(r.account.id, apiKey)) return { ok: false, error: 'token' };   // step 3; nothing committed
-  commit(r.state, { accounts: true });
-  checkAuth(r.account.id);
-  return { ok: true, account: A.withAuth([r.account], (id) => auths.get(id))[0] };
-});
 ipcMain.handle('accounts:rename', (_e, id, label) => { commit(A.renameAccount(state, id, label), { accounts: true }); });
 // "Use Default's plugins, skills and MCP servers": applies when the account's sessions start next (nothing restarts).
 ipcMain.handle('accounts:setShare', (_e, id, on) => { commit(A.setAccountShare(state, id, on), { accounts: true }); });
-// v3.58: list the models a FixCloud endpoint serves (GET <baseUrl>/models). The key is read here — the typed one for the add
-// form (not stored yet), else the stored one by accountId — and is never returned to the renderer or logged.
-ipcMain.handle('fixcloud:listModels', async (_e, opts) => {
-  const o = opts || {};
-  const baseUrl = (typeof o.baseUrl === 'string' && o.baseUrl.trim()) || A.FIXCLOUD_DEFAULT_BASE;
-  let key = typeof o.apiKey === 'string' && o.apiKey.trim() ? o.apiKey.trim() : '';
-  if (!key && typeof o.accountId === 'string') {
-    const acc = accountById(o.accountId);
-    if (acc && A.isFixcloud(acc)) key = providerTokens().load(o.accountId) || '';
-  }
-  if (!key) return { ok: false, error: 'noKey' };
-  const url = baseUrl.replace(/\/+$/, '') + '/models';
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 10000);
-  try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: ac.signal });
-    if (!res.ok) return { ok: false, error: 'http', status: res.status };
-    return { ok: true, models: FC.parseModels(await res.json()) };
-  } catch { return { ok: false, error: 'network' }; }
-  finally { clearTimeout(timer); }
-});
-
-// v3.60: change a FixCloud account's model in place — rewrites opencode.json (the ao-delegate path still needs it) and
-// updates the account. The in-process proxy reads account.model live per request, so no bossModel retarget is needed;
-// idle claude sessions of the account's projects restart so any cached model is refreshed. No key is re-entered.
-ipcMain.handle('accounts:setFixcloudModel', (_e, id, model, baseUrl) => {
-  const acc = accountById(id);
-  if (!acc || !A.isFixcloud(acc)) return { ok: false, error: 'notFixcloud' };
-  const m = typeof model === 'string' ? model.trim() : '';
-  if (!m) return { ok: false, error: 'model' };
-  const url = (typeof baseUrl === 'string' && baseUrl.trim()) || acc.baseUrl || A.FIXCLOUD_DEFAULT_BASE;
-  try { FC.writeFixcloudProvider(FC.ocConfigPath(process.env, app.getPath('home')), url, m); }
-  catch (e) { console.error('fixcloud opencode.json:', e.message); return { ok: false, error: 'opencode' }; }
-  const next = A.setAccountModel(state, id, m, baseUrl);
-  if (next === state) return { ok: true, account: A.withAuth([acc], (x) => auths.get(x))[0], restarted: [] };
-  const affected = state.projects.filter((p) => p.accountId === id).map((p) => p.id);
-  commit(next, { accounts: true });
-  const restarted = state.projects.filter((p) => affected.includes(p.id)).flatMap((p) => restartIdle(p));
-  return { ok: true, account: A.withAuth([accountById(id)], (x) => auths.get(x))[0], restarted };
-});
 // The folder is not deleted: its login and history are not lost if an account is deleted by mistake.
 ipcMain.handle('accounts:remove', (_e, id) => {
   const from = accountById(id);
@@ -3409,7 +3175,6 @@ ipcMain.handle('accounts:remove', (_e, id) => {
   killPty(A.loginPtyId(id));
   auths.delete(id);
   usages.delete(id);
-  providerTokens().remove(id);   // v3.54: a fixcloud account's stored key goes with it
   try { fs.rmSync(delegateKeyFile(id), { force: true }); } catch {}   // v3.56: its delegate key file goes too
   try { fs.rmSync(path.join(usageRoot(), id), { recursive: true, force: true }); } catch {}
   commit(r.state, { accounts: true });
@@ -4199,8 +3964,6 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });
   if (settled.failed) console.error(`mcp: ${settled.failed} connection token(s) could not be moved (not readable now, or not saved); kept, retried at the next start`);
   if (settled.dropped) console.error(`mcp: ${settled.dropped} connection token(s) were stored empty; dropped`);
-  // v3.60: a fixcloud project saved under the old OpenCode binding moves to the claude engine (in-process proxy); idempotent.
-  state = P.migrateFixcloudProjects(state);
   app.setAboutPanelOptions({ applicationName: app.getName(), applicationVersion: app.getVersion() });
   buildMenu();
   setupUpdates();
@@ -4217,7 +3980,6 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   checkCmdAuth();
   checkOcAuth();
   startLink();
-  startFixcloudProxy();  // v3.60: the in-process Anthropic→OpenAI proxy for fixcloud (claude-engine) sessions
   await startOffice();   // v3.35: listening (or not) before the first boss tab starts
   setupHq();             // v3.46 after the office socket: HQ gets its server at its first start
   // in the packaged app the icon comes from the .icns; under npm start set it on the Dock by hand (Linux has no app.dock)

@@ -508,16 +508,6 @@ async function addAccount(label, projectId) {
   if (a?.id) openLogin(a.id, a);
 }
 
-// v3.55: create a FixCloud account (login-less, OpenCode-backed against a FixCloud endpoint). The key travels to main
-// once here. If OpenCode isn't installed, main returns { error: 'noOpencode' }; show the OpenCode row with its install hint.
-async function addFixcloud(payload, projectId) {
-  let r = null;
-  try { r = await api.accounts.addFixcloud(payload); } catch (e) { console.error(e); }
-  if (r?.error === 'noOpencode') { await setEngineRow('showOcAccount', true); try { setOcAuth(await api.oc?.auth(true)); } catch (e) { console.error(e); } }
-  if (r?.ok && r.account?.id && projectId) try { await api.projects.setAccount(projectId, r.account.id); } catch (e) { console.error(e); }
-  await refreshAccounts();
-}
-
 function openLogin(id, fallback) {
   const a = accounts.find((x) => x.id === id) || fallback;
   if (a) login.open(a);
@@ -540,15 +530,6 @@ async function refreshAuth(id) {
 
 async function renameAccount(id, label) {
   try { await api.accounts.rename(id, label); } catch (e) { console.error(e); }
-  await refreshAccounts();
-}
-
-async function listFixcloudModels(opts) {
-  try { return (await api.accounts.listFixcloudModels?.(opts)) || { ok: false, error: 'network' }; } catch (e) { console.error(e); return { ok: false, error: 'network' }; }
-}
-
-async function setFixcloudModel(id, model, baseUrl) {
-  try { await api.accounts.setFixcloudModel?.(id, model, baseUrl); } catch (e) { console.error(e); }
   await refreshAccounts();
 }
 
@@ -589,8 +570,6 @@ sidebar = mountSidebar($('sidebar'), {
   renameAccount,
   removeAccount,
   setShare: setAccountShare,
-  setFixcloudModel,
-  listFixcloudModels,
   login: (id) => openLogin(id),
   logout: logoutAccount,
   refreshAuth,
@@ -602,7 +581,6 @@ sidebar = mountSidebar($('sidebar'), {
   ocLogout: () => openOc('logout'),
   ocRefresh: () => api.oc?.auth(true).then(setOcAuth, (e) => console.error(e)),
   cmdRefresh: () => api.cmd?.auth(true).then(setCmdAuth, (e) => console.error(e)),
-  addFixcloud,
   addAgy: () => addEngineAccount('agy'),
   addCmd: () => addEngineAccount('cmd'),
   addOc: () => addEngineAccount('oc'),

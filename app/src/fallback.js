@@ -166,8 +166,7 @@ function pickBackup({ choice = null, current, home = null, accounts = [], marks 
   if (!choice) return { reason: 'off' };
   const byId = new Map(accounts.map((a) => [a.id, a]));
   let cands;
-  // 'auto' never falls back to a provider account (v3.54 fixcloud): its key talks to a fixed endpoint, not the user's plan.
-  if (choice === 'auto') cands = accounts.filter((a) => a.id !== current && a.provider !== 'fixcloud');
+  if (choice === 'auto') cands = accounts.filter((a) => a.id !== current);
   else if (choice !== current) cands = byId.has(choice) ? [byId.get(choice)] : [];
   else cands = home && home !== current && byId.has(home) ? [byId.get(home)] : [];
   if (!cands.length) return { reason: 'none' };

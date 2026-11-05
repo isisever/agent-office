@@ -17,23 +17,9 @@ const path = require('path');
 const DEFAULT_ID = 'default';
 const DEFAULT_ACCOUNT = Object.freeze({ id: DEFAULT_ID, label: 'Varsayılan', configDir: null });
 
-// FixCloud accounts (contract v3.60, supersedes the v3.55 OpenCode-session path): a login-less account whose PROJECT
-// SESSIONS run on the CLAUDE CODE engine against an in-process Anthropic→OpenAI proxy (main.js) that forwards to a
-// FixCloud (OpenAI-compatible) endpoint. The account carries provider:'fixcloud' plus the chosen model and base URL;
-// its API key is stored encrypted (providerTokens) and read only in main to call FixCloud — never logged, returned,
-// put in argv or written to state. The Claude launch gets ANTHROPIC_BASE_URL=<proxy> and a random ANTHROPIC_AUTH_TOKEN
-// (NOT the real key) that the proxy maps back to the account. The Anthropic↔OpenAI translation and the opencode.json
-// merge live in src/fixcloud.js; accounts.js only knows the account's own fields. This works via the proxy because
-// FixCloud is OpenAI-wire (POST /v1/chat/completions only); the direct 0.22.6 ANTHROPIC_BASE_URL path never did. The
-// ao-delegate CLI still launches OpenCode under a fixcloud account (opencode.json merge + FIXCLOUD_API_KEY), unchanged.
-const FIXCLOUD = 'fixcloud';
-const FIXCLOUD_DEFAULT_BASE = 'https://llm.fixcloud.ai/v1';
-// deepseek-v4.1-flash supports tool calling; qwen3.6-35b-a3b does not (the server lacks --tool-call-parser), and Claude
-// Code needs tools, so the default must be tool-capable.
-const FIXCLOUD_DEFAULT_MODEL = 'deepseek-v4.1-flash';
-const isFixcloud = (account) => account?.provider === FIXCLOUD;
-
-// The default account is always first and its configDir is null.
+// The default account is always first and its configDir is null. A leftover account from a removed feature (e.g. an
+// old `provider:'fixcloud'` row) keeps only {id,label,configDir}: unknown fields are dropped, so it degrades to a
+// plain login-less account and never throws on load.
 function normalizeAccounts(list) {
   const out = [{ ...DEFAULT_ACCOUNT }];
   const seen = new Set([DEFAULT_ID]);
@@ -41,25 +27,17 @@ function normalizeAccounts(list) {
     if (!a || typeof a.id !== 'string' || !a.id || seen.has(a.id)) continue;
     if (typeof a.configDir !== 'string' || !a.configDir) continue;
     seen.add(a.id);
-    out.push({ id: a.id, label: cleanLabel(a.label, a.id), configDir: a.configDir, ...(a.shareDefault === false ? { shareDefault: false } : {}), ...fixcloudFields(a) });
+    out.push({ id: a.id, label: cleanLabel(a.label, a.id), configDir: a.configDir, ...(a.shareDefault === false ? { shareDefault: false } : {}) });
   }
   return out;
 }
 
 const cleanLabel = (label, fallback) => (typeof label === 'string' && label.trim()) || fallback;
 
-// The fields a fixcloud account carries (contract v3.55): provider:'fixcloud', and the chosen model and base URL (kept
-// so the project's OpenCode boss model and the opencode.json provider can be rebuilt). A non-fixcloud account keeps none.
-const fixcloudFields = (a) => (a?.provider === FIXCLOUD
-  ? { provider: FIXCLOUD, ...(typeof a.model === 'string' && a.model ? { model: a.model } : {}), ...(typeof a.baseUrl === 'string' && a.baseUrl ? { baseUrl: a.baseUrl } : {}) }
-  : {});
-
 // configDir = <root>/<id>; in main, root is userData/accounts. main creates the folder.
-// provider (contract v3.55): 'fixcloud' marks a login-less OpenCode-backed account; it also carries model and baseUrl.
-// The default account and ordinary added accounts keep no provider/model/baseUrl.
-/** @param {any} state @param {any} label @param {{ id: string, root: string, provider?: string, model?: string, baseUrl?: string }} opts */
-function addAccount(state, label, { id, root, provider, model, baseUrl }) {
-  const account = { id, label: cleanLabel(label, `Hesap ${state.accounts.length}`), configDir: path.join(root, id), ...fixcloudFields({ provider, model, baseUrl }) };
+/** @param {any} state @param {any} label @param {{ id: string, root: string }} opts */
+function addAccount(state, label, { id, root }) {
+  const account = { id, label: cleanLabel(label, `Hesap ${state.accounts.length}`), configDir: path.join(root, id) };
   return { state: { ...state, accounts: [...state.accounts, account] }, account };
 }
 
@@ -67,15 +45,6 @@ function renameAccount(state, id, label) {
   const l = typeof label === 'string' ? label.trim() : '';
   if (!l || id === DEFAULT_ID) return state;
   return { ...state, accounts: state.accounts.map((a) => (a.id === id ? { ...a, label: l } : a)) };
-}
-
-/** v3.57: change a FixCloud account's model (and optionally its base URL) in place. Same state when nothing applies. */
-function setAccountModel(state, id, model, baseUrl) {
-  const a = state.accounts.find((x) => x.id === id);
-  const m = typeof model === 'string' ? model.trim() : '';
-  if (!a || !isFixcloud(a) || !m) return state;
-  const url = typeof baseUrl === 'string' ? baseUrl.trim() : '';
-  return { ...state, accounts: state.accounts.map((x) => (x.id === id ? { ...x, model: m, ...(url ? { baseUrl: url } : {}) } : x)) };
 }
 
 // "Use Default's plugins, skills and MCP servers": stored only when off; applies at the next session start.
@@ -307,8 +276,7 @@ const loginAccountId = (ptyId) =>
   typeof ptyId === 'string' && ptyId.startsWith(LOGIN_PREFIX) ? ptyId.slice(LOGIN_PREFIX.length) : null;
 
 module.exports = {
-  shellEnv, DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, setAccountShare, setAccountModel, removeAccount, accountOf, ptyEnv, sessionEnv,
-  FIXCLOUD, FIXCLOUD_DEFAULT_BASE, FIXCLOUD_DEFAULT_MODEL, isFixcloud,
+  shellEnv, DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, setAccountShare, removeAccount, accountOf, ptyEnv, sessionEnv,
   SAVINGS, SAVINGS_LEVELS, SAVINGS_DEFAULT,
   lastJsonObject, authFromStatus, authFromRun, localizeAuth, claudeCommand, withAuth, loginPtyId, loginAccountId,
 };
