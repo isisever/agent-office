@@ -1769,6 +1769,23 @@ function startFixcloudProxy() {
     const baseUrl = (account.baseUrl || A.FIXCLOUD_DEFAULT_BASE).replace(/\/+$/, '');
     const key = providerTokens().load(accountId);   // decrypt the real key ONLY here; never log/return/argv/state it
     const wantStream = body.stream === true;
+    // Safety net: bound every base64 image before translation so one screenshot can't blow the 262K context wall. Top-level
+    // user images are downscaled (Electron nativeImage) and forwarded as image_url; tool_result-nested and un-shrinkable
+    // images collapse to a short text note. resizeFn: decode → resize to 1024px longest side → JPEG q70; null on any failure.
+    const resizeFn = ({ data }) => {
+      try {
+        const img = nativeImage.createFromBuffer(Buffer.from(data, 'base64'));
+        if (img.isEmpty()) return null;
+        const { width, height } = img.getSize();
+        const longest = Math.max(width, height);
+        const sized = longest > 1024
+          ? img.resize(width >= height ? { width: 1024 } : { height: 1024 })
+          : img;
+        const jpeg = sized.toJPEG(70);
+        return { data: jpeg.toString('base64'), mediaType: 'image/jpeg' };
+      } catch { return null; }
+    };
+    try { FC.capImageBlocks(body, resizeFn, { maxB64Chars: 16000 }); } catch {}
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), FIXCLOUD_UPSTREAM_TIMEOUT_MS);
     try {

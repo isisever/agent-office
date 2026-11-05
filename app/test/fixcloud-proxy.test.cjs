@@ -232,6 +232,80 @@ test('fixcloud (v3.67): main.js gives a slow completion generous client timeouts
   assert.match(src, /AGENT_OFFICE_STREAM_IDLE"?\s*\] && export CLAUDE_STREAM_IDLE_TIMEOUT_MS="\$AGENT_OFFICE_STREAM_IDLE"/);
 });
 
+// v3.70: a single IMAGE block (e.g. a ~627 KB browser screenshot) must never contribute more than a small bounded
+// amount to the OpenAI request. The real pixel resize needs Electron nativeImage (main.js); here a FAKE resizeFn is
+// injected so the walking/threshold/placeholder logic runs under plain node --test.
+const bigB64 = 'A'.repeat(200000);   // ~150 KB of base64 -> well over the 16000-char cap
+const tinyResize = () => ({ data: 'QUJD', mediaType: 'image/jpeg' });   // returns a 4-char base64 (fits any cap)
+const noMaxBase64 = (body) => {   // assert no base64 blob longer than a few KB survives anywhere in the OpenAI body
+  const s = JSON.stringify(body);
+  for (const m of s.match(/[A-Za-z0-9+/]{4000,}={0,2}/g) || []) assert.fail(`a base64 blob of ${m.length} chars leaked into the OpenAI body`);
+};
+
+test('fixcloud (v3.70): a tool_result-nested image becomes a short [image omitted] note, not base64; the tool message is small', () => {
+  const body = { messages: [
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'tu1', name: 'Browser', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [
+      { type: 'text', text: 'screenshot:' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: bigB64 } },
+    ] }] },
+  ] };
+  const oai = FC.anthropicToOpenAI(body, 'deepseek-v4.1-flash');   // translated DIRECTLY (no capImageBlocks pre-pass)
+  const tool = oai.messages.find((m) => m.role === 'tool');
+  assert.ok(tool, 'the tool_result becomes a role:tool message');
+  assert.equal(typeof tool.content, 'string', 'an OpenAI tool message content must be a string');
+  assert.match(tool.content, /\[image omitted: image\/png, ~\d+ KB\]/);
+  assert.ok(!tool.content.includes(bigB64), 'the base64 must NOT be JSON.stringify\'d into the tool text');
+  assert.ok(tool.content.length < 4000, `the tool message must stay small, got ${tool.content.length} chars`);
+  noMaxBase64(oai);
+});
+
+test('fixcloud (v3.70): a top-level user image over the cap is downscaled and emitted as an OpenAI image_url', () => {
+  const body = { messages: [{ role: 'user', content: [
+    { type: 'text', text: 'what is this?' },
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: bigB64 } },
+  ] }] };
+  const info = FC.capImageBlocks(body, tinyResize, { maxB64Chars: 16000 });
+  assert.deepEqual(info, { scanned: 1, reduced: 1, removed: 0 });
+  const oai = FC.anthropicToOpenAI(body, 'deepseek-v4.1-flash');
+  const user = oai.messages.find((m) => m.role === 'user');
+  assert.ok(Array.isArray(user.content), 'a user message carrying an image uses the OpenAI parts array');
+  const img = user.content.find((p) => p.type === 'image_url');
+  assert.ok(img, 'the downscaled image is forwarded as image_url');
+  assert.equal(img.image_url.url, 'data:image/jpeg;base64,QUJD');
+  assert.ok(user.content.some((p) => p.type === 'text' && p.text === 'what is this?'));
+  noMaxBase64(oai);
+});
+
+test('fixcloud (v3.70): an image whose base64 is under the cap passes through unchanged (resizeFn not called)', () => {
+  const small = 'B'.repeat(100);
+  const body = { messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: small } }] }] };
+  const info = FC.capImageBlocks(body, () => assert.fail('resizeFn must not run for a small image'), { maxB64Chars: 16000 });
+  assert.deepEqual(info, { scanned: 1, reduced: 0, removed: 0 });
+  assert.equal(body.messages[0].content[0].source.data, small, 'the small image is untouched');
+});
+
+test('fixcloud (v3.70): capImageBlocks with resizeFn returning null replaces the oversized image with the note', () => {
+  const body = { messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: bigB64 } }] }] };
+  const info = FC.capImageBlocks(body, () => null, { maxB64Chars: 16000 });
+  assert.deepEqual(info, { scanned: 1, reduced: 0, removed: 1 });
+  const block = body.messages[0].content[0];
+  assert.equal(block.type, 'text');
+  assert.match(block.text, /\[image omitted: image\/jpeg, ~\d+ KB\]/);
+  // and such a note-only user message still translates cleanly (no image_url, plain string content), no base64 leak
+  const oai = FC.anthropicToOpenAI(body, 'deepseek-v4.1-flash');
+  noMaxBase64(oai);
+});
+
+test('fixcloud (v3.70): main.js runs capImageBlocks before the translation with an Electron nativeImage resizeFn', () => {
+  const src = mainSrc();
+  assert.match(src, /FC\.capImageBlocks\(body, resizeFn, \{ maxB64Chars: 16000 \}\)/);
+  assert.match(src, /nativeImage\.createFromBuffer\(Buffer\.from\(data, 'base64'\)\)/);
+  assert.match(src, /\.toJPEG\(70\)/);
+  // the pre-pass must come BEFORE the anthropicToOpenAI translation
+  assert.ok(src.indexOf('FC.capImageBlocks(body') < src.indexOf('FC.anthropicToOpenAI(body, model)'));
+});
+
 test('fixcloud (v3.63): a near-wall prompt gets a sub-floor output that still fits the context', () => {
   // Near the wall the old code forced the 1024 floor, so prompt + 1024 overshot the context by a hair and 400'd.
   // Size a prompt whose budget falls below the comfortable floor but whose prompt is still under the wall.
