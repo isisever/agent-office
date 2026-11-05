@@ -229,8 +229,10 @@ test('MCP: the add form refuses plain http to another host and keys in the addre
   assert.equal(v('http://a.io/mcp'), 'url-http');
   assert.equal(v('https://user:pw@a.io/mcp'), 'url-secret');
   assert.equal(v('https://a.io/mcp?key=K'), 'url-secret');
-  assert.equal(v('https://h/abc123def456ghi789jkl0/sse'), 'url-secret');
-  assert.equal(v('https://h/01234567-89ab-cdef-0123-456789abcdef/sse'), 'url-secret');
+  assert.equal(v('https://h/x?key=SECRET'), 'url-secret');
+  // a token in the path cannot move anywhere else, so the add form accepts it (the edit form only hides it)
+  assert.equal(v('https://h/abc123def456ghi789jkl0/sse'), null);
+  assert.equal(v('https://h/01234567-89ab-cdef-0123-456789abcdef/sse'), null);
   for (const u of ['https://h/sse', 'https://h/mcp', 'https://h/v1/messages', 'https://h/api/mcp', 'https://host']) assert.equal(v(u), null, u);
   assert.equal(v('ftp://a.io'), 'url');
   for (const l of ['en', 'tr']) {
