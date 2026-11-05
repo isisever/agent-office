@@ -232,8 +232,8 @@ window.agentOffice = {
   },
   mcp: {
     list: async () => ({ servers: [
-      { name: 'github', source: 'user', type: 'http', host: 'api.githubcopilot.com', readOnly: true },
-      { name: 'files', source: 'project', type: 'stdio', host: '', readOnly: true, approved: true },
+      { name: 'github', source: 'user', type: 'http', host: 'api.githubcopilot.com', readOnly: true, where: 'user' },
+      { name: 'files', source: 'project', type: 'stdio', host: '', readOnly: true, approved: true, where: 'project' },
       ...mockMcp.map((s) => ({ ...s, source: 'app', readOnly: false, hasToken: s.type !== 'stdio' })),
     ] }),
     add: async (f) => {
@@ -248,6 +248,21 @@ window.agentOffice = {
       mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: f.type === 'sse' ? 'sse' : 'http', host, scope: f.scope === 'all' ? 'all' : 'project' });
       return { ok: true, restarted: [] };
     },
+    // v3.69: the mock keeps no address, command or token, so the edit form opens with the name, type and scope only
+    get: async (id) => { const s = mockMcp.find((x) => x.id === id); return s ? { ok: true, server: { id: s.id, name: s.name, type: s.type, scope: s.scope === 'all' ? 'all' : (projects[0]?.id || 'all'), url: '', command: '', args: [], env: {}, hasToken: s.type !== 'stdio' } } : { ok: false, error: 'unknown' }; },
+    update: async (id, f) => {
+      const s = mockMcp.find((x) => x.id === id);
+      if (!s) return { ok: false, error: 'unknown' };
+      if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
+      let host = ''; try { host = f?.type === 'stdio' ? '' : new URL(f.url).host; } catch { host = s.host; }
+      Object.assign(s, { name: String(f.name).trim().toLowerCase(), type: f.type === 'stdio' ? 'stdio' : f.type === 'sse' ? 'sse' : 'http', host, scope: f.scope === 'all' ? 'all' : 'project' });
+      return { ok: true, restarted: [] };
+    },
+    // v3.69 a server in Claude Code's files: values masked, the mock writes nothing
+    getFile: async (_pid, where, name) => ({ ok: true, server: name === 'files'
+      ? { name, type: 'stdio', command: 'npx', args: ['-y', 'files-mcp'], env: { ROOT: '••••••' }, where }
+      : { name, type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: '••••••' }, where: where === 'origin' ? 'user' : where } }),
+    updateFile: async (_pid, _where, _name, f) => (String(f?.name || '').trim() ? { ok: true, name: f.name } : { ok: false, error: 'name' }),
     remove: async (id) => { const i = mockMcp.findIndex((s) => s.id === id); if (i >= 0) mockMcp.splice(i, 1); return { ok: i >= 0, restarted: [] }; },
   },
 

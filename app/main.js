@@ -6,6 +6,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const P = require('./src/projects.js');
 const MS = require('./src/mcp-servers.js');
+const MF = require('./src/mcp-files.js');
 const SF = require('./src/state-file.js');
 const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
@@ -2923,15 +2924,20 @@ ipcMain.handle('projects:add', async () => {
 });
 // --- one MCP panel (contract v3.44): every server a project's Claude Code sessions get (read-only from Claude
 // Code's own files) and the remote ones added here, for all projects or one. No URL path, header or token leaves main.
+const listingOf = (p) => MS.listing({ account: A.accountOf(state, p), home: app.getPath('home'), cwd: isDir(p.dir) ? p.dir : null, office: officeInput(p), servers: appServers(), projectId: p.id, boss: P.managerOf(state, p), hasToken: (sid) => tokens().has(sid) });
 ipcMain.handle('mcp:list', (_e, projectId) => {
   const p = P.findProject(state, projectId);
   if (!p) return { servers: [] };
   try {
-    return { servers: MS.listing({ account: A.accountOf(state, p), home: app.getPath('home'), cwd: isDir(p.dir) ? p.dir : null, office: officeInput(p), servers: appServers(), projectId: p.id, boss: P.managerOf(state, p), hasToken: (sid) => tokens().has(sid) }) };
+    // v3.69 another project's server: its origin folder becomes that project's id (originId) for the edit button
+    return { servers: listingOf(p).map((/** @type {any} */ { origin, ...s }) => {
+      const from = origin ? state.projects.find((x) => x.dir === origin && x.id !== p.id) : null;
+      return from ? { ...s, originId: from.id } : s;
+    }) };
   } catch (e) { console.error('mcp:list', e.message); return { servers: [] }; }
 });
 /** Idle Claude Code sessions the change reaches restart in their conversation; busy ones take it at their next start. */
-const restartFor = (scope) => state.projects.filter((p) => P.engineOf(p) === 'claude' && (scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));
+const restartFor = (...scopes) => state.projects.filter((p) => P.engineOf(p) === 'claude' && scopes.some((scope) => scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));
 // Bundled skill packs (contract v3.45): the list (never a path), the global on/off and the per-project override.
 // A change restarts the idle Claude Code sessions it reaches in their conversation; busy ones take it at their next start.
 ipcMain.handle('skillPacks:list', (_e, projectId) => {
@@ -2957,11 +2963,15 @@ ipcMain.handle('projects:setSkillPacks', (_e, projectId, values) => {
   const p = P.findProject(state, projectId);
   return { restarted: p && SP.changedProjects(before, state, skillPacks(), P.engineOf).includes(p.id) ? restartIdle(p) : [] };
 });
-ipcMain.handle('mcp:add', (_e, f) => {
+/** The add / edit form as sent by the renderer → the fields mcp-servers.js takes (the token is handled apart). */
+function mcpForm(f) {
   const type = f?.type === 'sse' ? 'sse' : f?.type === 'stdio' ? 'stdio' : 'http';
-  const form = type === 'stdio'
+  return type === 'stdio'
     ? { name: String(f?.name || ''), type, command: String(f?.command || '').trim(), args: f?.args, env: f?.env, scope: f?.scope } // v3.59 stdio/CLI server (no token)
     : { name: String(f?.name || ''), url: String(f?.url || '').trim(), type, scope: f?.scope };
+}
+ipcMain.handle('mcp:add', (_e, f) => {
+  const form = mcpForm(f);
   if (!stateWritable) return { ok: false, error: 'state' }; // it could not be saved: the next start would sweep its token
   const bad = MS.validate(form, state.projects.map((p) => p.id));
   if (bad) return { ok: false, error: bad };
@@ -2970,6 +2980,51 @@ ipcMain.handle('mcp:add', (_e, f) => {
   if (!tokens().save(r.server.id, form.type === 'stdio' ? '' : MS.cleanToken(f?.token))) return { ok: false, error: 'token' }; // nothing added (stdio carries no token)
   commit({ ...state, mcpServers: r.servers });
   return { ok: true, restarted: restartFor(r.server.scope) };
+});
+// v3.69 edit an app-added server: mcp:get fills the form (MS.editable: never the token, only hasToken; never an
+// address carrying a key), mcp:update saves it under the same id. Token: a new one replaces the stored one, clearToken
+// removes it, blank keeps it; a server that became stdio loses it. Saved before state, so a failed save changes nothing.
+ipcMain.handle('mcp:get', (_e, sid) => {
+  const s = appServers().find((x) => x.id === sid && !x.held);
+  return s ? { ok: true, server: MS.editable(s, tokens().has(s.id)) } : { ok: false, error: 'unknown' };
+});
+ipcMain.handle('mcp:update', (_e, sid, f) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  const r = MS.updateServer(appServers(), String(sid || ''), mcpForm(f), state.projects.map((p) => p.id));
+  if (!r.servers) return { ok: false, error: r.error };
+  const stdio = r.server.type === 'stdio';
+  const token = stdio ? '' : MS.cleanToken(f?.token);
+  if ((stdio || token || f?.clearToken === true) && !tokens().save(r.server.id, token)) return { ok: false, error: 'token' };
+  commit({ ...state, mcpServers: r.servers });
+  return { ok: true, restarted: restartFor(r.before.scope, r.server.scope) }; // the sessions it left and the ones it reaches now
+});
+// v3.69 a server in Claude Code's own files (the panel row's `where`): mcp:getFile fills the form with header/env
+// names only (MF.editable, values masked), mcp:updateFile changes that one entry in that file (MF.editFile: read again,
+// other keys kept, atomic). No restart here: the MCP reload (v3.11) sees the file change and restarts idle sessions.
+function mcpFileTarget(projectId, where) {
+  const p = P.findProject(state, projectId);
+  if (!p || !MF.WHERE.includes(where)) return null;
+  return MF.target({ where, account: A.accountOf(state, p), home: app.getPath('home'), cwd: isDir(p.dir) ? p.dir : null });
+}
+// where 'origin': a row of another project (originId), edited where that project's own panel row says it lives
+ipcMain.handle('mcp:getFile', (_e, projectId, where, name) => {
+  if (where === 'origin') {
+    const p = P.findProject(state, projectId);
+    /** @type {any} */ let row = null;
+    try { row = p ? listingOf(p).find((/** @type {any} */ s) => s.name === String(name) && s.where) : null; } catch {}
+    if (!row) return { ok: false, error: 'unknown' };
+    where = row.where;
+  }
+  const tg = mcpFileTarget(projectId, where);
+  const conf = tg ? MF.mapAt(readJson(tg.file), tg.keys)?.[String(name)] : null;
+  return conf && typeof conf === 'object' ? { ok: true, server: { ...MF.editable(String(name), conf), where } } : { ok: false, error: 'unknown' };
+});
+ipcMain.handle('mcp:updateFile', (_e, projectId, where, name, f) => {
+  const tg = mcpFileTarget(projectId, where);
+  if (!tg) return { ok: false, error: 'unknown' };
+  const r = MF.editFile(tg.file, tg.keys, String(name), f);
+  if (r.ok) checkMcp();
+  return r;
 });
 ipcMain.handle('mcp:remove', (_e, sid) => {
   const s = appServers().find((x) => x.id === sid);

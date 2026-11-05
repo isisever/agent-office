@@ -603,7 +603,7 @@ sidebar = mountSidebar($('sidebar'), {
     set: (id, on) => skillPackChange(() => api.skillPacks?.set(id, on)),
     setProject: (projectId, values) => skillPackChange(() => api.projects.setSkillPacks?.(projectId, values)),
   },
-  mcp: { list: (id) => api.mcp.list(id).catch(() => null), add: (f) => mcpChange(() => api.mcp.add(f)), remove: (id) => mcpChange(() => api.mcp.remove(id)) },
+  mcp: { list: (id) => api.mcp.list(id).catch(() => null), add: (f) => mcpChange(() => api.mcp.add(f)), get: (id) => api.mcp.get(id).catch(() => null), update: (id, f) => mcpChange(() => api.mcp.update(id, f)), getFile: (pid, where, name) => api.mcp.getFile(pid, where, name).catch(() => null), updateFile: (pid, where, name, f) => api.mcp.updateFile(pid, where, name, f).catch(() => ({ ok: false, error: 'failed' })), remove: (id) => mcpChange(() => api.mcp.remove(id)) },
 });
 
 login = mountLogin(document.body, { getTheme: () => theme, onClose: () => focusActive() });

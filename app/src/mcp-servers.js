@@ -96,13 +96,16 @@ function normalizeServers(list, projectIds) {
   return out;
 }
 
-/** Error code for the add form ('name' | 'command' | 'url' | 'url-http' | 'url-secret' | 'type' | 'scope') or null. */
-function validate(f, projectIds = []) {
+/**
+ * Error code for the add / edit form ('name' | 'command' | 'url' | 'url-http' | 'url-secret' | 'type' | 'scope') or
+ * null. keptUrl (edit, v3.69): the address is the stored one, so only cleanUrl applies (like a stored server).
+ */
+function validate(f, projectIds = [], { keptUrl = false } = {}) {
   if (!serverName(f?.name)) return 'name';
   if (f?.type === 'stdio') {
     if (!cleanCommand(f?.command)) return 'command';
   } else {
-    const bad = urlProblem(f?.url);
+    const bad = keptUrl ? (cleanUrl(f?.url) ? null : 'url') : urlProblem(f?.url);
     if (bad) return bad;
     if (f?.type !== undefined && !TYPES.includes(f.type)) return 'type';
   }
@@ -127,6 +130,37 @@ function addServer(servers, f, newId) {
   return clash ? { error: 'name-used' } : { servers: [...servers, server], server };
 }
 const removeServer = (servers, id) => servers.filter((s) => s.id !== id);
+
+/**
+ * Edits an app-added server in place (v3.69): same id (so its token stays keyed to it), new name, transport, address
+ * or command/args/env and scope; validated like the add form. A blank address, or the stored one unchanged, keeps the
+ * stored address (the edit form gets no address that carries a key, see `editable`). A held server is not edited
+ * (it can only be removed). → { servers, server, before } | { error: 'unknown' | 'name-used' | <validate code> }
+ * @param {any[]} servers @param {string} id @param {any} f @param {string[]} [projectIds]
+ */
+function updateServer(servers, id, f, projectIds = []) {
+  const before = servers.find((s) => s.id === id);
+  if (!before || before.held) return { error: 'unknown' };
+  const typed = String(f?.url || '').trim();
+  const keptUrl = f?.type !== 'stdio' && before.type !== 'stdio' && (!typed || typed === before.url);
+  const form = keptUrl ? { ...f, url: before.url } : f;
+  const bad = validate(form, projectIds, { keptUrl });
+  if (bad) return { error: bad };
+  const r = addServer(servers.filter((s) => s.id !== id), form, id);
+  if (!r.servers) return r;
+  return { servers: servers.map((s) => (s.id === id ? r.server : s)), server: r.server, before };
+}
+
+/**
+ * What the edit form is filled with (v3.69): the server's own fields, for main to hand to the renderer. Never its
+ * token (only whether one is stored), and never an address with a user:password@ part or a query (an old v3.43
+ * connection may have one): that one comes back as url '' with urlHidden, and a blank address keeps it.
+ */
+function editable(s, hasToken = false) {
+  if (s.type === 'stdio') return { id: s.id, name: s.name, type: 'stdio', command: s.command, args: [...(s.args || [])], env: { ...(s.env || {}) }, scope: s.scope };
+  const hidden = urlProblem(s.url) === 'url-secret';
+  return { id: s.id, name: s.name, type: s.type, url: hidden ? '' : s.url, ...(hidden ? { urlHidden: true } : {}), scope: s.scope, hasToken: Boolean(hasToken) };
+}
 /** The servers of a project removed from this machine: → { servers, gone: ids whose token must go } */
 function dropProject(servers, projectId) {
   return { servers: servers.filter((s) => s.scope !== projectId), gone: servers.filter((s) => s.scope === projectId).map((s) => s.id) };
@@ -305,7 +339,7 @@ function settleTokens(servers, from, to, { sweep = true } = {}) {
 
 /**
  * What the MCP panel lists for one project's Claude Code sessions (v3.44). Names, transport, where each comes from
- * and the host of remote ones; never a URL path, header, env, argument or token.
+ * and the host of remote ones; never a URL path, header, env, argument or token. where / origin (v3.69): see push below.
  * source: 'user' (~/.claude.json mcpServers) | 'local' (~/.claude.json projects[dir]) | 'account' (the account's own
  * .claude.json) | 'project' (.mcp.json; approved: false = Claude Code asks before using it) | 'office' (another
  * project's, v3.9 share) | 'app' (added in Agent Office; scope 'all' | 'project'; shadowed: a server of that name
@@ -327,6 +361,7 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
   const out = [];
   const seen = new Set();
   const shown = new Set();
+  // where (v3.69): which of Claude Code's files holds it, for the edit button (src/mcp-files.js); none for 'office'
   const push = (name, c, source, more = {}) => {
     if (shown.has(name)) return;
     shown.add(name);
@@ -334,10 +369,15 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
     out.push({ name, source, type: typeOf(c), host: host(c), readOnly: true, ...more });
   };
   const approved = (n) => SC.isApproved(plan.own.approvals, n);
-  for (const [n, c] of Object.entries(plan.own.local)) push(n, c, isDefault ? 'local' : 'account');
-  for (const [n, c] of Object.entries(plan.own.project)) push(n, c, 'project', { approved: approved(n) });
-  for (const [n, c] of Object.entries(plan.own.user)) push(n, c, isDefault ? 'user' : 'account');
-  for (const [n, c] of Object.entries(plan.servers)) push(n, c, isObj(defLocal) && isObj(defLocal[n]) ? 'local' : isObj(defaultConfig?.mcpServers?.[n]) ? 'user' : 'office');
+  for (const [n, c] of Object.entries(plan.own.local)) push(n, c, isDefault ? 'local' : 'account', { where: 'local' });
+  for (const [n, c] of Object.entries(plan.own.project)) push(n, c, 'project', { approved: approved(n), where: 'project' });
+  for (const [n, c] of Object.entries(plan.own.user)) push(n, c, isDefault ? 'user' : 'account', { where: 'user' });
+  for (const [n, c] of Object.entries(plan.servers)) {
+    const src = isObj(defLocal) && isObj(defLocal[n]) ? 'local' : isObj(defaultConfig?.mcpServers?.[n]) ? 'user' : 'office';
+    // another project's (v3.9): origin = that project's folder, so main can send the edit to that project's own row
+    const origin = src === 'office' ? Object.keys(plan.mcpNames).find((k) => k !== office?.current && plan.mcpNames[k].includes(n)) : null;
+    push(n, c, src, src === 'office' ? (origin ? { origin } : {}) : { where: `default-${src}` });
+  }
   for (const s of serversFor(servers.filter((x) => !x.held), projectId)) {
     const shadowed = seen.has(s.name);
     const bossShadowed = !shadowed && boss && s.name === 'agent-office';
@@ -351,7 +391,7 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
 }
 
 module.exports = {
-  TYPES, serverName, cleanUrl, urlProblem, hostOf, cleanToken, typeOf, normalizeServers, validate, serversFor, addServer, removeServer,
+  TYPES, serverName, cleanUrl, urlProblem, hostOf, cleanToken, typeOf, normalizeServers, validate, serversFor, addServer, removeServer, updateServer, editable,
   dropProject, dirKey, holdProject, adoptHeld, serverConfig, appConfigs, sessionServers, migrateConnections, tokenStore, moveToken,
   pendingMoves, settleTokens, listing,
 };

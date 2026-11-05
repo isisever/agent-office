@@ -1049,11 +1049,16 @@ label.sb-langrow { cursor: pointer; }
 .sb-modal-form .sb-field input[readonly] { opacity: .7; }
 .sb-modal-form .sb-botcolor { padding: 4px 0; font-size: 12px; opacity: 1; }
 .sb-mcp-panel .sb-empty { padding: 4px 12px; }
-.sb-mcp-row { display: flex; align-items: baseline; gap: 6px; padding: 3px 12px; font-size: 12px; }
-.sb-mcp-row .sb-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sb-mcp-row .sb-mcp-src { flex: 1; min-width: 0; opacity: .6; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* MCP rows look like project rows (.sb-proj grid: dot, name, buttons; transport + source below); nothing to select */
+.sb-mcp-row { cursor: default; }
+.sb-mcp-row .sb-dot { width: 8px; height: 8px; justify-self: center; }
+.sb-mcp-row .sb-meta { flex-wrap: nowrap; }
+.sb-mcp-row .sb-mcp-type { letter-spacing: .5px; opacity: .85; color: var(--accent); white-space: nowrap; flex-shrink: 0; }
+.sb-mcp-row .sb-mcp-src { flex: 1 1 0; min-width: 0; }
 .sb-mcp-row.shadowed .sb-name { text-decoration: line-through; opacity: .6; }
 .sb-mcp-row.away .sb-name { font-style: italic; opacity: .6; }
+.sb-mcp-row:hover .sb-x { opacity: .6; }
+.sb-mcp-row .sb-edit { font-size: 16px; opacity: .55; } /* v3.69 edit: always shown, like the project row's ⚙ */
 #sb-mcp-note { padding: 2px 12px; font-size: 10px; }
 
 /* Bundled skill packs (contract v3.45): global Settings and the project popup */
