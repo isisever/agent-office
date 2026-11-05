@@ -74,8 +74,6 @@ export function mountSidebar(el, on) {
   let projKey = '';
   let acctKey = '';
   let editing = null; // { id: string | null } — account name being edited (null id = new account)
-  let fixModelEdit = null; // v3.57: id of the FixCloud account whose model is being edited
-  let fixForm = null; // v3.54: the inline FixCloud add form is open; { forProject? }
   let langSetting = 'auto';
   /** @type {{ code: string, name: string }[]} */
   let languages = []; // locales/*.json (from main, LanguageInfo.languages)
@@ -273,13 +271,10 @@ export function mountSidebar(el, on) {
         }
         queue('account', async () => {
           const eng = Object.keys(ENGINE_OPT).find((k) => ENGINE_OPT[k] === v) || null;
-          // v3.60: a fixcloud account runs on the claude engine (in-process proxy); setAccount binds it (engine→claude,
-          // any fixcloud/<model> cleared). Skip the setEngine reset for a fixcloud target so it does not override that.
-          const toFix = accounts.find((a) => a.id === v)?.provider === 'fixcloud';
           // leaving agy/cmd for another Claude account: the account first, so the restarted tabs use it
           const leaving = !eng && engine !== 'claude';
           if (leaving && v !== p.accountId) await on.setAccount(p.id, v);
-          if ((eng || engine !== 'claude') && !toFix) {
+          if (eng || engine !== 'claude') {
             const r = await on.setEngine?.(p.id, eng);
             if (!r || r.refused) { // failed: the old account again, if it was already moved
               if (leaving && v !== p.accountId) await on.setAccount(p.id, p.accountId);
@@ -770,64 +765,10 @@ export function mountSidebar(el, on) {
     return input;
   }
 
-  let fixListSeq = 0;
-  /** v3.58: a free-text model input plus a "Fetch models" button that fills its <datalist> from the endpoint. getOpts() returns the
-   *  IPC options, or null when the fetch cannot start yet (then onNeedKey runs). Failure shows an inline note; typing still works. */
-  function modelFetcher(input, getOpts, onNeedKey) {
-    const listId = `sb-fix-models-${++fixListSeq}`;
-    input.setAttribute('list', listId);
-    const datalist = h('datalist', { id: listId });
-    const note = h('span', { class: 'sb-fix-note' });
-    const btn = h('button', { class: 'sb-btn', type: 'button' }, t('sidebar.fixFetchModels'));
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      note.textContent = '';
-      const opts = getOpts();
-      if (!opts) { note.textContent = onNeedKey(); return; }
-      btn.disabled = true; btn.textContent = t('sidebar.fixFetchModelsLoading');
-      let r = null;
-      try { r = await on.listFixcloudModels?.(opts); } catch { r = null; }
-      btn.disabled = false; btn.textContent = t('sidebar.fixFetchModels');
-      if (!r || !r.ok) { note.textContent = t('sidebar.fixFetchModelsErr'); return; }
-      datalist.replaceChildren(...r.models.map((m) => h('option', { value: m })));
-      if (!input.value.trim() && r.models[0]) input.value = r.models[0];
-    });
-    return [btn, note, datalist];
-  }
-
-  /** v3.57: a FixCloud account's row — the neutral ready line plus its model with an in-place edit. */
-  function fixcloudRow(a) {
-    const ready = h('div', { class: 'sb-auth' }, h('span', { class: 'sb-auth-text', title: t('sidebar.fixReadyTitle') }, t('sidebar.fixReady')));
-    if (fixModelEdit === a.id) {
-      const input = h('input', { class: 'sb-input', value: a.model || '', placeholder: t('sidebar.fixModel'), onkeydown: (e) => e.stopPropagation() });
-      const close = () => { fixModelEdit = null; renderAccounts(); };
-      const save = () => {
-        const v = input.value.trim();
-        if (!v) return input.focus();
-        if (v !== a.model) on.setFixcloudModel?.(a.id, v);
-        close();
-      };
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); else if (e.key === 'Escape') { e.stopPropagation(); close(); } });
-      requestAnimationFrame(() => { input.focus(); input.select(); });
-      const fetcher = modelFetcher(input, () => ({ accountId: a.id, baseUrl: a.baseUrl }), () => '');
-      return h('div', { class: 'sb-fix-field' }, ready, input,
-        h('div', { class: 'sb-fix-actions' }, fetcher[0],
-          h('button', { class: 'sb-btn primary', onclick: (e) => { e.stopPropagation(); save(); } }, t('sidebar.fixModelSave')),
-          h('button', { class: 'sb-btn', onclick: (e) => { e.stopPropagation(); close(); } }, t('sidebar.fixCancel'))),
-        fetcher[1], fetcher[2]);
-    }
-    return h('div', { class: 'sb-auth' },
-      h('span', { class: 'sb-auth-text', title: t('sidebar.fixReadyTitle') }, t('sidebar.fixReady')),
-      h('span', { class: 'sb-method', title: a.model || '' }, a.model || ''),
-      h('button', { class: 'sb-x', title: t('sidebar.fixChangeModel'), onclick: (e) => { e.stopPropagation(); fixModelEdit = a.id; renderAccounts(); } }, '✎'));
-  }
-
   /** The account's login row: email + method or state, with Giriş yap / Çıkış yap next to it. */
   function authRow(a, isDefault) {
     const auth = a.auth;
     if (!auth?.state) return null;
-    // v3.54: a fixcloud account has no login; show a neutral line, no Giriş/Çıkış buttons.
-    if (a.provider === 'fixcloud') return fixcloudRow(a);
     const btn = (cls, text, title, fn) => h('button', { class: 'sb-btn ' + cls, title, onclick: (e) => { e.stopPropagation(); fn(); } }, text);
     const loginBtn = () => btn('primary', t('sidebar.login'), t('sidebar.loginTitle', { label: labelOf(a) }), () => on.login(a.id));
     switch (auth.state) {
@@ -1033,36 +974,7 @@ export function mountSidebar(el, on) {
       item(t('sidebar.addClaude'), t('sidebar.newAccountTitle'), () => { editing = { id: null, ...(addFor ? { forProject: addFor } : {}) }; renderAccounts(); }),
       item(t('sidebar.addAgy'), t('sidebar.addAgyTitle'), () => { renderAccounts(); on.addAgy?.(); }),
       item(t('sidebar.addCmd'), t('sidebar.addCmdTitle'), () => { renderAccounts(); on.addCmd?.(); }),
-      item(t('sidebar.addOc'), t('sidebar.addOcTitle'), () => { renderAccounts(); on.addOc?.(); }),
-      item(t('sidebar.addFix'), t('sidebar.addFixTitle'), () => { fixForm = { ...(addFor ? { forProject: addFor } : {}) }; renderAccounts(); }));
-  }
-
-  /** v3.54: the inline FixCloud add form in Accounts — Name, API key (required), Model, Base URL (editable). */
-  function fixcloudForm() {
-    const forProject = fixForm?.forProject;
-    const name = h('input', { class: 'sb-input', value: 'FixCloud', maxLength: 40, placeholder: t('sidebar.accountName'), onkeydown: (e) => e.stopPropagation() });
-    const apiKey = h('input', { class: 'sb-input', type: 'password', placeholder: t('sidebar.fixApiKey'), onkeydown: (e) => e.stopPropagation() });
-    const model = h('input', { class: 'sb-input', value: 'qwen3.6-35b-a3b', placeholder: t('sidebar.fixModel'), onkeydown: (e) => e.stopPropagation() });
-    const baseUrl = h('input', { class: 'sb-input', value: 'https://llm.fixcloud.ai/v1', placeholder: t('sidebar.fixBaseUrl'), onkeydown: (e) => e.stopPropagation() });
-    const close = () => { fixForm = null; renderAccounts(); };
-    const fetcher = modelFetcher(model, () => (apiKey.value.trim() ? { apiKey: apiKey.value.trim(), baseUrl: baseUrl.value.trim() } : null), () => { apiKey.focus(); return t('sidebar.fixApiKey'); });
-    const field = (label, input) => h('label', { class: 'sb-fix-field' }, h('span', {}, label), input);
-    const save = () => {
-      if (!apiKey.value.trim()) return apiKey.focus();
-      on.addFixcloud?.({ label: name.value.trim() || 'FixCloud', apiKey: apiKey.value.trim(), model: model.value.trim(), baseUrl: baseUrl.value.trim() }, forProject);
-      fixForm = null; renderAccounts();
-    };
-    requestAnimationFrame(() => apiKey.focus());
-    return h('li', { class: 'sb-acc sb-fix-form', onkeydown: (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } } },
-      field(t('sidebar.accountName'), name),
-      field(t('sidebar.fixApiKey'), apiKey),
-      field(t('sidebar.fixModel'), model),
-      h('div', { class: 'sb-fix-actions' }, fetcher[0]), fetcher[1], fetcher[2],
-      field(t('sidebar.fixBaseUrl'), baseUrl),
-      h('p', { class: 'sb-fix-note' }, t('sidebar.fixBaseNote')),
-      h('div', { class: 'sb-fix-actions' },
-        h('button', { class: 'sb-btn primary', onclick: save }, t('sidebar.fixSave')),
-        h('button', { class: 'sb-btn', onclick: close }, t('sidebar.fixCancel'))));
+      item(t('sidebar.addOc'), t('sidebar.addOcTitle'), () => { renderAccounts(); on.addOc?.(); }));
   }
 
   function renderAccounts() {
@@ -1079,7 +991,6 @@ export function mountSidebar(el, on) {
           h('span', { class: 'sb-adot', title: hasText(`sidebar.authDot.${state}`) ? t(`sidebar.authDot.${state}`) : '' }),
           h('span', { class: 'sb-name' }, labelOf(a)),
           isDefault ? h('span', { class: 'sb-tag' }, t('sidebar.system')) : null,
-          a.provider === 'fixcloud' ? h('span', { class: 'sb-tag', title: t('sidebar.fixBadgeTitle') }, t('sidebar.fixBadge')) : null,
           h('button', {
             class: 'sb-x', title: t('sidebar.refreshAuth'), disabled: state === 'checking',
             onclick: () => on.refreshAuth(a.id),
@@ -1100,7 +1011,6 @@ export function mountSidebar(el, on) {
         if (label) on.addAccount(label, forProject);
       })));
     }
-    if (fixForm) rows.push(fixcloudForm());
     const agy = agyRow();
     const cmd = cmdRow();
     const oc = ocRow();
@@ -1124,14 +1034,14 @@ export function mountSidebar(el, on) {
   });
 
   // reset times and "x dk önce" go stale on their own: redraw once a minute
-  setInterval(() => { if (!editing && !fixForm && !fixModelEdit && accounts.some((a) => a.usage)) renderAccounts(); }, 60000);
+  setInterval(() => { if (!editing && accounts.some((a) => a.usage)) renderAccounts(); }, 60000);
 
   // language changed: everything is redrawn; if an account name is being edited, accounts are drawn when editing ends
   // (so the typed name is not lost; nameInput calls renderAccounts when done)
   onLang(() => {
     renderChrome();
     renderProjects();
-    if (!editing && !fixForm && !fixModelEdit) renderAccounts();
+    if (!editing) renderAccounts();
   });
 
   return {
@@ -1198,33 +1108,33 @@ export function mountSidebar(el, on) {
       const pk = JSON.stringify([projects, activeId, [...status], [...asleep], [...attn], accounts.map((a) => [a.id, a.label, a.auth?.state])]);
       if (pk !== projKey) { projKey = pk; renderProjects(); }
       const ak = JSON.stringify([accounts, agyShown(), cmdShown(), ocShown()]);
-      if (ak !== acctKey && !editing && !fixForm && !fixModelEdit) { acctKey = ak; renderAccounts(); }
+      if (ak !== acctKey && !editing) { acctKey = ak; renderAccounts(); }
     },
     /** Antigravity's login state (contract v3.24, main's AgyAuth). */
     setAgyAuth(a) {
       const before = JSON.stringify([agyAuth?.state, agyAuth?.email]);
       agyAuth = a || null;
       if (before !== JSON.stringify([agyAuth?.state, agyAuth?.email])) renderProjects();
-      if (!editing && !fixForm && !fixModelEdit) renderAccounts();
+      if (!editing) renderAccounts();
     },
     /** Command Code's login state (contract v3.30, main's CmdAuth). */
     setCmdAuth(a) {
       const before = cmdAuth?.state;
       cmdAuth = a || null;
       if (before !== cmdAuth?.state) renderProjects();
-      if (!editing && !fixForm && !fixModelEdit) renderAccounts();
+      if (!editing) renderAccounts();
     },
     /** OpenCode's login state (contract v3.40, main's OcAuth). */
     setOcAuth(a) {
       ocAuth = a || null;
-      if (!editing && !fixForm && !fixModelEdit) renderAccounts();
+      if (!editing) renderAccounts();
     },
     /** The Antigravity / Command Code / OpenCode rows' setting (contract v3.30, prefs showAgyAccount / showCmdAccount). */
     setEngineRows(p) {
       showAgy = typeof p?.showAgyAccount === 'boolean' ? p.showAgyAccount : null;
       showCmd = typeof p?.showCmdAccount === 'boolean' ? p.showCmdAccount : null;
       showOc = typeof p?.showOcAccount === 'boolean' ? p.showOcAccount : null;
-      if (!editing && !fixForm && !fixModelEdit) renderAccounts();
+      if (!editing) renderAccounts();
     },
     /** Today's token usage per project: [{ id, usd, total, pct }] (contract v3.13); the line opens the usage panel. */
     setTokenBriefs(list) {

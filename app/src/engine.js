@@ -195,9 +195,8 @@ const OC_FORCED_ENV = {
 
 /**
  * The env OpenCode starts with: agyEnv's base allowlist (without agy's own names and families) plus OpenCode's own
- * variables and provider API keys; the same deny rule (Claude, Anthropic, the office, MCP). `extra` (v3.55): values
- * forced in AFTER the filter, beside OC_FORCED_ENV, so the filter cannot drop them — main passes a fixcloud account's
- * decrypted FIXCLOUD_API_KEY here (engine.js never reads a key itself; the decryption happens only in main).
+ * variables and provider API keys; the same deny rule (Claude, Anthropic, the office, MCP). `extra`: values forced in
+ * AFTER the filter, beside OC_FORCED_ENV, so the filter cannot drop them (engine.js never reads a key itself).
  * @param {Record<string, string | undefined>} base @param {string} [platform] @param {Record<string, string>} [extra]
  * @returns {Record<string, string>}
  */

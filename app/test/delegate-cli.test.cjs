@@ -24,10 +24,10 @@ test('readManifest: missing env / bad JSON / no repoTop are clear errors', () =>
 });
 
 test('resolveAccount: by id, by label (case-insensitive), clear error otherwise', () => {
-  const list = [{ id: 'a1', label: 'Work', engine: 'claude' }, { id: 'b2', label: 'FixCloud', engine: 'opencode' }];
+  const list = [{ id: 'a1', label: 'Work', engine: 'claude' }, { id: 'b2', label: 'Other', engine: 'claude' }];
   assert.equal(CLI.resolveAccount(list, 'a1').id, 'a1');
   assert.equal(CLI.resolveAccount(list, 'work').id, 'a1');
-  assert.throws(() => CLI.resolveAccount(list, 'nope'), /not a delegatable account.*Work, FixCloud/s);
+  assert.throws(() => CLI.resolveAccount(list, 'nope'), /not a delegatable account.*Work, Other/s);
   assert.throws(() => CLI.resolveAccount([{ id: 'x', label: 'Dup' }, { id: 'y', label: 'Dup' }], 'dup'), /more than one/);
 });
 

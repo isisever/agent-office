@@ -7,7 +7,6 @@
 // `git diff --stat <base>..HEAD` so the boss can cherry-pick. The key is never printed or logged.
 const fs = require('fs');
 const os = require('os');
-const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
 const D = require('./delegate.js');
@@ -105,11 +104,8 @@ function run({ argv, env = process.env, out = process.stdout, deps = {} } = {}) 
   const add = git(wt.args);
   if (add.status !== 0) throw new Error(`git worktree add failed: ${String(add.stderr || '').trim()}`);
 
-  // opencode delegates read their key from the manifest's keyFile (same sanitised name main.js wrote); claude use configDir
-  const keyFile = account.engine === 'opencode'
-    ? (account.keyFile || (man.keyDir && account.id ? path.join(man.keyDir, String(account.id).replace(/[^\w-]/g, '_')) : undefined))
-    : undefined;
-  const launch = D.delegateLaunch({ account, task, worktree: wt.path, keyFile, ocConfigHome: man.ocConfigHome, env, platform: process.platform });
+  // delegates are claude-only: they use the account's configDir, no key is read
+  const launch = D.delegateLaunch({ account, task, worktree: wt.path, env, platform: process.platform });
   let code;
   let committed = false;
   let commitErr = '';
