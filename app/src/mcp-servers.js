@@ -30,16 +30,18 @@ function cleanUrl(v) {
     return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : '';
   } catch { return ''; }
 }
+// A path segment that looks like a token: 20+ opaque chars with a digit, or a UUID-shaped one (hex and hyphens, 32+).
+const isTokenSegment = (seg) => (/^[A-Za-z0-9_-]{20,}$/.test(seg) && /\d/.test(seg)) || /^[0-9a-f-]{32,}$/i.test(seg) && seg.includes('-');
 const LOOPBACK = ['localhost', '127.0.0.1', '[::1]'];
 /**
  * Why an address typed in the add form is refused (v3.44), or null: 'url' (not an http(s) URL), 'url-http' (plain
- * http other than to this computer), 'url-secret' (a user:password@ part or a query string: a key belongs in the
+ * http other than to this computer), 'url-secret' (a user:password@ part, a query string or a token-like path segment: a key belongs in the
  * token field, which is stored encrypted, not in state.json). Stored and migrated servers are only checked by cleanUrl.
  */
 function urlProblem(v) {
   if (!cleanUrl(v)) return 'url';
   const u = new URL(String(v).trim());
-  if (u.username || u.password || u.search) return 'url-secret';
+  if (u.username || u.password || u.search || u.pathname.split('/').some(isTokenSegment)) return 'url-secret';
   if (u.protocol === 'http:' && !LOOPBACK.includes(u.hostname)) return 'url-http';
   return null;
 }

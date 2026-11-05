@@ -229,6 +229,9 @@ test('MCP: the add form refuses plain http to another host and keys in the addre
   assert.equal(v('http://a.io/mcp'), 'url-http');
   assert.equal(v('https://user:pw@a.io/mcp'), 'url-secret');
   assert.equal(v('https://a.io/mcp?key=K'), 'url-secret');
+  assert.equal(v('https://h/abc123def456ghi789jkl0/sse'), 'url-secret');
+  assert.equal(v('https://h/01234567-89ab-cdef-0123-456789abcdef/sse'), 'url-secret');
+  for (const u of ['https://h/sse', 'https://h/mcp', 'https://h/v1/messages', 'https://h/api/mcp', 'https://host']) assert.equal(v(u), null, u);
   assert.equal(v('ftp://a.io'), 'url');
   for (const l of ['en', 'tr']) {
     const e = JSON.parse(src(`../locales/${l}.json`)).sidebar;
@@ -473,6 +476,17 @@ test('MCP: editing (v3.69) keeps the id, validates like add, keeps the stored ad
   assert.equal(e.url, '');
   assert.equal(e.urlHidden, true);
   assert.ok(!JSON.stringify(e).includes('SECRET'));
+  for (const u of ['https://h/abc123def456ghi789jkl0/sse', 'https://h/01234567-89ab-cdef-0123-456789abcdef/sse']) {
+    const pe = MS.editable({ ...remote, url: u }, true);
+    assert.equal(pe.url, '');
+    assert.equal(pe.urlHidden, true);
+    assert.ok(!JSON.stringify(pe).includes('abc123def') && !JSON.stringify(pe).includes('89ab-cdef'));
+  }
+  for (const u of ['https://h/sse', 'https://h/mcp', 'https://h/v1/messages', 'https://h/api/mcp', 'https://host']) {
+    const pe = MS.editable({ ...remote, url: u }, true);
+    assert.equal(pe.url, u);
+    assert.ok(!pe.urlHidden, u);
+  }
   assert.deepEqual(MS.editable(st[0]), { id: 'r1', name: 'notion', type: 'stdio', command: 'npx', args: ['-y', 'x'], env: { A: '1' }, scope: 'p1' });
   // main: the token is saved before state, kept when blank, cleared on request or when the server becomes stdio
   const main = src('../main.js');
