@@ -4008,6 +4008,7 @@ app.on('open-file', (e, file) => {
 // v3.70: keep the Claude Code CLI current with `claude update`, at most once per CU.INTERVAL_MS; never touches the user's Claude config
 function updateClaudeCode() {
   try {
+    if (IS_WIN) return; // the login-shell (`claude update`) path is macOS/Linux; on Windows this would just ENOENT on /bin/bash
     if (!CU.enabled(process.env)) return;
     const stampFile = path.join(app.getPath('userData'), 'claude-update.json');
     let stamp = 0;
