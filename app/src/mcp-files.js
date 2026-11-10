@@ -160,6 +160,8 @@ function editFile(file, keys, name, f, fsx = fs) {
       fsx.writeFileSync(tmp, JSON.stringify(r.config, null, indentOf(text)) + (text.endsWith('\n') ? '\n' : ''), { mode });
       fsx.chmodSync(tmp, mode); // writeFileSync's mode is masked by the umask
       unchanged = fsx.readFileSync(real, 'utf8') === text; // the compare of the compare-and-swap, as late as possible
+      // A sub-millisecond window stays open between this compare and the rename; rename is the only atomic primitive
+      // (POSIX has no compare-and-rename) and Claude Code takes no lock here, so this cannot be fully closed.
       if (unchanged) fsx.renameSync(tmp, real);
     } catch { try { fsx.rmSync(tmp, { force: true }); } catch {} return { ok: false, error: 'write' }; }
     if (unchanged) return { ok: true, name: r.name };
