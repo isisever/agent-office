@@ -116,3 +116,33 @@ test('MCP files: the panel marks which file each row lives in, and another proje
   assert.match(main, /ipcMain\.handle\('mcp:updateFile'/);
   assert.match(main, /originId: from\.id/);
 });
+
+// a fs whose reads run `hook(n)` right after the n-th read of the target returned (a concurrent writer landing in the race window)
+const racingFs = (file, hook) => {
+  let reads = 0;
+  return { ...fs, readFileSync: (p, ...a) => { const out = fs.readFileSync(p, ...a); if (p === fs.realpathSync(file)) hook(++reads); return out; } };
+};
+
+test('MCP files: a concurrent write between the read and the rename is kept (compare-and-swap + retry)', () => {
+  const home = tmp(), file = path.join(home, '.claude.json');
+  w(file, { oauth: 1, mcpServers: { a: { command: 'x' } } }, 4);
+  fs.chmodSync(file, 0o644);
+  const fsx = racingFs(file, (n) => { if (n === 1) { const c = rd(file); c.oauth = 2; fs.writeFileSync(file, JSON.stringify(c, null, 4) + '\n'); } });
+  assert.deepEqual(MF.editFile(file, ['mcpServers'], 'a', { name: 'a', type: 'stdio', command: 'y' }, fsx), { ok: true, name: 'a' });
+  assert.deepEqual(rd(file), { oauth: 2, mcpServers: { a: { command: 'y' } } });
+  assert.deepEqual(Object.keys(rd(file)), ['oauth', 'mcpServers']);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o644);
+  assert.match(fs.readFileSync(file, 'utf8'), /\n {4}"oauth"/);
+  assert.deepEqual(fs.readdirSync(home).filter((f) => f.includes('.tmp')), []);
+});
+
+test('MCP files: a file that keeps changing makes editFile throw and never overwrites the concurrent content', () => {
+  const home = tmp(), file = path.join(home, '.claude.json');
+  w(file, { counter: 0, mcpServers: { a: { command: 'x' } } });
+  let last;
+  const fsx = racingFs(file, () => { const c = rd(file); c.counter += 1; fs.writeFileSync(file, JSON.stringify(c, null, 2) + '\n'); last = fs.readFileSync(file, 'utf8'); });
+  assert.throws(() => MF.editFile(file, ['mcpServers'], 'a', { name: 'a', type: 'stdio', command: 'y' }, fsx), /kept changing/);
+  assert.equal(fs.readFileSync(file, 'utf8'), last);
+  assert.equal(rd(file).mcpServers.a.command, 'x');
+  assert.deepEqual(fs.readdirSync(home).filter((f) => f.includes('.tmp')), []);
+});

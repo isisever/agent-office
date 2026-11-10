@@ -130,28 +130,42 @@ function indentOf(text) {
   return m ? m[1] : 2;
 }
 
+/** How many times editFile re-applies the edit when the file changes under it before giving up. */
+const MAX_ATTEMPTS = 4;
+
 /**
  * Reads `file` again, applies the form, writes it back atomically (temp + rename, its mode kept; a link is written
- * through to its target). → { ok: true, name } | { ok: false, error } ('read' when the file is not there or not JSON,
- * 'write' when it could not be written; the file is then unchanged).
+ * through to its target). Claude Code writes the same files continuously, so this is a compare-and-swap: right before
+ * the rename the file is read once more, and if its bytes differ from the copy that was edited, the edit is re-applied
+ * to the fresh content (bounded retries; then it throws, the file untouched) so a concurrent write is never clobbered.
+ * → { ok: true, name } | { ok: false, error } ('read' when the file is not there or not JSON, 'write' when it could not
+ * be written; the file is then unchanged by us). Throws when the file kept changing for MAX_ATTEMPTS reads.
  * @param {string} file @param {string[]} keys @param {string} name @param {any} f @param {typeof fs} [fsx]
  */
 function editFile(file, keys, name, f, fsx = fs) {
-  let real = file, text;
-  try { real = fsx.realpathSync(file); text = fsx.readFileSync(real, 'utf8'); } catch { return { ok: false, error: 'read' }; }
-  let config;
-  try { config = JSON.parse(text); } catch { return { ok: false, error: 'read' }; }
-  const r = applyEdit(config, keys, name, f);
-  if (!r.config) return { ok: false, error: r.error };
-  let mode = 0o600;
-  try { mode = fsx.statSync(real).mode & 0o777; } catch {}
-  const tmp = `${real}.agent-office-${process.pid}.tmp`;
-  try {
-    fsx.writeFileSync(tmp, JSON.stringify(r.config, null, indentOf(text)) + (text.endsWith('\n') ? '\n' : ''), { mode });
-    fsx.chmodSync(tmp, mode); // writeFileSync's mode is masked by the umask
-    fsx.renameSync(tmp, real);
-  } catch { try { fsx.rmSync(tmp, { force: true }); } catch {} return { ok: false, error: 'write' }; }
-  return { ok: true, name: r.name };
+  let real = file;
+  try { real = fsx.realpathSync(file); } catch { return { ok: false, error: 'read' }; }
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let text;
+    try { text = fsx.readFileSync(real, 'utf8'); } catch { return { ok: false, error: 'read' }; }
+    let config;
+    try { config = JSON.parse(text); } catch { return { ok: false, error: 'read' }; }
+    const r = applyEdit(config, keys, name, f);
+    if (!r.config) return { ok: false, error: r.error };
+    let mode = 0o600;
+    try { mode = fsx.statSync(real).mode & 0o777; } catch {}
+    const tmp = `${real}.agent-office-${process.pid}.tmp`;
+    let unchanged = false;
+    try {
+      fsx.writeFileSync(tmp, JSON.stringify(r.config, null, indentOf(text)) + (text.endsWith('\n') ? '\n' : ''), { mode });
+      fsx.chmodSync(tmp, mode); // writeFileSync's mode is masked by the umask
+      unchanged = fsx.readFileSync(real, 'utf8') === text; // the compare of the compare-and-swap, as late as possible
+      if (unchanged) fsx.renameSync(tmp, real);
+    } catch { try { fsx.rmSync(tmp, { force: true }); } catch {} return { ok: false, error: 'write' }; }
+    if (unchanged) return { ok: true, name: r.name };
+    try { fsx.rmSync(tmp, { force: true }); } catch {}
+  }
+  throw new Error(`${real} kept changing while it was edited (${MAX_ATTEMPTS} attempts); nothing was written`);
 }
 
 module.exports = { WHERE, MASK, target, mapAt, editable, applyEdit, editFile };
