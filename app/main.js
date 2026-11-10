@@ -34,6 +34,7 @@ const EN = require('./src/engine.js');
 const D = require('./src/delegate.js');
 const AW = require('./src/agy-watch.js');
 const CS = require('./src/cmd-spool.js');
+const CU = require('./src/claude-update.js');
 const AG = require('./src/agy-auth.js');
 const CA = require('./src/cmd-auth.js');
 const OCA = require('./src/oc-auth.js');
@@ -4004,6 +4005,24 @@ app.on('open-file', (e, file) => {
   if (file.toLowerCase().endsWith(`.${TR.EXT}`)) openSessionFile(file);
 });
 
+// v3.70: keep the Claude Code CLI current with `claude update`, at most once per CU.INTERVAL_MS; never touches the user's Claude config
+function updateClaudeCode() {
+  try {
+    if (!CU.enabled(process.env)) return;
+    const stampFile = path.join(app.getPath('userData'), 'claude-update.json');
+    let stamp = 0;
+    try { stamp = Number(JSON.parse(fs.readFileSync(stampFile, 'utf8'))?.checkedAt) || 0; } catch {}
+    const now = Date.now();
+    if (!CU.shouldCheck(now, stamp)) return;
+    try { fs.writeFileSync(stampFile, JSON.stringify({ checkedAt: now })); } catch {} // stamp first: a slow or failing run must not retrigger every launch
+    const child = execFile(shell(), ['-l', '-i', '-c', CU.UPDATE_COMMAND], { env: process.env, timeout: 120000, cwd: app.getPath('home') }, (err, stdout) => {
+      if (err && err.code === 127) return console.log('claude update: claude not found, skipped');
+      const last = String(stdout || '').trim().split('\n').pop().trim();
+      console.log('claude update:', err ? String(err.message || err).split('\n')[0] : last || 'done');
+    });
+    try { child.stdin?.end(); } catch {}
+  } catch (e) { console.log('claude update:', e && e.message); }
+}
 if (!isSecondInstance) app.whenReady().then(async () => {
   await loadI18n();
   await loadThemesLib();
@@ -4042,7 +4061,9 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   setupHq();             // v3.46 after the office socket: HQ gets its server at its first start
   // in the packaged app the icon comes from the .icns; under npm start set it on the Dock by hand (Linux has no app.dock)
   if (!app.isPackaged) try { app.dock?.setIcon(path.join(__dirname, 'build', 'icon.png')); } catch {}
-  return createWindow();
+  const created = await createWindow();
+  updateClaudeCode();    // v3.70 fire-and-forget, after the window exists
+  return created;
 });
 app.on('activate', () => { if (!win && state) createWindow(); });
 app.on('window-all-closed', () => { killAll(); app.quit(); });
