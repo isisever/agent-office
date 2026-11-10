@@ -3022,7 +3022,10 @@ ipcMain.handle('mcp:getFile', (_e, projectId, where, name) => {
 ipcMain.handle('mcp:updateFile', (_e, projectId, where, name, f) => {
   const tg = mcpFileTarget(projectId, where);
   if (!tg) return { ok: false, error: 'unknown' };
-  const r = MF.editFile(tg.file, tg.keys, String(name), f);
+  let r;
+  // editFile re-checks the file before its atomic write and throws if it kept changing under us (concurrent Claude
+  // Code writes, CAS retry exhausted): surface it as a 'write' error so the form shows editFailed, nothing clobbered.
+  try { r = MF.editFile(tg.file, tg.keys, String(name), f); } catch { return { ok: false, error: 'write' }; }
   if (r.ok) checkMcp();
   return r;
 });
