@@ -1119,6 +1119,14 @@ function hasHistory(dir, configDir) {
 }
 // Is there a Command Code session in the folder (contract v3.25): ~/.commandcode/projects/<ccSlugOf(dir)>/<id>.jsonl.
 const hasCmdHistory = (dir) => AW.hasCmdSession(app.getPath('home'), dir);
+// v3.71/v3.72 Claude Code tabs started with Auto-approve or Skip permissions on. A busy tab keeps that mode after its
+// switch is turned off, so the office link asks answersPrompts, not only the stored switches.
+const promptless = new Set();
+/** True when the project's main tab answers or skips permission prompts: by its switches, or by how it was started. */
+function answersPrompts(projectId) {
+  const p = P.findProject(state, projectId);
+  return Boolean(p) && (P.skipPermissionsOf(p) || P.autoApproveOf(p) || (terms.has(projectId) && promptless.has(projectId)));
+}
 const RESUME_GRACE_MS = 8000; // if --continue ends with an error within this time, claude restarts fresh
 
 // (Re)starts a tab's claude; the id is projectId for the main tab, `<projectId>:<n>` for an extra tab.
@@ -1179,7 +1187,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   }).args;
   // v3.46 HQ: only the Agent Office plugin, strict MCP (agent-office only), --tools Read, Read auto-allowed in its folder
   const hqArgs = project.hq ? HQ.launchArgs({ dir: cwd, mcpConfig: prepared.mcpConfig || '' }) : [];
-  const args = R.claudeArgs([...P.bossModelArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
+  // v3.72 skip permissions: the project's switch adds --dangerously-skip-permissions here, for every Claude Code tab
+  // start (fresh, --continue, --resume, worktree tabs, Windows); never the HQ session (P.skipPermissionsArgs)
+  const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
@@ -1235,6 +1245,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     return broadcast();
   }
   terms.set(id, t);
+  if (!project.hq && (P.skipPermissionsOf(project) || P.autoApproveOf(project))) promptless.add(id); else promptless.delete(id);
   activity.set(id, { at: startedAt, draft: false });
   mcpPrint.set(id, { started: print, current: print });
   ptyStart.set(id, startedAt);
@@ -2481,6 +2492,7 @@ function startLink() {
     tabState: linkTabState,
     asleep: (id) => asleep.has(id), attentionOf: (id) => attention.get(id) || '',   // v3.48 task-status for a device's task
     type: typePrompt,
+    answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices
     loginOf: (projectId) => { const p = P.findProject(state, projectId); const s = p ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },
     reportsDir: path.join(app.getPath('home'), '.claude', 'agent-office', 'reports'),
     onReport: onOfficeReport,
@@ -3186,6 +3198,15 @@ ipcMain.handle('projects:setProjectFiles', (_e, id, value) => {
 // Returns the restarted pty ids.
 ipcMain.handle('projects:setAutoApprove', (_e, id, value) => {
   const next = P.setProjectAutoApprove(state, id, value === true);
+  if (next === state) return { restarted: [] };
+  commit(next);
+  const p = P.findProject(state, id);
+  return { restarted: p && P.engineOf(p) === 'claude' ? restartIdle(p) : [] };
+});
+// Skip permissions (contract v3.72): true starts the project's Claude Code tabs with --dangerously-skip-permissions.
+// claude reads its arguments at its start: next start, idle Claude Code tabs at once. Returns the restarted pty ids.
+ipcMain.handle('projects:setSkipPermissions', (_e, id, value) => {
+  const next = P.setProjectSkipPermissions(state, id, value === true);
   if (next === state) return { restarted: [] };
   commit(next);
   const p = P.findProject(state, id);

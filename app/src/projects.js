@@ -48,6 +48,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withEngine(p.engine),
       ...withProjectFiles(p.projectFiles),
       ...withAutoApprove(p.autoApprove),
+      ...withSkipPermissions(p.skipPermissions),
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
       ...withBackup(p.backupAccount, known),
       ...withHome(p.homeAccount, known, accountId),
@@ -433,6 +434,31 @@ function setProjectAutoApprove(state, id, value) {
 /** Whether the project's permission prompts are answered for the person: Claude Code projects only. */
 const autoApproveOf = (project) => project?.autoApprove === true && engineOf(project) === 'claude';
 
+// --- skip permissions (contract v3.72)
+// Project.skipPermissions: true starts the project's Claude Code tabs with --dangerously-skip-permissions (bypass
+// mode: nothing asks, the session's agents inherit it). Absent = off (the default). Never written for off.
+const SKIP_PERMISSIONS_FLAG = '--dangerously-skip-permissions';
+/** @type {(v: unknown) => { skipPermissions?: true }} */
+const withSkipPermissions = (v) => (v === true ? { skipPermissions: true } : {});
+
+/** value: true | false. Same state when nothing changes. */
+function setProjectSkipPermissions(state, id, value) {
+  const p = findProject(state, id);
+  const v = value === true;
+  if (!p || (p.skipPermissions === true) === v) return state;
+  return { ...state, projects: state.projects.map((x) => {
+    if (x.id !== id) return x;
+    const { skipPermissions: _, ...rest } = x;
+    return v ? { ...rest, skipPermissions: true } : rest;
+  }) };
+}
+
+/** Whether the project's Claude Code tabs start in bypass mode: Claude Code projects only. */
+const skipPermissionsOf = (project) => project?.skipPermissions === true && engineOf(project) === 'claude';
+
+/** The switch's launch arguments for a tab of the project: the flag, or [] (off, another engine, the HQ session). */
+const skipPermissionsArgs = (project) => (!project?.hq && skipPermissionsOf(project) ? [SKIP_PERMISSIONS_FLAG] : []);
+
 // --- backup account at the usage limit (contract v3.17, src/fallback.js)
 // Project.backupAccount: 'auto' (any other logged-in account not at its limit) or an account id; absent = none.
 // Project.homeAccount: the account the project was on before an automatic move to a backup; it goes back there once
@@ -537,6 +563,7 @@ module.exports = {
   ENGINES, setProjectEngine, engineOf,
   setProjectFiles, projectFilesOf,
   setProjectAutoApprove, autoApproveOf,
+  SKIP_PERMISSIONS_FLAG, setProjectSkipPermissions, skipPermissionsOf, skipPermissionsArgs,
   setProjectBackup, backupOf, fallbackTo, returnHome,
   setProjectDelegates, delegatesOf,
 };

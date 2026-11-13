@@ -464,6 +464,70 @@ test('v3.48 review: remote report task: type() false or throwing leaves no repor
   }
 });
 
+test('v3.71/v3.72: a project that answers or skips its permission prompts refuses another device (not-allowed, never queued or typed); local tasks still run', (t) => {
+  const { setupLink } = require('../src/link-host.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-hqskip-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let on = false; let tab = 'ready'; let captured = null;
+  const typed = [];
+  const realOn = Link.prototype.on;
+  Link.prototype.on = function (ev, fn) { captured = this; return realOn.call(this, ev, fn); };
+  t.after(() => { Link.prototype.on = realOn; });
+  const host = setupLink({
+    app: { getPath: () => dir, getVersion: () => '0.21.0' },
+    safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain', encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+    ipcMain: { handle: () => {} }, send: () => {}, notify: () => {}, T: (k) => k, loginOf: () => 'in', reportsDir: path.join(dir, 'r'),
+    projects: () => [{ id: 'p1', name: 'pii', engine: 'claude' }], tabState: () => tab,
+    type: (id, text) => { typed.push(text); },
+    answersPrompts: (id) => id === 'p1' && on,   // main.js: Skip permissions or Auto-approve
+  });
+  t.after(() => host.destroy());
+  host.devices();   // starts the link
+  const link = captured;
+  link.devices = [{ pub: PA, name: 'Studio', addedAt: 0, allowCommands: true, allowHandoff: false, allowManage: false, allowAccounts: false }];
+  const dev = { pub: PA, name: 'Studio' };
+  const send = (id, report) => { const r = []; link.emit('command', { device: dev, id, project: 'p1', text: `remote ${id}`, report, reply: (s, why) => r.push([s, why]) }); host.pump(); return r; };
+
+  // both switches off: a device's command and task are taken as before
+  assert.deepEqual(send('c-off', false), [['queued', undefined], ['delivered', undefined]]);
+  assert.deepEqual(send('t-off', true), [['queued', undefined], ['delivered', undefined]]);
+  assert.equal(typed.length, 2);
+
+  // either switch on: refused with the existing reason, with or without a report, and nothing waits in the queue
+  on = true;
+  assert.deepEqual(send('c-on', false), [['rejected', 'not-allowed']]);
+  assert.deepEqual(send('t-on', true), [['rejected', 'not-allowed']]);
+  assert.equal(link.owesReport('t-on'), false);
+  assert.equal(host.remoteTaskOpen('p1'), Boolean(link.owesReportFor?.('p1')));   // only the earlier typed task, nothing queued
+
+  // this machine's own task (HQ, a routine, a local boss) still runs there
+  const local = [];
+  const mine = host.dispatchLocal('p1', 'local task', 'HQ', (id, s, why) => local.push([s, why]));
+  host.pump();
+  assert.equal(mine.status, 'delivered');
+  assert.deepEqual(local.map((x) => x[0]), ['queued', 'delivered']);
+  assert.equal(typed.length, 3);
+  assert.match(typed[2], /local task/);
+
+  // the refused commands were never queued: nothing of theirs is typed once the switch is off again
+  on = false;
+  host.pump();
+  assert.equal(typed.length, 3);
+
+  // the switch is turned on while a device's task still waits for a busy tab: refused at typing time, never typed
+  tab = 'busy';
+  const late = send('t-late', true);
+  assert.deepEqual(late, [['queued', undefined]]);
+  on = true; tab = 'ready';
+  host.pump();
+  assert.deepEqual(late, [['queued', undefined], ['rejected', 'not-allowed']]);
+  assert.equal(link.owesReport('t-late'), false);
+  on = false;
+  host.pump();
+  assert.equal(typed.length, 3);
+  assert.equal(typed.some((x) => /remote (c-on|t-on|t-late)/.test(x)), false);
+});
+
 test('v3.48 review: host restarted after expectReport but before the reply: the task is not typed again on resync', async (t) => {
   const { dir, make, connect } = world(t);
   const a = make('A'); const b = make('B');
