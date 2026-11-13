@@ -1374,6 +1374,7 @@ The app chrome has two independent settings, app-wide: a **look** and a **mode**
 - **API**: `agentOffice.prefs.get()` returns `look` and `mode` beside `theme`; `agentOffice.prefs.set({ look?, mode? })` stores them. A value that is not listed is stored as the default (`src/appearance.mjs` `normalizeLook` / `normalizeMode`).
 - **Storage**: `state.json` top-level `look` and `mode`, next to `theme` and `language`. A file without them reads as `pixel` + `system`.
 - **Main**: `nativeTheme.themeSource = mode`, so native menus, dialogs and `prefers-color-scheme` follow. The `BrowserWindow` `backgroundColor` is `windowBackground(look, mode, nativeTheme.shouldUseDarkColors)` (the page colour of that look and mode: no flash at start); it is set again with `win.setBackgroundColor` when the setting or the OS scheme changes.
+- **First paint**: `renderer/appearance-boot.js`, a classic script in `<head>` (the page CSP runs no inline script), sets `data-look`, `data-mode` and `color-scheme` from `localStorage` before anything is painted (`system` resolved with `matchMedia`), and for the 8-bit look the four frame colours app.js cached for that mode (`localStorage` `chrome`).
 - **Renderer**: `<html>` carries `data-look` (`pixel` | `claude`) and `data-mode` (the effective `light` | `dark`), and `color-scheme` is set to match. `system` is resolved with `matchMedia('(prefers-color-scheme: dark)')` and follows its changes live. Switching applies at once, without a reload. The last look and mode are kept in `localStorage` (`look`, `mode`) so the page has them before prefs arrive.
 - **Settings popup** (v3.42, the ⚙ of the ACCOUNTS heading): two selects before Theme: **Look** (`sidebar.look`: `sidebar.lookPixel` "8-bit", `sidebar.lookClaude` "Claude") and **Mode** (`sidebar.mode`: `sidebar.modeSystem`, `sidebar.modeLight`, `sidebar.modeDark`).
 - **dev-mock**: `?look=pixel|claude` and `?mode=system|light|dark`.
@@ -1396,11 +1397,13 @@ The colours are fixed and do not follow the office theme.
 | raised: inputs, selects (`--raised`) | `#FFFFFF` | `#30302E` |
 | popups, floating panels (`--popup`) | `#FAF9F5` | `#30302E` |
 | text | `#141413` | `#FAF9F5` |
-| muted text | `#73726C` | `#C2C0B6` |
+| muted text | `#6B6A64` | `#C2C0B6` |
 | hairline border | `rgba(31,30,29,.15)` | `rgba(222,220,209,.15)` |
 | accent (clay), fills | `#D97757` | `#D97757` |
-| accent as text | `#C6613F` | `#D97757` |
+| accent as text | `#A8502F` | `#D97757` |
 | text on an accent fill | `#141413` | `#141413` |
+
+Muted text and the accent as text are darker in light than the desktop app's `#73726C` and `#C6613F`, so that both reach 4.5:1 on the page and on the sidebar surface. On the light-mode red (`.sb-warn:hover`) the text is white.
 
 - Typography: UI in `system-ui, -apple-system, "Segoe UI", sans-serif` at 13px; the app title, section headings and popup titles in `ui-serif, Georgia, "Times New Roman", serif`, in sentence case without letter spacing (the title is `app.appTitlePlain`; the sidebar headings' upper-case locale strings are lower-cased by the stylesheet with the first letter capitalised, and "MCP" keeps its capitals).
 - Shape: 6-12px radii on buttons, inputs, selects, tabs, panels and popups; hairline borders in place of accent borders; neutral hover washes; primary buttons filled with the accent, the others outlined.
@@ -1409,7 +1412,7 @@ The colours are fixed and do not follow the office theme.
 
 ### Terminal
 
-`terminalTheme(look, effectiveMode, theme)` builds the xterm theme for project terminals and the login terminal: background = `--status-bg`, foreground = text, cursor = accent (Claude light: the darker clay `#C6613F`), selection = the accent at 40% (dark) or 25% (light) alpha. Dark mode leaves xterm's ANSI colours alone (8-bit dark is as before). Light mode sets all sixteen (`LIGHT_ANSI`), each at least 4.5:1 on the light terminal background:
+`terminalTheme(look, effectiveMode, theme)` builds the xterm theme for project terminals and the login terminal: background = `--status-bg`, foreground = text, cursor = accent (Claude light: the darker clay `#A8502F`), selection = the accent at 40% (dark) or 25% (light) alpha. Dark mode leaves xterm's ANSI colours alone (8-bit dark is as before). Light mode sets all sixteen (`LIGHT_ANSI`), each at least 4.5:1 on the light terminal background:
 
 `black #24292f`, `red #b91c28`, `green #116329`, `yellow #7d4e00`, `blue #0550ae`, `magenta #7340c9`, `cyan #136870`, `white #5c6570`, `brightBlack #57606a`, `brightRed #a40e26`, `brightGreen #166b2e`, `brightYellow #633c01`, `brightBlue #0a5cc2`, `brightMagenta #6639ba`, `brightCyan #0f6c7a`, `brightWhite #4b535d`.
 
@@ -1417,4 +1420,4 @@ Claude Code picks its own theme; the palette only keeps plain ANSI output readab
 
 ### Status colours
 
-In light mode (both looks) the status colours used as text are darkened: `--ok #2e7d32`, `--err #c62828`, `--amber #9a6700`, `--approval #9a5b00`, `--online #18753a`, `--danger #c62828`, `--bad #b3261e`.
+In light mode (both looks) the status colours used as text are darkened (`src/appearance.mjs` `LIGHT_STATUS`): `--ok #2a7230`, `--err #c62828`, `--amber #8a5c00`, `--approval #9a5b00`, `--online #18753a`, `--danger #c62828`, `--bad #b3261e`, `--hint-warn #8a5a00`, `--rt-warn #8a4a06`. Each has at least 4.5:1 on every light surface (Claude light and the 8-bit light chrome of every gallery theme).
