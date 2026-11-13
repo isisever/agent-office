@@ -217,6 +217,8 @@
     "agentModelOpus": "Opus",
     "projectFiles": "Agent Office files",
     "projectFilesTitle": "Let Agent Office add its files to this project: the manager brief, a worker agent on the agent model, a check-before-done gate and the project's own approved MCP servers (Antigravity: .agents/, Command Code: .commandcode/agents/). Kept out of git with .git/info/exclude; turning it off removes exactly these files.",
+    "autoApprove": "Auto-approve",
+    "autoApproveTitle": "Auto-approve permission prompts: Agent Office answers Claude Code's permission dialogs with yes for this project, for the boss and its agents. Clearly destructive commands (sudo, rm -r on / or ~, git push --force, git reset --hard, git clean -f, disk tools, a download piped into a shell) and questions to you still ask, as do edits to Claude's own settings files. Off by default. Applies from the next tab start; idle tabs restart right away.",
     "contextCap": "Context cap",
     "contextCapTitle": "How large this project's conversations may grow before Claude summarizes them (auto-compact), for the boss and its agents. Every step re-reads the whole conversation, so a lower cap means Claude summarizes earlier, each step re-reads less and the work costs less. The trade-off: details of earlier work are kept only as a summary. Auto uses Claude Code's own limit (up to 1M tokens on a 1M model). Applies when the project's Claude starts next (idle tabs restart now).",
     "contextCapAuto": "Auto",
@@ -361,7 +363,8 @@
       "ocProjectFiles": "Agent Office writes no project files for OpenCode.",
       "claudeOnlyMcp": "Claude Code only: servers added in Agent Office and their tokens are not given to Antigravity, Command Code or OpenCode.",
       "claudeOnlySkills": "Claude Code only: skill packs are Claude Code plugins; Antigravity, Command Code and OpenCode do not get them.",
-      "claudeOnlyDelegate": "Claude Code only: the ao-delegate account delegation runs from a Claude Code boss; the other engines do not get it."
+      "claudeOnlyDelegate": "Claude Code only: the ao-delegate account delegation runs from a Claude Code boss; the other engines do not get it.",
+      "claudeOnlyAutoApprove": "Claude Code only: the Agent Office plugin answers Claude Code's permission dialogs; the other engines' prompts are never answered."
     },
     "skills": "Skills",
     "skillsHint": "Skill packs bundled with Agent Office, for Claude Code only (Antigravity, Command Code and OpenCode do not get them). Idle sessions restart to pick up a change; busy ones get it at their next start. A project can override each pack in its ⚙ settings.",

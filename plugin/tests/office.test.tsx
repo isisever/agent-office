@@ -952,6 +952,80 @@ test('a permission dialog marks the session waiting until its tool is answered, 
   expect(stateOf(writes).stats.isBossBusy).toBe(false)
 })
 
+// auto-approve (app contract v3.71): the project's switch answers the dialog, so nothing waits
+test('auto-approve answers a permission request with allow and marks nothing waiting', async ($, on) => {
+  const { writes } = setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_AUTO_APPROVE: '1' })
+  answerTurns(on)
+  on('classic.PermissionRequest', () => ({}) as never)
+
+  await $.session.start(start)
+  await $.turn.start({ text: 'hello', turnId: 'turn-1' })
+  const bash = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } })
+  expect(bash.decision).toEqual({ behavior: 'allow' })
+  expect(stateOf(writes).stats.waiting).toBe(undefined)
+  // a subagent's request too
+  const edit = await $.classic.PermissionRequest({ tool_name: 'Edit', tool_input: { file_path: '/work/my-app/a.ts' }, agent_id: 'agent-1' } as never)
+  expect(edit.decision).toEqual({ behavior: 'allow' })
+  expect(stateOf(writes).stats.waiting).toBe(undefined)
+})
+
+test('auto-approve leaves a destructive command and a question to the person', async ($, on) => {
+  const { writes } = setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_AUTO_APPROVE: '1' })
+  answerTurns(on)
+  on('classic.PermissionRequest', () => ({}) as never)
+
+  await $.session.start(start)
+  await $.turn.start({ text: 'hello', turnId: 'turn-1' })
+  const push = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'git push --force origin main' } })
+  expect(push.decision).toBe(undefined)
+  expect(stateOf(writes).stats.waiting?.tool).toBe('Bash')
+  const question = await $.classic.PermissionRequest({ tool_name: 'AskUserQuestion', tool_input: { questions: [] } })
+  expect(question.decision).toBe(undefined)
+  expect(stateOf(writes).stats.waiting?.tool).toBe('AskUserQuestion')
+  const plan = await $.classic.PermissionRequest({ tool_name: 'ExitPlanMode', tool_input: { plan: 'x' } })
+  expect(plan.decision).toBe(undefined)
+  expect(stateOf(writes).stats.waiting?.tool).toBe('ExitPlanMode')
+})
+
+test('auto-approve keeps another hook\'s decision, and is off without the switch and in HQ', async ($, on) => {
+  const env: Record<string, string> = { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_AUTO_APPROVE: '1' }
+  const { writes } = setUp(on, env)
+  answerTurns(on)
+  let answer: Record<string, unknown> = { decision: { behavior: 'deny', message: 'no' } }
+  on('classic.PermissionRequest', () => answer as never)
+
+  await $.session.start(start)
+  await $.turn.start({ text: 'hello', turnId: 'turn-1' })
+  const denied = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } })
+  expect(denied.decision).toEqual({ behavior: 'deny', message: 'no' })
+
+  answer = {}
+  env.AGENT_OFFICE_AUTO_APPROVE = '0'
+  await $.session.start(start)
+  const off = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } })
+  expect(off.decision).toBe(undefined)
+  expect(stateOf(writes).stats.waiting?.tool).toBe('Bash')
+
+  env.AGENT_OFFICE_AUTO_APPROVE = '1'
+  env.AGENT_OFFICE_HQ = '1'
+  await $.session.start(start)
+  const hq = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } })
+  expect(hq.decision).toBe(undefined)
+  expect(stateOf(writes).stats.waiting?.tool).toBe('Bash')
+})
+
+// a nested claude writes no state file, so `waiting` cannot be read back there; the missing decision is what shows
+// that the dialog goes to the person
+test('auto-approve is off in a nested claude', async ($, on) => {
+  const { writes } = setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_AUTO_APPROVE: '1', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'parent-1' })
+  on('classic.PermissionRequest', () => ({}) as never)
+
+  await $.session.start(start)
+  const nested = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } })
+  expect(nested.decision).toBe(undefined)
+  expect(writes.filter(w => w.path.includes('/sessions/'))).toEqual([])
+})
+
 // /office stats: today's deliveries from every session file, plus what works and runs right now
 test('/office stats sums today across sessions: count, failed, agent time, per project, last ones, working agents and shells', async ($, on) => {
   const root = '/home/tester/.claude/agent-office'

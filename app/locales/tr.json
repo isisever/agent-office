@@ -216,6 +216,8 @@
     "agentModelOpus": "Opus",
     "projectFiles": "Agent Office dosyaları",
     "projectFilesTitle": "Agent Office kendi dosyalarını bu projeye eklesin: yönetici notu, ajan modelinde bir işçi ajan, bitirmeden önce kontrol kapısı ve projenin kendi onaylı MCP sunucuları (Antigravity: .agents/, Command Code: .commandcode/agents/). .git/info/exclude ile git dışında tutulur; kapatınca tam olarak bu dosyalar silinir.",
+    "autoApprove": "Otomatik onay",
+    "autoApproveTitle": "İzin sorularını otomatik onayla: Agent Office bu projede Claude Code'un izin pencerelerine (müdür ve ajanları için) sizin yerinize evet der. Açıkça yıkıcı komutlar (sudo, / ya da ~ üzerinde rm -r, git push --force, git reset --hard, git clean -f, disk araçları, indirilip kabuğa aktarılan betik) ve size sorulan sorular ile Claude'un kendi ayar dosyalarındaki değişiklikler yine sorulur. Varsayılan kapalı. Sonraki sekme başlangıcında geçerli olur; boştaki sekmeler hemen yeniden başlar.",
     "contextCap": "Bağlam sınırı",
     "contextCapTitle": "Bu projedeki konuşmaların (müdür ve ajanları için) Claude onları özetlemeden (otomatik sıkıştırma) önce ne kadar büyüyebileceği. Her adım bütün konuşmayı yeniden okur; sınır düşükse Claude daha erken özetler, her adım daha az okur ve iş daha ucuza gelir. Bedeli: önceki işin ayrıntıları yalnızca özet olarak kalır. Otomatik, Claude Code'un kendi sınırını kullanır (1M modelde 1M token'a kadar). Projenin Claude'u bir sonraki açılışında geçerli olur (boştaki sekmeler hemen yeniden başlar).",
     "contextCapAuto": "Otomatik",
@@ -360,7 +362,8 @@
       "ocProjectFiles": "Agent Office, OpenCode için proje dosyası yazmaz.",
       "claudeOnlyMcp": "Yalnız Claude Code: Agent Office'te eklenen sunucular ve tokenları Antigravity, Command Code ya da OpenCode'a verilmez.",
       "claudeOnlySkills": "Yalnız Claude Code: beceri paketleri Claude Code eklentileridir; Antigravity, Command Code ve OpenCode almaz.",
-      "claudeOnlyDelegate": "Yalnız Claude Code: ao-delegate hesap devri bir Claude Code patronundan çalışır; diğer motorlar almaz."
+      "claudeOnlyDelegate": "Yalnız Claude Code: ao-delegate hesap devri bir Claude Code patronundan çalışır; diğer motorlar almaz.",
+      "claudeOnlyAutoApprove": "Yalnız Claude Code: Claude Code'un izin pencerelerini Agent Office eklentisi yanıtlar; diğer motorların soruları asla yanıtlanmaz."
     },
     "skills": "Beceriler",
     "skillsHint": "Agent Office ile gelen beceri paketleri, yalnız Claude Code için (Antigravity, Command Code ve OpenCode almaz). Boştaki oturumlar değişikliği almak için yeniden başlar; meşgul olanlar bir sonraki başlangıçta alır. Bir proje her paketi kendi ⚙ ayarlarında değiştirebilir.",
