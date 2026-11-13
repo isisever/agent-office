@@ -1179,7 +1179,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   }).args;
   // v3.46 HQ: only the Agent Office plugin, strict MCP (agent-office only), --tools Read, Read auto-allowed in its folder
   const hqArgs = project.hq ? HQ.launchArgs({ dir: cwd, mcpConfig: prepared.mcpConfig || '' }) : [];
-  const args = R.claudeArgs([...P.bossModelArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
+  // v3.72 skip permissions: the project's switch adds --dangerously-skip-permissions here, for every Claude Code tab
+  // start (fresh, --continue, --resume, worktree tabs, Windows); never the HQ session (P.skipPermissionsArgs)
+  const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
@@ -3186,6 +3188,15 @@ ipcMain.handle('projects:setProjectFiles', (_e, id, value) => {
 // Returns the restarted pty ids.
 ipcMain.handle('projects:setAutoApprove', (_e, id, value) => {
   const next = P.setProjectAutoApprove(state, id, value === true);
+  if (next === state) return { restarted: [] };
+  commit(next);
+  const p = P.findProject(state, id);
+  return { restarted: p && P.engineOf(p) === 'claude' ? restartIdle(p) : [] };
+});
+// Skip permissions (contract v3.72): true starts the project's Claude Code tabs with --dangerously-skip-permissions.
+// claude reads its arguments at its start: next start, idle Claude Code tabs at once. Returns the restarted pty ids.
+ipcMain.handle('projects:setSkipPermissions', (_e, id, value) => {
+  const next = P.setProjectSkipPermissions(state, id, value === true);
   if (next === state) return { restarted: [] };
   commit(next);
   const p = P.findProject(state, id);

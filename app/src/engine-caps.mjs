@@ -5,7 +5,7 @@
 export const ENGINES = ['claude', 'agy', 'commandcode', 'opencode'];
 
 /** The features of a project row, in the order the sidebar shows them. */
-export const FEATURES = ['account', 'login', 'manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'autoApprove', 'backup', 'workers', 'approvals', 'cost', 'projectFiles', 'appMcp', 'skillPacks', 'delegate'];
+export const FEATURES = ['account', 'login', 'manager', 'bossModel', 'agentModel', 'contextCap', 'savings', 'autoApprove', 'skipPermissions', 'backup', 'workers', 'approvals', 'cost', 'projectFiles', 'appMcp', 'skillPacks', 'delegate'];
 
 const OK = Object.freeze({ ok: true });
 const no = (reason) => Object.freeze({ ok: false, reason });
@@ -25,6 +25,7 @@ const TABLE = {
     skillPacks: no('claudeOnlySkills'),
     delegate: no('claudeOnlyDelegate'), // v3.56 ao-delegate is a Claude-boss feature
     autoApprove: no('claudeOnlyAutoApprove'), // v3.71: the Claude Code plugin answers the dialogs
+    skipPermissions: no('claudeOnlySkipPermissions'), // v3.72: a flag of the claude CLI
   },
   commandcode: {
     backup: no('cmdBackup'),
@@ -32,6 +33,7 @@ const TABLE = {
     skillPacks: no('claudeOnlySkills'),
     delegate: no('claudeOnlyDelegate'), // v3.56
     autoApprove: no('claudeOnlyAutoApprove'), // v3.71
+    skipPermissions: no('claudeOnlySkipPermissions'), // v3.72
   },
   // OpenCode (contract v3.40): observed from its terminal only; no launch config or files from the app, no token counts.
   opencode: {
@@ -47,6 +49,7 @@ const TABLE = {
     skillPacks: no('claudeOnlySkills'),
     delegate: no('claudeOnlyDelegate'), // v3.56
     autoApprove: no('claudeOnlyAutoApprove'), // v3.71
+    skipPermissions: no('claudeOnlySkipPermissions'), // v3.72
   },
 };
 

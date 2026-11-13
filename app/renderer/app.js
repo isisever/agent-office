@@ -425,6 +425,15 @@ async function setProjectFiles(projectId, value) {
   } catch (e) { console.error(e); }
 }
 
+/** Skip permissions (v3.72): true | false; main restarts the idle tabs. */
+async function setSkipPermissions(projectId, value) {
+  try {
+    const r = await api.projects.setSkipPermissions?.(projectId, value);
+    for (const id of r?.restarted || []) panes.get(id)?.term.reset({ restarting: true });
+    applyProjects(await api.projects.list());
+  } catch (e) { console.error(e); }
+}
+
 /** Auto-approve permission prompts (v3.71): true | false; main restarts the idle tabs. */
 async function setAutoApprove(projectId, value) {
   try {
@@ -571,6 +580,7 @@ sidebar = mountSidebar($('sidebar'), {
   setAgentModel,
   setProjectFiles,
   setAutoApprove,
+  setSkipPermissions,
   setContextCap,
   setSavings,
   setEngine,

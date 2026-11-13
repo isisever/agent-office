@@ -374,6 +374,16 @@ export function mountSidebar(el, on) {
     return control(p, 'autoApprove', t('sidebar.autoApprove'), box);
   }
 
+  // "Skip permissions" (contract v3.72): off by default; Claude Code only. The title says nothing asks anymore.
+  function skipPermissionsToggle(p) {
+    const box = h('input', {
+      type: 'checkbox', class: 'sb-files', checked: p.skipPermissions === true, title: t('sidebar.skipPermissionsTitle'),
+      onclick: (e) => e.stopPropagation(),
+      onchange: (e) => queue('skipPermissions', () => on.setSkipPermissions?.(p.id, e.target.checked)),
+    });
+    return control(p, 'skipPermissions', t('sidebar.skipPermissions'), box);
+  }
+
   // The model the project's agents run on (contract v3.14): Auto (the boss picks per agent) or one pinned model.
   // Applies like the boss setting: next start, idle tabs right away.
   const CLAUDE_55_AGENT = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']; // v3.68
@@ -579,7 +589,7 @@ export function mountSidebar(el, on) {
     const map = new Map();
     const body = [
       accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p),
-      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p),
+      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p),
     ];
     const save = h('button', {
       class: 'sb-btn primary', onclick: async () => {

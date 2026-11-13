@@ -173,6 +173,50 @@ test('auto-approve: off by default, round-trips through the state, Claude Code p
   }
 });
 
+test('skip permissions: off by default, round-trips through the state, Claude Code projects only, never HQ (v3.72)', () => {
+  const base = P.normalizeState({ projects: [{ id: 'p1', dir: '/w/one' }, { id: 'p2', dir: '/w/two', skipPermissions: true }, { id: 'p3', dir: '/w/three', skipPermissions: 'yes' }] });
+  const [p1, p2, p3] = base.projects;
+  assert.equal(P.skipPermissionsOf(p1), false);
+  assert.equal('skipPermissions' in p1, false); // never written for off
+  assert.deepEqual(P.skipPermissionsArgs(p1), []); // the flag is absent by default
+  assert.equal(P.skipPermissionsOf(p2), true);
+  assert.deepEqual(P.skipPermissionsArgs(p2), ['--dangerously-skip-permissions']);
+  assert.equal(P.SKIP_PERMISSIONS_FLAG, '--dangerously-skip-permissions');
+  assert.equal(P.skipPermissionsOf(p3), false); // only true counts
+  assert.equal('skipPermissions' in p3, false);
+  assert.equal(P.skipPermissionsOf(undefined), false);
+  assert.deepEqual(P.skipPermissionsArgs(undefined), []);
+
+  const on = P.setProjectSkipPermissions(base, 'p1', true);
+  assert.deepEqual(P.skipPermissionsArgs(P.findProject(on, 'p1')), ['--dangerously-skip-permissions']);
+  assert.equal(P.setProjectSkipPermissions(on, 'p1', true), on); // same state when nothing changes
+  assert.equal(P.setProjectSkipPermissions(on, 'nope', true), on);
+  assert.equal(P.skipPermissionsOf(P.findProject(P.normalizeState(JSON.parse(JSON.stringify(on))), 'p1')), true); // survives a save
+  assert.equal(P.autoApproveOf(P.findProject(on, 'p1')), false); // the two switches are stored apart
+  assert.equal(P.skipPermissionsOf(P.findProject(P.setProjectAutoApprove(base, 'p1', true), 'p1')), false);
+  const off = P.setProjectSkipPermissions(on, 'p1', false);
+  assert.equal('skipPermissions' in P.findProject(off, 'p1'), false);
+  assert.deepEqual(P.skipPermissionsArgs(P.findProject(off, 'p1')), []);
+
+  // the flag belongs to the claude CLI: the stored switch counts for nothing on another engine
+  for (const engine of ['agy', 'commandcode', 'opencode']) {
+    const p = P.findProject(P.setProjectEngine(on, 'p1', engine), 'p1');
+    assert.equal(P.skipPermissionsOf(p), false, engine);
+    assert.deepEqual(P.skipPermissionsArgs(p), [], engine);
+  }
+
+  // the HQ session keeps --permission-mode default and its tool allowlist whatever is stored
+  assert.deepEqual(P.skipPermissionsArgs({ ...p2, hq: true }), []);
+  const hqArgs = require('../src/hq.js').launchArgs({ dir: '/w/hq', mcpConfig: '/w/hq.json' });
+  assert.equal(hqArgs.includes('--dangerously-skip-permissions'), false);
+  assert.equal(hqArgs[hqArgs.indexOf('--permission-mode') + 1], 'default');
+  // a delegate run keeps acceptEdits
+  assert.equal(/dangerously-skip-permissions/.test(require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/delegate.js'), 'utf8')), false);
+  // not part of the settings that travel to another machine, like auto-approve
+  const sent = require('../src/handoff.js').cleanSettings({ manager: true, skipPermissions: true, autoApprove: true });
+  assert.deepEqual(sent, { manager: true });
+});
+
 test('sessionEnv: müdür modu kapalıyken AGENT_OFFICE_FINISH=1 (bitirme bekçisi), açıkken yok (v3.10)', () => {
   const base = A.ptyEnv({ PATH: '/bin', AGENT_OFFICE_FINISH: '1' }, null);
   const on = A.sessionEnv(base, { manager: true });
