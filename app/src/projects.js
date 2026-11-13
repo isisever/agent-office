@@ -260,8 +260,17 @@ const managerOf = (state, project) => (typeof project?.manager === 'boolean' ? p
 // src/engine-caps.mjs BOSS_MODEL_CHOICES holds the same values for the sidebar.
 // v3.68: the explicit 5.5 ids are offered next to the aliases: an alias resolves to Claude Code's default of that family
 // (opus -> 4.8), and `--model` outranks an in-session `/model`, so only a full id pins the 5.5 models.
+// v3.73: Fable 5.2 (alias `fable`, full id first among the full ids), and any other model id as a custom id (below).
 const CLAUDE_55_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
-const BOSS_MODELS = ['sonnet', 'opus', 'haiku', ...CLAUDE_55_MODELS];
+const CLAUDE_FULL_MODELS = ['claude-fable-5-2', ...CLAUDE_55_MODELS];
+const BOSS_MODELS = ['sonnet', 'opus', 'haiku', 'fable', ...CLAUDE_FULL_MODELS];
+// Custom model id (contract v3.73), Claude Code engine only: a model the lists do not know yet, typed by the person or
+// received in a handoff. THE one validator, used by the loader and both setters. The value becomes a process argument
+// (`--model <id>`) and CLAUDE_CODE_SUBAGENT_MODEL, so: a letter or digit first (never parseable as a flag), then only
+// letters, digits and . _ : / [ ] - (`sonnet[1m]`), 100 characters at most. No whitespace, quote or shell metacharacter.
+const CUSTOM_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,99}$/;
+// `fixcloud/<model>` is refused: FixCloud support was removed (0.22.22) and old state still carries such ids; they must stay dropped, not become a custom id
+const customModelValue = (v) => (typeof v === 'string' && CUSTOM_MODEL_RE.test(v) && !/^fixcloud\//i.test(v) ? v : null);
 const BOSS_MODELS_BY_ENGINE = {
   claude: BOSS_MODELS,
   agy: ['flash', 'pro'],
@@ -270,16 +279,21 @@ const BOSS_MODELS_BY_ENGINE = {
 };
 const bossModelValue = (v, engine) => {
   const e = engineValue(engine) || 'claude';
-  return (BOSS_MODELS_BY_ENGINE[e] || []).includes(v) ? v : null;
+  if ((BOSS_MODELS_BY_ENGINE[e] || []).includes(v)) return v;
+  // v3.73: a custom id, Claude Code only; another engine's own model left behind by an engine switch stays Auto
+  return e === 'claude' && !listedBossModel(v) ? customModelValue(v) : null;
 };
+const listedBossModel = (v) => Object.values(BOSS_MODELS_BY_ENGINE).some((l) => l.includes(v));
 // normalizeState keeps a model valid for ANY engine (switching back finds it again); only the launch args check the active engine
-const anyEngineBossModel = (v) => Object.values(BOSS_MODELS_BY_ENGINE).some((l) => l.includes(v));
+const anyEngineBossModel = (v) => listedBossModel(v) || customModelValue(v) !== null;
 const withBossModel = (v) => (anyEngineBossModel(v) ? { bossModel: v } : {});
 
-/** value: one of the project's engine's models, or null (Auto). Same state when nothing changes. */
+/** value: one of the project's engine's models, a custom id (Claude Code engine) or null (Auto). Same state when nothing changes. */
 function setProjectBossModel(state, id, value) {
   const p = findProject(state, id);
   const v = bossModelValue(value, p?.engine);
+  // v3.73: on Claude Code a refused value changes nothing (only null is Auto); elsewhere a model that does not fit is Auto, as before
+  if (v === null && value != null && !engineValue(p?.engine)) return state;
   if (!p || (p.bossModel ?? null) === v) return state;
   return { ...state, projects: state.projects.map((x) => {
     if (x.id !== id) return x;
@@ -302,14 +316,20 @@ const bossModelArgs = (project) => {
 // --- per-project subagent model (contract v3.14)
 // Project.agentModel: 'sonnet' | 'haiku' | 'opus' runs every subagent of the project's sessions on that model;
 // absent = Auto: the boss picks per agent (the plugin's manager brief). Never written for Auto.
-const AGENT_MODELS = ['sonnet', 'haiku', 'opus', ...CLAUDE_55_MODELS]; // v3.68: full ids flow unchanged into CLAUDE_CODE_SUBAGENT_MODEL
-const agentModelValue = (v) => (AGENT_MODELS.includes(v) ? v : null);
+const AGENT_MODELS = ['sonnet', 'haiku', 'opus', 'fable', ...CLAUDE_FULL_MODELS]; // v3.68: full ids flow unchanged into CLAUDE_CODE_SUBAGENT_MODEL
+// v3.73: a custom id counts on the Claude Code engine only (the other engines map the listed values to their own models)
+const agentModelValue = (v, engine) => {
+  if (AGENT_MODELS.includes(v)) return v;
+  return (engineValue(engine) || 'claude') === 'claude' ? customModelValue(v) : null;
+};
+// normalizeState keeps a custom id whatever the engine, like the boss model (switching back finds it again)
 const withAgentModel = (v) => (agentModelValue(v) ? { agentModel: v } : {});
 
-/** value: 'sonnet' | 'haiku' | 'opus' | null (Auto). Same state when nothing changes. */
+/** value: a listed model, a custom id (Claude Code engine) or null (Auto). Same state when nothing changes. */
 function setProjectAgentModel(state, id, value) {
   const p = findProject(state, id);
-  const v = agentModelValue(value);
+  const v = agentModelValue(value, p?.engine);
+  if (v === null && value != null) return state; // v3.73: a refused value changes nothing; only null is Auto
   if (!p || (p.agentModel ?? null) === v) return state;
   return { ...state, projects: state.projects.map((x) => {
     if (x.id !== id) return x;
@@ -319,7 +339,7 @@ function setProjectAgentModel(state, id, value) {
 }
 
 /** The model the project pins its subagents to, or null (Auto). */
-const agentModelOf = (project) => agentModelValue(project?.agentModel);
+const agentModelOf = (project) => agentModelValue(project?.agentModel, project?.engine);
 
 // --- per-project context cap (contract v3.15)
 // Project.contextCap: 200000 | 400000 tokens makes Claude Code auto-compact earlier (CLAUDE_CODE_AUTO_COMPACT_WINDOW,
@@ -556,8 +576,8 @@ module.exports = {
   /** state.hq (v3.46) normalized next to the rest */
   normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq), routines: ROUT.normalizeRoutines(raw?.routines), routinesCfg: ROUT.normalizeCfg(raw?.routinesCfg) }), findByDir,
   addProject, removeProject, setActive, setProjectAccount, setProjectManager, managerOf,
-  BOSS_MODELS, BOSS_MODELS_BY_ENGINE, setProjectBossModel, bossModelOf, bossModelArgs,
-  AGENT_MODELS, setProjectAgentModel, agentModelOf,
+  BOSS_MODELS, BOSS_MODELS_BY_ENGINE, bossModelValue, setProjectBossModel, bossModelOf, bossModelArgs,
+  AGENT_MODELS, setProjectAgentModel, agentModelOf, CUSTOM_MODEL_RE, customModelValue,
   CONTEXT_CAPS, setProjectContextCap, contextCapOf,
   setProjectSavings, savingsOf,
   ENGINES, setProjectEngine, engineOf,

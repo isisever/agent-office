@@ -2089,7 +2089,7 @@ ipcMain.handle('hq:get', () => hqView());
 ipcMain.handle('hq:setSettings', (_e, patch) => {
   const o = patch && typeof patch === 'object' ? patch : {};
   const next = HQ.normalizeHq({ ...(state.hq || {}), ...(typeof o.accountId === 'string' ? { accountId: o.accountId } : {}),
-    ...(typeof o.bossModel === 'string' ? { bossModel: o.bossModel } : {}), ...(typeof o.dispatchWithoutAsking === 'boolean' ? { dispatchWithoutAsking: o.dispatchWithoutAsking } : {}),
+    ...(typeof o.bossModel === 'string' && (o.bossModel === '' || HQ.hqBossModel(o.bossModel)) ? { bossModel: o.bossModel } : {}), ...(typeof o.dispatchWithoutAsking === 'boolean' ? { dispatchWithoutAsking: o.dispatchWithoutAsking } : {}),
     ...(typeof o.enabled === 'boolean' ? { enabled: o.enabled } : {}) });
   const relaunch = next.accountId !== hqSettings().accountId || next.bossModel !== hqSettings().bossModel;
   commit({ ...state, hq: next });

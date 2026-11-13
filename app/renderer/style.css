@@ -342,6 +342,8 @@ body.sidebar-collapsed #sidebar { display: none; }
 .sb-tag { font-size: 10px; opacity: .5; }
 .sb-tag.sb-onbackup { opacity: .85; color: var(--accent); white-space: nowrap; }
 .sb-tag.sb-agy { opacity: .7; white-space: nowrap; }
+.sb-input[aria-invalid="true"] { border-color: var(--err); }
+.sb-btn:disabled { opacity: .45; cursor: not-allowed; }
 .sb-input {
   flex: 1;
   min-width: 0;

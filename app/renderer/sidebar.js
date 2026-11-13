@@ -4,7 +4,7 @@
 import { hasText, locale, onLang, t } from './i18n.js';
 import { modLabel, platform } from './platform.js';
 import { isBossHere, projectStatus } from '../src/project-status.mjs';
-import { bossModelChoices, cap } from '../src/engine-caps.mjs';
+import { BOSS_MODEL_CHOICES, bossModelChoices, cap, isCustomModelId } from '../src/engine-caps.mjs';
 import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
 
 function h(tag, props = {}, ...children) {
@@ -321,19 +321,59 @@ export function mountSidebar(el, on) {
 
   // The model of the project's boss session (contract v3.27): Auto (claude's default) or one model, `--model`.
   const claudeModelLabel = (v) => (v === 'sonnet' ? t('sidebar.bossModelSonnet') : v === 'opus' ? t('sidebar.bossModelOpus')
-    : v === 'haiku' ? t('sidebar.bossModelHaiku') : '');
+    : v === 'haiku' ? t('sidebar.bossModelHaiku') : v === 'fable' ? t('sidebar.bossModelFable') : '');
+  // Custom model id (contract v3.73), Claude Code only: "Custom…" as the last option of both model pickers shows a field
+  // for a model id the lists do not know. A stored value that is not listed opens it filled. An empty field is Auto;
+  // an id main would refuse is marked and changes nothing.
+  const CUSTOM_MODEL = '__custom__';
+  // the Custom fields holding a refused id; Save stays disabled while any does (the popup sets saveButton)
+  const badFields = new Set();
+  let saveButton = null;
+  const syncSave = () => { if (saveButton) saveButton.disabled = badFields.size > 0; };
+  const customModelOf = (p, stored, listed) => (engineOfRow(p) === 'claude' && isCustomModelId(stored) && !listed.includes(stored) ? stored : '');
+  function customModelField(key, stored, apply) {
+    const commit = () => {
+      const v = input.value.trim();
+      const bad = v !== '' && !isCustomModelId(v);
+      input.setAttribute('aria-invalid', String(bad));
+      if (bad) badFields.add(key); else badFields.delete(key);
+      syncSave();
+      if (bad) draft?.delete(key); else queue(key, () => apply(v === '' ? null : v));
+    };
+    const input = h('input', {
+      class: 'sb-input', value: stored, hidden: !stored, maxLength: 100, autocomplete: 'off',
+      placeholder: t('sidebar.modelCustomPh'), title: t('sidebar.modelCustomTitle'),
+      onclick: (e) => e.stopPropagation(),
+      oninput: commit,
+    });
+    /** The picker changed: the field shows for "Custom…" only, and what it holds becomes the pending value. */
+    const picked = (value) => {
+      input.hidden = value !== CUSTOM_MODEL;
+      if (!input.hidden) { commit(); input.focus(); } else { badFields.delete(key); syncSave(); } // a hidden field is not applied
+    };
+    return { input, picked };
+  }
   function bossModelSelect(p) {
     const choices = bossModelChoices(engineOfRow(p)); // per engine (contract v3.36)
-    const now = choices.some((c) => c.value === p.bossModel) ? p.bossModel : 'auto';
+    // another engine's model left behind by an engine switch is not a custom id (main reads it as Auto)
+    const typed = customModelOf(p, p.bossModel, Object.values(BOSS_MODEL_CHOICES).flat().map((c) => c.value));
+    const now = typed ? CUSTOM_MODEL : choices.some((c) => c.value === p.bossModel) ? p.bossModel : 'auto';
     const opt = (v, label) => h('option', { value: v, selected: now === v }, label);
+    const custom = engineOfRow(p) === 'claude' ? customModelField('bossModel', typed, (v) => on.setBossModel?.(p.id, v)) : null;
     const sel = h('select', {
       class: 'sb-acct sb-mode',
       title: t('sidebar.bossModelTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: (e) => queue('bossModel', () => on.setBossModel?.(p.id, e.target.value === 'auto' ? null : e.target.value)),
+      onchange: (e) => {
+        const v = e.target.value;
+        if (v !== CUSTOM_MODEL) queue('bossModel', () => on.setBossModel?.(p.id, v === 'auto' ? null : v));
+        custom?.picked(v);
+      },
     },
-    opt('auto', t('sidebar.bossModelAuto')), ...choices.map((c) => opt(c.value, claudeModelLabel(c.value) || c.label)));
+    opt('auto', t('sidebar.bossModelAuto')), ...choices.map((c) => opt(c.value, claudeModelLabel(c.value) || c.label)),
+    custom ? opt(CUSTOM_MODEL, t('sidebar.modelCustom')) : null);
     const wrap = control(p, 'bossModel', t('sidebar.bossModel'), sel);
+    if (custom) wrap.append(custom.input);
     if (engineOfRow(p) === 'claude') showEffectiveModel(p, sel, wrap);
     return wrap;
   }
@@ -386,20 +426,34 @@ export function mountSidebar(el, on) {
 
   // The model the project's agents run on (contract v3.14): Auto (the boss picks per agent) or one pinned model.
   // Applies like the boss setting: next start, idle tabs right away.
-  const CLAUDE_55_AGENT = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']; // v3.68
+  const AGENT_ALIASES = ['sonnet', 'haiku', 'opus'];
+  const FABLE_IDS = ['fable', 'claude-fable-5-2'];
   function agentModelSelect(p) {
-    const now = ['sonnet', 'haiku', 'opus', ...CLAUDE_55_AGENT].includes(p.agentModel) ? p.agentModel : 'auto';
+    // v3.68, v3.73: after the three aliases, the rest of the Claude Code boss choices (Fable, the full ids)
+    // Fable has no worker file entry on Antigravity and Command Code, so it is offered on Claude Code projects only
+    const more = bossModelChoices('claude').filter((c) => !AGENT_ALIASES.includes(c.value) && (engineOfRow(p) === 'claude' || !FABLE_IDS.includes(c.value)));
+    const listed = [...AGENT_ALIASES, ...more.map((c) => c.value)];
+    const typed = customModelOf(p, p.agentModel, listed);
+    const now = typed ? CUSTOM_MODEL : listed.includes(p.agentModel) ? p.agentModel : 'auto';
     const opt = (v, label) => h('option', { value: v, selected: now === v }, label);
+    const custom = engineOfRow(p) === 'claude' ? customModelField('agentModel', typed, (v) => on.setAgentModel?.(p.id, v)) : null;
     const sel = h('select', {
       class: 'sb-acct sb-mode',
       title: t('sidebar.agentModelTitle'),
       onclick: (e) => e.stopPropagation(),
-      onchange: (e) => queue('agentModel', () => on.setAgentModel?.(p.id, e.target.value === 'auto' ? null : e.target.value)),
+      onchange: (e) => {
+        const v = e.target.value;
+        if (v !== CUSTOM_MODEL) queue('agentModel', () => on.setAgentModel?.(p.id, v === 'auto' ? null : v));
+        custom?.picked(v);
+      },
     },
     opt('auto', t('sidebar.agentModelAuto')), opt('sonnet', t('sidebar.agentModelSonnet')),
     opt('haiku', t('sidebar.agentModelHaiku')), opt('opus', t('sidebar.agentModelOpus')),
-    ...bossModelChoices('claude').filter((c) => CLAUDE_55_AGENT.includes(c.value)).map((c) => opt(c.value, c.label)));
-    return control(p, 'agentModel', t('sidebar.agentModel'), sel);
+    ...more.map((c) => opt(c.value, c.label)),
+    custom ? opt(CUSTOM_MODEL, t('sidebar.modelCustom')) : null);
+    const wrap = control(p, 'agentModel', t('sidebar.agentModel'), sel);
+    if (custom) wrap.append(custom.input);
+    return wrap;
   }
 
   // When the project's Claude summarizes its conversation (contract v3.15): Auto (Claude Code's own window) or a cap
@@ -587,6 +641,7 @@ export function mountSidebar(el, on) {
   /** The project's popup (contract v3.42): every per-project setting; Save applies what changed. */
   function openProjectSettings(p) {
     const map = new Map();
+    badFields.clear();
     const body = [
       accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p),
       contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p),
@@ -598,6 +653,7 @@ export function mountSidebar(el, on) {
         for (const fn of fns) { try { await fn(); } catch (e) { console.error(e); } }
       },
     }, t('sidebar.save'));
+    saveButton = save;
     openModal(`${t('sidebar.projectSettings')} · ${p.name}`, body,
       [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save]);
     draft = map; // after openModal (its closeModal clears the previous draft); controls read it when they change

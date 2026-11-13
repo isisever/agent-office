@@ -302,7 +302,7 @@ test('proje başına ajan modeli: normalizeState, setProjectAgentModel, agentMod
     projects: [
       { id: 'a', dir: '/a', agentModel: 'sonnet' },
       { id: 'b', dir: '/b', agentModel: 'haiku' },
-      { id: 'c', dir: '/c', agentModel: 'gpt' },
+      { id: 'c', dir: '/c', agentModel: 'gpt 5' },
       { id: 'd', dir: '/d' },
     ],
   });
@@ -311,7 +311,7 @@ test('proje başına ajan modeli: normalizeState, setProjectAgentModel, agentMod
   assert.equal(P.setProjectAgentModel(s, 'a', 'sonnet'), s);
   assert.equal(P.setProjectAgentModel(s, 'zz', 'opus'), s);
   assert.equal(P.setProjectAgentModel(s, 'd', null), s);
-  assert.equal(P.setProjectAgentModel(s, 'd', 'fable'), s); // geçersiz = Otomatik
+  assert.equal(P.setProjectAgentModel(s, 'd', 'no model'), s); // invalid = Auto (v3.73: a well-formed unknown id is a custom id)
   s = P.setProjectAgentModel(s, 'd', 'opus');
   assert.equal(P.agentModelOf(P.findProject(s, 'd')), 'opus');
   s = P.setProjectAgentModel(s, 'b', null); // Otomatik'e dönüş: alan silinir
@@ -3734,16 +3734,16 @@ test('proje başına müdür modeli: normalizeState, setProjectBossModel, bossMo
     projects: [
       { id: 'a', dir: '/a', bossModel: 'sonnet' },
       { id: 'b', dir: '/b', bossModel: 'opus' },
-      { id: 'c', dir: '/c', bossModel: 'gpt' },
+      { id: 'c', dir: '/c', bossModel: 'gpt 5' },
       { id: 'd', dir: '/d' },
     ],
   });
-  assert.deepEqual(P.BOSS_MODELS, ['sonnet', 'opus', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
+  assert.deepEqual(P.BOSS_MODELS, ['sonnet', 'opus', 'haiku', 'fable', 'claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
   assert.deepEqual(s.projects.map((p) => P.bossModelOf(p)), ['sonnet', 'opus', null, null]);
   assert.equal('bossModel' in s.projects[2], false);
   assert.equal(P.setProjectBossModel(s, 'a', 'sonnet'), s);
   assert.equal(P.setProjectBossModel(s, 'zz', 'opus'), s);
-  assert.equal(P.setProjectBossModel(s, 'd', 'fable'), s); // geçersiz = Otomatik
+  assert.equal(P.setProjectBossModel(s, 'd', 'no model'), s); // invalid = Auto (v3.73: a well-formed unknown id is a custom id)
   s = P.setProjectBossModel(s, 'd', 'haiku');
   assert.equal(P.bossModelOf(P.findProject(s, 'd')), 'haiku');
   s = P.setProjectBossModel(s, 'a', null); // Otomatik'e dönüş: alan silinir
@@ -3759,7 +3759,7 @@ test('müdür modeli: her seçim için başlatma argümanları; Otomatik ve diğ
   assert.deepEqual(P.bossModelArgs({ bossModel: 'opus' }), ['--model', 'opus']);
   assert.deepEqual(P.bossModelArgs({ bossModel: 'haiku' }), ['--model', 'haiku']);
   assert.deepEqual(P.bossModelArgs({}), []); // Otomatik: hiçbir şey değişmez
-  assert.deepEqual(P.bossModelArgs({ bossModel: 'x' }), []);
+  assert.deepEqual(P.bossModelArgs({ bossModel: 'x y' }), []);
   assert.deepEqual(P.bossModelArgs({ engine: 'claude', bossModel: 'opus' }), ['--model', 'opus']);
   // diğer motorlar: Claude takma adı onların modeli değil, argüman yok (v3.36: kendi modelleri engine-caps.test.mjs)
   assert.deepEqual(P.bossModelArgs({ engine: 'agy', bossModel: 'opus' }), []);
@@ -4242,7 +4242,7 @@ test('OpenCode sekmesi gözlemlenir: agy-watch engine opencode ("esc interrupt" 
 }
 
 test('review fixes: bossModel survives another engine, exclude merge, secret file mode, symlinked roots', () => {
-  const s = P.normalizeState({ projects: [{ id: 'a', dir: '/a', engine: 'agy', bossModel: 'opus' }, { id: 'b', dir: '/b', bossModel: 'nonsense' }] });
+  const s = P.normalizeState({ projects: [{ id: 'a', dir: '/a', engine: 'agy', bossModel: 'opus' }, { id: 'b', dir: '/b', bossModel: 'non sense' }] });
   assert.equal(s.projects[0].bossModel, 'opus'); // kept while agy is active
   assert.deepEqual(P.bossModelArgs(s.projects[0]), []); // but no flag for agy
   assert.equal('bossModel' in s.projects[1], false);
