@@ -5,16 +5,14 @@ import { FitAddon } from '../node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
 import { t } from './i18n.js';
 import { platform, isMac, isModKey, keyOf } from './platform.js';
 import { translateKey, isPasteKey, pasteAction } from '../src/terminal-keys.mjs';
+import { terminalTheme } from '../src/appearance.mjs';
 
 // Text lives in locales/*.json (terminal.exited). A line already written to the terminal is not rewritten on a language change.
 
-const xtermTheme = (t = {}) => ({
-  background: t.statusBg || '#231815',
-  foreground: t.statusText || '#f3ead8',
-  cursor: t.accent || '#3fb6a8',
-  cursorAccent: t.statusBg || '#231815',
-  selectionBackground: (t.accent || '#3fb6a8') + '66',
-});
+// The theme is an xterm theme built by app.js for the look and mode (src/appearance.mjs terminalTheme, v3.74);
+// without one the terminal has the 8-bit dark default.
+/** @param {{ background?: string } | null} [t] */
+const xtermTheme = (t) => (t && t.background ? t : terminalTheme('pixel', 'dark'));
 
 // Open terminals: Paste (⌘V) in the menu goes to the focused terminal (pasteIntoFocused).
 const terminals = new Set();

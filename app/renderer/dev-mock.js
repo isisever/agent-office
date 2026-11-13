@@ -17,8 +17,10 @@
 // ?remotes → three paired machines (one with a long name, one offline) whose projects are rows in PROJECTS (v3.46 HQ).
 // ?machines[=<n>] → a fake device link (v3.31/v3.32) with n paired machines (default 2; one v1, one offline from n ≥ 3); opens the Machines panel.
 // ?theme=<name> → theme picker setting (v3.1; e.g. ?theme=sakura, ?theme=forest); default auto. The gallery is read from
+// ?look=pixel|claude and ?mode=system|light|dark → the appearance setting (v3.74; default pixel + system).
 // ../../themes/*.json, so it is there under Electron's loadFile or a static server at the repo root (/app/renderer/index.html).
 import { galleryThemes, mergeThemes } from '../src/themes.mjs';
+import { normalizeLook, normalizeMode } from '../src/appearance.mjs';
 const q = new URLSearchParams(location.search);
 const listeners = (set = new Set()) => ({ add: (cb) => (set.add(cb), () => set.delete(cb)), emit: (...a) => set.forEach((cb) => cb(...a)) });
 const ev = { projects: listeners(), data: listeners(), exit: listeners(), office: listeners(), accounts: listeners() };
@@ -140,6 +142,8 @@ const GALLERY = ['desert', 'graphite', 'latte', 'lavender', 'light', 'midnight',
 const galleryFiles = (await Promise.all(GALLERY.map((n) => fetch(`../../themes/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
 const mockThemes = mergeThemes(galleryThemes(galleryFiles), {});
 let themeSetting = q.get('theme') || 'auto';
+let lookSetting = normalizeLook(q.get('look'));
+let modeSetting = normalizeMode(q.get('mode'));
 let resumeSetting = true;
 let resumeWorkSetting = true;
 let managerSetting = true;
@@ -150,7 +154,7 @@ let sleepSetting = 30;
 // "Resume unfinished work" (v3.8): the first click finds two projects with unfinished work (?unfinished=0: none);
 // a stopped one starts, as main starts a lazy tab with --resume
 let mockUnfinished = q.get('unfinished') !== '0';
-const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows });
+const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows });
 const engineRows = { showAgyAccount: null, showCmdAccount: null, showOcAccount: null }; // v3.30
 
 window.agentOffice = {
@@ -398,6 +402,8 @@ window.agentOffice = {
       if (typeof p?.reloadMcp === 'boolean') reloadMcpSetting = p.reloadMcp;
       if (typeof p?.fallback === 'boolean') fallbackSetting = p.fallback;
       if (typeof p?.theme === 'string') themeSetting = p.theme.trim() || 'auto';
+      if (p?.look !== undefined) lookSetting = normalizeLook(p.look);
+      if (p?.mode !== undefined) modeSetting = normalizeMode(p.mode);
       if ([0, 15, 30, 60].includes(p?.sleepMinutes)) sleepSetting = p.sleepMinutes;
       for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (typeof p?.[k] === 'boolean') engineRows[k] = p[k];
       return prefsNow();

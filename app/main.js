@@ -1,5 +1,5 @@
 // Agent Office shell: window, projects, accounts, one claude pty per project (several with tabs), and office data.
-const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, safeStorage, powerMonitor, shell: eShell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, nativeTheme, safeStorage, powerMonitor, shell: eShell } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -3812,8 +3812,11 @@ ipcMain.handle('office:today', () => {
 /** @typedef {{ galleryThemes(files: unknown[]): Record<string, any>, mergeThemes(gallery: Record<string, any>, user: unknown): Record<string, any>, normalizeThemeSetting(v: unknown): string }} ThemesLib */
 /** @type {ThemesLib | null} */
 let TH = null; // loaded at startup, like src/i18n.mjs
+/** @type {{ normalizeLook(v: unknown): string, normalizeMode(v: unknown): string, windowBackground(look: unknown, mode: unknown, systemDark: boolean): string } | null} */
+let AP = null; // src/appearance.mjs (contract v3.74), loaded with the themes library
 async function loadThemesLib() {
   try { TH = await import('./src/themes.mjs'); } catch {}
+  try { AP = await import('./src/appearance.mjs'); } catch {}
 }
 /** @type {unknown[] | null} */
 let galleryFiles = null; // read once: the gallery ships with the app and does not change while it runs
@@ -3842,11 +3845,27 @@ function devIcon() {
   return !app.isPackaged && fs.existsSync(icon) ? { icon } : {};
 }
 
+// --- appearance (contract v3.74): look ('pixel' | 'claude') and mode ('system' | 'light' | 'dark') in state.json.
+// The mode drives nativeTheme (menus, dialogs, prefers-color-scheme); the window background matches the chrome so
+// nothing flashes before the page paints.
+const appearance = () => ({ look: AP ? AP.normalizeLook(state?.look) : 'pixel', mode: AP ? AP.normalizeMode(state?.mode) : 'system' });
+function windowBackground() {
+  const a = appearance();
+  return AP ? AP.windowBackground(a.look, a.mode, nativeTheme.shouldUseDarkColors) : '#2b1d1a';
+}
+function applyAppearance() {
+  const mode = appearance().mode;
+  if (nativeTheme.themeSource !== mode) nativeTheme.themeSource = /** @type {'system' | 'light' | 'dark'} */ (mode);
+  if (win && !win.isDestroyed()) win.setBackgroundColor(windowBackground());
+}
+nativeTheme.on('updated', () => { if (win && !win.isDestroyed()) win.setBackgroundColor(windowBackground()); });
+
 async function createWindow() {
+  applyAppearance();
   win = new BrowserWindow({
     width: 1400, height: 950,
     minWidth: 900, minHeight: 640,
-    backgroundColor: '#2b1d1a',
+    backgroundColor: windowBackground(),
     // macOS: title bar inside the page, traffic lights above it; Linux and Windows: the system's normal frame
     ...(IS_MAC ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 10 } } : devIcon()),
     title: 'Agent Office',
@@ -3990,7 +4009,7 @@ function buildMenu() {
 // showAgyAccount / showCmdAccount / showOcAccount = the Antigravity / Command Code / OpenCode row in Accounts: true (added via Add account),
 // false (removed), null (the old rule: shown when installed or a project runs it) (contract v3.30)
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null });
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
@@ -4001,6 +4020,12 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
   for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (p && typeof p[k] === 'boolean' && p[k] !== prefs()[k]) commit({ ...state, [k]: p[k] });
   if (p && typeof p.theme === 'string' && themeSetting(p.theme) !== prefs().theme) commit({ ...state, theme: themeSetting(p.theme) });
+  // appearance (v3.74): an unknown look or mode is stored as the default
+  if (p && AP && (p.look !== undefined || p.mode !== undefined)) {
+    const cur = appearance();
+    const next = { look: p.look !== undefined ? AP.normalizeLook(p.look) : cur.look, mode: p.mode !== undefined ? AP.normalizeMode(p.mode) : cur.mode };
+    if (next.look !== cur.look || next.mode !== cur.mode) { commit({ ...state, ...next }); applyAppearance(); }
+  }
   if (p && Z.SLEEP_CHOICES.includes(p.sleepMinutes) && p.sleepMinutes !== prefs().sleepMinutes) {
     commit({ ...state, sleepMinutes: p.sleepMinutes });
     // turned off: every sleeping tab starts again, as if the app had started without sleeping
@@ -4068,7 +4093,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
   const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });
