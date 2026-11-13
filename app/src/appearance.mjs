@@ -83,7 +83,7 @@ export function pixelLightChrome(theme = {}) {
 
 /** The Claude look: fixed warm neutrals, the office theme does not reach them. */
 export const CLAUDE = {
-  light: { frame: '#FAF9F5', statusBg: '#F0EEE6', raised: '#FFFFFF', statusText: '#141413', muted: '#73726C', border: 'rgba(31,30,29,.15)', accent: '#D97757', accentText: '#C6613F', onAccent: '#141413' },
+  light: { frame: '#FAF9F5', statusBg: '#F0EEE6', raised: '#FFFFFF', statusText: '#141413', muted: '#6B6A64', border: 'rgba(31,30,29,.15)', accent: '#D97757', accentText: '#A8502F', onAccent: '#141413' },
   dark: { frame: '#262624', statusBg: '#1F1E1D', raised: '#30302E', statusText: '#FAF9F5', muted: '#C2C0B6', border: 'rgba(222,220,209,.15)', accent: '#D97757', accentText: '#D97757', onAccent: '#141413' },
 };
 
@@ -102,6 +102,12 @@ export function chromeFor(look, mode, theme = {}) {
 
 /** BrowserWindow background before the page paints (no flash at start). @param {unknown} look @param {unknown} mode @param {boolean} systemDark */
 export const windowBackground = (look, mode, systemDark) => chromeFor(look, effectiveMode(mode, systemDark)).frame;
+
+/** Status colours of light mode (style.css `:root[data-mode="light"]`): dark enough to be text on a light surface. */
+export const LIGHT_STATUS = {
+  '--ok': '#2a7230', '--err': '#c62828', '--amber': '#8a5c00', '--approval': '#9a5b00', '--online': '#18753a',
+  '--danger': '#c62828', '--bad': '#b3261e', '--hint-warn': '#8a5a00', '--rt-warn': '#8a4a06',
+};
 
 /** ANSI colours that read on a light terminal background (xterm's defaults assume dark). */
 export const LIGHT_ANSI = {

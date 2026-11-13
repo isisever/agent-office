@@ -44,13 +44,14 @@
   --font-mono: Menlo, "SF Mono", Monaco, monospace;
   --font-ui: var(--font-mono);
   --font-head: var(--font-mono);
+  --font-code: monospace;        /* login code field */
   color-scheme: dark;
 }
 /* Light mode, both looks: status colours dark enough to read as text on a light background. */
 :root[data-mode="light"] {
-  --ok: #2e7d32;
+  --ok: #2a7230;
   --err: #c62828;
-  --amber: #9a6700;
+  --amber: #8a5c00;
   --approval: #9a5b00;
   --online: #18753a;
   --danger: #c62828;
@@ -1025,7 +1026,7 @@ label.sb-langrow { cursor: pointer; }
 .lo-remote { height: auto; }
 .lo-remote .lo-open { align-self: flex-start; margin: 4px 16px; }
 .lo-code { display: flex; gap: 8px; margin: 8px 16px; }
-.lo-code-input { flex: 1; min-width: 0; font: inherit; font-family: var(--font-mono); padding: 6px 8px; border-radius: 6px; border: 1px solid #8884; background: transparent; color: inherit; }
+.lo-code-input { flex: 1; min-width: 0; font: inherit; font-family: var(--font-code); padding: 6px 8px; border-radius: 6px; border: 1px solid #8884; background: transparent; color: inherit; }
 
 /* A control the project's engine can't honour (contract v3.36): shown disabled, its one-line reason on hover/focus. */
 .sb-na-wrap { position: relative; flex-wrap: wrap; }
@@ -1204,6 +1205,7 @@ select option.rt-off { color: #888; }
   --radius: 8px;
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-head: ui-serif, Georgia, "Times New Roman", serif;
+  --font-code: var(--font-mono);
 }
 :root[data-look="claude"][data-mode="light"] {
   --frame: #FAF9F5;
@@ -1211,9 +1213,9 @@ select option.rt-off { color: #888; }
   --status-text: #141413;
   --raised: #FFFFFF;
   --popup: #FAF9F5;
-  --muted: #73726C;
+  --muted: #6B6A64;
   --border: rgba(31, 30, 29, .15);
-  --accent-text: #C6613F;
+  --accent-text: #A8502F;
 }
 :root[data-look="claude"][data-mode="dark"] {
   --frame: #262624;
@@ -1278,6 +1280,7 @@ select option.rt-off { color: #888; }
 [data-look="claude"] .sb-usage-bar, [data-look="claude"] .up-bar { border-radius: 3px; overflow: hidden; }
 [data-look="claude"] .sb-note { border-left: 0; border-radius: 6px; background: var(--hover-soft); }
 [data-look="claude"] .sb-warn { border-radius: 6px; }
+[data-look="claude"][data-mode="light"] .sb-warn:hover { color: #fff; } /* the ink is too dark on the light-mode red */
 [data-look="claude"] .sb-cost { border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
 [data-look="claude"] .sb-cost:hover { color: var(--text); border-color: var(--muted); }
 /* buttons: neutral hairline, primary filled with the accent */

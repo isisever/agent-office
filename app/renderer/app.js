@@ -81,13 +81,17 @@ function applyAppearance() {
     if (look === 'claude') root.style.removeProperty(name);
     else root.style.setProperty(name, chrome[key]);
   }
+  // the 8-bit colours of this mode, for appearance-boot.js at the next start (once the office theme is known)
+  if (themeKnown) store.set('chrome', look === 'claude' ? '' : JSON.stringify({ mode, ...chrome }));
   for (const p of panes.values()) p.term.setTheme(termTheme());
   login?.setTheme(termTheme());
   $('title').textContent = (look === 'claude' ? t('app.appTitlePlain') : t('app.appTitle'));
 }
 systemDark.addEventListener('change', () => applyAppearance());
+let themeKnown = false;
 function applyTheme(info) {
   theme = { ...DEFAULT_THEME, ...info };
+  themeKnown = true;
   applyAppearance();
 }
 
@@ -727,7 +731,7 @@ function setBotColor(hex) {
 setCollapsed(store.get('sidebarCollapsed') === '1');
 
 // ---- Appearance (v3.74): the setting lives in main (prefs look/mode); the last value is cached here so the page
-// has it before prefs arrive. Switching applies at once, no reload.
+// has it before prefs arrive (appearance-boot.js applies it before the first paint). Switching applies at once, no reload.
 function adoptAppearance(p) {
   look = normalizeLook(p?.look);
   modeSetting = normalizeMode(p?.mode);
@@ -736,9 +740,14 @@ function adoptAppearance(p) {
   sidebar.setAppearance(look, modeSetting);
   applyAppearance();
 }
+let appearanceRequest = 0;
 function setAppearance(p) {
   adoptAppearance({ look, mode: modeSetting, ...p });
-  api.prefs?.set(p).then((r) => { if (r && (r.look !== look || r.mode !== modeSetting)) adoptAppearance(r); }).catch((e) => console.error(e));
+  // only the latest request's reply is adopted: an older reply would roll a newer choice back for a moment
+  const request = ++appearanceRequest;
+  api.prefs?.set(p).then((r) => {
+    if (request === appearanceRequest && r && (r.look !== look || r.mode !== modeSetting)) adoptAppearance(r);
+  }).catch((e) => console.error(e));
 }
 adoptAppearance({ look: store.get('look'), mode: store.get('mode') });
 

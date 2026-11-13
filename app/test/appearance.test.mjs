@@ -6,7 +6,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import {
   LOOKS, MODES, normalizeLook, normalizeMode, effectiveMode, parseHex, mix, contrast, luminance,
-  PIXEL_DEFAULT, pixelLightChrome, CLAUDE, chromeFor, windowBackground, LIGHT_ANSI, terminalTheme,
+  PIXEL_DEFAULT, pixelLightChrome, CLAUDE, chromeFor, windowBackground, LIGHT_ANSI, LIGHT_STATUS, terminalTheme,
 } from '../src/appearance.mjs'
 
 const require = createRequire(import.meta.url)
@@ -86,13 +86,35 @@ test('Claude look: fixed palette, the office theme does not reach it', () => {
     const c = CLAUDE[m]
     for (const bg of [c.frame, c.statusBg, c.raised]) {
       assert.ok(contrast(c.statusText, bg) >= 7, `${m}: text on ${bg}`)
-      assert.ok(contrast(c.muted, bg) >= 4, `${m}: muted on ${bg}`)
+      assert.ok(contrast(c.muted, bg) >= 4.5, `${m}: muted on ${bg}`)
     }
     assert.ok(contrast(c.onAccent, c.accent) >= 4.5, `${m}: text on the accent fill`)
+    // the accent as text (small labels too) on the page and on the sidebar surface
+    for (const bg of [c.frame, c.statusBg]) assert.ok(contrast(c.accentText, bg) >= 4.5, `${m}: accent text on ${bg}`)
   }
-  for (const bg of [CLAUDE.dark.frame, CLAUDE.dark.statusBg]) assert.ok(contrast(CLAUDE.dark.accentText, bg) >= 4.5)
-  // the darker clay on light: large-text contrast (3:1); it is used for small accents only, never for body text
-  for (const bg of [CLAUDE.light.frame, CLAUDE.light.statusBg]) assert.ok(contrast(CLAUDE.light.accentText, bg) >= 3)
+  assert.ok(contrast('#ffffff', LIGHT_STATUS['--err']) >= 4.5) // .sb-warn:hover in Claude light
+  // style.css carries the same values
+  const css = readFileSync(new URL('../renderer/style.css', import.meta.url), 'utf8')
+  const block = (sel) => css.slice(css.indexOf(sel + ' {'), css.indexOf('}', css.indexOf(sel + ' {')))
+  const lightCss = block(':root[data-look="claude"][data-mode="light"]')
+  const darkCss = block(':root[data-look="claude"][data-mode="dark"]')
+  for (const [m, b] of [['light', lightCss], ['dark', darkCss]]) {
+    const c = CLAUDE[m]
+    for (const [name, v] of [['--frame', c.frame], ['--status-bg', c.statusBg], ['--status-text', c.statusText], ['--raised', c.raised], ['--muted', c.muted], ['--accent-text', c.accentText]]) {
+      assert.ok(b.includes(`${name}: ${v};`), `style.css ${m} ${name} ${v}`)
+    }
+  }
+})
+
+test('light mode status colours read as text on every light surface', () => {
+  const css = readFileSync(new URL('../renderer/style.css', import.meta.url), 'utf8')
+  const start = css.indexOf(':root[data-mode="light"] {')
+  const light = css.slice(start, css.indexOf('}', start))
+  const surfaces = [CLAUDE.light.frame, CLAUDE.light.statusBg, ...themes.flatMap(({ theme }) => { const c = pixelLightChrome(theme); return [c.frame, c.statusBg] })]
+  for (const [name, v] of Object.entries(LIGHT_STATUS)) {
+    assert.ok(light.includes(`${name}: ${v};`), `style.css light ${name} ${v}`)
+    for (const bg of surfaces) assert.ok(contrast(v, bg) >= 4.5, `${name} ${v} on ${bg}: ${contrast(v, bg).toFixed(2)}`)
+  }
 })
 
 test('terminal: follows the chrome; light mode gets an ANSI palette that reads on it', () => {
