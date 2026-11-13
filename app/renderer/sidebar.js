@@ -326,12 +326,18 @@ export function mountSidebar(el, on) {
   // for a model id the lists do not know. A stored value that is not listed opens it filled. An empty field is Auto;
   // an id main would refuse is marked and changes nothing.
   const CUSTOM_MODEL = '__custom__';
+  // the Custom fields holding a refused id; Save stays disabled while any does (the popup sets saveButton)
+  const badFields = new Set();
+  let saveButton = null;
+  const syncSave = () => { if (saveButton) saveButton.disabled = badFields.size > 0; };
   const customModelOf = (p, stored, listed) => (engineOfRow(p) === 'claude' && isCustomModelId(stored) && !listed.includes(stored) ? stored : '');
   function customModelField(key, stored, apply) {
     const commit = () => {
       const v = input.value.trim();
       const bad = v !== '' && !isCustomModelId(v);
       input.setAttribute('aria-invalid', String(bad));
+      if (bad) badFields.add(key); else badFields.delete(key);
+      syncSave();
       if (bad) draft?.delete(key); else queue(key, () => apply(v === '' ? null : v));
     };
     const input = h('input', {
@@ -343,7 +349,7 @@ export function mountSidebar(el, on) {
     /** The picker changed: the field shows for "Custom…" only, and what it holds becomes the pending value. */
     const picked = (value) => {
       input.hidden = value !== CUSTOM_MODEL;
-      if (!input.hidden) { commit(); input.focus(); }
+      if (!input.hidden) { commit(); input.focus(); } else { badFields.delete(key); syncSave(); } // a hidden field is not applied
     };
     return { input, picked };
   }
@@ -421,9 +427,11 @@ export function mountSidebar(el, on) {
   // The model the project's agents run on (contract v3.14): Auto (the boss picks per agent) or one pinned model.
   // Applies like the boss setting: next start, idle tabs right away.
   const AGENT_ALIASES = ['sonnet', 'haiku', 'opus'];
+  const FABLE_IDS = ['fable', 'claude-fable-5-2'];
   function agentModelSelect(p) {
     // v3.68, v3.73: after the three aliases, the rest of the Claude Code boss choices (Fable, the full ids)
-    const more = bossModelChoices('claude').filter((c) => !AGENT_ALIASES.includes(c.value));
+    // Fable has no worker file entry on Antigravity and Command Code, so it is offered on Claude Code projects only
+    const more = bossModelChoices('claude').filter((c) => !AGENT_ALIASES.includes(c.value) && (engineOfRow(p) === 'claude' || !FABLE_IDS.includes(c.value)));
     const listed = [...AGENT_ALIASES, ...more.map((c) => c.value)];
     const typed = customModelOf(p, p.agentModel, listed);
     const now = typed ? CUSTOM_MODEL : listed.includes(p.agentModel) ? p.agentModel : 'auto';
@@ -633,6 +641,7 @@ export function mountSidebar(el, on) {
   /** The project's popup (contract v3.42): every per-project setting; Save applies what changed. */
   function openProjectSettings(p) {
     const map = new Map();
+    badFields.clear();
     const body = [
       accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p),
       contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p),
@@ -644,6 +653,7 @@ export function mountSidebar(el, on) {
         for (const fn of fns) { try { await fn(); } catch (e) { console.error(e); } }
       },
     }, t('sidebar.save'));
+    saveButton = save;
     openModal(`${t('sidebar.projectSettings')} · ${p.name}`, body,
       [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save]);
     draft = map; // after openModal (its closeModal clears the previous draft); controls read it when they change

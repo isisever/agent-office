@@ -159,9 +159,9 @@ test('Fable 5.2: listed for the Claude Code boss and agent, first among the full
 
 test('custom model id: one validator, the same pattern in the renderer (v3.73)', () => {
   assert.equal(CUSTOM_MODEL_RE.source, P.CUSTOM_MODEL_RE.source)
-  const good = ['claude-fable-5-2', 'claude-opus-5-5', 'sonnet[1m]', 'us.anthropic.claude-fable-5-2-v1:0', 'vendor/model_x', 'a', 'a'.repeat(100)]
+  const good = ['claude-fable-5-2', 'claude-opus-5-5', 'sonnet[1m]', 'us.anthropic.claude-fable-5-2-v1:0', 'vendor/model_x', 'a', 'a'.repeat(100), 'fixcloudx/m']
   const bad = ['', ' ', 'a'.repeat(101), 'claude fable', 'a;b', 'a$(id)', '$(id)', 'a`id`', "a'b", 'a"b', 'a\nb', 'a\n', '-model', '--dangerously-skip-permissions',
-    'a|b', 'a&b', 'a>b', 'a<b', 'a\\b', 'a*b', 'a?b', 'a~b', 'a{b}', 'a(b)', 'a!b', 'a#b', 'a%b', 'a=b', 'a,b', 'a\tb', 'a\0b', '.a', '[a]', '/a', 'é', null, undefined, 5, {}, ['a']]
+    'a|b', 'a&b', 'a>b', 'a<b', 'a\\b', 'a*b', 'a?b', 'a~b', 'a{b}', 'a(b)', 'a!b', 'a#b', 'a%b', 'a=b', 'a,b', 'a\tb', 'a\0b', 'fixcloud/glm-4.6', 'FIXCLOUD/x', '.a', '[a]', '/a', 'é', null, undefined, 5, {}, ['a']]
   for (const v of good) { assert.equal(P.customModelValue(v), v, v); assert.equal(isCustomModelId(v), true, v) }
   for (const v of bad) { assert.equal(P.customModelValue(v), null, String(v)); assert.equal(isCustomModelId(v), false, String(v)) }
 })
@@ -176,7 +176,7 @@ test('custom model id: set, load, launch argument and agent env; Claude Code onl
   const env = A.sessionEnv({}, { agentModel: P.agentModelOf(a) })
   assert.deepEqual([env.AGENT_OFFICE_AGENT_MODEL, env.CLAUDE_CODE_SUBAGENT_MODEL, env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE], ['sonnet[1m]', 'sonnet[1m]', '1'])
   // refused: the setter returns the same state, the loader drops it to Auto
-  for (const v of ['a b', 'x;rm -rf ~', '$(id)', '`id`', '-p', 'a\nb', 'a'.repeat(101)]) {
+  for (const v of ['fixcloud/glm-4.6', 'FixCloud/x', 'a b', 'x;rm -rf ~', '$(id)', '`id`', '-p', 'a\nb', 'a'.repeat(101)]) {
     assert.equal(P.setProjectBossModel(s, 'a', v), s, v)
     assert.equal(P.setProjectAgentModel(s, 'a', v), s, v)
     const l = P.normalizeState({ projects: [{ id: 'x', dir: '/x', bossModel: v, agentModel: v }] }).projects[0]

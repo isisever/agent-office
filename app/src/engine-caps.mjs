@@ -102,7 +102,8 @@ export const BOSS_MODEL_CHOICES = {
 // same pattern as projects.js CUSTOM_MODEL_RE (the test compares them); main validates again and is the authority.
 export const CUSTOM_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,99}$/;
 /** @param {unknown} v */
-export const isCustomModelId = (v) => typeof v === 'string' && CUSTOM_MODEL_RE.test(v);
+// `fixcloud/` ids are refused like in projects.js customModelValue (FixCloud support was removed)
+export const isCustomModelId = (v) => typeof v === 'string' && CUSTOM_MODEL_RE.test(v) && !/^fixcloud\//i.test(v);
 
 /** The boss model choices of an engine. */
 export const bossModelChoices = (engine) => BOSS_MODEL_CHOICES[engineOf(engine)];

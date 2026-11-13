@@ -269,7 +269,8 @@ const BOSS_MODELS = ['sonnet', 'opus', 'haiku', 'fable', ...CLAUDE_FULL_MODELS];
 // (`--model <id>`) and CLAUDE_CODE_SUBAGENT_MODEL, so: a letter or digit first (never parseable as a flag), then only
 // letters, digits and . _ : / [ ] - (`sonnet[1m]`), 100 characters at most. No whitespace, quote or shell metacharacter.
 const CUSTOM_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,99}$/;
-const customModelValue = (v) => (typeof v === 'string' && CUSTOM_MODEL_RE.test(v) ? v : null);
+// `fixcloud/<model>` is refused: FixCloud support was removed (0.22.22) and old state still carries such ids; they must stay dropped, not become a custom id
+const customModelValue = (v) => (typeof v === 'string' && CUSTOM_MODEL_RE.test(v) && !/^fixcloud\//i.test(v) ? v : null);
 const BOSS_MODELS_BY_ENGINE = {
   claude: BOSS_MODELS,
   agy: ['flash', 'pro'],
@@ -575,7 +576,7 @@ module.exports = {
   /** state.hq (v3.46) normalized next to the rest */
   normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq), routines: ROUT.normalizeRoutines(raw?.routines), routinesCfg: ROUT.normalizeCfg(raw?.routinesCfg) }), findByDir,
   addProject, removeProject, setActive, setProjectAccount, setProjectManager, managerOf,
-  BOSS_MODELS, BOSS_MODELS_BY_ENGINE, setProjectBossModel, bossModelOf, bossModelArgs,
+  BOSS_MODELS, BOSS_MODELS_BY_ENGINE, bossModelValue, setProjectBossModel, bossModelOf, bossModelArgs,
   AGENT_MODELS, setProjectAgentModel, agentModelOf, CUSTOM_MODEL_RE, customModelValue,
   CONTEXT_CAPS, setProjectContextCap, contextCapOf,
   setProjectSavings, savingsOf,

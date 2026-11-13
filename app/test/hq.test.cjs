@@ -539,3 +539,10 @@ test('v3.48 review 5: report.md keeps report2 sizes (40 KB summary cut with the 
   assert.match(md, /\n````text\n# not a heading\n```\n/);   // fenced longer than the backticks inside: stays data
   assert.match(md, /\n````\n/);
 });
+
+test('HQ boss model: a listed model or a valid custom id; anything else is dropped (v3.73)', () => {
+  for (const v of ['sonnet', 'claude-fable-5-2', 'claude-next-9']) assert.equal(HQ.normalizeHq({ bossModel: v }).bossModel, v);
+  for (const v of ['a b', 'x;rm -rf ~', '-p', 'flash', 'fixcloud/glm-4.6', '', 5]) assert.equal('bossModel' in HQ.normalizeHq({ bossModel: v }), false, String(v));
+  assert.equal('bossModel' in P.normalizeState({ hq: { bossModel: '$(id)' } }).hq, false);
+  assert.match(fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8'), /o\.bossModel === '' \|\| HQ\.hqBossModel\(o\.bossModel\)/); // the IPC setter leaves an invalid value out
+});

@@ -57,13 +57,16 @@ const SECRET_PATTERNS = [
 /** @param {string} text */
 const redact = (text) => SECRET_PATTERNS.reduce((out, [re, to]) => out.replace(/** @type {RegExp} */ (re), /** @type {string} */ (to)), String(text ?? ''));
 
+/** The HQ boss model: a listed Claude Code model or a valid custom id (the project boss model check for the claude engine), else null. */
+const hqBossModel = (v) => (isStr(v) ? require('./projects.js').bossModelValue(v, 'claude') : null); // lazy: projects.js requires this file
+
 /** state.hq: the HQ's account and boss model, and the consent setting (default: ask). */
 function normalizeHq(raw) {
   const o = isObj(raw) ? raw : {};
   return {
     accountId: isStr(o.accountId) ? o.accountId : 'default',
     enabled: o.enabled !== false,
-    ...(isStr(o.bossModel) ? { bossModel: o.bossModel } : {}),
+    ...(hqBossModel(o.bossModel) ? { bossModel: o.bossModel } : {}),
     dispatchWithoutAsking: o.dispatchWithoutAsking === true,
   };
 }
@@ -383,7 +386,7 @@ You may edit this file: Agent Office writes it only when it is missing.
 `;
 
 module.exports = {
-  boardOfRemote, remoteOpen,
+  hqBossModel, boardOfRemote, remoteOpen,
   waitState, WAIT_STATES,
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
