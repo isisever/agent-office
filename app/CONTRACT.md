@@ -100,6 +100,8 @@ mountOffice(canvas, opts: { onTheme(t: ThemeInfo): void }): {
 
 `--frame`, `--accent`, `--status-bg`, `--status-text`; the xterm theme uses the same colors (background = statusBg).
 
+Amended in v3.74 (Appearance): these four stay the frame colours of the whole stylesheet. In the 8-bit look app.js sets them from ThemeInfo (dark: as they are; light: derived by `src/appearance.mjs` `pixelLightChrome`); in the Claude look app.js removes them and `style.css` supplies fixed values. `style.css` adds semantic variables on `:root`, defined per `[data-look][data-mode]`: `--bg`, `--surface`, `--raised`, `--popup`, `--text`, `--muted`, `--border` (hairline), `--accent-text` (the accent as text), `--on-accent` (text on an accent fill), `--line` / `--line-strong` / `--line-w` (frame borders), `--tint` (hover and active washes), `--scroll`, `--hover`, `--hover-soft`, `--ok`, `--err`, `--amber`, `--approval`, `--online`, `--danger`, `--bad`, `--hint-warn`, `--rt-warn`, `--track`, `--overlay`, `--shadow`, `--shadow-soft`, `--radius`, `--font-ui`, `--font-head`, `--font-mono`. Their defaults are the 8-bit dark look, where every one resolves to the colour the stylesheet had before v3.74.
+
 ## Account login (v2.1)
 
 - Main checks every account's auth at start (state 'checking' until done), after a login pty exits, after logout, when the window regains focus (at most once a minute) and on `refreshAuth`. Checks run through the user's login shell (`$SHELL -l -c`) so `claude` is on PATH, with the same env rules and shell flags (`$SHELL -l -i -c`) as the project ptys (`ptyEnv`).
@@ -1361,3 +1363,58 @@ The model pickers were fixed lists, so a new Claude model could not be chosen un
 - **Sidebar** (project settings, Claude Code projects): both pickers end with "Custom…" (`sidebar.modelCustom`), which shows a text field (`sidebar.modelCustomPh`, `sidebar.modelCustomTitle`; the existing `sb-input` style). A stored value that is not listed opens the picker on "Custom…" with the field filled. An empty field is Auto. What is typed is checked with `engine-caps.mjs` `isCustomModelId` (the same pattern; the test compares the two): a refused id is marked `aria-invalid` and leaves the stored value as it is, and the popup's Save is disabled while a Custom field holds one (`[aria-invalid="true"]` styles the field). The agent picker offers the Fable entries on Claude Code projects only. Main validates again and is the authority. The change is applied with the popup's Save like every other project setting.
 - **Effective model** (v3.53): `modelFamily` knows `fable`; the Auto option shows "Fable" for it. An unknown family (a custom id inherited from settings or `ANTHROPIC_MODEL`) stays `null` and the option shows the model name as written; the Haiku manager hint is unaffected. The per-project `/model` capture (v3.66) moves whatever string `/model` saved and does not read `bossModel`.
 - **Cost**: `token-usage.js` `priceOf` is unchanged; a model without a price entry is weighted with the fallback price, as before.
+
+## Appearance (v3.74)
+
+The app chrome has two independent settings, app-wide: a **look** and a **mode**. The office Theme picker (v3.1) is unchanged and keeps choosing the pixel room's palette in both looks.
+
+- `look`: `'pixel'` (default; the 8-bit look) | `'claude'` (warm neutral chrome in the style of the Claude desktop app; the option is named "Claude", no logos, marks or proprietary fonts are used).
+- `mode`: `'system'` (default; follows the OS) | `'light'` | `'dark'`.
+- **Compatibility**: `look: 'pixel'` with an effective dark mode is the app as it was before v3.74. The default mode is `system`, so on a light OS the app opens in the 8-bit light variant after updating.
+- **API**: `agentOffice.prefs.get()` returns `look` and `mode` beside `theme`; `agentOffice.prefs.set({ look?, mode? })` stores them. A value that is not listed is stored as the default (`src/appearance.mjs` `normalizeLook` / `normalizeMode`).
+- **Storage**: `state.json` top-level `look` and `mode`, next to `theme` and `language`. A file without them reads as `pixel` + `system`.
+- **Main**: `nativeTheme.themeSource = mode`, so native menus, dialogs and `prefers-color-scheme` follow. The `BrowserWindow` `backgroundColor` is `windowBackground(look, mode, nativeTheme.shouldUseDarkColors)` (the page colour of that look and mode: no flash at start); it is set again with `win.setBackgroundColor` when the setting or the OS scheme changes.
+- **Renderer**: `<html>` carries `data-look` (`pixel` | `claude`) and `data-mode` (the effective `light` | `dark`), and `color-scheme` is set to match. `system` is resolved with `matchMedia('(prefers-color-scheme: dark)')` and follows its changes live. Switching applies at once, without a reload. The last look and mode are kept in `localStorage` (`look`, `mode`) so the page has them before prefs arrive.
+- **Settings popup** (v3.42, the ⚙ of the ACCOUNTS heading): two selects before Theme: **Look** (`sidebar.look`: `sidebar.lookPixel` "8-bit", `sidebar.lookClaude` "Claude") and **Mode** (`sidebar.mode`: `sidebar.modeSystem`, `sidebar.modeLight`, `sidebar.modeDark`).
+- **dev-mock**: `?look=pixel|claude` and `?mode=system|light|dark`.
+
+### Look: pixel (8-bit)
+
+Monospace everywhere, square shapes, accent borders.
+
+- Dark: the four frame colours are the office theme's (`ThemeInfo`), as before.
+- Light: derived from the office theme by `pixelLightChrome(theme)`: the lightest of the theme's `frame` / `statusBg` / `statusText` mixed 55% toward white is the page (`--frame`), 88% toward white is the surface of the sidebar, terminal and popups (`--status-bg`); the darkest of the three is the text (`--status-text`), darkened until it has at least 7:1 on both; the theme accent is darkened until it has at least 4.5:1 on both (`--accent`). A colour that is not a hex value falls back to the classic theme's.
+
+### Look: claude
+
+The colours are fixed and do not follow the office theme.
+
+| | Light | Dark |
+|---|---|---|
+| background (`--frame`) | `#FAF9F5` | `#262624` |
+| sidebar, terminal (`--status-bg`) | `#F0EEE6` | `#1F1E1D` |
+| raised: inputs, selects (`--raised`) | `#FFFFFF` | `#30302E` |
+| popups, floating panels (`--popup`) | `#FAF9F5` | `#30302E` |
+| text | `#141413` | `#FAF9F5` |
+| muted text | `#73726C` | `#C2C0B6` |
+| hairline border | `rgba(31,30,29,.15)` | `rgba(222,220,209,.15)` |
+| accent (clay), fills | `#D97757` | `#D97757` |
+| accent as text | `#C6613F` | `#D97757` |
+| text on an accent fill | `#141413` | `#141413` |
+
+- Typography: UI in `system-ui, -apple-system, "Segoe UI", sans-serif` at 13px; the app title, section headings and popup titles in `ui-serif, Georgia, "Times New Roman", serif`, in sentence case without letter spacing (the title is `app.appTitlePlain`; the sidebar headings' upper-case locale strings are lower-cased by the stylesheet with the first letter capitalised, and "MCP" keeps its capitals).
+- Shape: 6-12px radii on buttons, inputs, selects, tabs, panels and popups; hairline borders in place of accent borders; neutral hover washes; primary buttons filled with the accent, the others outlined.
+- Stays monospace: the terminal, the project folder in the title bar, tool details and reports, pairing and login codes, the agy install line, worktree tab labels.
+- Stays pixel art: the office canvas, shown as a rounded card.
+
+### Terminal
+
+`terminalTheme(look, effectiveMode, theme)` builds the xterm theme for project terminals and the login terminal: background = `--status-bg`, foreground = text, cursor = accent (Claude light: the darker clay `#C6613F`), selection = the accent at 40% (dark) or 25% (light) alpha. Dark mode leaves xterm's ANSI colours alone (8-bit dark is as before). Light mode sets all sixteen (`LIGHT_ANSI`), each at least 4.5:1 on the light terminal background:
+
+`black #24292f`, `red #b91c28`, `green #116329`, `yellow #7d4e00`, `blue #0550ae`, `magenta #7340c9`, `cyan #136870`, `white #5c6570`, `brightBlack #57606a`, `brightRed #a40e26`, `brightGreen #166b2e`, `brightYellow #633c01`, `brightBlue #0a5cc2`, `brightMagenta #6639ba`, `brightCyan #0f6c7a`, `brightWhite #4b535d`.
+
+Claude Code picks its own theme; the palette only keeps plain ANSI output readable.
+
+### Status colours
+
+In light mode (both looks) the status colours used as text are darkened: `--ok #2e7d32`, `--err #c62828`, `--amber #9a6700`, `--approval #9a5b00`, `--online #18753a`, `--danger #c62828`, `--bad #b3261e`.
