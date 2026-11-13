@@ -1421,3 +1421,8 @@ Claude Code picks its own theme; the palette only keeps plain ANSI output readab
 ### Status colours
 
 In light mode (both looks) the status colours used as text are darkened (`src/appearance.mjs` `LIGHT_STATUS`): `--ok #2a7230`, `--err #c62828`, `--amber #8a5c00`, `--approval #9a5b00`, `--online #18753a`, `--danger #c62828`, `--bad #b3261e`, `--hint-warn #8a5a00`, `--rt-warn #8a4a06`. Each has at least 4.5:1 on every light surface (Claude light and the 8-bit light chrome of every gallery theme).
+
+
+## Shift+Enter is a new line (v3.75)
+
+In every terminal, Shift+Enter (no Cmd or Ctrl, outside an IME composition) sends `ESC CR` (`SHIFT_ENTER` in `src/terminal-keys.mjs`, through `translateKey`) instead of xterm.js's bare CR, so the prompt gets a new line and is not sent. It is the sequence Option+Enter already sends (Meta+Enter), which Claude Code reads as a newline without `/terminal-setup`; the other engines get the same bytes. Plain Enter still sends; Cmd+Enter / Ctrl+Enter are unchanged (v3.19 keys). On a stopped terminal only plain Enter restarts it.

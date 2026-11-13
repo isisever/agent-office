@@ -105,6 +105,7 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
   // Ctrl+Shift+V paste (claude has no Ctrl+V there; its image key is Alt+V, which paste() sends for an image; v3.19).
   // Linux and Windows: Ctrl+Shift+C/X are not passed to xterm (it would send ^C) and are left to Copy/Cut in the menu.
   // Cmd+Enter / Ctrl+Enter: xterm would send a bare CR; claude gets ctrl+enter (send a queued message now).
+  // Shift+Enter: a newline in the prompt (ESC CR) instead of xterm's bare CR, which would send it (v3.75).
   // macOS Option+Q (TR @) and other ASCII symbols the layout composes with Option: xterm would send ESC+key (Meta).
   term.attachCustomKeyEventHandler((ev) => {
     const seq = translateKey(ev, isMac);

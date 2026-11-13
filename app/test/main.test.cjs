@@ -1340,9 +1340,15 @@ test('terminal: ⌘Enter (macOS) ve Ctrl+Enter claude\'a ctrl+enter (hemen gönd
   assert.equal(K.translateKey(enter({ metaKey: true }), true), K.CTRL_ENTER);
   assert.equal(K.translateKey(enter({ ctrlKey: true }), true), K.CTRL_ENTER);
   assert.equal(K.translateKey(enter({ ctrlKey: true }), false), K.CTRL_ENTER);
-  // plain Enter, Shift/Option+Enter and ⌘ on Linux stay with xterm
+  // Shift+Enter is a newline (v3.75) on every platform; with Cmd or Ctrl, or inside an IME composition, it stays with xterm
+  assert.equal(K.SHIFT_ENTER, '\x1b\r');
+  assert.equal(K.translateKey(enter({ shiftKey: true }), true), K.SHIFT_ENTER);
+  assert.equal(K.translateKey(enter({ shiftKey: true }), false), K.SHIFT_ENTER);
+  assert.equal(K.translateKey(enter({ shiftKey: true, ctrlKey: true }), false), null);
+  assert.equal(K.translateKey(enter({ shiftKey: true, metaKey: true }), true), null);
+  assert.equal(K.translateKey(enter({ shiftKey: true, isComposing: true }), true), null);
+  // plain Enter, Option+Enter and ⌘ on Linux stay with xterm
   assert.equal(K.translateKey(enter(), true), null);
-  assert.equal(K.translateKey(enter({ shiftKey: true }), true), null);
   assert.equal(K.translateKey(enter({ altKey: true }), true), null);
   assert.equal(K.translateKey(enter({ ctrlKey: true, isComposing: true }), false), null);
   assert.equal(K.translateKey(enter({ metaKey: true }), false), null);
