@@ -1011,6 +1011,19 @@ test('auto-approve keeps another hook\'s decision, and is off without the switch
   await $.session.start(start)
   const hq = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } })
   expect(hq.decision).toBe(undefined)
+  expect(stateOf(writes).stats.waiting?.tool).toBe('Bash')
+})
+
+// a nested claude writes no state file, so `waiting` cannot be read back there; the missing decision is what shows
+// that the dialog goes to the person
+test('auto-approve is off in a nested claude', async ($, on) => {
+  const { writes } = setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_AUTO_APPROVE: '1', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'parent-1' })
+  on('classic.PermissionRequest', () => ({}) as never)
+
+  await $.session.start(start)
+  const nested = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } })
+  expect(nested.decision).toBe(undefined)
+  expect(writes.filter(w => w.path.includes('/sessions/'))).toEqual([])
 })
 
 // /office stats: today's deliveries from every session file, plus what works and runs right now

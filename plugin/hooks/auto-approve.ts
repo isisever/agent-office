@@ -9,6 +9,8 @@ const QUESTION_TOOLS = ['AskUserQuestion', 'ExitPlanMode']
 const FORK_BOMB = /:\s*\(\s*\)\s*\{/
 const PIPE_TO_SHELL = /\b(?:curl|wget)\b[^;&\n]*\|\s*(?:sudo\s+)?(?:\S*\/)?(?:ba|z|da|k|fi)?sh\b/
 const SHELL_FROM_DOWNLOAD = /\b(?:ba|z|da|k|fi)?sh\b[^;&|\n]*<\(\s*(?:curl|wget)\b/
+// a shell or `eval` fed a download through command substitution: `sh -c "$(curl …)"`, `eval "$(wget -qO- …)"`, backticks too
+const SHELL_FROM_SUBSTITUTION = /\b(?:(?:ba|z|da|k|fi)?sh|eval)\b[^;&|\n]*(?:\$\(|`)\s*(?:curl|wget)\b/
 
 // `;`, `&&`, `||`, `|`, `&`, newlines, and where a subshell or command substitution starts or ends (not `{`: `${HOME}`)
 const SEGMENT_BREAK = /\|\||&&|[;|&\n]|\$\(|[`()]/
@@ -62,16 +64,35 @@ function isDestructiveSegment(segment: string): boolean {
 
 /** Whether a shell command is one of the clearly destructive ones the person must still approve. */
 export function isDestructiveCommand(command: string): boolean {
-  if (FORK_BOMB.test(command) || PIPE_TO_SHELL.test(command) || SHELL_FROM_DOWNLOAD.test(command)) return true
-  return command.split(SEGMENT_BREAK).some(isDestructiveSegment)
+  // a backslash at the end of a line continues the command: `rm \<newline> -rf /` is one `rm -rf /`
+  const joined = command.replace(/\\\r?\n/g, ' ')
+  if (FORK_BOMB.test(joined) || PIPE_TO_SHELL.test(joined) || SHELL_FROM_DOWNLOAD.test(joined) || SHELL_FROM_SUBSTITUTION.test(joined)) return true
+  return joined.split(SEGMENT_BREAK).some(isDestructiveSegment)
+}
+
+// File tools: a write there outlives the session or raises its own permissions (Claude's settings, hooks, shell startup)
+const FILE_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']
+const PROTECTED_SEGMENTS = ['.claude', '.git', '.ssh']
+const PROTECTED_FILES = ['.claude.json', '.mcp.json', '.zshrc', '.zshenv', '.zprofile', '.zlogin', '.bashrc', '.bash_profile', '.bash_login', '.profile', '.envrc']
+
+/** Whether a file tool's path is one the person must approve: pure string check, `/` and `\\` separators alike. */
+function isProtectedPath(path: string): boolean {
+  const parts = path.split(/[\\/]+/).filter(Boolean)
+  return parts.some(p => PROTECTED_SEGMENTS.includes(p)) || PROTECTED_FILES.includes(parts[parts.length - 1] ?? '')
 }
 
 /**
  * Whether Agent Office may answer this permission request with "allow". False for a question to the person, for a
- * Bash call whose command cannot be read, and for a destructive command (any tool that carries a `command`).
+ * Bash call whose command cannot be read, for a destructive command (any tool that carries a `command`), and for a
+ * file tool writing to a protected path (Claude's own settings, git hooks, shell startup files, `.ssh`) or without one.
  */
 export function canAutoApprove(toolName: unknown, toolInput: unknown): boolean {
   if (typeof toolName !== 'string' || !toolName || QUESTION_TOOLS.includes(toolName)) return false
+  if (FILE_TOOLS.includes(toolName)) {
+    const input = toolInput && typeof toolInput === 'object' ? (toolInput as { file_path?: unknown; notebook_path?: unknown }) : {}
+    const path = typeof input.file_path === 'string' ? input.file_path : input.notebook_path
+    if (typeof path !== 'string' || !path.trim() || isProtectedPath(path)) return false
+  }
   const command = toolInput && typeof toolInput === 'object' ? (toolInput as { command?: unknown }).command : undefined
   if (typeof command === 'string') return command.trim() !== '' && !isDestructiveCommand(command)
   return toolName !== 'Bash'
