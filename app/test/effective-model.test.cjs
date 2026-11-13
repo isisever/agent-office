@@ -65,6 +65,9 @@ test('model family from aliases and full names', async () => {
   assert.equal(EM.modelFamily('opusplan'), 'opus');
   assert.equal(EM.modelFamily('claude-haiku-4-5-20251001'), 'haiku');
   assert.equal(EM.modelFamily('gpt-x'), null);
+  assert.equal(EM.modelFamily('fable'), 'fable'); // v3.73
+  assert.equal(EM.modelFamily('claude-fable-5-2'), 'fable');
+  assert.equal(EM.effectiveModel({ settings: [{ source: 'account', json: { model: 'claude-next-9' } }] }).family, null); // an unknown family is no error
   assert.equal(EM.effectiveModel(), null);
 });
 

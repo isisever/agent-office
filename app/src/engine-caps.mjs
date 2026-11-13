@@ -84,7 +84,9 @@ export const cap = (engine, feature, opts) => caps(engine, opts)[feature] || OK;
 export const BOSS_MODEL_CHOICES = {
   claude: [
     { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }, { value: 'haiku', label: 'Haiku' },
-    // v3.68: explicit ids pin the 5.5 models (an alias resolves to Claude Code's default of the family)
+    { value: 'fable', label: 'Fable' }, // v3.73
+    // v3.68: explicit ids pin the 5.5 models (an alias resolves to Claude Code's default of the family); v3.73: Fable 5.2
+    { value: 'claude-fable-5-2', label: 'Fable 5.2' },
     { value: 'claude-opus-5-5', label: 'Opus 5.5' }, { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
     { value: 'claude-haiku-5-5', label: 'Haiku 5.5' },
   ],
@@ -95,6 +97,12 @@ export const BOSS_MODEL_CHOICES = {
   ],
   opencode: [{ value: 'opencode/big-pickle', label: 'Big Pickle (free)' }], // v3.40: `-m provider/model`
 };
+
+// Custom model id (contract v3.73), Claude Code engine only: the pickers' "Custom…" field checks what is typed with the
+// same pattern as projects.js CUSTOM_MODEL_RE (the test compares them); main validates again and is the authority.
+export const CUSTOM_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,99}$/;
+/** @param {unknown} v */
+export const isCustomModelId = (v) => typeof v === 'string' && CUSTOM_MODEL_RE.test(v);
 
 /** The boss model choices of an engine. */
 export const bossModelChoices = (engine) => BOSS_MODEL_CHOICES[engineOf(engine)];

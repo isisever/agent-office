@@ -28,9 +28,9 @@ function modelValue(v) {
   return s;
 }
 
-/** 'haiku' | 'sonnet' | 'opus' for an alias or full name ('opusplan', 'claude-haiku-4-5', 'sonnet[1m]'), else null. */
+/** 'haiku' | 'sonnet' | 'opus' | 'fable' (v3.73) for an alias or full name ('opusplan', 'claude-haiku-4-5', 'sonnet[1m]'), else null. */
 function modelFamily(model) {
-  const m = /(haiku|sonnet|opus)/i.exec(String(model || ''));
+  const m = /(haiku|sonnet|opus|fable)/i.exec(String(model || ''));
   return m ? m[1].toLowerCase() : null;
 }
 
