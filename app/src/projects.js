@@ -47,6 +47,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withSavings(p.savings),
       ...withEngine(p.engine),
       ...withProjectFiles(p.projectFiles),
+      ...withAutoApprove(p.autoApprove),
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
       ...withBackup(p.backupAccount, known),
       ...withHome(p.homeAccount, known, accountId),
@@ -411,6 +412,27 @@ function setProjectFiles(state, id, value) {
 /** Whether the project lets Agent Office add its files. */
 const projectFilesOf = (project) => project?.projectFiles === true;
 
+// --- auto-approve permission prompts (contract v3.71)
+// Project.autoApprove: true lets the plugin answer Claude Code's permission dialogs with allow for this project
+// (AGENT_OFFICE_AUTO_APPROVE, accounts.js sessionEnv). Absent = off (the default). Never written for off.
+/** @type {(v: unknown) => { autoApprove?: true }} */
+const withAutoApprove = (v) => (v === true ? { autoApprove: true } : {});
+
+/** value: true | false. Same state when nothing changes. */
+function setProjectAutoApprove(state, id, value) {
+  const p = findProject(state, id);
+  const v = value === true;
+  if (!p || (p.autoApprove === true) === v) return state;
+  return { ...state, projects: state.projects.map((x) => {
+    if (x.id !== id) return x;
+    const { autoApprove: _, ...rest } = x;
+    return v ? { ...rest, autoApprove: true } : rest;
+  }) };
+}
+
+/** Whether the project's permission prompts are answered for the person: Claude Code projects only. */
+const autoApproveOf = (project) => project?.autoApprove === true && engineOf(project) === 'claude';
+
 // --- backup account at the usage limit (contract v3.17, src/fallback.js)
 // Project.backupAccount: 'auto' (any other logged-in account not at its limit) or an account id; absent = none.
 // Project.homeAccount: the account the project was on before an automatic move to a backup; it goes back there once
@@ -514,6 +536,7 @@ module.exports = {
   setProjectSavings, savingsOf,
   ENGINES, setProjectEngine, engineOf,
   setProjectFiles, projectFilesOf,
+  setProjectAutoApprove, autoApproveOf,
   setProjectBackup, backupOf, fallbackTo, returnHome,
   setProjectDelegates, delegatesOf,
 };

@@ -152,8 +152,14 @@ const SAVINGS_ENV = ['AGENT_OFFICE_STEP_BUDGET', 'AGENT_OFFICE_STEP_CAP', 'AGENT
 // truncates longer output to it) and MAX_MCP_OUTPUT_TOKENS (an MCP tool result's token limit, default 25000). The
 // launch line exports both again from AGENT_OFFICE_BASH_OUTPUT / AGENT_OFFICE_MCP_OUTPUT after the rc files. Off
 // leaves the user's own BASH_MAX_OUTPUT_LENGTH and MAX_MCP_OUTPUT_TOKENS alone.
-function sessionEnv(env, { manager = true, agentModel = null, contextCap = null, savings = SAVINGS_DEFAULT } = {}) {
+//
+// autoApprove (contract v3.71): the project's "Auto-approve" switch, off by default. On, AGENT_OFFICE_AUTO_APPROVE=1
+// lets the plugin answer Claude Code's permission dialogs with allow (plugin/hooks/auto-approve.ts holds what still
+// asks). Off, the variable is left out, even when the app itself was started with it.
+function sessionEnv(env, { manager = true, agentModel = null, contextCap = null, savings = SAVINGS_DEFAULT, autoApprove = false } = {}) {
   const out = { ...env, AGENT_OFFICE_APP: '1' };
+  if (autoApprove === true) out.AGENT_OFFICE_AUTO_APPROVE = '1';
+  else delete out.AGENT_OFFICE_AUTO_APPROVE;
   delete out.AGENT_OFFICE_AGENT_MODEL;
   delete out.AGENT_OFFICE_CONTEXT_CAP;
   for (const name of SAVINGS_ENV) delete out[name];

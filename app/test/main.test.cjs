@@ -142,6 +142,37 @@ test('sessionEnv: AGENT_OFFICE_APP her zaman, AGENT_OFFICE_MANAGER yalnız müd�
   assert.equal(base.AGENT_OFFICE_MANAGER, '1'); // girdi değişmez
 });
 
+test('sessionEnv: AGENT_OFFICE_AUTO_APPROVE=1 only with the project switch on; off removes an inherited one (v3.71)', () => {
+  assert.equal(A.sessionEnv({ PATH: '/bin' }).AGENT_OFFICE_AUTO_APPROVE, undefined); // off by default
+  assert.equal(A.sessionEnv({ PATH: '/bin' }, { autoApprove: true }).AGENT_OFFICE_AUTO_APPROVE, '1');
+  assert.equal(A.sessionEnv({ PATH: '/bin', AGENT_OFFICE_AUTO_APPROVE: '1' }, { autoApprove: false }).AGENT_OFFICE_AUTO_APPROVE, undefined);
+  assert.equal(A.sessionEnv({ PATH: '/bin' }, { autoApprove: /** @type {any} */ ('1') }).AGENT_OFFICE_AUTO_APPROVE, undefined); // only true
+});
+
+test('auto-approve: off by default, round-trips through the state, Claude Code projects only (v3.71)', () => {
+  const base = P.normalizeState({ projects: [{ id: 'p1', dir: '/w/one' }, { id: 'p2', dir: '/w/two', autoApprove: true }, { id: 'p3', dir: '/w/three', autoApprove: 'yes' }] });
+  const [p1, p2, p3] = base.projects;
+  assert.equal(P.autoApproveOf(p1), false);
+  assert.equal('autoApprove' in p1, false); // never written for off
+  assert.equal(P.autoApproveOf(p2), true);
+  assert.equal(P.autoApproveOf(p3), false); // only true counts
+  assert.equal('autoApprove' in p3, false);
+  assert.equal(P.autoApproveOf(undefined), false);
+
+  const on = P.setProjectAutoApprove(base, 'p1', true);
+  assert.equal(P.autoApproveOf(P.findProject(on, 'p1')), true);
+  assert.equal(P.setProjectAutoApprove(on, 'p1', true), on); // same state when nothing changes
+  assert.equal(P.setProjectAutoApprove(on, 'nope', true), on);
+  assert.equal(P.autoApproveOf(P.findProject(P.normalizeState(JSON.parse(JSON.stringify(on))), 'p1')), true); // survives a save
+  const off = P.setProjectAutoApprove(on, 'p1', false);
+  assert.equal('autoApprove' in P.findProject(off, 'p1'), false);
+
+  // the other engines' prompts are never answered: the stored switch counts for nothing there
+  for (const engine of ['agy', 'commandcode', 'opencode']) {
+    assert.equal(P.autoApproveOf(P.findProject(P.setProjectEngine(on, 'p1', engine), 'p1')), false, engine);
+  }
+});
+
 test('sessionEnv: müdür modu kapalıyken AGENT_OFFICE_FINISH=1 (bitirme bekçisi), açıkken yok (v3.10)', () => {
   const base = A.ptyEnv({ PATH: '/bin', AGENT_OFFICE_FINISH: '1' }, null);
   const on = A.sessionEnv(base, { manager: true });

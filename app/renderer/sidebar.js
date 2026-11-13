@@ -364,6 +364,16 @@ export function mountSidebar(el, on) {
     return control(p, 'projectFiles', t('sidebar.projectFiles'), box);
   }
 
+  // "Auto-approve permission prompts" (contract v3.71): off by default; Claude Code only. The title says what still asks.
+  function autoApproveToggle(p) {
+    const box = h('input', {
+      type: 'checkbox', class: 'sb-files', checked: p.autoApprove === true, title: t('sidebar.autoApproveTitle'),
+      onclick: (e) => e.stopPropagation(),
+      onchange: (e) => queue('autoApprove', () => on.setAutoApprove?.(p.id, e.target.checked)),
+    });
+    return control(p, 'autoApprove', t('sidebar.autoApprove'), box);
+  }
+
   // The model the project's agents run on (contract v3.14): Auto (the boss picks per agent) or one pinned model.
   // Applies like the boss setting: next start, idle tabs right away.
   const CLAUDE_55_AGENT = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']; // v3.68
@@ -569,7 +579,7 @@ export function mountSidebar(el, on) {
     const map = new Map();
     const body = [
       accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p),
-      contextCapSelect(p), savingsSelect(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p),
+      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p),
     ];
     const save = h('button', {
       class: 'sb-btn primary', onclick: async () => {

@@ -205,6 +205,11 @@ window.agentOffice = {
       if (p) { if (ids && ids.length) p.delegates = ids; else delete p.delegates; changed(); }
     },
     setSkillPacks: async () => ({ restarted: [] }), // v3.45
+    setAutoApprove: async (id, value) => { // v3.71
+      const p = /** @type {any} */ (projects.find((x) => x.id === id));
+      if (p) { if (value === true) p.autoApprove = true; else delete p.autoApprove; changed(); }
+      return { restarted: [] };
+    },
     setSavings: async (id, value) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === id));
       if (p) { if (value === 'off' || value === 'strict') p.savings = value; else delete p.savings; changed(); }

@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ToolCallResult } from 'claude-code'
 
 import type { Delivery, OfficeFrame, OfficeStats, Shell, Worker } from '../types'
+import { canAutoApprove } from './auto-approve'
 import { finishCandidate, finishModeOf, finishPrompt, finishTurnComplete, finishTurnStart, finishVerdict, isWaiting, JUDGE_LABELS } from './finish'
 import {
   BRIEF_TEXT,
@@ -398,6 +399,9 @@ let isStepCapped = false
 // budget, or AGENT_OFFICE_VERIFY=1; AGENT_OFFICE_VERIFY=0 turns it off), the brief check's once-per-prompt flag, and
 // the project's facts file (<data dir>/facts/<slug>.md, in the app only)
 let verifyOn = false
+// AGENT_OFFICE_AUTO_APPROVE=1 (the project's switch in the app, contract v3.71): permission dialogs are answered
+// "allow" for the person, except what auto-approve.ts leaves to them. Never nested, never in HQ.
+let autoApproveOn = false
 let isBriefReminded = false
 let factsFile = ''
 const FACTS_SECTION_ID = 'agent-office:facts'
@@ -1354,6 +1358,7 @@ export const register: Register = on => {
     isStepCapped = stepBudget > 0 && (await $.env.get('AGENT_OFFICE_STEP_CAP')) === '1'
     const verify = (await $.env.get('AGENT_OFFICE_VERIFY')) ?? ''
     verifyOn = !isNested && (verify === '1' || (verify !== '0' && stepBudget > 0))
+    autoApproveOn = !isNested && !isHq && (await $.env.get('AGENT_OFFICE_AUTO_APPROVE')) === '1'
     await $.command.register(
       isInApp
         ? { name: 'office', description: t.appDescription, argumentHint: t.appArgumentHint }
@@ -1622,6 +1627,12 @@ export const register: Register = on => {
   on('classic.PermissionRequest', async ($, e, next) => {
     noteTranscript(e)
     const tool = typeof e.tool_name === 'string' ? e.tool_name : ''
+    // auto-approve (contract v3.71): answered for the person, so no dialog opens and nothing waits; a decision
+    // another hook already made stands
+    if (autoApproveOn && canAutoApprove(tool, e.tool_input)) {
+      const answer = await next(e)
+      return answer.decision ? answer : { ...answer, decision: { behavior: 'allow' } }
+    }
     await setStats($, s => ({ ...s, waiting: { kind: 'permission', tool, since: Date.now() } }))
 
     return next(e)

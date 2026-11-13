@@ -1308,3 +1308,18 @@ Every server in the MCP panel gets an edit button (✎) except a held one (it ca
 ## Claude Code CLI kept current (v3.70)
 
 - On startup Agent Office runs `claude update` in the background at most once per 12 h (`src/claude-update.js`; stamp in userData `claude-update.json`); opt out with `AGENT_OFFICE_NO_CLAUDE_UPDATE=1`. It never edits the user's Claude config.
+
+## Auto-approve permission prompts (v3.71)
+
+A per-project switch, **off by default**, for sessions where Claude Code's auto mode is not offered (Haiku 4.5): with it on, the Agent Office plugin answers Claude Code's permission dialogs with allow, for the main session and its subagents. Claude Code projects only.
+
+- State: `Project.autoApprove: true` (`src/projects.js` `setProjectAutoApprove`, `autoApproveOf`); absent = off, never written for off. `autoApproveOf` is false for a project on another engine whatever is stored. It is not part of a project's transferred settings.
+- IPC `projects:setAutoApprove(id, value)` → `{ restarted }`; preload `window.agentOffice.projects.setAutoApprove`. Sidebar: the "Auto-approve" checkbox in the project settings (`sidebar.autoApprove`, hint `sidebar.autoApproveTitle`); feature `autoApprove` in `src/engine-caps.mjs`, disabled for Antigravity, Command Code and OpenCode with `sidebar.na.claudeOnlyAutoApprove`.
+- Delivery: `accounts.js` `sessionEnv({ autoApprove })` sets `AGENT_OFFICE_AUTO_APPROVE=1` in the tab's environment; off, the variable is removed even when the app itself was started with it. The plugin reads it once at session start, so a change applies **from the next tab start**; idle Claude Code tabs restart at once (as for Savings), a busy tab keeps its old value until it restarts.
+- Plugin (`plugin/hooks/register.tsx`, `classic.PermissionRequest`): with the variable set and the request approvable, the hook returns `{ decision: { behavior: 'allow' } }` (the classic hook's `hookSpecificOutput.decision`) and does not set `stats.waiting` (no dialog opens). It adds no permission rules (`updatedPermissions`), so nothing is remembered beyond the one call. A decision another hook already returned stands. Otherwise the request goes to the person exactly as before (v2.6 `waiting`).
+- Never auto-approved (`plugin/hooks/auto-approve.ts`, pure, `canAutoApprove(toolName, toolInput)`):
+  - questions to the person: `AskUserQuestion`, `ExitPlanMode`;
+  - a request without a tool name, and a `Bash` request whose command is missing or empty;
+  - clearly destructive commands, for any tool whose input carries a `command`, matched per command segment (split on `;`, `&&`, `||`, `|`, `&`, newlines and subshell boundaries): `sudo` / `doas` anywhere in a segment; `rm` with a recursive flag on `/`, `~`, `$HOME`, `.`, `..` or a bare `*` (with or without a trailing `/` or `/*`); `git push` with `--force`, `-f`, `--force-with-lease`, `--force-if-includes` or a `+refspec`; `git reset --hard`; `git clean -f…`; `dd … of=`; `mkfs*`; `diskutil erase…` / `secureErase` / `zeroDisk` / `randomDisk` / `partitionDisk` / `reformat`; `chmod` / `chown` `-R` on the same broad targets; `curl` / `wget` piped into a shell, or a shell reading `<(curl …)`; the `:(){` fork bomb; `shutdown`, `reboot`, `halt`, `poweroff` in command position.
+  - The list is a net under obvious mistakes, not a sandbox: a command that hides what it does (a script file, an alias, `eval` of a variable) is approved like any other.
+- Not applied to: the HQ session (`startPty` passes `autoApprove: false` for it and the plugin ignores the variable when `AGENT_OFFICE_HQ=1`), a nested session, delegate runs (`delegate.js` `cleanBase` drops every `AGENT_OFFICE_*`), and the other engines (the Command Code mod still never answers).

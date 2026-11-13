@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setDelegates: (id, ids) => ipcRenderer.invoke('projects:setDelegates', id, ids), // string[] of other account ids the boss may delegate to (v3.56)
     setEngine: (id, value) => ipcRenderer.invoke('projects:setEngine', id, value), // 'agy' | 'commandcode' | null (Claude Code); { restarted: pty ids }, every tab fresh, or { restarted: [], refused } when a tab is working (v3.22, v3.25)
     setProjectFiles: (id, value) => ipcRenderer.invoke('projects:setProjectFiles', id, value), // true | false; { restarted, written, removed, refused } (v3.38)
+    setAutoApprove: (id, value) => ipcRenderer.invoke('projects:setAutoApprove', id, value), // true | false; { restarted: pty ids } (v3.71)
     openFolder: (id) => ipcRenderer.invoke('projects:openFolder', id),   // opens the project's folder in the file manager → boolean
     menu: (id) => ipcRenderer.invoke('projects:menu', id),   // right click: native menu (move the session to another computer, v3.4)
     onChange: listen('projects:changed'),

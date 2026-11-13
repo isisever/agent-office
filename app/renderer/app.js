@@ -425,6 +425,15 @@ async function setProjectFiles(projectId, value) {
   } catch (e) { console.error(e); }
 }
 
+/** Auto-approve permission prompts (v3.71): true | false; main restarts the idle tabs. */
+async function setAutoApprove(projectId, value) {
+  try {
+    const r = await api.projects.setAutoApprove?.(projectId, value);
+    for (const id of r?.restarted || []) panes.get(id)?.term.reset({ restarting: true });
+    applyProjects(await api.projects.list());
+  } catch (e) { console.error(e); }
+}
+
 /** Per-project context cap (v3.15): 200000 | 400000 | null (Auto); main restarts the idle tabs. */
 async function setContextCap(projectId, value) {
   try {
@@ -561,6 +570,7 @@ sidebar = mountSidebar($('sidebar'), {
   effectiveModel: (id) => Promise.resolve(api.projects.effectiveModel?.(id)).catch((e) => { console.error(e); return null; }),
   setAgentModel,
   setProjectFiles,
+  setAutoApprove,
   setContextCap,
   setSavings,
   setEngine,

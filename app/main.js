@@ -1192,6 +1192,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   let env = A.sessionEnv(A.ptyEnv(process.env, configDir), {
     manager: P.managerOf(state, project), agentModel: P.agentModelOf(project), contextCap: P.contextCapOf(project),
     savings: P.savingsOf(project),
+    autoApprove: !project.hq && P.autoApproveOf(project), // v3.71: never the HQ session
   });
   delete env.AGENT_OFFICE_STATUSLINE;
   delete env.AGENT_OFFICE_DIRECTORY;
@@ -3179,6 +3180,16 @@ ipcMain.handle('projects:setProjectFiles', (_e, id, value) => {
   const r = syncProjectFilesNotice(p);
   const restarted = next !== state && P.engineOf(p) !== 'claude' ? restartIdle(p) : [];
   return { restarted, written: r.written, removed: r.removed, refused: r.refused };
+});
+// Auto-approve permission prompts (contract v3.71): true lets the plugin answer Claude Code's permission dialogs with
+// allow for this project. The session reads it at its start: next start, idle Claude Code tabs at once.
+// Returns the restarted pty ids.
+ipcMain.handle('projects:setAutoApprove', (_e, id, value) => {
+  const next = P.setProjectAutoApprove(state, id, value === true);
+  if (next === state) return { restarted: [] };
+  commit(next);
+  const p = P.findProject(state, id);
+  return { restarted: p && P.engineOf(p) === 'claude' ? restartIdle(p) : [] };
 });
 // Account delegates (contract v3.56): the account ids the project's claude boss may delegate to (never its own).
 // Applies at the next session start (the manifest + key files are prepared then); idle claude tabs restart to pick it up.
