@@ -44,7 +44,6 @@ function setUp(
     return { value: run(e.argv) }
   })
   on('session.start', (_$, e) => e)
-  on('ui.render', { component: 'AbovePrompt' }, () => undefined as never)
 
   return { writes, runs, clock, commands, registered }
 }
