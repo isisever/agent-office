@@ -94,6 +94,29 @@ export function mountSidebar(el, on) {
   const themeLabel = h('span', {});
   const themeSelect = h('select', { class: 'sb-acct sb-lang sb-theme', onchange: (e) => on.setTheme?.(e.target.value) });
   const themeRow = h('div', { class: 'sb-botcolor sb-langrow' }, themeLabel, themeSelect);
+  // appearance (v3.74): the chrome's look (8-bit | Claude) and mode (System | Light | Dark); Theme stays the office palette
+  let lookSetting = 'pixel';
+  let modeSetting = 'system';
+  const lookLabel = h('span', {});
+  const lookSelect = h('select', { class: 'sb-acct sb-lang', id: 'sb-look', onchange: (e) => on.setLook?.(e.target.value) });
+  const lookRow = h('div', { class: 'sb-botcolor sb-langrow' }, lookLabel, lookSelect);
+  const modeLabel = h('span', {});
+  const modeSelect = h('select', { class: 'sb-acct sb-lang', id: 'sb-mode', onchange: (e) => on.setMode?.(e.target.value) });
+  const modeRow = h('div', { class: 'sb-botcolor sb-langrow' }, modeLabel, modeSelect);
+  // The Claude look sets the headings in sentence case (style.css); "MCP" keeps its capitals there (.sb-keepcase).
+  // The 8-bit look gets the plain string, as before.
+  function renderMcpHead() {
+    const text = t('sidebar.mcp');
+    mcpHead.replaceChildren(...(lookSetting === 'claude' && text.startsWith('MCP ') ? [h('span', { class: 'sb-keepcase' }, 'MCP'), text.slice(3)] : [text]));
+  }
+  function renderAppearance() {
+    lookLabel.textContent = t('sidebar.look');
+    modeLabel.textContent = t('sidebar.mode');
+    lookSelect.replaceChildren(...[['pixel', t('sidebar.lookPixel')], ['claude', t('sidebar.lookClaude')]]
+      .map(([v, label]) => h('option', { value: v, selected: lookSetting === v }, label)));
+    modeSelect.replaceChildren(...[['system', t('sidebar.modeSystem')], ['light', t('sidebar.modeLight')], ['dark', t('sidebar.modeDark')]]
+      .map(([v, label]) => h('option', { value: v, selected: modeSetting === v }, label)));
+  }
   // resume the last session on launch (claude --continue)
   const resumeLabel = h('span', {});
   const resumeBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setResume?.(e.target.checked) });
@@ -163,7 +186,7 @@ export function mountSidebar(el, on) {
   function renderChrome() {
     projHead.textContent = t('sidebar.projects');
     acctHead.textContent = t('sidebar.accounts');
-    mcpHead.textContent = t('sidebar.mcp');
+    renderMcpHead();
     addMcpBtn.textContent = t('sidebar.mcpAdd');
     addMcpBtn.title = t('sidebar.mcpAddTitle');
     settingsBtn.title = t('sidebar.settingsTitle');
@@ -193,6 +216,7 @@ export function mountSidebar(el, on) {
     renderSleep();
     langSelect.title = t('sidebar.languageTitle');
     themeLabel.textContent = t('sidebar.theme');
+    renderAppearance();
     renderLanguages();
     renderThemes();
   }
@@ -820,7 +844,7 @@ export function mountSidebar(el, on) {
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, themeRow, botRow, skillsSection()],
+      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, lookRow, modeRow, themeRow, botRow, skillsSection()],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 
@@ -1180,6 +1204,13 @@ export function mountSidebar(el, on) {
       renderLanguages();
     },
     /** Theme picker: options after Auto (src/themes.mjs themeChoices) and the setting ('auto' | name). */
+    /** Appearance pickers (v3.74): look 'pixel' | 'claude', mode 'system' | 'light' | 'dark'. */
+    setAppearance(look, mode) {
+      lookSetting = look;
+      modeSetting = mode;
+      renderAppearance();
+      renderMcpHead();
+    },
     setThemes(choices, setting) {
       if (Array.isArray(choices)) themeChoices = choices;
       if (typeof setting === 'string') themeSetting = setting;

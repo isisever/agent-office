@@ -7,6 +7,7 @@ import { mountDevices, mergeRemote } from './devices.js';
 import { setLang, onLang, t } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac } from './platform.js';
 import { themeChoices, effectiveTheme } from '../src/themes.mjs';
+import { normalizeLook, normalizeMode, effectiveMode, chromeFor, terminalTheme } from '../src/appearance.mjs';
 import { tildePath, windowTitle } from '../src/layout.mjs';
 
 // Fake window.agentOffice to see the layout in a plain browser (outside Electron).
@@ -61,14 +62,37 @@ const focusActive = () => (login?.isOpen() ? login.focus() : panes.get(activePty
 let login = null; // login overlay (login.js)
 
 // ---- Theme ----
-function applyTheme(t) {
-  theme = { ...DEFAULT_THEME, ...t };
-  root.style.setProperty('--frame', theme.frame);
-  root.style.setProperty('--accent', theme.accent);
-  root.style.setProperty('--status-bg', theme.statusBg);
-  root.style.setProperty('--status-text', theme.statusText);
-  for (const p of panes.values()) p.term.setTheme(theme);
-  login?.setTheme(theme);
+// Appearance (v3.74): look ('pixel' | 'claude') and mode ('system' | 'light' | 'dark'). <html> carries data-look and
+// data-mode (effective: light | dark). The 8-bit look takes its four frame colours from the office theme (dark: as
+// they are; light: derived, src/appearance.mjs); the Claude look's colours are fixed in style.css, so they are unset.
+let look = 'pixel';
+let modeSetting = 'system';
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+const shownMode = () => effectiveMode(modeSetting, systemDark.matches);
+const termTheme = () => terminalTheme(look, shownMode(), theme);
+const FRAME_VARS = { '--frame': 'frame', '--accent': 'accent', '--status-bg': 'statusBg', '--status-text': 'statusText' };
+function applyAppearance() {
+  const mode = shownMode();
+  root.dataset.look = look;
+  root.dataset.mode = mode;
+  root.style.colorScheme = mode;
+  const chrome = chromeFor(look, mode, theme);
+  for (const [name, key] of Object.entries(FRAME_VARS)) {
+    if (look === 'claude') root.style.removeProperty(name);
+    else root.style.setProperty(name, chrome[key]);
+  }
+  // the 8-bit colours of this mode, for appearance-boot.js at the next start (once the office theme is known)
+  if (themeKnown) store.set('chrome', look === 'claude' ? '' : JSON.stringify({ mode, ...chrome }));
+  for (const p of panes.values()) p.term.setTheme(termTheme());
+  login?.setTheme(termTheme());
+  $('title').textContent = (look === 'claude' ? t('app.appTitlePlain') : t('app.appTitle'));
+}
+systemDark.addEventListener('change', () => applyAppearance());
+let themeKnown = false;
+function applyTheme(info) {
+  theme = { ...DEFAULT_THEME, ...info };
+  themeKnown = true;
+  applyAppearance();
 }
 
 // ---- Title bar ----
@@ -157,7 +181,7 @@ function createPane(id) {
   el.append(hintEl, host);
   $('terminals').appendChild(el);
 
-  const term = mountTerminal(host, { projectId: id, theme });
+  const term = mountTerminal(host, { projectId: id, theme: termTheme() });
   panes.set(id, { el, hint: hintEl, term });
   const buf = pending.get(id);
   if (buf) {
@@ -617,6 +641,8 @@ sidebar = mountSidebar($('sidebar'), {
   setFallback: (on) => api.prefs?.set({ fallback: on }).then((p) => sidebar.setFallback(p?.fallback)).catch((e) => console.error(e)),
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
   setTheme: setThemeSetting,
+  setLook: (v) => setAppearance({ look: v }),
+  setMode: (v) => setAppearance({ mode: v }),
   openUsage: (p) => usagePanel?.show(p),
   skillPacks: {
     list: (projectId) => (api.skillPacks ? api.skillPacks.list(projectId).catch(() => null) : Promise.resolve(null)),
@@ -626,7 +652,7 @@ sidebar = mountSidebar($('sidebar'), {
   mcp: { list: (id) => api.mcp.list(id).catch(() => null), add: (f) => mcpChange(() => api.mcp.add(f)), get: (id) => api.mcp.get(id).catch(() => null), update: (id, f) => mcpChange(() => api.mcp.update(id, f)), getFile: (pid, where, name) => api.mcp.getFile(pid, where, name).catch(() => null), updateFile: (pid, where, name, f) => api.mcp.updateFile(pid, where, name, f).catch(() => ({ ok: false, error: 'failed' })), remove: (id) => mcpChange(() => api.mcp.remove(id)) },
 });
 
-login = mountLogin(document.body, { getTheme: () => theme, onClose: () => focusActive() });
+login = mountLogin(document.body, { getTheme: () => termTheme(), onClose: () => focusActive() });
 
 // Antigravity's login (contract v3.24): one per user, agy itself in the 'login:agy' pty. Log out = /logout at its prompt.
 function setAgyAuth(a) { if (a) sidebar.setAgyAuth(a); }
@@ -704,6 +730,27 @@ function setBotColor(hex) {
 
 setCollapsed(store.get('sidebarCollapsed') === '1');
 
+// ---- Appearance (v3.74): the setting lives in main (prefs look/mode); the last value is cached here so the page
+// has it before prefs arrive (appearance-boot.js applies it before the first paint). Switching applies at once, no reload.
+function adoptAppearance(p) {
+  look = normalizeLook(p?.look);
+  modeSetting = normalizeMode(p?.mode);
+  store.set('look', look);
+  store.set('mode', modeSetting);
+  sidebar.setAppearance(look, modeSetting);
+  applyAppearance();
+}
+let appearanceRequest = 0;
+function setAppearance(p) {
+  adoptAppearance({ look, mode: modeSetting, ...p });
+  // only the latest request's reply is adopted: an older reply would roll a newer choice back for a moment
+  const request = ++appearanceRequest;
+  api.prefs?.set(p).then((r) => {
+    if (request === appearanceRequest && r && (r.look !== look || r.mode !== modeSetting)) adoptAppearance(r);
+  }).catch((e) => console.error(e));
+}
+adoptAppearance({ look: store.get('look'), mode: store.get('mode') });
+
 // ---- Theme picker (v3.1): 'auto' picks by project (core.mjs), a name forces that theme for the whole office.
 // The frame colours follow through onTheme → applyTheme; the bot color picker still wins over a theme's bot colours.
 let officeThemes = {}; // gallery + user themes.json (main, office:themes)
@@ -722,7 +769,7 @@ function setThemeSetting(name) {
 
 // ---- Language: title, empty state and hints; sidebar, office and panel redraw themselves ----
 function applyStaticText() {
-  $('title').textContent = t('app.appTitle');
+  $('title').textContent = (look === 'claude' ? t('app.appTitlePlain') : t('app.appTitle'));
   setVersionTitle();
   $('empty-title').textContent = t('app.emptyTitle');
   $('empty-add').textContent = t('app.emptyAdd');
@@ -763,6 +810,7 @@ api.prefs?.get().then((p) => {
   sidebar.setEngineRows(p);
   if (typeof p?.theme === 'string') themeSetting = p.theme;
   applyThemeChoice();
+  adoptAppearance(p);
 }).catch((e) => console.error(e));
 
 $('empty-add').addEventListener('click', addProject);
