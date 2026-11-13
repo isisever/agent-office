@@ -95,7 +95,6 @@ function setUp(
   on('classic.UserPromptSubmit', () => ({}))
   on('tool.call', () => ({ result: 'ok' }) as never)
   on('clock.after', () => ({ value: undefined as never }))
-  on('ui.render', { component: 'AbovePrompt' }, () => undefined as never)
   return { appended, gitCalls, store, mtimes }
 }
 
