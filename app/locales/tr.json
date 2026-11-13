@@ -217,9 +217,9 @@
     "projectFiles": "Agent Office dosyaları",
     "projectFilesTitle": "Agent Office kendi dosyalarını bu projeye eklesin: yönetici notu, ajan modelinde bir işçi ajan, bitirmeden önce kontrol kapısı ve projenin kendi onaylı MCP sunucuları (Antigravity: .agents/, Command Code: .commandcode/agents/). .git/info/exclude ile git dışında tutulur; kapatınca tam olarak bu dosyalar silinir.",
     "autoApprove": "Otomatik onay",
-    "autoApproveTitle": "İzin sorularını otomatik onayla: Agent Office bu projede Claude Code'un izin pencerelerine (müdür ve ajanları için) sizin yerinize evet der. Açıkça yıkıcı komutlar (sudo, / ya da ~ üzerinde rm -r, git push --force, git reset --hard, git clean -f, disk araçları, indirilip kabuğa aktarılan betik) ve size sorulan sorular ile Claude'un kendi ayar dosyalarındaki değişiklikler yine sorulur. Varsayılan kapalı. Sonraki sekme başlangıcında geçerli olur; boştaki sekmeler hemen yeniden başlar.",
+    "autoApproveTitle": "İzin sorularını otomatik onayla: Agent Office bu projede Claude Code'un izin pencerelerine (müdür ve ajanları için) sizin yerinize evet der. Açıkça yıkıcı komutlar (sudo, / ya da ~ üzerinde rm -r, git push --force, git reset --hard, git clean -f, disk araçları, indirilip kabuğa aktarılan betik) ve size sorulan sorular ile Claude'un kendi ayar dosyalarındaki değişiklikler yine sorulur. Bu açıkken diğer makinelerinizden gelen görevler reddedilir. Varsayılan kapalı. Sonraki sekme başlangıcında geçerli olur; boştaki sekmeler hemen yeniden başlar.",
     "skipPermissions": "İzinleri atla",
-    "skipPermissionsTitle": "İzinleri atla: bu projenin Claude Code'unu --dangerously-skip-permissions ile başlatır (bypass modu). İzin soruları atlanır, yıkıcı komutlar dahil (Otomatik onay bunları yine sorar); başlattığı ajanlar da bunu devralır. Yalnızca kendi deny ve ask kurallarınız ile kritik bir yolun silinmesi (/ ya da ~ üzerinde rm) yine durdurur. Claude Code ilk seferde bir uyarıyı kabul etmenizi ister. Bu açıkken Otomatik onaya yanıtlayacak neredeyse hiçbir şey kalmaz. Varsayılan kapalı. Sonraki sekme başlangıcında geçerli olur; boştaki sekmeler hemen yeniden başlar.",
+    "skipPermissionsTitle": "İzinleri atla: bu projenin Claude Code'unu --dangerously-skip-permissions ile başlatır (bypass modu). İzin soruları atlanır, yıkıcı komutlar dahil (Otomatik onay bunları yine sorar); başlattığı ajanlar da bunu devralır. Yalnızca kendi deny ve ask kurallarınız ile kritik bir yolun silinmesi (/ ya da ~ üzerinde rm) yine durdurur. Claude Code ilk seferde bir uyarıyı kabul etmenizi ister. Bu açıkken Otomatik onaya yanıtlayacak neredeyse hiçbir şey kalmaz. Bu açıkken diğer makinelerinizden gelen görevler reddedilir. Varsayılan kapalı. Sonraki sekme başlangıcında geçerli olur; boştaki sekmeler hemen yeniden başlar.",
     "contextCap": "Bağlam sınırı",
     "contextCapTitle": "Bu projedeki konuşmaların (müdür ve ajanları için) Claude onları özetlemeden (otomatik sıkıştırma) önce ne kadar büyüyebileceği. Her adım bütün konuşmayı yeniden okur; sınır düşükse Claude daha erken özetler, her adım daha az okur ve iş daha ucuza gelir. Bedeli: önceki işin ayrıntıları yalnızca özet olarak kalır. Otomatik, Claude Code'un kendi sınırını kullanır (1M modelde 1M token'a kadar). Projenin Claude'u bir sonraki açılışında geçerli olur (boştaki sekmeler hemen yeniden başlar).",
     "contextCapAuto": "Otomatik",
@@ -849,7 +849,7 @@
       "reported": "raporlandı"
     },
     "reason": {
-      "not-allowed": "o cihazda bu cihazın komutları kapalı",
+      "not-allowed": "o cihazda bu cihazın komutları kapalı ya da o proje izin sorularını kendisi yanıtlıyor",
       "unknown-project": "böyle bir proje yok",
       "engine": "Claude Code projesi değil",
       "not-running": "terminali çalışmıyor",

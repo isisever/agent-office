@@ -206,12 +206,23 @@ test('skip permissions: off by default, round-trips through the state, Claude Co
   }
 
   // the HQ session keeps --permission-mode default and its tool allowlist whatever is stored
-  assert.deepEqual(P.skipPermissionsArgs({ ...p2, hq: true }), []);
-  const hqArgs = require('../src/hq.js').launchArgs({ dir: '/w/hq', mcpConfig: '/w/hq.json' });
+  const HQ = require('../src/hq.js');
+  const hq = HQ.hqProject({ skipPermissions: true, autoApprove: true }, '/w/hq');
+  assert.equal('skipPermissions' in hq || 'autoApprove' in hq, false); // HQ carries neither switch
+  assert.deepEqual(P.skipPermissionsArgs(hq), []);
+  assert.deepEqual(P.skipPermissionsArgs({ ...hq, skipPermissions: true }), []); // and its hq mark wins over a stored one
+  const hqArgs = HQ.launchArgs({ dir: '/w/hq', mcpConfig: '/w/hq.json' });
   assert.equal(hqArgs.includes('--dangerously-skip-permissions'), false);
   assert.equal(hqArgs[hqArgs.indexOf('--permission-mode') + 1], 'default');
   // a delegate run keeps acceptEdits
-  assert.equal(/dangerously-skip-permissions/.test(require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/delegate.js'), 'utf8')), false);
+  const launch = require('../src/delegate.js').delegateLaunch({ account: {}, task: 'x', worktree: '/w/wt', env: { PATH: '/bin', AGENT_OFFICE_AUTO_APPROVE: '1' } });
+  assert.equal(launch.args.includes(P.SKIP_PERMISSIONS_FLAG), false);
+  assert.equal(launch.args[launch.args.indexOf('--permission-mode') + 1], 'acceptEdits');
+  assert.equal('AGENT_OFFICE_AUTO_APPROVE' in launch.env, false); // nor does auto-approve reach it
+  // the office link asks main for both switches and for the mode the running tab was started in
+  const mainSrc = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
+  assert.match(mainSrc, /function answersPrompts\(projectId\) \{[^}]*P\.skipPermissionsOf\(p\) \|\| P\.autoApproveOf\(p\) \|\| \(terms\.has\(projectId\) && promptless\.has\(projectId\)\)/);
+  assert.match(mainSrc, /type: typePrompt,\n\s+answersPrompts,/);
   // not part of the settings that travel to another machine, like auto-approve
   const sent = require('../src/handoff.js').cleanSettings({ manager: true, skipPermissions: true, autoApprove: true });
   assert.deepEqual(sent, { manager: true });

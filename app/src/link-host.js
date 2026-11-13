@@ -318,6 +318,9 @@ function setupLink(d) {
     if (!p) return done('rejected', 'unknown-project');
     if (p.engine !== 'claude') return done('rejected', 'engine');
     if (report && d.loginOf?.(project) === 'out') return done('rejected', 'logged-out');   // v3.35
+    // v3.71/v3.72: a tab that answers or skips its permission prompts never takes another device's text (v3.48: the
+    // runner never answers a prompt for a device). This machine's own tasks (SELF: HQ, routines, a local boss) still run.
+    if (device.pub !== SELF && d.answersPrompts?.(project)) return done('rejected', 'not-allowed');
     const q = queue.get(project) || [];
     if (q.length >= QUEUE_MAX) return done('rejected', 'queue-full');
     q.push({ id, device, text, at: Date.now(), reply, report, ttl, revive: Boolean(revive) && device.pub === SELF });
@@ -333,6 +336,13 @@ function setupLink(d) {
         const c = q[0];
         if (c.device.pub !== SELF && !link?.devices.some((x) => x.pub === c.device.pub)) { q.shift(); continue; }   // removed meanwhile
         if (now - c.at > ttlOf(c)) { q.shift(); c.reply('rejected', 'expired'); continue; }
+        // v3.71/v3.72: the switch was turned on while a device's command waited here: refused now, never typed
+        if (c.device.pub !== SELF && d.answersPrompts?.(project)) {
+          q.shift();
+          log(c.device.name, d.projects().find((x) => x.id === project)?.name || project, c.text, `${c.report ? 'task:' : ''}rejected:not-allowed`);
+          c.reply('rejected', 'not-allowed');
+          continue;
+        }
         const s = d.tabState(project);
         if (s === 'gone') {
           // v3.46 amendment: a local HQ task wakes a sleeping or starts a stopped boss (manage 'start'), a few times at
