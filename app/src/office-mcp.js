@@ -24,7 +24,7 @@ const TOOLS = [
   },
   {
     name: 'office_dispatch',
-    description: 'Gives a task to the boss of a project on this machine or on a paired device. The task is typed into that project as a marked prompt; when its turn is done (and its agents finished) a report comes back: you are told "report ready" and read it with office_reports. Returns { id, status } or a refusal reason (offline, logged-out, not-allowed, engine, queue-full, unknown-machine, unknown-project, no-report, too-large, self: the boss own project, locked: being handed off).',
+    description: 'Gives a task to the boss of a project on this machine or on a paired device. The task is typed into that project as a marked prompt; when its turn is done (and its agents finished) a report comes back: you are told "report ready" and read it with office_reports. Returns { id, status } or a refusal reason (offline, logged-out, not-allowed, engine, queue-full, unknown-machine, unknown-project, no-report, too-large, self: the boss own project, locked: being handed off; v3.77 staged: after-unknown, after-other-request, after-no-request, after-cycle, after-ended, too-many-stages, stages-routine, after-hq-only). With then, also { stages: [ids] }; a waiting stage has status waiting.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -33,6 +33,12 @@ const TOOLS = [
         task: { type: 'string', description: 'What to do, self-contained (at most 8 KB).' },
         title: { type: 'string', description: 'Short title for the board (at most 80 characters).' },
         request: { type: 'string', description: 'HQ only: the request id from office_board (groups the tasks of one request).' },
+        // v3.77 staged requests (HQ only; the app refuses them from a project boss)
+        after: { type: 'string', description: 'HQ only: id of a task of the same request this one waits for. It starts by itself, with that report appended, once that task has fully reported; it is blocked when that task ends otherwise.' },
+        then: {
+          type: 'array', maxItems: 7, description: 'HQ only: later stages, in order, each starting by itself once the one before it fully reported (its report appended). The person approves the whole chain when you dispatch it.',
+          items: { type: 'object', properties: { machine: { type: 'string' }, project: { type: 'string' }, task: { type: 'string' }, title: { type: 'string' } }, required: ['project', 'task'], additionalProperties: false },
+        },
       },
       required: ['project', 'task'],
       additionalProperties: false,

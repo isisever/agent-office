@@ -4,13 +4,13 @@
 // Every text from the board is put in with textContent: report text is data, never markup.
 
 const COLS = [
-  ['queued', ['queued']],
+  ['queued', ['queued', 'waiting']],   // v3.77 a stage waiting for the one before it
   ['running', ['delivered', 'running']],
   ['needs', ['needs-approval', 'awaiting-consent']],
   ['done', ['reported', 'partial']],
-  ['failed', ['failed', 'rejected', 'expired', 'lost']],
+  ['failed', ['failed', 'rejected', 'expired', 'lost', 'blocked']],
 ];
-const OPEN = new Set(['queued', 'delivered', 'running', 'needs-approval', 'awaiting-consent']);
+const OPEN = new Set(['queued', 'delivered', 'running', 'needs-approval', 'awaiting-consent', 'waiting']);
 const RUN_OPEN = new Set(['waiting', 'typed', 'running', 'awaiting-consent']);
 const pad2 = (n) => String(n).padStart(2, '0');
 const hhmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -211,6 +211,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
           el('div', { class: 'hq-task-title' }, x.title || x.id),
           el('div', { class: 'hq-task-meta' }, `${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.status}${x.reason ? ` (${x.reason})` : ''}`),
           waitLine(x),
+          stageLine(x),
           x.status === 'awaiting-consent' && api.routines ? el('div', { class: 'rt-actions' },
             el('button', { onclick: async (e) => { e.stopPropagation(); await api.routines.approve(x.id, true); refresh(); } }, t('routines.allow')),
             el('button', { onclick: async (e) => { e.stopPropagation(); await api.routines.approve(x.id, false); refresh(); } }, t('routines.decline'))) : null,
@@ -225,6 +226,12 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     return el('div', { class: 'hq-task-wait' },
       el('span', {}, [t(`hq.wait.${w.state}`, { project: w.project, machine: w.machine || '' }), w.len > 1 ? t('hq.wait.pos', { n: w.pos, len: w.len }) : '', t('hq.wait.expires', { min })].filter(Boolean).join(' · ')),
       w.cancel === false ? null : el('button', { class: 'hq-link', title: t('hq.wait.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
+  }
+  /** v3.77 a waiting stage: which task it waits for, and Cancel (the stages after it are blocked with it). */
+  function stageLine(x) {
+    if (x.status !== 'waiting') return null;
+    return el('div', { class: 'hq-task-wait' }, el('span', {}, t('hq.stage.waiting', { id: x.after || '' })),
+      el('button', { class: 'hq-link', title: t('hq.stage.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
   }
   /** The link's live snapshot of one remote project (engine, counts) and the commands sent to it. */
   function liveOf(r) {

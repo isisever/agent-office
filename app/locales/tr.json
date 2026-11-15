@@ -736,6 +736,8 @@
     "hqDeny": "Vazgeç",
     "hqAsk": "Müdür {project} projesine görev vermek istiyor.",
     "hqAskRemote": "Müdür {machine} makinesindeki {project} projesine görev vermek istiyor.",
+    "hqAskStages": "Müdür bu makinede {n} aşamalı görev vermek istiyor. Her aşama, ondan önceki tam rapor verince kendiliğinden başlar.",
+    "hqAskStagesNote": "Her aşamanın tam metni Panoda (bekleyen kartlar); bekleyen bir aşamayı oradan iptal edebilirsin.",
     "hqRequestDone": "Müdür: bir istek bitti ({n} görev)",
     "hqGaveUp": "Müdür 5 kez başlayamadı ve durdu. Yeniden denemek için Müdür'ü açın.",
     "routineDone": "Rutin: {name}",
@@ -998,6 +1000,10 @@
       "sending": "{machine} makinesine gönderiliyor…",
       "cancel": "İptal",
       "cancelTip": "Bu görevi projenin kuyruğundan çıkar"
+    },
+    "stage": {
+      "waiting": "#{id} raporunu bekliyor",
+      "cancelTip": "Bu aşamayı iptal et; sonraki aşamalar da engellenir"
     }
   },
   "routines": {

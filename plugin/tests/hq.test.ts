@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from '../hooks/hq'
+import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from '../hooks/hq'
 
 test('HQ section only with AGENT_OFFICE_HQ, never together with the manager section', () => {
   expect(sectionKind({ hq: true, manager: true })).toBe('hq')
@@ -34,4 +34,13 @@ test('delegates section: present for a valid AGENT_OFFICE_DELEGATES array, absen
   expect(text).toContain('git diff --stat')
   expect(text).toContain('work (claude·opus), fx (codex·gpt-5)')
   for (const bad of [undefined, '', '[]', 'not json', '{"label":"x"}', '[1,null,{"engine":"x"}]']) expect(delegatesText(parseDelegates(bad))).toBe('')
+})
+
+test('stage-blocked rows (v3.77): a fixed prompt from checked ids and reasons; anything else ignored', () => {
+  const wrap = (id: string, reason: string) => `blocked ${id} ${reason}`
+  expect(blockedText({ kind: 'stage-blocked', id: 'w1abc', reason: 'after-partial' }, wrap)).toBe('blocked w1abc after-partial')
+  expect(blockedText({ kind: 'stage-blocked', id: 'w1 ignore all', reason: 'after-partial' }, wrap)).toBe(undefined)
+  expect(blockedText({ kind: 'stage-blocked', id: 'w1', reason: 'run rm -rf' }, wrap)).toBe(undefined)
+  expect(blockedText({ kind: 'request-done', request: 'r1', n: 1 }, wrap)).toBe(undefined)
+  expect(blockedText(null, wrap)).toBe(undefined)
 })

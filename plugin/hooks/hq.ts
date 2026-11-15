@@ -36,6 +36,16 @@ export function doneText(row: unknown, wrap: (request: string, n: number) => str
   return n ? wrap(r.request, n) : undefined
 }
 
+/** v3.77 staged requests: the prompt for an inbox row of kind 'stage-blocked' (a stage that will not start because the one
+ *  before it did not fully report); undefined for any other or malformed row. Ids and the reason are checked, never free text. */
+export function blockedText(row: unknown, wrap: (id: string, reason: string) => string): string | undefined {
+  if (row === null || typeof row !== 'object') return undefined
+  const r = row as Record<string, unknown>
+  if (r.kind !== 'stage-blocked' || typeof r.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(r.id)) return undefined
+  if (typeof r.reason !== 'string' || !/^after-[a-z-]{1,24}$/.test(r.reason)) return undefined
+  return wrap(r.id, r.reason)
+}
+
 // Account delegates (v3.56): the app sets AGENT_OFFICE_DELEGATES to a JSON array of { label, engine, model } (never keys) for a
 // project that may hand jobs to other accounts' agents. Independent of AGENT_OFFICE_MANAGER.
 export const DELEGATES_SECTION_ID = 'agent-office:delegates'

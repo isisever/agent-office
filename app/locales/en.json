@@ -755,6 +755,8 @@
     "hqDeny": "Cancel",
     "hqAsk": "HQ wants to give a task to {project}.",
     "hqAskRemote": "HQ wants to give a task to {project} on {machine}.",
+    "hqAskStages": "HQ wants to give {n} staged tasks on this machine. Each stage starts by itself when the one before it has fully reported.",
+    "hqAskStagesNote": "The full text of every stage is on the Board (waiting cards); you can cancel a waiting stage there.",
     "hqRequestDone": "HQ: a request finished ({n} tasks)",
     "hqGaveUp": "HQ stopped after failing to start 5 times. Open HQ to try again.",
     "routineDone": "Routine: {name}",
@@ -1026,6 +1028,10 @@
       "sending": "sending to {machine}…",
       "cancel": "Cancel",
       "cancelTip": "Remove this task from the project's queue"
+    },
+    "stage": {
+      "waiting": "waits for #{id} to report",
+      "cancelTip": "Cancel this stage; the stages after it are blocked"
     }
   },
   "routines": {

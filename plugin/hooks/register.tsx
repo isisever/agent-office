@@ -23,7 +23,7 @@ import type { StopInput } from './finish'
 import { appendEntry, directoryProjects, entryOf, JOURNAL_FILE, LOOKBACK_MS, newsText, parseJournal, placeOfDir, selectNews } from './journal'
 import type { Host, JournalSeen, OfficeProject } from './journal'
 import { readyText, ReportTracker, typedTaskId, writeReport } from './reports'
-import { DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from './hq'
+import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from './hq'
 
 // Claude Code side of Agent Office: writes agent arrivals, tools, deliveries and background shells to
 // ~/.claude/agent-office/sessions/<session>.json. The office itself is drawn by the
@@ -76,6 +76,7 @@ const STRINGS = {
     task: (text: string) => `Task from Agent Office: ${text}\n\nIf it fits, split the work across subagents and run them in parallel.`,
     reportReady: (id: string, project: string, machine: string) => `Remote task #${id} on ${project}@${machine} finished; read it with office_reports.`,
     requestDone: (request: string, n: number) => `Request #${request} finished (${n} tasks); read them with office_board and office_reports, save the summary with office_summary and answer.`,
+    stageBlocked: (id: string, reason: string) => `Stage #${id} will not start (${reason}): the stage before it did not fully report. Check office_board and tell the person; do not re-dispatch on your own.`,
     stats: {
       heading: (date: string) => `Agent Office · today (${date})`,
       delivered: (count: number, failed: number, time: string) =>
@@ -114,6 +115,7 @@ const STRINGS = {
     task: (text: string) => `Agent Ofis'ten görev: ${text}\n\nUygunsa işi alt agent'lara bölerek paralel yürüt.`,
     reportReady: (id: string, project: string, machine: string) => `Uzak görev #${id} (${project}@${machine}) bitti; office_reports ile oku.`,
     requestDone: (request: string, n: number) => `İstek #${request} bitti (${n} görev); office_board ve office_reports ile oku, özeti office_summary ile kaydet ve yanıtla.`,
+    stageBlocked: (id: string, reason: string) => `Aşama #${id} başlamayacak (${reason}): ondan önceki aşama tam rapor vermedi. office_board'a bak ve kişiye söyle; kendiliğinden yeniden dağıtma.`,
     stats: {
       heading: (date: string) => `Agent Ofis · bugün (${date})`,
       delivered: (count: number, failed: number, time: string) =>
@@ -821,14 +823,21 @@ async function submitTasks($: EngineInterface, raw: string) {
     })
     .filter(
       (t): t is { at: number; text?: string; kind?: string } =>
-        t !== null && typeof t === 'object' && typeof t.at === 'number' && t.at > inboxSeen && (Boolean(t.text) || t.kind === 'report-ready' || t.kind === 'request-done'),
+        t !== null && typeof t === 'object' && typeof t.at === 'number' && t.at > inboxSeen && (Boolean(t.text) || t.kind === 'report-ready' || t.kind === 'request-done' || t.kind === 'stage-blocked'),
     )
   if (tasks.length === 0) return
   inboxSeen = await update($, inboxAtom, () => Math.max(...tasks.map(t => t.at)))
   for (const task of tasks) {
     // a report-ready row is a fixed notice with its own wrapper, never a task, and carries no report text (v3.35)
-    const ready = task.kind === 'report-ready' ? readyText(task, t.reportReady) : task.kind === 'request-done' ? doneText(task, t.requestDone) : undefined
-    if ((task.kind === 'report-ready' || task.kind === 'request-done') && !ready) continue
+    const ready =
+      task.kind === 'report-ready'
+        ? readyText(task, t.reportReady)
+        : task.kind === 'request-done'
+          ? doneText(task, t.requestDone)
+          : task.kind === 'stage-blocked'
+            ? blockedText(task, t.stageBlocked) // v3.77
+            : undefined
+    if ((task.kind === 'report-ready' || task.kind === 'request-done' || task.kind === 'stage-blocked') && !ready) continue
     await $.prompt.submit({ asUser: true, text: ready ?? t.task(task.text ?? '') })
   }
 }

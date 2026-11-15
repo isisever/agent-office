@@ -15,6 +15,7 @@
 // ?longDir → the first project's folder is a long path (title bar cuts it from the left, v3.18).
 // ?usage[=<n>] → opens project n's token usage panel (v3.13; default the first) after a moment.
 // ?remotes → three paired machines (one with a long name, one offline) whose projects are rows in PROJECTS (v3.46 HQ).
+// ?stages (with ?remotes) → the Board shows a staged request (v3.77): one running stage, one waiting (Cancel), one blocked.
 // ?machines[=<n>] → a fake device link (v3.31/v3.32) with n paired machines (default 2; one v1, one offline from n ≥ 3); opens the Machines panel.
 // ?theme=<name> → theme picker setting (v3.1; e.g. ?theme=sakura, ?theme=forest); default auto. The gallery is read from
 // ?look=pixel|claude and ?mode=system|light|dark → the appearance setting (v3.74; default pixel + system).
@@ -713,6 +714,12 @@ if (q.has('remotes')) {
     row(B, 'r3', 'notes', 'very-long-machine-name-build-server-01.local', true, false, 'working'),
     row(C, 'r4', 'website', 'Old Mac', false, true),
   ] };
+  if (q.has('stages')) {
+    const task = (id, title, project, status, o = {}) => ({ id, request: 'rmock1', title, machine: 'self', machineName: 'Mac', project, status, at: Date.now(), brief: `tasks/${id}/brief.md`, commits: [], prs: [], read: true, ...o });
+    hv.board.tasks = [task('c1', 'Scope ACME', 'office', 'running'), task('wmock2', 'Build ACME module', 'erp', 'waiting', { after: 'c1' }),
+      task('wmock3', 'ACME delivery form', 'office', 'blocked', { after: 'wx', reason: 'after-partial' })];
+  }
   const hok = () => Promise.resolve(structuredClone(hv));
-  window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
+  const cancel = (id) => { const t = hv.board.tasks.find((x) => x.id === id); if (t && t.status === 'waiting') Object.assign(t, { status: 'rejected', reason: 'cancelled' }); return hok(); };
+  window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, cancel, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
 }
