@@ -374,6 +374,8 @@ function killPty(id) {
   mcpPrint.delete(id);
   ptyStart.delete(id);
   ptyLimit.delete(id);
+  tailSeen.delete(id);
+  compactTail.delete(id);
   release(t);   // dispose its onData/onExit listeners before the kill: nothing is left to fire from a dying pty
   if (quitting && t.pid) dying.push(t.pid);   // will-quit waits for these (≤ 1 s)
   try { t.kill(); } catch {}
@@ -434,6 +436,8 @@ function checkTurns() {
     const sid = validSid(claude?.sessionId);
     const busy = R.isTurnBusy({ claude, office: sid ? office()?.readSession(sid) : undefined });
     if (sid) lastSid.set(id, sid);
+    const w = ptyLimit.get(id);
+    if (w && claude?.status === 'busy') w.busyAt = Date.now(); // v3.77: a compaction failure follows a running turn
     next = R.nextInterrupted(next, id, { busy, sessionId: sid });
   }
   setMarks(next);
@@ -1249,7 +1253,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   activity.set(id, { at: startedAt, draft: false });
   mcpPrint.set(id, { started: print, current: print });
   ptyStart.set(id, startedAt);
-  ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0 });
+  // v3.77: a prompt given as claude's argument (the carry-on after a move) is an Enter at the start
+  ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0, input: FB.startInput({ prompt: args.includes(R.promptArg(prompt)) ? prompt : '', startedAt, sessionId }) });
   if (sessionId) lastSid.set(id, sessionId); else lastSid.delete(id);
   attachPty(terms, id, t, {
     onData: (d) => {
@@ -1263,6 +1268,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       mcpPrint.delete(id);
       ptyStart.delete(id);
       ptyLimit.delete(id);
+      tailSeen.delete(id);
+      compactTail.delete(id);
       // the session it was in, for Enter-restart: the pid file may still be there, else the last poll's
       const last = validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId);
       if (last) lastSid.set(id, last);
@@ -1631,10 +1638,16 @@ function unfinishedTabs() {
   return tabs;
 }
 /** v3.47 an HQ keystroke held during a routine prompt's paste→Enter: minted and drafted as if typed now. */
+/** v3.77: what was sent to the tab (FB.inputAfter): an Enter, or text the terminal will echo. */
+function noteInput(id, d) {
+  const w = ptyLimit.get(id);
+  if (w) w.input = FB.inputAfter(w.input, d, Date.now(), lastSid.get(id) || null);
+}
 function hqWriteTyped(id, d) {
   if (HQ.submitsTyped(activity.get(id)?.draft, d)) hqMinter.mint();
   const a = activity.get(id);
   if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); }
+  noteInput(id, d);
   ptyOf(id)?.write(d);
 }
 /** Types the prompt into a running claude's input box and submits it. */
@@ -1652,7 +1665,7 @@ function typePrompt(id, text, { taskId = '' } = {}) {
   if (P.isHqId(id)) hqGate.hold();   // v3.47 the person's HQ keystrokes wait until the pasted prompt's Enter
   t.write(R.typedPrompt(text));
   setTimeout(() => {
-    if (terms.get(id) === t) t.write('\r');
+    if (terms.get(id) === t) { t.write('\r'); noteInput(id, '\r'); }
     if (P.isHqId(id)) for (const d of hqGate.release()) hqWriteTyped(id, d);   // held keys go through the same mint/draft logic
   }, ENTER_DELAY_MS);
   const a = activity.get(id);
@@ -2746,7 +2759,8 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
 
 // --- backup account at the usage limit (contract v3.17, src/fallback.js)
 // A tab whose session ends on Claude Code's usage-limit error (its transcript; the terminal's words only with the
-// account's quota at 100 %) moves its project to the project's backup account with moveProject: every tab resumes its
+// account's quota at 100 %; v3.77: "automatic compaction failed: <usage limit>" on screen, which no transcript entry
+// records, unless the transcript contradicts it) moves its project to the project's backup account with moveProject: every tab resumes its
 // own conversation there and the tabs stopped by the limit are told to carry on. The account it left is its home; once
 // the home's limit resets and every tab is idle, the project goes back. Each account's limit is remembered until its
 // reset (state.accountLimits), so no project moves onto an account at its limit and none ping-pongs.
@@ -2762,7 +2776,15 @@ function watchLimit(id, d, startedAt) {
   if (!w) return;
   const r = FB.scanPty(w.scan, d);
   w.scan = r.scan;
-  if (r.hit && Date.now() - startedAt > FB.PTY_GRACE_MS) w.hitAt = Date.now();
+  if (!r.hit) return;
+  const now = Date.now();
+  // v3.77: "automatic compaction failed: <usage limit>" leaves no transcript entry, so the sighting is kept with what
+  // the tab had just done (an Enter, a running turn, typing) and judged in checkLimits (compactionSeen). The start
+  // grace does not drop it: a tab resumed with the carry-on prompt may fail at once on the next account, and a
+  // sighting without a cause (the resumed conversation drawn) is void by the verdict. A sighting still being judged or
+  // acted on stays: the same words redrawn are not a second failure. A void one is replaced.
+  if (r.compaction && (!w.compact || w.compact.void)) w.compact = { ...FB.compactionSighting({ at: now, input: w.input, busyAt: w.busyAt, startedAt }), void: false };
+  if (now - startedAt > FB.PTY_GRACE_MS) w.hitAt = now;
 }
 /** The end of a file (FB.TAIL_BYTES), or ''. */
 function readTail(file) {
@@ -2776,7 +2798,7 @@ function readTail(file) {
     return buf.toString('utf8');
   } catch { return ''; } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch {} }
 }
-const tailSeen = new Map(); // transcript → { key: "size|mtime|since", hit }
+const tailSeen = new Map(); // pty id → { key: "file|size|mtime|since", hit }
 /** Does the tab's session end on a usage limit written since the tab started? → FB.limitFromTranscript result | null */
 function transcriptLimit(id, dir, configDir) {
   const sid = lastSid.get(id);
@@ -2785,20 +2807,44 @@ function transcriptLimit(id, dir, configDir) {
   const st = file ? statOrNull(file) : null;
   if (!st) return null;
   const since = ptyStart.get(id) || 0;
-  const key = `${st.size}|${st.mtimeMs}|${since}`;
-  const old = tailSeen.get(file);
+  const key = `${file}|${st.size}|${st.mtimeMs}|${since}`;
+  const old = tailSeen.get(id);
   if (old?.key === key) return old.hit;
   const hit = FB.limitFromTranscript(readTail(file), { since });
-  tailSeen.set(file, { key, hit });
+  tailSeen.set(id, { key, hit });
   return hit;
+}
+const compactTail = new Map(); // pty id → { key: "file|size|mtime", tail }: read again only when the transcript changed
+/**
+ * v3.77: the compaction failure seen on the tab's screen (w.compact) → a limit hit, or null. Glue only: the tab's
+ * transcript end, Claude Code's status and session, and the tab's input state go to FB.compactionVerdict, which decides.
+ */
+function compactionSeen(id, dir, configDir, w, now) {
+  const c = w?.compact;
+  if (!c || c.void) return null;
+  const sid = lastSid.get(id);
+  const file = sid ? TIO.findTranscript(dir, sid, configDir, app.getPath('home'))?.file : null;
+  const st = file ? statOrNull(file) : null;
+  let tail = null;
+  if (st) {
+    const key = `${file}|${st.size}|${st.mtimeMs}`;
+    const old = compactTail.get(id);
+    tail = old?.key === key ? old.tail : readTail(file);
+    compactTail.set(id, { key, tail });
+  }
+  const live = liveSession(id, configDir);
+  const verdict = FB.compactionVerdict({ sighting: c, now, status: live?.claude?.status, sessionId: live?.sessionId || null, input: w.input, tail });
+  if (verdict === 'void') { c.void = true; compactTail.delete(id); }
+  return verdict === 'limit' ? FB.compactionHit(c) : null;
 }
 const accountName = (a) => (a.id === A.DEFAULT_ID ? T('main.defaultAccount') : a.label);
 /** Accounts as FB.pickBackup reads them: login state and quota. */
 const fallbackAccounts = () => state.accounts.map((a) => ({ id: a.id, provider: a.provider, auth: auths.get(a.id), usage: usages.get(a.id) }));
 function setLimitMark(accountId, mark) {
   const old = limitMarks()[accountId];
-  if (old && old.until >= mark.until) return;
-  state = { ...state, accountLimits: { ...FB.normalizeMarks(limitMarks(), state.accounts.map((a) => a.id)), [accountId]: mark } };
+  const next = FB.mergeMarks(old, mark);
+  if (next === old) return;
+  state = { ...state, accountLimits: { ...FB.normalizeMarks(limitMarks(), state.accounts.map((a) => a.id)), [accountId]: next } };
   saveState();
 }
 /** Tells the renderer (a hint over the project's terminals) and the system (a notification). */
@@ -2822,6 +2868,7 @@ function checkLimits() {
       if (!r) continue;
       let hit = transcriptLimit(id, r.dir, account.configDir);
       const w = ptyLimit.get(id);
+      if (!hit) hit = compactionSeen(id, r.dir, account.configDir, w, now);
       if (!hit && w?.hitAt && now - w.hitAt < 60000 && usageFull()) hit = { at: w.hitAt, resetsAt: null, type: null, text: '' };
       if (hit && !limitDone.has(`${id}|${hit.at}`)) hits.push({ id, hit });
     }
@@ -2831,7 +2878,7 @@ function checkLimits() {
 }
 function onLimit(p, account, hits, now) {
   const resets = hits.map((h) => h.hit.resetsAt).filter(Number.isFinite);
-  const mark = FB.markFor(resets.length ? Math.max(...resets) : null, now);
+  const mark = FB.limitMark({ resets, seenAt: Math.min(...hits.map((h) => h.hit.at)), now });
   setLimitMark(account.id, mark);
   const done = () => { for (const h of hits) limitDone.add(`${h.id}|${h.hit.at}`); };
   const choice = P.backupOf(p);
@@ -3698,6 +3745,7 @@ ipcMain.on('pty:write', (_e, id, d) => {
   if (!terms.has(id)) wake(id);
   const a = activity.get(id);
   if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); }
+  noteInput(id, d);
   agyWatch.get(id)?.watch.input(d);
   ptyOf(id)?.write(d);
 });
