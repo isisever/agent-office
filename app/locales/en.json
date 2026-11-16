@@ -551,6 +551,10 @@
     "permission": "Claude is waiting for an approval: answer it in the terminal.",
     "empty": "No conversation yet: write the first message below.",
     "images": "{count} image(s)",
+    "freePlaceholder": "Your answer…",
+    "menuBack": "← Back",
+    "menuNext": "Next →",
+    "menuCancel": "Cancel (Esc)",
     "note": {
       "compact": "— the conversation was compacted —",
       "task": "A background task finished.",
@@ -563,7 +567,8 @@
       "draft": "The terminal's input box has unsent text: send or clear it there first.",
       "locked": "This project is being moved to another computer.",
       "too-long": "The message is too long.",
-      "other": "The message could not be sent."
+      "other": "The message could not be sent.",
+      "menu": "Claude is asking something: answer it above first."
     }
   },
   "main": {

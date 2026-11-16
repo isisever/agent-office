@@ -541,6 +541,10 @@
     "permission": "Claude bir onay bekliyor: terminalde yanıtlayın.",
     "empty": "Henüz konuşma yok: ilk mesajı aşağıya yazın.",
     "images": "{count} görsel",
+    "freePlaceholder": "Yanıtınız…",
+    "menuBack": "← Geri",
+    "menuNext": "İleri →",
+    "menuCancel": "Vazgeç (Esc)",
     "note": {
       "compact": "— konuşma özetlendi —",
       "task": "Bir arka plan görevi bitti.",
@@ -553,7 +557,8 @@
       "draft": "Terminalin yazı kutusunda gönderilmemiş metin var: önce orada gönderin ya da silin.",
       "locked": "Bu proje başka bir bilgisayara taşınıyor.",
       "too-long": "Mesaj çok uzun.",
-      "other": "Mesaj gönderilemedi."
+      "other": "Mesaj gönderilemedi.",
+      "menu": "Claude bir şey soruyor: önce yukarıda yanıtlayın."
     }
   },
   "main": {

@@ -22,6 +22,7 @@ function toolDetail(name, input) {
     .map((k) => i[k]).find((v) => typeof v === 'string' && v.trim());
   if (pick) return cut(oneLine(pick), DETAIL_MAX);
   if (name === 'TodoWrite' && Array.isArray(i.todos)) return `${i.todos.length}`;
+  if (Array.isArray(i.questions)) return cut(oneLine(i.questions.map((q) => q?.question).filter((q) => typeof q === 'string').join(' · ')), DETAIL_MAX);
   return '';
 }
 /** mcp__server__tool → "server · tool"; other names as they are. */
@@ -134,4 +135,25 @@ function sendRefused({ text, running, locked, draft, permission }) {
   return null;
 }
 
-module.exports = { TAIL, STEP_MAX, TEXT_MAX, chatItems, readChat, toolDetail, toolName, sendRefused };
+// Keys a chat-view menu button may type into the tab (src/tui-menu.mjs reads the menu): an option's number, Esc, the
+// arrows that move between AskUserQuestion's tabs, Enter, and the text of a "Type something" answer.
+const MENU_KEYS = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '\x1b', '\x1b[C', '\x1b[D', '\r']);
+const MENU_TEXT_MAX = 2000;
+/** The steps of a menu answer → the strings to write, one by one; null when any step is not allowed. */
+function menuKeys(steps) {
+  if (!Array.isArray(steps) || !steps.length || steps.length > 8) return null;
+  const out = [];
+  for (const s of steps) {
+    if (typeof s === 'string' && MENU_KEYS.has(s)) out.push(s);
+    else if (s && typeof s === 'object' && typeof s.text === 'string') {
+      // typed text: one line, no control characters (an Esc or a CR in it would act on the menu)
+      // eslint-disable-next-line no-control-regex
+      const text = s.text.replace(/[\x00-\x1f\x7f]+/g, ' ').trim();
+      if (!text || text.length > MENU_TEXT_MAX) return null;
+      out.push(text);
+    } else return null;
+  }
+  return out;
+}
+
+module.exports = { TAIL, STEP_MAX, TEXT_MAX, chatItems, readChat, toolDetail, toolName, sendRefused, menuKeys };

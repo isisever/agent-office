@@ -3723,6 +3723,24 @@ ipcMain.handle('chat:read', (_e, id, cursor) => {
   }
   return { sid, ...CHAT.readChat(known.file, cursor && typeof cursor === 'object' ? cursor : null) };
 });
+// A chat-view menu button (an approval, a question): its keys go straight to the tab, a step every 250 ms so Claude
+// Code's menu takes each one; not through pty:write (they are no draft and mint no HQ request).
+const MENU_STEP_MS = 250;
+ipcMain.handle('chat:keys', (_e, id, steps) => {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return 'unsupported';
+  const keys = CHAT.menuKeys(steps);
+  if (!keys) return 'bad-keys';
+  if (handoffLocked(id)) { lockedNotice(id); return 'locked'; }
+  const t = terms.get(id);
+  if (!t) return 'not-running';
+  if (P.isHqId(id)) hqLastKey = Date.now();
+  const a = activity.get(id);
+  if (a) a.at = Date.now();
+  keys.forEach((k, n) => setTimeout(() => { if (terms.get(id) === t) t.write(k); }, n * MENU_STEP_MS));
+  return 'ok';
+});
 // The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).
 ipcMain.handle('chat:send', (_e, id, text) => {
   id = String(id);

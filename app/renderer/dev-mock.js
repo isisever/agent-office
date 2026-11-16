@@ -119,6 +119,8 @@ function boot(id) {
   setTimeout(() => ev.data.emit(id,
     `\x1b[38;5;173m✻\x1b[0m Welcome to \x1b[1mClaude Code\x1b[0m (sahte)\r\n\r\n` +
     `  cwd: ${tab?.dir || p?.dir}\r\n  hesap: ${acc?.label}${tab?.worktree ? `\r\n  dal: ${tab.worktree.branch}` : ''}\r\n\r\n> `), 50);
+  // v3.78 ?menu: the main tab then shows Claude Code's approval menu (?menu=q: an AskUserQuestion); an answer clears it
+  if (q.has('menu') && !n) setTimeout(() => ev.data.emit(id, q.get('menu') === 'q' ? MOCK_QUESTION : MOCK_APPROVAL), 120);
   changed();
 }
 for (const p of projects) for (const id of tabIds(p)) if (running.get(id)) boot(id);
@@ -151,6 +153,9 @@ let shareMcpSetting = true;
 let reloadMcpSetting = true;
 let fallbackSetting = true;
 let sleepSetting = 30;
+const MOCK_RULE = `${'─'.repeat(60)}\r\n`;
+const MOCK_APPROVAL = `\r\n${MOCK_RULE} Bash command\r\n npm test\r\n Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. Yes, and don't ask again for npm test commands in /Users/me/web\r\n   3. No\r\n Esc to cancel · Tab to amend\r\n`;
+const MOCK_QUESTION = `\r\n${MOCK_RULE}←  ☐ Scope  ✔ Submit  →\r\nWhich scope?\r\n❯ 1. Only README\r\n     The setup section\r\n  2. README and docs/\r\n     Every page that mentions setup\r\n  3. Type something.\r\n${MOCK_RULE}  4. Chat about this\r\nEnter to select · ↑/↓ to navigate · Esc to cancel\r\n`;
 // v3.78 chat view: ?chat starts with the setting on; every Claude tab has a short fake conversation, a sent message
 // gets an answer after a second
 let chatViewSetting = q.has('chat');
@@ -410,6 +415,13 @@ window.agentOffice = {
       const items = chatOf(id);
       const from = cursor && cursor.file === id ? cursor.size : 0;
       return { sid: `mock-${id}`, cursor: { file: id, ino: 1, size: items.length }, items: items.slice(from), reset: from === 0, more: false };
+    },
+    // a menu answer clears the screen (the menu is gone) and lands in the chat as Claude Code would show it
+    keys: async (id, steps) => {
+      const at = Date.now();
+      setTimeout(() => ev.data.emit(id, '\x1b[2J\x1b[H> '), 100);
+      chatOf(id).push({ key: `${id}-k${at}`, at, kind: 'note', note: 'message' }, { key: `${id}-r${at}`, at, kind: 'assistant', text: `(sahte) tuşlar: ${JSON.stringify(steps)}` });
+      return 'ok';
     },
     send: async (id, text) => {
       if (q.has('asking')) return 'permission';

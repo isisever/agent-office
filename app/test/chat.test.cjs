@@ -132,6 +132,20 @@ test('sendRefused: nothing is typed over an approval menu, a draft, a handoff or
   assert.equal(C.sendRefused({ ...ok, draft: true }), 'draft');
 });
 
+test('menuKeys: only option numbers, Esc, the tab arrows, Enter and one line of text', () => {
+  assert.deepEqual(C.menuKeys(['2']), ['2']);
+  assert.deepEqual(C.menuKeys(['3', { text: ' Yeşil\nve\x1b[2Jmavi ' }, '\r']), ['3', 'Yeşil ve [2Jmavi', '\r']);
+  assert.deepEqual(C.menuKeys(['\x1b[C', '1']), ['\x1b[C', '1']);
+  assert.deepEqual(C.menuKeys(['\x1b']), ['\x1b']);
+  for (const bad of [[], ['0'], ['10'], ['a'], ['\x03'], ['\x1b[A'], [{ text: '   ' }], [{ text: 'x'.repeat(2001) }], [1], null, 'x', Array(9).fill('1')]) {
+    assert.equal(C.menuKeys(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('toolDetail: an AskUserQuestion call shows its questions', () => {
+  assert.equal(C.toolDetail('AskUserQuestion', { questions: [{ question: 'Renk?' }, { question: 'Boyut?' }] }), 'Renk? · Boyut?');
+});
+
 test('main.js: chat:send types through typePrompt; chatView is written only once set', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const send = src.slice(src.indexOf("ipcMain.handle('chat:send'"), src.indexOf("ipcMain.handle('chat:send'") + 900);
@@ -139,4 +153,7 @@ test('main.js: chat:send types through typePrompt; chatView is written only once
   assert.match(send, /typePrompt\(id,/);
   assert.match(src, /\.\.\.\(typeof raw\.chatView === 'boolean' \? \{ chatView: raw\.chatView \} : \{\}\)/);
   assert.match(src, /chatView: state\.chatView === true/);
+  const keys = src.slice(src.indexOf("ipcMain.handle('chat:keys'"), src.indexOf("ipcMain.handle('chat:keys'") + 900);
+  assert.match(keys, /CHAT\.menuKeys\(steps\)/);
+  assert.doesNotMatch(keys, /hqMinter|draftAfter/, 'a menu answer is no draft and no HQ request');
 });

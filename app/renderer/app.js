@@ -242,12 +242,14 @@ function syncChat() {
       const host = document.createElement('div');
       host.className = 'chat-host';
       p.el.append(host);
-      p.chat = mountChat(host, { ptyId: id, onTerminal: () => setChatMode(id, false) });
+      p.chat = mountChat(host, { ptyId: id, onTerminal: () => setChatMode(id, false), screen: () => p.term.screen() });
     }
     const was = Boolean(p.chatOn);
     p.chatOn = want;
-    p.el.querySelector('.term-host').hidden = want;
-    if (want) { p.chat.setAttention(attn(id)); p.chat.show(); } else p.chat?.hide();
+    // the terminal stays laid out under the chat (invisible, not focusable): it keeps its size, so its screen (where
+    // Claude Code draws its menus) is read the way the pty draws it
+    p.el.classList.toggle('under-chat', want);
+    if (want) { p.chat.setAttention(attn(id)); p.chat.show(); if (!was) requestAnimationFrame(() => p.term.fit()); } else p.chat?.hide();
     if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
   }
   const canSwitch = chatView && chatCapable(visible) && chatOff.has(visible);
