@@ -27,9 +27,17 @@
 // a newer one. A .claude.json entry keeps the new account's values; what only the old one has is added, lists are
 // joined, and an accepted trust dialog stays accepted.
 //
+// Acceptances the person already gave in the old account (contract v3.76; Claude Code 2.1.325), so that a moved
+// tab starts without a start-up dialog. Only a decision the old account holds is carried, never a new one:
+// - folder trust that the old account holds on a parent folder (Claude Code trusts a folder when its own entry or
+//   any parent's has hasTrustDialogAccepted) is written as the project folder's own entry, never the parent's;
+// - the bypass mode warning ("Claude Code running in Bypass Permissions mode"), kept per account in the user
+//   settings (settings.json skipDangerousModePermissionPrompt; older versions: .claude.json
+//   bypassPermissionsModeAccepted), only for a project with Skip permissions on (contract v3.72).
+//
 // Never copied: logins and per-account settings (.credentials.json, the keychain, .claude.json oauthAccount,
-// primaryApiKey, userID and every other top-level field, settings.json, skills, plugins, agents, commands),
-// session-env/ (hook environments, remade at every start) and anything of another project.
+// primaryApiKey, userID and every other top-level field, every other settings.json key, skills, plugins, agents,
+// commands), session-env/ (hook environments, remade at every start) and anything of another project.
 const fs = require('fs');
 const path = require('path');
 const TU = require('./token-usage.js');
@@ -164,9 +172,25 @@ function mergeEntry(into, from) {
   return out;
 }
 
+const TRUST_KEY = 'hasTrustDialogAccepted';
+
+/**
+ * Whether Claude Code starts in dir without its trust dialog under this projects map: the folder's own entry or
+ * any parent folder's has hasTrustDialogAccepted (checked against Claude Code 2.1.325).
+ */
+function trustedIn(projects, dir) {
+  if (!isObj(projects) || typeof dir !== 'string' || !dir) return false;
+  for (let d = dir; ; d = path.dirname(d)) {
+    if (isObj(projects[d]) && projects[d][TRUST_KEY] === true) return true;
+    if (path.dirname(d) === d) return false;
+  }
+}
+
 /**
  * The new account's .claude.json object with the old account's projects[dir] entries merged in, for dirs only.
- * Every other field of `to` stays as it is; nothing outside `from.projects[dir]` is read. → { config, changed }
+ * A folder the old account trusts through a parent folder's entry gets the trust on its own entry (v3.76); the
+ * parent's entry is never copied. Every other field of `to` stays as it is; nothing outside `from.projects` is
+ * read, and of the parents' entries only hasTrustDialogAccepted. → { config, changed }
  */
 function mergeProjectEntries(to, from, dirs) {
   const src = isObj(from?.projects) ? from.projects : {};
@@ -174,17 +198,32 @@ function mergeProjectEntries(to, from, dirs) {
   const projects = isObj(base.projects) ? { ...base.projects } : {};
   let changed = false;
   for (const dir of dirs) {
-    if (!isObj(src[dir])) continue;
-    const next = mergeEntry(projects[dir], src[dir]);
-    if (JSON.stringify(next) === JSON.stringify(projects[dir])) continue;
-    projects[dir] = next;
-    changed = true;
+    if (isObj(src[dir])) {
+      const next = mergeEntry(projects[dir], src[dir]);
+      if (JSON.stringify(next) !== JSON.stringify(projects[dir])) { projects[dir] = next; changed = true; }
+    }
+    if (trustedIn(src, dir) && !trustedIn(projects, dir)) {
+      projects[dir] = { ...(isObj(projects[dir]) ? projects[dir] : {}), [TRUST_KEY]: true };
+      changed = true;
+    }
   }
   return { config: changed ? { ...base, projects } : base, changed };
 }
 
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return undefined; }
+}
+
+/** Writes a JSON file through a temp file beside it (mode kept, 0600 for a new file; a link's target is written). */
+function writeJson(file, value) {
+  let real = file; // the link's target as the file system names it (no NFC step: the write must land on the real file)
+  try { real = fs.realpathSync(file); } catch {}
+  let mode = 0o600;
+  try { mode = fs.statSync(real).mode & 0o777; } catch {}
+  fs.mkdirSync(path.dirname(real), { recursive: true });
+  const tmp = `${real}.agent-office-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode });
+  fs.renameSync(tmp, real);
 }
 
 /** Merges the entries into the new account's .claude.json file (read just before the write; atomic, mode kept). */
@@ -196,12 +235,35 @@ function mergeClaudeJson(fromFile, toFile, dirs) {
   if (exists && !isObj(to)) return false; // unreadable: never replace the account's config with a guess
   const { config, changed } = mergeProjectEntries(to, from, dirs);
   if (!changed) return false;
-  let mode = 0o600;
-  try { mode = fs.statSync(toFile).mode & 0o777; } catch {}
-  fs.mkdirSync(path.dirname(toFile), { recursive: true });
-  const tmp = `${toFile}.agent-office-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify(config, null, 2), { mode });
-  fs.renameSync(tmp, toFile);
+  writeJson(toFile, config);
+  return true;
+}
+
+// ---- the bypass mode warning (contract v3.76)
+
+const BYPASS_KEY = 'skipDangerousModePermissionPrompt';      // user settings.json; what Claude Code 2.1.325 writes
+const BYPASS_KEY_LEGACY = 'bypassPermissionsModeAccepted';   // top level of .claude.json; older versions, still read
+
+/** Whether the account has accepted Claude Code's bypass mode warning. configDir: null for Default. */
+function bypassAccepted(configDir, home) {
+  const settings = readJson(path.join(claudeRoot(configDir, home), 'settings.json'));
+  if (isObj(settings) && settings[BYPASS_KEY] === true) return true;
+  const config = readJson(claudeJson(configDir, home));
+  return isObj(config) && config[BYPASS_KEY_LEGACY] === true;
+}
+
+/**
+ * Carries the old account's acceptance of the bypass mode warning to the new account: that one key in the new
+ * account's settings.json, written only when the old account has accepted and the new one has not. Every other
+ * key stays as it is; a settings.json that does not parse is left alone. → whether the file was written
+ */
+function carryBypassAcceptance(from, to, home) {
+  if (!bypassAccepted(from, home) || bypassAccepted(to, home)) return false;
+  const file = path.join(claudeRoot(to, home), 'settings.json');
+  const exists = Boolean(lstat(file));
+  const settings = exists ? readJson(file) : {};
+  if (!isObj(settings)) return false;
+  writeJson(file, { ...settings, [BYPASS_KEY]: true });
   return true;
 }
 
@@ -252,14 +314,17 @@ function mergeHistory(fromRoot, toRoot, dirs) {
  * Copies a project's Claude Code data from one account to another and merges it with what the new account has.
  * from / to: the accounts' configDir (null for Default); home: the user's home; dirs: the project's folder first,
  * then its tab folders; otherDirs: the other projects' folders (their worktree-like folders are not this project's).
- * → { folders, copied, merged, sessions, history, config, memory } (counts; config: .claude.json changed;
- * memory: the old account's memories merged into ~/.claude). Same folder on both sides: nothing to do.
- * @param {{ from: string | null, to: string | null, home: string, dirs: string[], otherDirs?: string[] }} o
+ * skipPermissions: the project starts its tabs in bypass mode (v3.72), so the old account's acceptance of the
+ * bypass mode warning goes with it (v3.76).
+ * → { folders, copied, merged, sessions, history, config, memory, bypass } (counts; config: .claude.json changed;
+ * memory: the old account's memories merged into ~/.claude; bypass: the acceptance was written to the new
+ * account's settings.json). Same folder on both sides: nothing to do.
+ * @param {{ from: string | null, to: string | null, home: string, dirs: string[], otherDirs?: string[], skipPermissions?: boolean }} o
  */
-function moveProjectData({ from, to, home, dirs, otherDirs = [] }) {
+function moveProjectData({ from, to, home, dirs, otherDirs = [], skipPermissions = false }) {
   const fromRoot = claudeRoot(from, home);
   const toRoot = claudeRoot(to, home);
-  const result = { folders: 0, copied: 0, merged: 0, sessions: 0, history: 0, config: false, memory: 0 };
+  const result = { folders: 0, copied: 0, merged: 0, sessions: 0, history: 0, config: false, memory: 0, bypass: false };
   if (path.resolve(fromRoot) === path.resolve(toRoot) || !dirs.length) return result;
   const paths = projectPaths(dirs);
   const others = projectPaths(otherDirs);
@@ -308,6 +373,7 @@ function moveProjectData({ from, to, home, dirs, otherDirs = [] }) {
 
   try { result.history = mergeHistory(fromRoot, toRoot, paths); } catch {}
   try { result.config = mergeClaudeJson(claudeJson(from, home), claudeJson(to, home), paths); } catch {}
+  if (skipPermissions === true) { try { result.bypass = carryBypassAcceptance(from, to, home); } catch {} }
   return result;
 }
 
@@ -324,5 +390,5 @@ function restartAfterMove({ sessionId = null, continues = false, busy = false } 
 
 module.exports = {
   restartAfterMove, claudeRoot, claudeJson, projectPaths, mergeJsonl, mergeFile, mergeTree, mergeEntry, mergeProjectEntries, mergeClaudeJson,
-  historyLines, mergeHistory, moveProjectData,
+  historyLines, mergeHistory, trustedIn, bypassAccepted, carryBypassAcceptance, moveProjectData,
 };

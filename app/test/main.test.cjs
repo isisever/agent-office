@@ -3139,6 +3139,92 @@ test('hesap değişince (v3.16): .claude.json kaydı birleşir; okunamayan dosya
   t.done();
 });
 
+test('account move (v3.76): folder trust the old account holds on a parent folder reaches the project folder', () => {
+  // Claude Code trusts a folder when its own entry or any parent's has hasTrustDialogAccepted
+  assert.equal(PD.trustedIn({ '/w': { hasTrustDialogAccepted: true } }, '/w/shop/sub'), true);
+  assert.equal(PD.trustedIn({ '/w/shop': { hasTrustDialogAccepted: false }, '/w/shop-api': { hasTrustDialogAccepted: true } }, '/w/shop'), false);
+  assert.equal(PD.trustedIn(undefined, '/w/shop'), false);
+  const t = pdSetup();
+  const { A, B, shop, other, put, read } = t;
+  const work = pdPath.dirname(shop);
+  const wt = pdPath.join(work, 'shop-wt-1');
+  // the old account trusted the parent folder: the project's own entry says false and the worktree tab has none
+  put(pdPath.join(A, '.claude.json'), JSON.stringify({ projects: {
+    [work]: { hasTrustDialogAccepted: true, allowedTools: ['Bash(rm:*)'] },
+    [shop]: { hasTrustDialogAccepted: false, allowedTools: [] },
+  } }));
+  put(pdPath.join(B, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'b@x' } }));
+  const r = PD.moveProjectData({ from: A, to: B, home: t.home, dirs: [shop, wt], otherDirs: [other] });
+  assert.equal(r.config, true);
+  const b = JSON.parse(read(pdPath.join(B, '.claude.json')));
+  assert.equal(PD.trustedIn(b.projects, shop), true);
+  assert.equal(PD.trustedIn(b.projects, wt), true);
+  assert.deepEqual(b.projects[wt], { hasTrustDialogAccepted: true });
+  assert.equal(b.projects[work], undefined);              // the parent's entry is not copied: its siblings stay untrusted
+  assert.equal(PD.trustedIn(b.projects, other), false);
+  assert.deepEqual(b.oauthAccount, { emailAddress: 'b@x' });
+  assert.equal(PD.moveProjectData({ from: A, to: B, home: t.home, dirs: [shop, wt] }).config, false); // nothing to add twice
+  // trust the old account does not hold is never invented
+  put(pdPath.join(A, '.claude.json'), JSON.stringify({ projects: { [work]: { hasTrustDialogAccepted: false }, [shop]: { hasTrustDialogAccepted: false } } }));
+  pdFs.rmSync(pdPath.join(B, '.claude.json'));
+  PD.moveProjectData({ from: A, to: B, home: t.home, dirs: [shop, wt] });
+  assert.equal(PD.trustedIn(JSON.parse(read(pdPath.join(B, '.claude.json'))).projects, shop), false);
+  // the new account already trusts it through a parent: its entries are left as they are
+  const { changed } = PD.mergeProjectEntries({ projects: { '/w': { hasTrustDialogAccepted: true } } }, { projects: { '/w': { hasTrustDialogAccepted: true } } }, ['/w/shop']);
+  assert.equal(changed, false);
+  t.done();
+});
+
+test('account move (v3.76): a Skip permissions project takes the old account\'s bypass mode acceptance along', () => {
+  const t = pdSetup();
+  const { home, A, B, shop, put, read } = t;
+  const KEY = 'skipDangerousModePermissionPrompt';
+  const settingsA = pdPath.join(A, 'settings.json');
+  const settingsB = pdPath.join(B, 'settings.json');
+  put(pdPath.join(A, '.claude.json'), JSON.stringify({ projects: { [shop]: { hasTrustDialogAccepted: true } } }));
+  put(settingsA, JSON.stringify({ [KEY]: true, model: 'opus', permissions: { allow: ['Bash(ls:*)'] } }));
+  put(settingsB, JSON.stringify({ model: 'haiku' }));
+  // Skip permissions off: the acceptance stays where it is
+  assert.equal(PD.moveProjectData({ from: A, to: B, home, dirs: [shop] }).bypass, false);
+  assert.deepEqual(JSON.parse(read(settingsB)), { model: 'haiku' });
+  // on: that one key, nothing else of the old account's settings
+  assert.equal(PD.moveProjectData({ from: A, to: B, home, dirs: [shop], skipPermissions: true }).bypass, true);
+  assert.deepEqual(JSON.parse(read(settingsB)), { model: 'haiku', [KEY]: true });
+  assert.equal(PD.moveProjectData({ from: A, to: B, home, dirs: [shop], skipPermissions: true }).bypass, false);
+  // an old account that never accepted gives nothing, and a declined one stays declined
+  pdFs.rmSync(settingsB);
+  put(settingsA, JSON.stringify({ [KEY]: false, model: 'opus' }));
+  assert.equal(PD.moveProjectData({ from: A, to: B, home, dirs: [shop], skipPermissions: true }).bypass, false);
+  assert.equal(read(settingsB), null);
+  // the key older Claude Code versions kept in .claude.json counts as the same acceptance; a new settings.json is made
+  put(pdPath.join(A, '.claude.json'), JSON.stringify({ bypassPermissionsModeAccepted: true, projects: { [shop]: { hasTrustDialogAccepted: true } } }));
+  assert.equal(PD.bypassAccepted(A, home), true);
+  assert.equal(PD.moveProjectData({ from: A, to: B, home, dirs: [shop], skipPermissions: true }).bypass, true);
+  assert.deepEqual(JSON.parse(read(settingsB)), { [KEY]: true });
+  // a settings.json that does not parse is left alone
+  put(settingsB, '{ broken');
+  assert.equal(PD.carryBypassAcceptance(A, B, home), false);
+  assert.equal(read(settingsB), '{ broken');
+  // Default (~/.claude/settings.json) on either side
+  put(pdPath.join(home, '.claude', 'settings.json'), JSON.stringify({ [KEY]: true }));
+  put(settingsB, JSON.stringify({ env: { X: '1' } }));
+  assert.equal(PD.moveProjectData({ from: null, to: B, home, dirs: [shop], skipPermissions: true }).bypass, true);
+  assert.deepEqual(JSON.parse(read(settingsB)), { env: { X: '1' }, [KEY]: true });
+  pdFs.rmSync(pdPath.join(home, '.claude', 'settings.json'));
+  assert.equal(PD.moveProjectData({ from: B, to: null, home, dirs: [shop], skipPermissions: true }).bypass, true);
+  assert.deepEqual(JSON.parse(read(pdPath.join(home, '.claude', 'settings.json'))), { [KEY]: true });
+  // a linked settings.json stays a link: the file it points to is written
+  if (process.platform !== 'win32') {
+    const real = put(pdPath.join(t.root, 'shared-settings.json'), JSON.stringify({ theme: 'dark' }));
+    pdFs.rmSync(settingsB);
+    pdFs.symlinkSync(real, settingsB);
+    assert.equal(PD.carryBypassAcceptance(null, B, home), true);
+    assert.equal(pdFs.lstatSync(settingsB).isSymbolicLink(), true);
+    assert.deepEqual(JSON.parse(read(real)), { theme: 'dark', [KEY]: true });
+  }
+  t.done();
+});
+
 test('hesap değişince (v3.16): Default’a ve Default’tan; hafıza ~/.claude’da birleşir, hesap klasörüne kopyalanmaz', () => {
   const t = pdSetup();
   const { home, A, B, shop, put, read, slug } = t;
@@ -3163,7 +3249,7 @@ test('hesap değişince (v3.16): Default’a ve Default’tan; hafıza ~/.claude
   assert.equal(JSON.parse(read(pdPath.join(B, '.claude.json'))).projects[shop].hasTrustDialogAccepted, true);
   assert.equal(r2.memory, 0);
   // the same folder on both sides: nothing
-  assert.deepEqual(PD.moveProjectData({ from: B, to: B, home, dirs: [shop] }), { folders: 0, copied: 0, merged: 0, sessions: 0, history: 0, config: false, memory: 0 });
+  assert.deepEqual(PD.moveProjectData({ from: B, to: B, home, dirs: [shop] }), { folders: 0, copied: 0, merged: 0, sessions: 0, history: 0, config: false, memory: 0, bypass: false });
   t.done();
 });
 
