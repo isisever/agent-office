@@ -2710,6 +2710,8 @@ function sleepIdle() {
 // folder and merged there, and each tab starts again in the conversation it was in (--resume <its session>, else
 // --continue for a tab that continues), like an MCP reload. A tab cut off mid-turn is told to carry on. A sleeping
 // tab stays asleep and wakes into its own session. from: the project's account before the change.
+// v3.76: the start-up acceptances the old account holds go too (folder trust held on a parent folder; for a
+// Skip permissions project the bypass mode warning), written before any tab starts, so no dialog stops a moved tab.
 // carryOn (v3.17): tabs that stopped at the usage limit; they are told to carry on like a tab cut off mid-turn.
 // An Antigravity project (v3.22) ignores accounts: nothing moves and its tabs keep running.
 function moveProject(projectId, from, { carryOn = [] } = {}) {
@@ -2736,6 +2738,7 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
       from: from.configDir || null, to: to.configDir || null, home,
       dirs: [p.dir, ...P.tabsOf(p).filter((t) => !t.shell).map((t) => t.dir).filter(Boolean)],
       otherDirs: state.projects.filter((x) => x.id !== p.id).map((x) => x.dir),
+      skipPermissions: P.skipPermissionsArgs(p).length > 0, // v3.76: the old account's bypass mode acceptance goes with it
     });
   } catch (e) { console.error('proje verisi taşınamadı:', e.message); }
   for (const { id, opts } of plan) startPty(id, opts);
