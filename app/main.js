@@ -20,6 +20,7 @@ const M = require('./src/memory.js');
 const Z = require('./src/sleep.js');
 const TR = require('./src/transfer.js');
 const TIO = require('./src/transfer-io.js');
+const CHAT = require('./src/chat.js');
 const SC = require('./src/shared-config.js');
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
@@ -3816,6 +3817,58 @@ ipcMain.on('pty:write', (_e, id, d) => {
   agyWatch.get(id)?.watch.input(d);
   ptyOf(id)?.write(d);
 });
+// --- chat view (contract v3.78, src/chat.js): a Claude Code tab shown as a conversation, read from its transcript
+const chatFiles = new Map();   // pty id → { sid, file }: the transcript found for the tab's session
+/** The tab's session id: the running claude's, else the sleeping tab's (null when there is none yet). */
+function chatSession(id, r, configDir) {
+  const t = terms.get(id);
+  if (t) return validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId) || null;
+  return validSid(asleep.get(id)?.sessionId) || null;
+}
+ipcMain.handle('chat:read', (_e, id, cursor) => {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return { unsupported: true };
+  const { configDir } = A.accountOf(state, r.project);
+  const sid = chatSession(id, r, configDir);
+  if (!sid) return { sid: null, cursor: null, items: [], reset: true, more: false };
+  let known = chatFiles.get(id);
+  if (!known || known.sid !== sid || !fs.existsSync(known.file)) {
+    const f = TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file;
+    if (!f) return { sid, cursor: null, items: [], reset: true, more: false };   // written with the first prompt
+    known = { sid, file: f };
+    chatFiles.set(id, known);
+  }
+  return { sid, ...CHAT.readChat(known.file, cursor && typeof cursor === 'object' ? cursor : null) };
+});
+// A chat-view menu button (an approval, a question): its keys go straight to the tab, a step every 250 ms so Claude
+// Code's menu takes each one; not through pty:write (they are no draft and mint no HQ request).
+const MENU_STEP_MS = 250;
+ipcMain.handle('chat:keys', (_e, id, steps) => {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return 'unsupported';
+  const keys = CHAT.menuKeys(steps);
+  if (!keys) return 'bad-keys';
+  if (handoffLocked(id)) { lockedNotice(id); return 'locked'; }
+  const t = terms.get(id);
+  if (!t) return 'not-running';
+  if (P.isHqId(id)) hqLastKey = Date.now();
+  const a = activity.get(id);
+  if (a) a.at = Date.now();
+  keys.forEach((k, n) => setTimeout(() => { if (terms.get(id) === t) t.write(k); }, n * MENU_STEP_MS));
+  return 'ok';
+});
+// The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).
+ipcMain.handle('chat:send', (_e, id, text) => {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return 'unsupported';
+  const why = CHAT.sendRefused({ text, running: terms.has(id), locked: handoffLocked(id), draft: Boolean(activity.get(id)?.draft), permission: attention.get(r.project.id) === 'permission' });
+  if (why) { if (why === 'locked') lockedNotice(id); return why; }
+  if (P.isHqId(id)) { hqLastKey = Date.now(); hqMinter.mint(); }
+  return typePrompt(id, String(text).trim()) ? 'ok' : 'not-running';
+});
 // the renderer shows a tab: a sleeping one starts (lazy start, wake from sleep)
 ipcMain.on('pty:wake', (_e, id) => { shownTab = String(id); wake(id); });
 ipcMain.on('pty:shown', (_e, id) => { shownTab = ROUT.shownTabOf(id); });   // v3.47 every tab change (HQ on screen)
@@ -4125,9 +4178,10 @@ function buildMenu() {
 // reloadMcp = an idle running tab whose MCP servers changed restarts in its session (contract v3.11);
 // fallback = a project at the usage limit moves to its backup account and back after the reset (contract v3.17);
 // showAgyAccount / showCmdAccount / showOcAccount = the Antigravity / Command Code / OpenCode row in Accounts: true (added via Add account),
-// false (removed), null (the old rule: shown when installed or a project runs it) (contract v3.30)
+// false (removed), null (the old rule: shown when installed or a project runs it) (contract v3.30);
+// chatView = Claude Code tabs can be shown as a conversation (contract v3.78); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true });
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
@@ -4136,6 +4190,7 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp });
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
+  if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) commit({ ...state, chatView: p.chatView });   // v3.78 chat view (the renderer switches)
   for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (p && typeof p[k] === 'boolean' && p[k] !== prefs()[k]) commit({ ...state, [k]: p[k] });
   if (p && typeof p.theme === 'string' && themeSetting(p.theme) !== prefs().theme) commit({ ...state, theme: themeSetting(p.theme) });
   // appearance (v3.74): an unknown look or mode is stored as the default
@@ -4211,7 +4266,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
   const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });

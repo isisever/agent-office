@@ -86,6 +86,8 @@
     "shareMcp": "Projelerin MCP sunucularını paylaş",
     "reloadMcp": "MCP değişince oturumları yenile",
     "reloadMcpTitle": "Çalışan bir Claude'un alacağı MCP sunucuları değişince (claude mcp add/remove, düzenlenen .mcp.json, bir onay, eklenen bir proje) boşta kalır kalmaz aynı konuşmada yeniden başlar: çalışırken, ajan ya da arka plan kabuğu çalıştırırken, onay beklerken ya da isteminde gönderilmemiş yazı varken başlamaz.",
+    "chatView": "Sohbet görünümü",
+    "chatViewTitle": "Claude Code sekmeleri konuşmayı mesajlar ve bir yazı kutusuyla gösterir; terminal altta çalışmaya devam eder ve bir tık uzaktadır (onaylar ve /model gibi menüler orada yanıtlanır). Antigravity, Command Code, OpenCode ve kabuk sekmeleri terminal olarak kalır.",
     "shareMcpTitle": "Her projenin Claude'u ofisteki diğer projelerin MCP sunucularını da alır (yerel ve onaylı .mcp.json sunucuları, token'larıyla birlikte); böylece bir projenin sekmesinden başka bir proje üzerinde çalışabilirsin. Adı başka bir ayarla zaten alınmış bir sunucunun adına proje adı eklenir (sunucu-proje). Bundan sonra başlayan Claude oturumlarında geçerli olur.",
     "shareDefault": "Varsayılan hesabın eklentilerini, skill'lerini ve MCP sunucularını kullan",
     "shareDefaultTitle": "Varsayılan hesap (~/.claude) için kurduğun eklentiler, kişisel skill'ler, ajanlar, komutlar, çıktı stilleri, MCP sunucuları (token'larıyla) ve CLAUDE.md bu hesapta da kullanılır. Bu hesabın kendi girişi, ayarları ve claude.ai'den eşitlenen skill'leri kendisinde kalır. Bu hesabın Claude oturumları bir sonraki başlayışta geçerli olur.",
@@ -528,6 +530,36 @@
     "exited": "— Claude kapandı — yeniden başlatmak için Enter —",
     "asleep": "— Bellek için uykuda: açınca kaldığı yerden devam eder —",
     "mcpReloaded": "— MCP sunucuları yeniden yüklendi: Claude aynı konuşmada yeniden başladı —"
+  },
+  "chat": {
+    "placeholder": "Mesaj… (Enter gönderir, Shift+Enter: yeni satır)",
+    "send": "Gönder",
+    "terminal": "Terminal",
+    "terminalTitle": "Terminali göster (onaylar, menüler, tuşlar)",
+    "chat": "Sohbet",
+    "chatTitle": "Bu sekmeyi sohbet olarak göster",
+    "permission": "Claude bir onay bekliyor: terminalde yanıtlayın.",
+    "empty": "Henüz konuşma yok: ilk mesajı aşağıya yazın.",
+    "images": "{count} görsel",
+    "freePlaceholder": "Yanıtınız…",
+    "menuBack": "← Geri",
+    "menuNext": "İleri →",
+    "menuCancel": "Vazgeç (Esc)",
+    "note": {
+      "compact": "— konuşma özetlendi —",
+      "task": "Bir arka plan görevi bitti.",
+      "interrupted": "Kesildi.",
+      "message": "Başka bir oturumdan mesaj geldi."
+    },
+    "why": {
+      "not-running": "Oturum henüz çalışmıyor; birazdan tekrar deneyin.",
+      "permission": "Claude bir onay bekliyor: önce terminalde yanıtlayın.",
+      "draft": "Terminalin yazı kutusunda gönderilmemiş metin var: önce orada gönderin ya da silin.",
+      "locked": "Bu proje başka bir bilgisayara taşınıyor.",
+      "too-long": "Mesaj çok uzun.",
+      "other": "Mesaj gönderilemedi.",
+      "menu": "Claude bir şey soruyor: önce yukarıda yanıtlayın."
+    }
   },
   "main": {
     "defaultAccount": "Varsayılan",

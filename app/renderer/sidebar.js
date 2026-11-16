@@ -141,6 +141,10 @@ export function mountSidebar(el, on) {
   const reloadMcpLabel = h('span', {});
   const reloadMcpBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setReloadMcp?.(e.target.checked) });
   const reloadMcpRow = h('label', { class: 'sb-botcolor sb-langrow' }, reloadMcpLabel, reloadMcpBox);
+  // Claude Code tabs shown as a conversation, the terminal one click away (contract v3.78, chat.js)
+  const chatViewLabel = h('span', {});
+  const chatViewBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setChatView?.(e.target.checked) });
+  const chatViewRow = h('label', { class: 'sb-botcolor sb-langrow' }, chatViewLabel, chatViewBox);
   // a project at the usage limit moves to its backup account, and back after the reset (contract v3.17)
   const fallbackLabel = h('span', {});
   const fallbackBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setFallback?.(e.target.checked) });
@@ -209,6 +213,8 @@ export function mountSidebar(el, on) {
     shareMcpRow.title = t('sidebar.shareMcpTitle');
     reloadMcpLabel.textContent = t('sidebar.reloadMcp');
     reloadMcpRow.title = t('sidebar.reloadMcpTitle');
+    chatViewLabel.textContent = t('sidebar.chatView');
+    chatViewRow.title = t('sidebar.chatViewTitle');
     fallbackLabel.textContent = t('sidebar.fallback');
     fallbackRow.title = t('sidebar.fallbackTitle');
     sleepLabel.textContent = t('sidebar.sleep');
@@ -844,7 +850,7 @@ export function mountSidebar(el, on) {
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, lookRow, modeRow, themeRow, botRow, skillsSection()],
+      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, lookRow, modeRow, chatViewRow, themeRow, botRow, skillsSection()],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 
@@ -1245,6 +1251,8 @@ export function mountSidebar(el, on) {
     setShareMcp(on) { shareMcpBox.checked = on !== false; },
     /** "Reload sessions when MCP changes" setting (v3.11). */
     setReloadMcp(on) { reloadMcpBox.checked = on !== false; },
+    /** "Chat view" setting (v3.78; off unless set). */
+    setChatView(on) { chatViewBox.checked = on === true; },
     /** "Backup account at the usage limit" setting (v3.17). */
     setFallback(on) { fallbackBox.checked = on !== false; },
     /** Minutes after which an idle background session sleeps (0 = off). */

@@ -87,6 +87,8 @@
     "shareMcp": "Share MCP servers between projects",
     "reloadMcp": "Reload sessions when MCP changes",
     "reloadMcpTitle": "When the MCP servers a running Claude would get change (claude mcp add/remove, an edited .mcp.json, an approval, a project added), it restarts in the same conversation as soon as it is idle: not while it works, runs agents or background shells, waits for an approval or has unsent text in its prompt.",
+    "chatView": "Chat view",
+    "chatViewTitle": "Claude Code tabs show their conversation as messages with an input box; the terminal keeps running underneath and is one click away (approvals and menus such as /model are answered there). Antigravity, Command Code, OpenCode and shell tabs stay terminals.",
     "shareMcpTitle": "Each project's Claude also gets the MCP servers the other projects in the office have (their local and approved .mcp.json servers, with their tokens), so you can work on one project from another's tab. A server whose name is already taken with another setup gets the project's name added (server-project). Applies to Claude sessions started afterwards.",
     "shareDefault": "Use Default's plugins, skills and MCP servers",
     "shareDefaultTitle": "Plugins, personal skills, agents, commands, output styles, MCP servers (with their tokens) and CLAUDE.md you installed for the Default account (~/.claude) are available in this account too. This account's own login, settings and claude.ai-synced skills stay its own. Applies when this account's Claude sessions start next.",
@@ -538,6 +540,36 @@
     "exited": "— Claude exited — press Enter to restart —",
     "asleep": "— Asleep to save memory: it continues where it left off when you open it —",
     "mcpReloaded": "— MCP servers reloaded: Claude restarted in the same conversation —"
+  },
+  "chat": {
+    "placeholder": "Message… (Enter sends, Shift+Enter: new line)",
+    "send": "Send",
+    "terminal": "Terminal",
+    "terminalTitle": "Show the terminal (approvals, menus, keys)",
+    "chat": "Chat",
+    "chatTitle": "Show this tab as a chat",
+    "permission": "Claude is waiting for an approval: answer it in the terminal.",
+    "empty": "No conversation yet: write the first message below.",
+    "images": "{count} image(s)",
+    "freePlaceholder": "Your answer…",
+    "menuBack": "← Back",
+    "menuNext": "Next →",
+    "menuCancel": "Cancel (Esc)",
+    "note": {
+      "compact": "— the conversation was compacted —",
+      "task": "A background task finished.",
+      "interrupted": "Interrupted.",
+      "message": "A message from another session arrived."
+    },
+    "why": {
+      "not-running": "The session is not running yet; try again in a moment.",
+      "permission": "Claude is waiting for an approval: answer it in the terminal first.",
+      "draft": "The terminal's input box has unsent text: send or clear it there first.",
+      "locked": "This project is being moved to another computer.",
+      "too-long": "The message is too long.",
+      "other": "The message could not be sent.",
+      "menu": "Claude is asking something: answer it above first."
+    }
   },
   "main": {
     "defaultAccount": "Default",
