@@ -360,6 +360,7 @@ function removeMcpFile(id) {
   officeSock?.remove(id);   // v3.35 its office_* token stops working with it
   try { fs.rmSync(path.join(mcpDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
   try { fs.rmSync(path.join(directoryDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
+  try { fs.rmSync(path.join(deskRoleDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}   // v3.81 a desk's role file
 }
 
 // Killed on purpose (restart, removal, sleep, account change): its interrupted mark goes too, except while quitting.
@@ -1166,6 +1167,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const dir = pluginDir();
   const sl = usageStatusLine(project, configDir, cwd, usageKey(id));
   const settings = M.withMemorySetting(sl?.settings, isDir(cwd) ? projectMemoryDir(cwd, configDir) : null);
+  // v3.81 a desk continues its own conversation (kept on the tab), when its transcript is still there
+  if (!sessionId && tab?.staffId && tab.sessionId && TIO.findTranscript(cwd, tab.sessionId, configDir, app.getPath('home'))) sessionId = tab.sessionId;
   const isResume = Boolean(sessionId) || (resume && (!tab || Boolean(tab.worktree)) && hasHistory(cwd, configDir));
   const resumeArgs = sessionId ? ['--resume', sessionId] : isResume ? ['--continue'] : [];
   const settingsArg = IS_WIN && settings ? settingsFile(usageKey(id), settings) : settings;
@@ -1213,6 +1216,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   if (directory) env.AGENT_OFFICE_DIRECTORY = directory;
   delete env.AGENT_OFFICE_HQ;
   if (project.hq) env.AGENT_OFFICE_HQ = '1';   // v3.46 the plugin gives the HQ section instead of the manager one
+  // v3.81 team: a desk's session gets its member's role section (AGENT_OFFICE_ROLE, a 0600 file); HQ the team section
+  delete env.AGENT_OFFICE_ROLE;
+  delete env.AGENT_OFFICE_TEAM;
+  const roleFile = tab?.staffId ? writeDeskRole(id, project, tab.staffId) : null;
+  if (roleFile) env.AGENT_OFFICE_ROLE = roleFile;
+  if (project.hq && teamOn()) env.AGENT_OFFICE_TEAM = '1';
   if (bossMcp && (linkHost?.link()?.devices.length || 0) > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
   if (sl?.userCommand) env.AGENT_OFFICE_STATUSLINE = sl.userCommand;
   delete env[D.DELEGATE_ENV];
@@ -1608,7 +1617,7 @@ function unfinishedTabs() {
     for (const id of P.ptyIdsOf(p)) {
       const r = P.resolvePty(state, id);
       if (!r) continue;
-      const { configDir } = A.accountOf(state, p);
+      const { configDir } = A.accountOf(state, r.project);   // v3.81 a desk's own account (resolvePty)
       const t = terms.get(id);
       const continues = !r.tab || Boolean(r.tab.worktree);
       let sid = '';
@@ -1700,6 +1709,8 @@ function officeMachines() {
   const l = linkHost?.link();
   const v = l ? l.view() : null;
   const here = { machine: selfName(), thisMachine: true, online: true, projects: state.projects.map((p) => ({ id: p.id, name: officeName(p.name), engine: P.engineOf(p), state: terms.has(p.id) ? 'running' : asleep.has(p.id) ? 'asleep' : 'stopped' })) };
+  // v3.81 team mode: the staff (role, department, projects each may work on, desks and whether they are at work)
+  if (teamOn()) here.staff = ST.machineStaff(state.staff, presetRoles(), state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: officeName(p.name) })), deskStateOf);
   const there = (v?.devices || []).map((dv) => ({ machine: officeName(dv.name), online: dv.online, reports: dv.caps.includes('report'), manage: dv.caps.includes('manage') && Boolean(dv.catalog),
     // v3.46 an offline machine shows its last-known projects (peer cache: names and ids only)
     lastSeen: peerCache()[dv.id]?.lastSeen || 0,
@@ -1722,7 +1733,8 @@ function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {
     if (!p || !linkHost) return { status: 'rejected', reason: 'unknown-project' };
     if (p.id === tab) return { status: 'rejected', reason: 'self' };   // the boss's own project: it would type into itself
     // every later status (delivered, or rejected e.g. locked/expired) lands in the record office_reports reads
-    r = linkHost.dispatchLocal(p.id, task, selfName(), (id, status, reason) => {
+    const into = args.desk && P.resolvePty(state, args.desk)?.tab?.staffId && String(args.desk).split(':')[0] === p.id ? args.desk : p.id;   // v3.81 a desk
+    r = linkHost.dispatchLocal(into, task, selfName(), (id, status, reason) => {
       const x = loadDispatches().get(id);
       hqStatus(id, status, reason);
       if (!x || x.report) return;
@@ -1950,7 +1962,7 @@ async function confirmHqDispatch(args, remote) {
 
   if (!win || win.isDestroyed()) return false;
   const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
-    message: T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: LC.cleanLine(HQ.redact(String(args.task || '')), 300) });
+    message: args.staffName ? T('main.hqAskStaff', { staff: args.staffName, project: officeName(args.project) }) : T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: LC.cleanLine(HQ.redact(String(args.task || '')), 300) });
   return r.response === 0;
 }
 /** v3.47/v3.49 a routine's own project or remote run: its dispatch record names the run, so the report ends the run
@@ -1973,6 +1985,12 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   const remote = Boolean(key) || !isHere(machine);
   const rrun = routineRunOfRequest(request);
   const target = key ? null : byName(state.projects, args.project);
+  // v3.81 team: a task for a staff member goes to the member's desk in that project (the desk is opened, not started yet)
+  if (args.staff) {
+    const d = await hqStaffDesk(args, remote, target);
+    if (d.reason) return { status: 'rejected', reason: d.reason };
+    args = { ...args, desk: d.desk, staffName: d.staffName };
+  }
   const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '' });   // a project routine: only its own project
   const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
@@ -1992,9 +2010,10 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   };
   if (!remote) {
     const p = byName(state.projects, args.project);
-    if (p && !terms.has(p.id)) projectOp('start', p.id);   // a stopped or sleeping target starts first; pump waits for 'starting'
+    const startId = args.desk || p?.id;   // v3.81 a staff member's desk, else the project's boss tab
+    if (startId && !terms.has(startId)) projectOp('start', startId);   // a stopped or sleeping target starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
-    if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id });
+    if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName } : {}) });
     // v3.47 a routine's own project run: its report finishes the run and writes no HQ inbox row
     tagRoutineRec(/** @type {any} */ (r).id, rrun);
     return { ...r, ...(request ? { request } : {}) };
@@ -2401,6 +2420,14 @@ ipcMain.handle('hq:remoteOp', async (_e, key, op) => {
 // sleep and stop refuse a busy tab (a turn, a dialog, a draft, a permission prompt) and a non-Claude engine for sleep.
 function projectOp(op, projectId) {
   if (P.isHqId(projectId)) return { ok: false, reason: 'unknown-project' };   // v3.46 HQ is never a project target
+  // v3.81 HQ's task for a desk starts or wakes that desk (only start / wake: a desk is managed from its tab)
+  const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
+  if (desk?.tab?.staffId && (op === 'start' || op === 'wake')) {
+    if (handoffLocks.has(desk.project.id)) return { ok: false, reason: 'locked' };
+    if (!terms.has(projectId)) { if (asleep.has(projectId)) wake(projectId); else startPty(projectId, { resume: true }); }
+    broadcast();
+    return { ok: true };
+  }
   const p = P.findProject(state, projectId);
   if (!p) return { ok: false, reason: 'unknown-project' };
   const id = p.id;
@@ -2434,6 +2461,14 @@ function projectOp(op, projectId) {
 }
 /** The link sees projects only: HQ (and any non-project id) is 'gone' for remote commands. */
 function linkTabState(projectId) {
+  // v3.81 a desk (a staff member's tab): its own state; with the project's lock it waits while another tab works
+  const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
+  if (desk?.tab?.staffId) {
+    const ts = tabStateOf(projectId);
+    const project = P.findProject(state, desk.project.id);
+    if (ts === 'ready' && project && ST.deskWaits(project, projectId, P.ptyIdsOf(project), (id) => terms.has(id) && (tabStateOf(id) === 'busy' || tabWorkRunning(id)))) return 'busy';
+    return ts;
+  }
   return P.findProject(state, projectId) ? tabStateOf(projectId) : 'gone';
 }
 /** A tab's state for typing from outside; resolves through resolvePty, so HQ ('hq') is known (v3.47 routines). */
@@ -3079,6 +3114,111 @@ ipcMain.handle('staff:remove', (_e, id) => {
   commit({ ...state, staff: ST.removeMember(state.staff, String(id)) });
   return { ok: true };
 });
+
+// --- desks (contract v3.81 step 3): a staff member's tab in a project. Its own session (account, role section,
+// conversation kept on the tab); one desk at work per project folder unless the project allows parallel work, then each
+// desk has its own worktree in userData/work (never in or next to the project folder).
+const teamOn = () => state.teamMode === true && (state.staff || []).length > 0;
+const deskRoleDir = () => path.join(app.getPath('userData'), 'role');
+const memberById = (id) => (state.staff || []).find((m) => m.id === id) || null;
+/** Writes the desk's role file (0600) → its path, or null (no member). */
+function writeDeskRole(id, project, staffId) {
+  const m = memberById(staffId);
+  if (!m) return null;
+  const real = P.findProject(state, project.id) || project;
+  try {
+    fs.mkdirSync(deskRoleDir(), { recursive: true, mode: 0o700 });
+    const f = path.join(deskRoleDir(), SC.mcpFileName(usageKey(id)));
+    SF.writeAtomic(f, JSON.stringify(ST.deskRoleFile(m, presetRoles(), real, state.staff)));   // 0600
+    return f;
+  } catch (e) { console.error('desk role:', e.message); return null; }
+}
+/**
+ * Opens (and starts) a member's desk in a project: the existing one, or a new tab (a worktree of its own when the
+ * project allows parallel work). → { ok, id } | { ok: false, error: 'unknown' | 'staff-not-allowed' | 'engine' | 'git' }
+ */
+async function openDesk(projectId, staffId, { start = true } = {}) {
+  const p = P.findProject(state, projectId);
+  const m = memberById(staffId);
+  if (!p || !m || p.hq) return { ok: false, error: 'unknown' };
+  if (!ST.mayWork(m, p.id)) return { ok: false, error: 'staff-not-allowed' };
+  if (P.engineOf(p) !== 'claude') return { ok: false, error: 'engine' };
+  const have = P.deskOf(p, m.id);
+  if (have) {
+    const id = P.tabPtyId(p.id, have.n);
+    if (start && !terms.has(id)) { if (asleep.has(id)) wake(id); else startPty(id, { resume: true }); }
+    return { ok: true, id };
+  }
+  const tab = { n: P.nextTabNumber(p), staffId: m.id };
+  if (p.parallel === true) {
+    const repo = await gitTop(p.dir);
+    if (!repo) return { ok: false, error: 'git' };
+    const wt = ST.deskWorktree(app.getPath('userData'), p.id, m.id);
+    if (!fs.existsSync(wt.root)) {
+      try { fs.mkdirSync(path.dirname(wt.root), { recursive: true }); } catch {}
+      const has = (await git(['-C', repo, 'rev-parse', '--verify', '--quiet', `refs/heads/${wt.branch}`])).ok;
+      const g = await git(['-C', repo, 'worktree', 'add', ...(has ? [wt.root, wt.branch] : ['-b', wt.branch, wt.root])]);
+      if (!g.ok) { console.error('desk worktree:', g.stderr); return { ok: false, error: 'git' }; }
+    }
+    let real = p.dir;
+    try { real = fs.realpathSync(p.dir); } catch {}
+    Object.assign(tab, { dir: P.worktreeDir(repo, wt.root, real), worktree: { root: wt.root, repo, branch: wt.branch } });
+  }
+  if (!P.findProject(state, p.id)) return { ok: false, error: 'unknown' };   // removed while git ran
+  commit(P.addTab(state, p.id, tab));
+  const id = P.tabPtyId(p.id, tab.n);
+  if (start) startPty(id);
+  return { ok: true, id };
+}
+/** A desk's state for HQ: 'busy' | 'idle' | 'asleep' | 'off', or 'none' (no desk there yet). */
+function deskStateOf(projectId, staffId) {
+  const p = P.findProject(state, projectId);
+  const t = p ? P.deskOf(p, staffId) : null;
+  if (!t) return 'none';
+  const id = P.tabPtyId(p.id, t.n);
+  return terms.has(id) ? (tabWorkRunning(id) ? 'busy' : 'idle') : asleep.has(id) ? 'asleep' : 'off';
+}
+/** v3.81 HQ's office_dispatch with `staff`: the member's desk in the target project → { desk, staffName } | { reason }. */
+async function hqStaffDesk(args, remote, target) {
+  if (remote) return { reason: 'staff-local-only' };   // paired devices know no staff (the link protocol is unchanged)
+  if (!teamOn()) return { reason: 'no-team' };
+  const m = ST.findMember(state.staff, args.staff);
+  if (!m) return { reason: 'unknown-staff' };
+  if (!target) return { reason: 'unknown-project' };
+  if (!ST.mayWork(m, target.id)) return { reason: 'staff-not-allowed' };
+  const d = await openDesk(target.id, m.id, { start: false });
+  return d.ok ? { desk: d.id, staffName: m.name } : { reason: d.error === 'engine' ? 'engine' : d.error === 'git' ? 'desk-failed' : 'unknown-project' };
+}
+ipcMain.handle('staff:desk', (_e, projectId, staffId) => openDesk(String(projectId || ''), String(staffId || '')));
+ipcMain.handle('projects:setParallel', (_e, id, on) => { commit(P.setParallel(state, String(id), on === true)); return { ok: true }; });
+/** Every desk's state ('busy' while a turn, a dialog, agents or a background shell run; else running / asleep / off). */
+function deskStates() {
+  const out = [];
+  for (const p of state.projects) for (const t of P.desksOf(p)) {
+    const id = P.tabPtyId(p.id, t.n);
+    out.push({ id, projectId: p.id, n: t.n, staffId: t.staffId, state: terms.has(id) ? (tabWorkRunning(id) ? 'busy' : 'idle') : asleep.has(id) ? 'asleep' : 'off' });
+  }
+  return out;
+}
+// every 3 s: a desk's conversation id is kept on its tab (it continues it after a restart); the renderer gets the states
+let deskKey = '';
+setInterval(() => {
+  if (!state || !isLoaded) return;
+  let next = state;
+  for (const p of state.projects) for (const t of P.desksOf(p)) {
+    const id = P.tabPtyId(p.id, t.n);
+    const term = terms.get(id);
+    if (!term) continue;
+    const r = P.resolvePty(next, id);
+    const sid = r ? validSid(readJson(Z.claudePidFile(A.accountOf(next, r.project).configDir, app.getPath('home'), term.pid))?.sessionId) : '';
+    if (sid) next = P.setDeskSession(next, p.id, t.n, sid);
+  }
+  if (next !== state) commit(next);
+  const desks = deskStates();
+  const k = JSON.stringify(desks);
+  if (k !== deskKey) { deskKey = k; send('staff:desks', desks); }
+}, 3000).unref?.();
+ipcMain.handle('staff:desks', () => deskStates());
 
 ipcMain.handle('projects:remove', (_e, id) => {
   const p = P.findProject(state, id);

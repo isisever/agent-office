@@ -1378,3 +1378,12 @@ select option.rt-off { color: #888; }
 .sb-scope { display: flex; flex-direction: column; gap: 4px; }
 .sb-scope-list { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow-y: auto; padding-left: 18px; }
 .sb-scope label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+
+/* v3.81 desks on a team card: one chip per project (● at work, ○ open, ◌ asleep, + none yet) */
+.sb-desks { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
+.sb-desk { font: inherit; font-size: 10px; padding: 1px 6px; border-radius: 10px; cursor: pointer; color: var(--text); background: transparent; border: 1px solid var(--border); white-space: nowrap; }
+.sb-desk:hover { border-color: var(--line-strong); }
+.sb-desk.busy { color: var(--ok); border-color: var(--ok); }
+.sb-desk.none { opacity: .6; border-style: dashed; }
+.sb-desk.asleep { opacity: .7; font-style: italic; }
+.sb-staff-state.working { color: var(--ok); }

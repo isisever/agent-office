@@ -70,3 +70,83 @@ test('staff-view: roleOf merges the preset with the member’s own words; byDepa
   const groups = V.byDepartment([{ name: 'a', department: 'Dev' }, { name: 'b' }, { name: 'c', department: 'Ops' }, { name: 'd', department: 'Dev' }]);
   assert.deepEqual(groups.map((g) => [g.head, g.members.map((m) => m.name)]), [['Dev', ['a', 'd']], ['Ops', ['c']], ['', ['b']]]);
 });
+
+// ---------- desks (step 3) and HQ (step 4) ----------
+const P = require('../src/projects.js');
+
+test('desks: a staff tab keeps staffId and sessionId; resolvePty gives a desk its member’s own account', () => {
+  const tabs = P.normalizeTabs([{ n: 2, staffId: 's-a1b2c3', sessionId: 'abc-1' }, { n: 3, staffId: 'nope', sessionId: 'x' }, { n: 4, staffId: 's-a1b2c3', shell: true, dir: '/w' }]);
+  assert.deepEqual(tabs, [{ n: 2, staffId: 's-a1b2c3', sessionId: 'abc-1' }, { n: 3 }, { n: 4, dir: '/w', shell: true }]);
+  const state = {
+    accounts: [{ id: 'default' }, { id: 'work' }], projects: [{ id: 'p1', dir: '/w/p1', accountId: 'default', tabs: [{ n: 2, staffId: 's-a1b2c3' }, { n: 3, staffId: 's-bbbbbb' }] }],
+    staff: [{ ...ayse, id: 's-a1b2c3', accountId: 'work' }, { id: 's-bbbbbb', name: 'Mert', role: { preset: 'qa' }, projects: 'all' }],
+  };
+  assert.equal(P.resolvePty(state, 'p1:2').project.accountId, 'work', 'the member’s account');
+  assert.equal(P.resolvePty(state, 'p1:3').project.accountId, 'default', 'no own account: the project’s');
+  assert.equal(P.resolvePty(state, 'p1').project.accountId, 'default', 'the main tab is unchanged');
+  assert.equal(P.resolvePty({ ...state, accounts: [{ id: 'default' }] }, 'p1:2').project.accountId, 'default', 'a gone account: the project’s');
+  assert.deepEqual(P.desksOf(state.projects[0]).map((t) => t.staffId), ['s-a1b2c3', 's-bbbbbb']);
+  assert.equal(P.deskOf(state.projects[0], 's-bbbbbb').n, 3);
+  const next = P.setDeskSession(state, 'p1', 2, 'sess-9');
+  assert.equal(P.deskOf(next.projects[0], 's-a1b2c3').sessionId, 'sess-9');
+  assert.equal(P.setDeskSession(next, 'p1', 2, 'sess-9'), next, 'unchanged: same state');
+});
+
+test('parallel: a project flag, never written when off; a desk worktree lives in userData', () => {
+  const s = { projects: [{ id: 'p1', dir: '/w/p1' }] };
+  const on = P.setParallel(s, 'p1', true);
+  assert.equal(on.projects[0].parallel, true);
+  assert.equal('parallel' in P.setParallel(on, 'p1', false).projects[0], false);
+  const wt = ST.deskWorktree('/ud', 'p1', 's-a1b2c3', path.posix.join);
+  assert.deepEqual(wt, { root: '/ud/work/p1/s-a1b2c3', branch: 'agent-office/s-a1b2c3' });
+});
+
+test('deskWaits: one desk at work per folder unless the project is parallel', () => {
+  const busy = new Set(['p1']);
+  assert.equal(ST.deskWaits({}, 'p1:2', ['p1', 'p1:2'], (id) => busy.has(id)), true, 'the boss tab works: the desk waits');
+  assert.equal(ST.deskWaits({}, 'p1:2', ['p1', 'p1:2'], () => false), false);
+  assert.equal(ST.deskWaits({ parallel: true }, 'p1:2', ['p1', 'p1:2'], () => true), false, 'parallel: never waits');
+  assert.equal(ST.deskWaits({}, 'p1:2', ['p1:2'], () => true), false, 'its own work does not count');
+});
+
+test('deskRoleFile: the member, its role in English, the project and the rest of the team; no account or token', () => {
+  const defs = ST.loadRoles(ROLES);
+  const staff = [ayse, { id: 's-bbbbbb', name: 'Mert', role: { preset: 'qa' }, projects: 'all' }];
+  const f = ST.deskRoleFile(ayse, defs, { id: 'p1', name: 'acme', dir: '/w/acme' }, staff);
+  assert.equal(f.member, 'Ayşe');
+  assert.equal(f.name, 'ERP Developer (Odoo)');
+  assert.equal(f.department, 'Geliştirme');
+  assert.deepEqual(f.project, { name: 'acme', dir: '/w/acme' });
+  assert.deepEqual(f.team, [{ name: 'Mert', role: 'QA Engineer' }]);
+  assert.ok(!('accountId' in f) && !JSON.stringify(f).includes('work"'), 'no account');
+});
+
+test('machineStaff / findMember: HQ sees roles, allowed projects and desks; members found by name or id', () => {
+  const defs = ST.loadRoles(ROLES);
+  const projects = [{ id: 'p1', name: 'acme' }, { id: 'p2', name: 'beta' }, { id: 'p3', name: 'gamma' }];
+  const staff = [ayse, { id: 's-bbbbbb', name: 'Mert', role: { preset: 'qa' }, projects: 'all' }];
+  const states = { 'p1:s-a1b2c3': 'busy', 'p3:s-bbbbbb': 'idle' };
+  const v = ST.machineStaff(staff, defs, projects, (pid, sid) => states[`${pid}:${sid}`] || 'none');
+  assert.deepEqual(v[0].projects, ['acme', 'beta']);
+  assert.deepEqual(v[0].desks, [{ project: 'acme', state: 'busy' }]);
+  assert.equal(v[0].busy, true);
+  assert.equal(v[1].projects, 'all');
+  assert.deepEqual(v[1].desks, [{ project: 'gamma', state: 'idle' }]);
+  assert.equal(v[1].role, 'QA Engineer');
+  assert.equal(ST.findMember(staff, 'AYŞE').id, ayse.id);
+  assert.equal(ST.findMember(staff, 's-bbbbbb').name, 'Mert');
+  assert.equal(ST.findMember(staff, 'nobody'), null);
+});
+
+test('main.js: HQ dispatch to staff — checks, the desk, the lock, the member’s env', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const fn = (name) => src.slice(src.indexOf(`function ${name}(`), src.indexOf('\n}\n', src.indexOf(`function ${name}(`)));
+  const hs = fn('hqStaffDesk');
+  for (const r of ['staff-local-only', 'no-team', 'unknown-staff', 'staff-not-allowed']) assert.ok(hs.includes(`'${r}'`), r);
+  assert.match(fn('linkTabState'), /ST\.deskWaits\(/);
+  assert.match(fn('officeDispatch'), /linkHost\.dispatchLocal\(into,/);
+  assert.match(src, /if \(roleFile\) env\.AGENT_OFFICE_ROLE = roleFile;/);
+  assert.match(src, /if \(project\.hq && teamOn\(\)\) env\.AGENT_OFFICE_TEAM = '1';/);
+  assert.match(fn('openDesk'), /ST\.deskWorktree\(app\.getPath\('userData'\)/);
+});

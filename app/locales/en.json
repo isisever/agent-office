@@ -578,7 +578,23 @@
       "name-used": "A team member with this name already exists.",
       "too-many": "The team is full (50 members).",
       "failed": "The member could not be saved."
-    }
+    },
+    "working": "{role} · working: {projects}",
+    "desk": {
+      "busy": "At work in {project}: open the desk",
+      "idle": "Desk in {project}: open it",
+      "asleep": "Desk in {project} (asleep): open it",
+      "off": "Desk in {project} (stopped): open it",
+      "none": "No desk in {project} yet: open one (a session of its own)"
+    },
+    "deskError": {
+      "staff-not-allowed": "This member may not work on that project.",
+      "engine": "Desks are for Claude Code projects.",
+      "git": "The project allows parallel work but its own copy (git worktree) could not be made.",
+      "failed": "The desk could not be opened."
+    },
+    "parallel": "Several team members at once",
+    "parallelTitle": "Team members work in this project at the same time, each in its own copy (a git worktree kept in Agent Office's data folder, never in the project folder). Off: one desk at work at a time; HQ's next task waits. Dependencies (node_modules, …) are installed per copy."
   },
   "main": {
     "defaultAccount": "Default",
@@ -795,6 +811,7 @@
     "hqAllow": "Dispatch",
     "hqDeny": "Cancel",
     "hqAsk": "HQ wants to give a task to {project}.",
+    "hqAskStaff": "HQ wants to give {staff} a task in {project}.",
     "hqAskRemote": "HQ wants to give a task to {project} on {machine}.",
     "hqRequestDone": "HQ: a request finished ({n} tasks)",
     "hqGaveUp": "HQ stopped after failing to start 5 times. Open HQ to try again.",

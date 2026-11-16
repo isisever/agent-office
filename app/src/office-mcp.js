@@ -19,12 +19,12 @@ const LINE_MAX = 512 * 1024;
 const TOOLS = [
   {
     name: 'office_machines',
-    description: 'Lists the machines of this Agent Office (this one and the paired devices, online or not) and the projects on each, by name. Read only.',
+    description: 'Lists the machines of this Agent Office (this one and the paired devices, online or not) and the projects on each, by name. In team mode this machine also lists its staff: each member\'s role, department, the projects it may work on and its desks (busy or idle). Read only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'office_dispatch',
-    description: 'Gives a task to the boss of a project on this machine or on a paired device. The task is typed into that project as a marked prompt; when its turn is done (and its agents finished) a report comes back: you are told "report ready" and read it with office_reports. Returns { id, status } or a refusal reason (offline, logged-out, not-allowed, engine, queue-full, unknown-machine, unknown-project, no-report, too-large, self: the boss own project, locked: being handed off).',
+    description: 'Gives a task to the boss of a project on this machine or on a paired device. The task is typed into that project as a marked prompt; when its turn is done (and its agents finished) a report comes back: you are told "report ready" and read it with office_reports. Returns { id, status } or a refusal reason (staff-not-allowed, unknown-staff, no-team, staff-local-only, offline, logged-out, not-allowed, engine, queue-full, unknown-machine, unknown-project, no-report, too-large, self: the boss own project, locked: being handed off).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -33,6 +33,7 @@ const TOOLS = [
         task: { type: 'string', description: 'What to do, self-contained (at most 8 KB).' },
         title: { type: 'string', description: 'Short title for the board (at most 80 characters).' },
         request: { type: 'string', description: 'HQ only: the request id from office_board (groups the tasks of one request).' },
+        staff: { type: 'string', description: 'HQ, team mode, this machine only: a staff member\'s name from office_machines. The task goes to that member\'s own desk (session) in the project, which must be one of its projects (else staff-not-allowed). A member can work on several projects at once; one project folder has one desk at work at a time, so the task may wait.' },
       },
       required: ['project', 'task'],
       additionalProperties: false,

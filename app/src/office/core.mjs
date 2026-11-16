@@ -539,7 +539,17 @@ function updateParty(workers, now) {
 
 const slots = new Map()
 
-function assignSlots(workers, now) {
+// app team (contract v3.81): the first desks belong to staff members (data.staff, in order; at most half the desks):
+// their plates carry the member's name and a working member sits there. Agents take the other desks.
+function staffDesks(data) {
+  const list = Array.isArray(data.staff) ? data.staff.filter(m => m && m.name) : []
+  const n = Math.min(list.length, Math.floor(L.desks.length / 2))
+  return new Map(list.slice(0, n).map((m, i) => [i, m]))
+}
+/** A staff member's colour (plate, tag edge), from its name like a project's. */
+const staffColor = m => projColor(`staff:${m.name}`)
+
+function assignSlots(workers, now, reserved = new Set()) {
   const live = new Set(workers.map(w => w.id))
   for (const id of slots.keys()) if (!live.has(id)) slots.delete(id)
   for (const w of workers) {
@@ -552,7 +562,7 @@ function assignSlots(workers, now) {
       if (phase === 'in' || phase === 'work') taken.add(s)
     }
     let s = 0
-    while (taken.has(s)) s++
+    while (taken.has(s) || reserved.has(s)) s++
     slots.set(w.id, s)
   }
 }
@@ -1454,7 +1464,8 @@ function renderFrame(now, data, focus = '', selected = null) {
   fb.set(background)
 
   const workers = [...data.workers].sort((a, b) => a.spawnAt - b.spawnAt)
-  assignSlots(workers, now)
+  const staffAt = staffDesks(data)
+  assignSlots(workers, now, new Set(staffAt.keys()))
   updateParty(workers, now)
   const poses = workers
     .map(w => {
@@ -1527,6 +1538,11 @@ function renderFrame(now, data, focus = '', selected = null) {
   if (focusKey !== null)
     for (const [slot, pr] of deskProj) if (pr && slugOf(pr.name) === focusKey) deskGlow(L.desks[slot], projColor(pr.name))
 
+  // staff desks: the member's name on the plate; a working member's laptop is lit
+  for (const [slot, m] of staffAt) {
+    deskProj.set(slot, { name: String(m.name), short: fit(normalize(String(m.short || m.name)), 7), color: staffColor(m) })
+    if (m.busy) busySlots.add(slot)
+  }
   const drawables = []
   L.desks.forEach((d, i) => drawables.push({ y: d.by + 0.5, draw: () => desk(d, i + 1, busySlots.has(i), now, deskProj.get(i) ?? null) }))
   drawables.push({ y: L.boss.by + 0.5, draw: () => bossDesk(now, data.isBossBusy, stack, lastOk) })
@@ -1542,6 +1558,13 @@ function renderFrame(now, data, focus = '', selected = null) {
       hitBot(BOSS_ID, L.boss.seat[0], L.boss.by - SIT)
     },
   })
+  // a working staff member sits at its own desk
+  for (const [slot, m] of staffAt) {
+    if (!m.busy) continue
+    const d = L.desks[slot]
+    const seed = strHash(`staff:${m.id ?? m.name}`)
+    drawables.push({ y: d.by, draw: () => bot(d.cx - 5, d.by - SIT, { pose: 'type', frame: (typeFrame + seed) % 2, isBlink: (now + seed) % 3700 < 120 }) })
+  }
   const beatMs = hot ? 230 : 320
   for (const [id, g] of party) {
     const p = partyPose(g, now)
@@ -1617,6 +1640,12 @@ function renderFrame(now, data, focus = '', selected = null) {
     // with several projects the label edge is the project's colour (those in the hall have no plate; this tells them apart too)
     const tb = tag([[shortType(w.type), C.white], [fit(tool, 8), C.yellow]], cx, top, pr ? pr.color : C.ol)
     hits.push({ id: w.id, ...tb })
+  }
+  // staff at work: the name and the projects above them, edged in the member's colour
+  for (const [slot, m] of staffAt) {
+    if (!m.busy) continue
+    const d = L.desks[slot]
+    tag([[fit(normalize(String(m.name)), 8), C.white], [fit(normalize((Array.isArray(m.projects) ? m.projects : []).join(',')), 8), C.yellow]], d.cx, d.by - 18, staffColor(m))
   }
   // the sign, in order: a permission dialog is open (contract v2.6: blinks and says which project) → the boss works →
   // its turn ended but agents still run (it waits for them, not for the user) → it waits for the user

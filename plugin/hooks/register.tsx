@@ -24,6 +24,7 @@ import { appendEntry, directoryProjects, entryOf, JOURNAL_FILE, LOOKBACK_MS, new
 import type { Host, JournalSeen, OfficeProject } from './journal'
 import { readyText, ReportTracker, typedTaskId, writeReport } from './reports'
 import { DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from './hq'
+import { memberText, parseMember, STAFF_SECTION_ID, TEAM_SECTION_ID, TEAM_TEXT } from './staff'
 
 // Claude Code side of Agent Office: writes agent arrivals, tools, deliveries and background shells to
 // ~/.claude/agent-office/sessions/<session>.json. The office itself is drawn by the
@@ -1403,6 +1404,14 @@ export const register: Register = on => {
     if (kind === 'manager' && !sections.some(section => section.id === MANAGER_SECTION_ID)) {
       const pinned = pinnedModel(await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL_FORCE'), await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL'))
       sections.push({ id: MANAGER_SECTION_ID, text: managerText(pinned), scope: 'session' as const })
+    }
+    // team (v3.81): HQ's team section and a desk's member section, each keyed on its own env var
+    if (kind === 'hq' && (await $.env.get('AGENT_OFFICE_TEAM')) === '1' && !sections.some(section => section.id === TEAM_SECTION_ID))
+      sections.push({ id: TEAM_SECTION_ID, text: TEAM_TEXT, scope: 'session' as const })
+    const memberFile = e.traits.includes('teammate') ? undefined : await $.env.get('AGENT_OFFICE_ROLE')
+    if (memberFile && !sections.some(section => section.id === STAFF_SECTION_ID)) {
+      const m = parseMember(await $.fs.read(memberFile).catch(() => ''))
+      if (m) sections.push({ id: STAFF_SECTION_ID, text: memberText(m), scope: 'session' as const })
     }
     // account delegates (v3.56): keyed only on AGENT_OFFICE_DELEGATES, independent of the manager flag
     if (!e.traits.includes('teammate') && !sections.some(section => section.id === DELEGATES_SECTION_ID)) {

@@ -47,6 +47,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withSavings(p.savings),
       ...withEngine(p.engine),
       ...withProjectFiles(p.projectFiles),
+      ...(p.parallel === true ? { parallel: true } : {}),   // v3.81 several desks may change the folder at once (own copies)
       ...withAutoApprove(p.autoApprove),
       ...withSkipPermissions(p.skipPermissions),
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
@@ -80,6 +81,11 @@ function normalizeTabs(list) {
     if (t.shell === true && !(isStr(t.dir) && t.dir)) continue; // a shell tab needs its folder: never turn into a Claude tab
     seen.add(t.n);
     const tab = { n: t.n };
+    // v3.81 a desk: a staff member's tab (src/staff.js); sessionId = the conversation it continues
+    if (isStr(t.staffId) && /^s-[0-9a-f]{6,16}$/.test(t.staffId) && t.shell !== true) {
+      tab.staffId = t.staffId;
+      if (isStr(t.sessionId) && /^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/.test(t.sessionId)) tab.sessionId = t.sessionId;
+    }
     const w = t.worktree;
     if (isStr(t.dir) && isObj(w) && isStr(w.root) && isStr(w.repo) && isStr(w.branch)) {
       tab.dir = t.dir;
@@ -120,7 +126,12 @@ function resolvePty(state, id) {
   if (!project) return null;
   if (r.n === MAIN_TAB) return { project, tab: null, dir: project.dir };
   const tab = tabsOf(project).find((t) => t.n === r.n);
-  return tab ? { project, tab, dir: tabDir(project, tab) } : null;
+  if (!tab) return null;
+  // v3.81 a desk whose member has an account of its own runs under that account: everything that resolves the tab
+  // (launch, pid file, transcript, sleep, typing) sees the project with the member's accountId
+  const member = tab.staffId && Array.isArray(state.staff) ? state.staff.find((m) => m.id === tab.staffId) : null;
+  const own = member?.accountId && Array.isArray(state.accounts) && state.accounts.some((a) => a.id === member.accountId) ? member.accountId : '';
+  return { project: own && own !== project.accountId ? { ...project, accountId: own } : project, tab, dir: tabDir(project, tab) };
 }
 
 /**
@@ -430,6 +441,28 @@ function setProjectFiles(state, id, value) {
   }) };
 }
 
+/** v3.81 a project where several desks work at once, each in its own copy (worktree). Absent = one at a time. */
+function setParallel(state, id, value) {
+  const p = findProject(state, id);
+  const v = value === true;
+  if (!p || (p.parallel === true) === v) return state;
+  return { ...state, projects: state.projects.map((x) => {
+    if (x.id !== id) return x;
+    const { parallel: _, ...rest } = x;
+    return v ? { ...rest, parallel: true } : rest;
+  }) };
+}
+/** v3.81 a project's desks (staff tabs) → [{ n, staffId, sessionId? }]; deskOf: one member's desk there, or null. */
+const desksOf = (project) => tabsOf(project).filter((t) => t.staffId);
+const deskOf = (project, staffId) => desksOf(project).find((t) => t.staffId === staffId) || null;
+/** v3.81 the desk's conversation id, kept on the tab so the desk continues it after a restart. */
+function setDeskSession(state, projectId, n, sessionId) {
+  const p = findProject(state, projectId);
+  const t = tabsOf(p).find((x) => x.n === n);
+  if (!p || !t?.staffId || t.sessionId === sessionId) return state;
+  return { ...state, projects: state.projects.map((x) => (x.id !== projectId ? x : { ...x, tabs: tabsOf(x).map((y) => (y.n === n ? { ...y, sessionId } : y)) })) };
+}
+
 /** Whether the project lets Agent Office add its files. */
 const projectFilesOf = (project) => project?.projectFiles === true;
 
@@ -572,6 +605,7 @@ module.exports = {
   historyDir,
   MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty,
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,
+  setParallel, desksOf, deskOf, setDeskSession,
   newId, projectName, findProject, setHqDir, hqProject, isHqId,
   /** state.hq (v3.46) normalized next to the rest */
   normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq), routines: ROUT.normalizeRoutines(raw?.routines), routinesCfg: ROUT.normalizeCfg(raw?.routinesCfg) }), findByDir,

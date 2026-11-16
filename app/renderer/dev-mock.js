@@ -157,6 +157,9 @@ const ROLE_IDS = ['assistant', 'chatbot', 'data-analyst', 'devops', 'erp-odoo', 
 const rolePresets = (await Promise.all(ROLE_IDS.map((n) => fetch(`../../roles/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
 /** @type {any[]} */
 const mockStaff = [];
+const mockDesks = new Map();   // pty id → desk state
+/** @type {Function[]} */
+const deskListeners = [];
 // "Resume unfinished work" (v3.8): the first click finds two projects with unfinished work (?unfinished=0: none);
 // a stopped one starts, as main starts a lazy tab with --resume
 let mockUnfinished = q.get('unfinished') !== '0';
@@ -300,6 +303,22 @@ window.agentOffice = {
       return { ok: true, member };
     },
     remove: async (id) => { const i = mockStaff.findIndex((m) => m.id === id); if (i >= 0) mockStaff.splice(i, 1); return { ok: i >= 0 }; },
+    // v3.81 desks: a desk is a tab with staffId; opening one adds the tab and boots it (busy for ?staff, see below)
+    desk: async (projectId, staffId) => {
+      const p = /** @type {any} */ (projects.find((x) => x.id === projectId));
+      if (!p) return { ok: false, error: 'unknown' };
+      p.tabs = p.tabs || [];
+      let tab = p.tabs.find((x) => x.staffId === staffId);
+      if (!tab) { tab = { n: Math.max(1, ...p.tabs.map((x) => x.n)) + 1, staffId }; p.tabs.push(tab); }
+      const id = `${projectId}:${tab.n}`;
+      if (!running.get(id)) boot(id);
+      mockDesks.set(id, { id, projectId, n: tab.n, staffId, state: 'idle' });
+      deskListeners.forEach((f) => f([...mockDesks.values()]));
+      return { ok: true, id };
+    },
+    desks: async () => [...mockDesks.values()],
+    onDesks: (f) => deskListeners.push(f),
+    setParallel: async (projectId, on) => { const p = /** @type {any} */ (projects.find((x) => x.id === projectId)); if (p) { if (on) p.parallel = true; else delete p.parallel; changed(); } return { ok: true }; },
   },
   tabs: {
     add: async (projectId, mode) => {
@@ -744,3 +763,13 @@ if (q.has('staff') && projects.length >= 3) mockStaff.push(
   { id: 's-b2b2b2', name: 'Mert', role: { preset: 'qa' }, department: 'Geliştirme', projects: 'all' },
   { id: 's-c3c3c3', name: 'Deniz', role: { preset: 'devops' }, department: 'Operasyon', projects: [projects[1].id] },
 );
+// ?staff: Ayşe has a desk at work in the first project, Mert an idle one in the second
+if (q.has('staff') && projects.length >= 3) {
+  for (const [pi, sid, st] of /** @type {[number, string, string][]} */ ([[0, 's-a1a1a1', 'busy'], [1, 's-b2b2b2', 'idle']])) {
+    const p = /** @type {any} */ (projects[pi]);
+    p.tabs = [...(p.tabs || []), { n: 7 + pi, staffId: sid }];
+    const id = `${p.id}:${7 + pi}`;
+    running.set(id, true);
+    mockDesks.set(id, { id, projectId: p.id, n: 7 + pi, staffId: sid, state: st });
+  }
+}

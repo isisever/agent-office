@@ -53,6 +53,10 @@ contextBridge.exposeInMainWorld('agentOffice', {
     list: () => ipcRenderer.invoke('staff:list'),           // → { teamMode, presets: RoleDef[], staff: Staff[] }
     save: (form) => ipcRenderer.invoke('staff:save', form), // add (no id) or edit → { ok, member } | { ok: false, error: 'name' | 'role' | 'name-used' | 'too-many' | 'state' }
     remove: (id) => ipcRenderer.invoke('staff:remove', id), // → { ok } | { ok: false, error: 'unknown' }
+    desk: (projectId, staffId) => ipcRenderer.invoke('staff:desk', projectId, staffId),   // v3.81 opens (and starts) the member's desk → { ok, id } | { ok: false, error }
+    desks: () => ipcRenderer.invoke('staff:desks'),         // → [{ id, projectId, n, staffId, state: 'busy' | 'idle' | 'asleep' | 'off' }]
+    onDesks: listen('staff:desks'),                         // the same list when it changes
+    setParallel: (projectId, on) => ipcRenderer.invoke('projects:setParallel', projectId, on),   // several desks at once, each in its own worktree
   },
   tabs: {
     add: (projectId, mode) => ipcRenderer.invoke('tabs:add', projectId, mode),   // mode: 'same' | 'worktree' | undefined (menu)

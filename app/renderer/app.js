@@ -242,7 +242,9 @@ function tabButton(p, tab, active, running) {
   num.textContent = String(n);
   const label = document.createElement('span');
   label.className = 'tab-label';
-  label.textContent = tab?.shell ? `› ${baseName(dir)}` : tab?.worktree ? `⎇ ${tab.worktree.branch}` : baseName(dir);
+  // v3.81 a desk shows its staff member's name
+  const member = tab?.staffId ? staffList.find((m) => m.id === tab.staffId) : null;
+  label.textContent = member ? `● ${member.name}` : tab?.shell ? `› ${baseName(dir)}` : tab?.worktree ? `⎇ ${tab.worktree.branch}` : baseName(dir);
   b.append(num, label);
   b.addEventListener('click', () => selectTab(p.id, n));
   if (tab) {
@@ -375,9 +377,37 @@ async function refreshAccounts() {
 }
 
 // ---- Actions ----
-/** v3.81 team mode and the staff into the sidebar. */
+/** v3.81 team mode and the staff into the sidebar (and the staff's names for desk tabs). */
+let staffList = [];
+let teamOn = false;
+let deskList = [];
 async function loadStaff() {
-  try { sidebar?.setTeam(await api.staff?.list()); } catch (e) { console.error(e); }
+  try {
+    const v = await api.staff?.list();
+    staffList = Array.isArray(v?.staff) ? v.staff : [];
+    teamOn = v?.teamMode === true;
+    sidebar?.setTeam(v);
+    renderTabs();
+  } catch (e) { console.error(e); }
+}
+api.staff?.onDesks?.((list) => { deskList = Array.isArray(list) ? list : []; sidebar?.setDesks?.(list); });
+/** v3.81 the office gets the team: each member's own desk, and whether (and on which projects) it is at work. */
+function withStaff(d) {
+  if (!teamOn || !staffList.length || !d) return d;
+  const name = (pid) => projects.find((p) => p.id === pid)?.name;
+  return { ...d, staff: staffList.map((m) => {
+    const at = deskList.filter((x) => x.staffId === m.id && x.state === 'busy').map((x) => name(x.projectId)).filter(Boolean);
+    return { id: m.id, name: m.name, busy: at.length > 0, projects: at };
+  }) };
+}
+/** v3.81 opens a member's desk in a project and shows it. */
+async function openDesk(projectId, staffId) {
+  const r = await api.staff?.desk(projectId, staffId).catch(() => null);
+  if (!r?.ok) { if (r?.error) alert(t(`staff.deskError.${['staff-not-allowed', 'engine', 'git'].includes(r.error) ? r.error : 'failed'}`)); return; }
+  applyProjects(await api.projects.list());
+  const [pid, n] = String(r.id).split(':');
+  selectProject(pid);
+  if (n) selectTab(pid, Number(n));
 }
 async function addProject() {
   try {
@@ -647,6 +677,8 @@ sidebar = mountSidebar($('sidebar'), {
     setMode: (on) => api.prefs?.set({ teamMode: on }).then(loadStaff).catch((e) => console.error(e)),
     save: (form) => api.staff.save(form).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
     remove: (id) => api.staff.remove(id).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+    openDesk: (projectId, staffId) => openDesk(projectId, staffId),
+    setParallel: (projectId, on) => api.staff.setParallel(projectId, on).catch((e) => console.error(e)),
   },
   setFallback: (on) => api.prefs?.set({ fallback: on }).then((p) => sidebar.setFallback(p?.fallback)).catch((e) => console.error(e)),
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
@@ -816,6 +848,7 @@ api.prefs?.get().then((p) => {
   sidebar.setShareMcp(p?.shareMcp);
   sidebar.setReloadMcp(p?.reloadMcp);
   loadStaff();
+  api.staff?.desks?.().then((d) => { deskList = Array.isArray(d) ? d : []; sidebar.setDesks?.(d); }).catch(() => {});
   sidebar.setFallback(p?.fallback);
   sidebar.setSleep(p?.sleepMinutes);
   sidebar.setEngineRows(p);
@@ -954,7 +987,7 @@ try {
   console.warn('Makineler paneli yüklenemedi:', e.message);
 }
 api.office.onData((local) => {
-  const d = mergeRemote(local, devices.view());
+  const d = withStaff(mergeRemote(local, devices.view()));
   setStats(d);
   sidebar.setStats(d?.projects);
   try { office?.setData(d); } catch (e) { console.error(e); }
