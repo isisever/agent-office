@@ -35,7 +35,8 @@ const MAX_SWITCHES = 4;
 const PTY_GRACE_MS = 10000;          // terminal text in the first seconds of a start is the resumed conversation redrawn
 const COMPACT_SETTLE_MS = 3000;      // a compaction failure on screen is acted on after this long (the transcript catches up)
 const COMPACT_QUOTE_MS = 60000;      // an entry this long before the sighting that holds the words explains the sighting
-const COMPACT_SUBMIT_MS = 30000;     // the failure follows an Enter within this long …
+const COMPACT_SUBMIT_MS = 10000;     // the failure follows an Enter within this long …
+const COMPACT_ECHO_MS = 3000;        // text typed this shortly before the words appeared may be what the screen echoed
 const COMPACT_BUSY_MS = 5000;        // … or a turn seen running this shortly before (the 1.5 s poll plus the status file's lag)
 const TAIL_BYTES = 64 * 1024;        // how much of a transcript's end is read
 
@@ -143,14 +144,17 @@ function scanPty(scan, chunk) {
 
 // --- a compaction that failed at the limit (v3.77): the terminal decides, what the tab did and its transcript may contradict
 /**
- * What the person (or the app) sent to the tab, as far as this rule needs it. state: { submitAt, typedAt, paste }.
- * An Enter outside a bracketed paste is a submit: it sets submitAt and clears typedAt. Text (typed or pasted, a pasted
- * line break too) sets typedAt: the terminal will echo it. Escape sequences (arrows, focus and mouse reports) and
- * control keys change nothing: Ctrl+C clears the prompt but the echo was already on screen, so typedAt stays.
- * @param {{ submitAt?: number, typedAt?: number, paste?: boolean } | undefined} state @param {string} data @param {number} now
+ * What the person (or the app) sent to the tab, as far as this rule needs it.
+ * state: { submitAt, submitSid, typedAt, quoted, paste, text }.
+ * An Enter outside a bracketed paste is a submit: submitAt, with the session the tab was in (submitSid, null unknown);
+ * it clears typedAt and quoted. Text (typed or pasted, a pasted line break too) sets typedAt: the terminal echoes it
+ * at once. quoted: the unsent text holds the words "automatic compaction failed" (the prompt box may redraw them
+ * until they are sent); text is the short end of the unsent text that finds them across pieces. Escape sequences
+ * (arrows, focus and mouse reports) and control keys change nothing: Ctrl+C is not a submit.
+ * @param {object | undefined} state @param {string} data @param {number} [now] @param {string | null} [sessionId]
  */
-function inputAfter(state, data, now = Date.now()) {
-  let { submitAt = 0, typedAt = 0, paste = false } = state || {};
+function inputAfter(state, data, now = Date.now(), sessionId = null) {
+  let { submitAt = 0, submitSid = null, typedAt = 0, quoted = false, paste = false, text = '' } = state || {};
   const s = String(data ?? '');
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
@@ -167,27 +171,38 @@ function inputAfter(state, data, now = Date.now()) {
       else if (n !== undefined) i += 1;
       continue;
     }
-    if (c === 0x0d && !paste) { submitAt = now; typedAt = 0; continue; }
-    if (paste || (c >= 0x20 && c !== 0x7f)) typedAt = now;
+    if (c === 0x0d && !paste) { submitAt = now; submitSid = sessionId || null; typedAt = 0; quoted = false; text = ''; continue; }
+    if (paste || (c >= 0x20 && c !== 0x7f)) {
+      typedAt = now;
+      text = (text + (c >= 0x20 ? s[i] : ' ')).slice(-COMPACT_FAILED.length);
+      if (text === COMPACT_FAILED) quoted = true;
+    }
   }
-  return { submitAt, typedAt, paste };
+  return { submitAt, submitSid, typedAt, quoted, paste, text };
 }
+/** The input state of a tab started with a prompt as claude's argument (the carry-on after a move): sent at the start. */
+const startInput = ({ prompt = '', startedAt, sessionId = null }) => (prompt ? inputAfter(undefined, '\r', startedAt, sessionId) : undefined);
 
 /**
  * The compaction failure as it was seen: when, and what the tab had just done. input: inputAfter's state;
- * busyAt: when Claude Code's pid file last said a turn was running. Kept with the sighting, because later input and
- * later turns must not change what caused it.
+ * busyAt: when Claude Code's pid file last said a turn was running; startedAt: the tab's start (early: seen in the
+ * first PTY_GRACE_MS, where a resumed conversation is drawn). Kept with the sighting, because later input and later
+ * turns must not change what caused it.
  */
-const compactionSighting = ({ at, input = null, busyAt = 0 }) => ({ at, typing: Boolean(input?.typedAt), submitAt: input?.submitAt || 0, busyAt: busyAt || 0 });
+const compactionSighting = ({ at, input = null, busyAt = 0, startedAt = 0 }) => ({
+  at, typedAt: input?.typedAt || 0, quoted: Boolean(input?.quoted), submitAt: input?.submitAt || 0, submitSid: input?.submitSid || null,
+  busyAt: busyAt || 0, early: at - (startedAt || 0) <= PTY_GRACE_MS,
+});
 
 /**
  * Does the end of the transcript contradict a compaction failure seen on screen at `at` (ms)? It does when
- * - a prompt or an answer was written after the sighting (the session went on, or the words were being written), or
+ * - a prompt, an answer or another API error was written after the sighting (the session went on, the words were
+ *   being written, or the turn ended on something else), or
  * - an entry written from COMPACT_QUOTE_MS before the sighting on holds the words: a prompt, an answer or a tool
  *   result quoting them is what the screen showed, or
  * - (answeredSince given: the sighting rests on an Enter at that time) an answer was written between that Enter and
  *   the sighting: the Enter's turn went through, so the words are a redraw after it.
- * Claude Code's own API error entries are never a contradiction.
+ * Claude Code's own entry for this failure, should a version write one, is never a contradiction.
  * @param {string} tail @param {{ at: number, answeredSince?: number }} o
  */
 function compactionContradicted(tail, { at, answeredSince = 0 }) {
@@ -198,9 +213,11 @@ function compactionContradicted(tail, { at, answeredSince = 0 }) {
     try { e = JSON.parse(line); } catch { continue; }
     if (!e || typeof e !== 'object') continue;
     const ts = Date.parse(e.timestamp);
-    if (!Number.isFinite(ts) || e.isApiErrorMessage) continue;
+    if (!Number.isFinite(ts)) continue;
+    if (e.isApiErrorMessage && isCompactionLimitText(textOf(e.message?.content))) continue;
     const turn = (e.type === 'user' || e.type === 'assistant') && !e.isMeta && !e.isSidechain;
     if (turn && ts > at) return true;
+    if (e.isApiErrorMessage) continue;
     if (turn && e.type === 'assistant' && answeredSince > 0 && ts > answeredSince) return true;
     if (ts >= at - COMPACT_QUOTE_MS && line.includes(COMPACT_FAILED)) return true;
   }
@@ -210,27 +227,35 @@ function compactionContradicted(tail, { at, answeredSince = 0 }) {
 /**
  * What a compaction failure seen on screen means now.
  * sighting: compactionSighting; status: Claude Code's pid file status now ('idle' | 'shell' | 'busy' | 'waiting' |
- * undefined); draft: text typed but not sent now; tail: the end of the tab's transcript, null when it has none.
- * 'void' (never acted on; a newer sighting may replace it) when
- * - text was typed and not sent when the words appeared (they may be its echo: a paste, cleared or not), or
- * - nothing caused it: no Enter within COMPACT_SUBMIT_MS before it and no running turn within COMPACT_BUSY_MS before
- *   it (old text redrawn on a resize, in the transcript view, or by a long resume), or
+ * undefined); sessionId: the session the tab is in now; input: inputAfter's state now; tail: the end of the tab's
+ * transcript, null when it has none.
+ * 'void' (never acted on; a newer sighting replaces it) when
+ * - the words may be an echo: text was typed within COMPACT_ECHO_MS before them (a paste, cleared or not), or the
+ *   unsent text held the words (the prompt box redrawn), or
+ * - nothing caused it: no Enter within COMPACT_SUBMIT_MS before it in the session the tab is still in (an in-tab
+ *   /resume draws another conversation) and no running turn within COMPACT_BUSY_MS before it (old text redrawn on
+ *   a resize, in the transcript view, or by a resume), or
  * - the transcript contradicts it (compactionContradicted), or it is older than DEFAULT_LIMIT_MS.
  * 'wait' (look again) while it is younger than COMPACT_SETTLE_MS, there is no transcript, a turn is running or a
- * dialog is open (the failure ends the turn; a model printing the words is mid-turn), or text is waiting unsent.
+ * dialog is open (the failure ends the turn; a model printing the words is mid-turn), text was typed within
+ * COMPACT_ECHO_MS or unsent text holds the words, or (early sighting: the resumed conversation may still be drawing
+ * before the carry-on turn starts) Claude Code has not written a status yet.
  * Otherwise 'limit': act as on a usage limit.
  * @returns {'limit' | 'wait' | 'void'}
  */
-function compactionVerdict({ sighting, now = Date.now(), status = undefined, draft = false, tail = null }) {
-  const { at, typing = false, submitAt = 0, busyAt = 0 } = sighting || {};
-  if (!Number.isFinite(at) || typing || now - at >= DEFAULT_LIMIT_MS) return 'void';
+function compactionVerdict({ sighting, now = Date.now(), status = undefined, sessionId = null, input = null, tail = null }) {
+  const { at, typedAt = 0, quoted = false, submitAt = 0, submitSid = null, busyAt = 0, early = false } = sighting || {};
+  if (!Number.isFinite(at) || now - at >= DEFAULT_LIMIT_MS) return 'void';
+  if (quoted || (typedAt > 0 && typedAt <= at && at - typedAt <= COMPACT_ECHO_MS)) return 'void';
   const afterTurn = busyAt > 0 && busyAt <= at && at - busyAt <= COMPACT_BUSY_MS;
-  const afterEnter = submitAt > 0 && submitAt <= at && at - submitAt <= COMPACT_SUBMIT_MS;
+  const sameSession = !submitSid || !sessionId || submitSid === sessionId;
+  const afterEnter = submitAt > 0 && submitAt <= at && at - submitAt <= COMPACT_SUBMIT_MS && sameSession;
   if (!afterTurn && !afterEnter) return 'void';
   if (tail === null || tail === undefined) return 'wait';
   if (compactionContradicted(tail, { at, answeredSince: afterTurn ? 0 : submitAt })) return 'void';
-  const busy = typeof status === 'string' && status !== '' && status !== 'idle' && status !== 'shell';
-  if (busy || draft || now - at < COMPACT_SETTLE_MS) return 'wait';
+  const known = typeof status === 'string' && status !== '';
+  if ((known && status !== 'idle' && status !== 'shell') || (early && !known)) return 'wait';
+  if (input?.quoted || (input?.typedAt > 0 && now - input.typedAt < COMPACT_ECHO_MS) || now - at < COMPACT_SETTLE_MS) return 'wait';
   return 'limit';
 }
 
@@ -241,10 +266,12 @@ const compactionHit = (sighting) => ({ at: sighting.at, resetsAt: null, type: nu
 /**
  * Until when the account is at its limit (ms), or 0. usage: its AccountUsage (v2.4); mark: { at, until } a limit seen
  * in one of its sessions. A window at 100 % counts until its reset (no reset time: 5 h after the reading). A mark counts
- * until its time, unless a quota reading newer than the mark shows every window below 100 %. A firm mark (v3.77: a
- * limit without a known reset time, e.g. a model's own limit, which no quota window shows) counts until its time
- * whatever the quota says.
+ * until its time, unless a quota reading newer than the mark shows every window below 100 %. Its firm part (v3.77
+ * firmUntil: a limit without a known reset time, e.g. a model's own limit, which no quota window shows) counts until
+ * its own time whatever the quota says.
  */
+/** Until when a mark is firm (ms), or 0. An earlier build wrote `firm: true` for a mark firm to its end. */
+const firmUntilOf = (mark) => (!mark ? 0 : Number.isFinite(mark.firmUntil) ? mark.firmUntil : mark.firm === true && Number.isFinite(mark.until) ? mark.until : 0);
 function limitedUntil({ usage = null, mark = null, now = Date.now() } = {}) {
   let until = 0;
   let full = false;
@@ -254,8 +281,10 @@ function limitedUntil({ usage = null, mark = null, now = Date.now() } = {}) {
     if (end > now) { until = Math.max(until, end); full = true; }
   }
   const markOk = mark && Number.isFinite(mark.until) && mark.until > now
-    && (mark.firm === true || !(usage && Number.isFinite(usage.updatedAt) && usage.updatedAt > (mark.at || 0) && !full));
+    && !(usage && Number.isFinite(usage.updatedAt) && usage.updatedAt > (mark.at || 0) && !full);
   if (markOk) until = Math.max(until, mark.until);
+  const firm = firmUntilOf(mark);
+  if (firm > now) until = Math.max(until, firm);
   return until;
 }
 
@@ -269,10 +298,22 @@ const markFor = (resetsAt, now = Date.now()) => ({ at: now, until: Number.isFini
 function limitMark({ resets = [], seenAt, now = Date.now() }) {
   const known = resets.filter(Number.isFinite);
   if (known.length) return markFor(Math.max(...known), now);
-  return { ...markFor(Math.min(now, Number.isFinite(seenAt) ? seenAt : now) + DEFAULT_LIMIT_MS, now), firm: true };
+  const mark = markFor(Math.min(now, Number.isFinite(seenAt) ? seenAt : now) + DEFAULT_LIMIT_MS, now);
+  return { ...mark, firmUntil: mark.until };
 }
-/** Does the new mark replace the one kept? Not when the kept one lasts as long, unless only the new one is firm. */
-const markReplaces = (old, mark) => !old || old.until < mark.until || (mark.firm === true && old.firm !== true);
+/**
+ * The mark kept after a new one is seen: the longer end, and separately the longer firm end, so a longer ordinary
+ * mark does not drop the firm part and a firm mark does not shorten a longer ordinary one. → `old` itself when the
+ * new mark adds nothing.
+ */
+function mergeMarks(old, mark, now = Date.now()) {
+  const live = old && Number.isFinite(old.until) && old.until > now ? old : null;
+  if (!live) return mark;
+  const until = Math.max(live.until, mark.until);
+  const firmUntil = Math.max(firmUntilOf(live), firmUntilOf(mark));
+  if (until === live.until && firmUntil === firmUntilOf(live)) return old;
+  return { at: Math.max(live.at || 0, mark.at || 0), until, ...(firmUntil > 0 ? { firmUntil } : {}) };
+}
 
 /** How full the account's quota is (0–100, the fuller window; unknown 0), to prefer the emptier backup. */
 function fullness(usage, now = Date.now()) {
@@ -341,15 +382,15 @@ function normalizeMarks(raw, accountIds, now = Date.now()) {
   if (!raw || typeof raw !== 'object') return out;
   for (const id of accountIds) {
     const m = raw[id];
-    if (m && Number.isFinite(m.until) && m.until > now) out[id] = { at: Number.isFinite(m.at) ? m.at : now, until: m.until, ...(m.firm === true ? { firm: true } : {}) };
+    if (m && Number.isFinite(m.until) && m.until > now) out[id] = { at: Number.isFinite(m.at) ? m.at : now, until: m.until, ...(firmUntilOf(m) > now ? { firmUntil: firmUntilOf(m) } : {}) };
   }
   return out;
 }
 
 module.exports = {
   LIMIT_PREFIXES, DEFAULT_LIMIT_MS, MIN_STAY_MS, MAX_SWITCHES, PTY_GRACE_MS, TAIL_BYTES,
-  COMPACT_SETTLE_MS, COMPACT_QUOTE_MS, COMPACT_SUBMIT_MS, COMPACT_BUSY_MS,
+  COMPACT_SETTLE_MS, COMPACT_QUOTE_MS, COMPACT_SUBMIT_MS, COMPACT_BUSY_MS, COMPACT_ECHO_MS,
   isUsageLimitText, isCompactionLimitText, parseResetText, limitFromTranscript, plainText, scanPty,
-  inputAfter, compactionSighting, compactionContradicted, compactionVerdict, compactionHit, limitMark, markReplaces,
+  inputAfter, startInput, compactionSighting, compactionContradicted, compactionVerdict, compactionHit, limitMark, mergeMarks,
   limitedUntil, markFor, fullness, pickBackup, switchAllowed, shouldReturn, normalizeMarks,
 };

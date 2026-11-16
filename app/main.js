@@ -1253,7 +1253,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   activity.set(id, { at: startedAt, draft: false });
   mcpPrint.set(id, { started: print, current: print });
   ptyStart.set(id, startedAt);
-  ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0 });
+  // v3.77: a prompt given as claude's argument (the carry-on after a move) is an Enter at the start
+  ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0, input: FB.startInput({ prompt: args.includes(R.promptArg(prompt)) ? prompt : '', startedAt, sessionId }) });
   if (sessionId) lastSid.set(id, sessionId); else lastSid.delete(id);
   attachPty(terms, id, t, {
     onData: (d) => {
@@ -1640,7 +1641,7 @@ function unfinishedTabs() {
 /** v3.77: what was sent to the tab (FB.inputAfter): an Enter, or text the terminal will echo. */
 function noteInput(id, d) {
   const w = ptyLimit.get(id);
-  if (w) w.input = FB.inputAfter(w.input, d, Date.now());
+  if (w) w.input = FB.inputAfter(w.input, d, Date.now(), lastSid.get(id) || null);
 }
 function hqWriteTyped(id, d) {
   if (HQ.submitsTyped(activity.get(id)?.draft, d)) hqMinter.mint();
@@ -2775,12 +2776,15 @@ function watchLimit(id, d, startedAt) {
   if (!w) return;
   const r = FB.scanPty(w.scan, d);
   w.scan = r.scan;
-  if (!r.hit || Date.now() - startedAt <= FB.PTY_GRACE_MS) return;
-  w.hitAt = Date.now();
+  if (!r.hit) return;
+  const now = Date.now();
   // v3.77: "automatic compaction failed: <usage limit>" leaves no transcript entry, so the sighting is kept with what
-  // the tab had just done (an Enter, a running turn, unsent typing) and judged in checkLimits (compactionSeen). A
-  // sighting still being judged or acted on stays: the same words redrawn are not a second failure. A void one is replaced.
-  if (r.compaction && (!w.compact || w.compact.void)) w.compact = { ...FB.compactionSighting({ at: w.hitAt, input: w.input, busyAt: w.busyAt }), void: false };
+  // the tab had just done (an Enter, a running turn, typing) and judged in checkLimits (compactionSeen). The start
+  // grace does not drop it: a tab resumed with the carry-on prompt may fail at once on the next account, and a
+  // sighting without a cause (the resumed conversation drawn) is void by the verdict. A sighting still being judged or
+  // acted on stays: the same words redrawn are not a second failure. A void one is replaced.
+  if (r.compaction && (!w.compact || w.compact.void)) w.compact = { ...FB.compactionSighting({ at: now, input: w.input, busyAt: w.busyAt, startedAt }), void: false };
+  if (now - startedAt > FB.PTY_GRACE_MS) w.hitAt = now;
 }
 /** The end of a file (FB.TAIL_BYTES), or ''. */
 function readTail(file) {
@@ -2813,7 +2817,7 @@ function transcriptLimit(id, dir, configDir) {
 const compactTail = new Map(); // pty id → { key: "file|size|mtime", tail }: read again only when the transcript changed
 /**
  * v3.77: the compaction failure seen on the tab's screen (w.compact) → a limit hit, or null. Glue only: the tab's
- * transcript end, Claude Code's status and the unsent-text flag go to FB.compactionVerdict, which decides.
+ * transcript end, Claude Code's status and session, and the tab's input state go to FB.compactionVerdict, which decides.
  */
 function compactionSeen(id, dir, configDir, w, now) {
   const c = w?.compact;
@@ -2828,7 +2832,8 @@ function compactionSeen(id, dir, configDir, w, now) {
     tail = old?.key === key ? old.tail : readTail(file);
     compactTail.set(id, { key, tail });
   }
-  const verdict = FB.compactionVerdict({ sighting: c, now, status: liveSession(id, configDir)?.claude?.status, draft: Boolean(activity.get(id)?.draft), tail });
+  const live = liveSession(id, configDir);
+  const verdict = FB.compactionVerdict({ sighting: c, now, status: live?.claude?.status, sessionId: live?.sessionId || null, input: w.input, tail });
   if (verdict === 'void') { c.void = true; compactTail.delete(id); }
   return verdict === 'limit' ? FB.compactionHit(c) : null;
 }
@@ -2837,8 +2842,9 @@ const accountName = (a) => (a.id === A.DEFAULT_ID ? T('main.defaultAccount') : a
 const fallbackAccounts = () => state.accounts.map((a) => ({ id: a.id, provider: a.provider, auth: auths.get(a.id), usage: usages.get(a.id) }));
 function setLimitMark(accountId, mark) {
   const old = limitMarks()[accountId];
-  if (!FB.markReplaces(old, mark)) return;
-  state = { ...state, accountLimits: { ...FB.normalizeMarks(limitMarks(), state.accounts.map((a) => a.id)), [accountId]: mark } };
+  const next = FB.mergeMarks(old, mark);
+  if (next === old) return;
+  state = { ...state, accountLimits: { ...FB.normalizeMarks(limitMarks(), state.accounts.map((a) => a.id)), [accountId]: next } };
   saveState();
 }
 /** Tells the renderer (a hint over the project's terminals) and the system (a notification). */
