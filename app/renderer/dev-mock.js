@@ -100,6 +100,13 @@ const running = new Map(projects.flatMap((p, i) => tabIds(p).map((id) => [id, i 
 let activeId = projects[0]?.id ?? null;
 /** @type {any[]} */
 const mockMcp = [];
+// v3.80 a server's scope as main keeps it ('all' | id | id[]); the list shows it as 'all' | 'project' | 'projects'
+const shownScope = (sc) => (sc === 'all' ? { scope: 'all' } : Array.isArray(sc) && sc.length > 1 ? { scope: 'projects', projects: sc.length } : { scope: 'project' });
+const realScope = (sc) => (sc === 'all' ? 'all' : Array.isArray(sc) ? (sc.length === 1 ? sc[0] : sc) : sc);
+// ?tools (v3.80): two tools added in Agent Office, one for every project, one for the first two
+if (q.has('tools') && projects.length >= 2) mockMcp.push(
+  { id: 'm1', name: 'notion', type: 'http', host: 'mcp.notion.com', real: 'all' },
+  { id: 'm2', name: 'jira', type: 'http', host: 'acme.atlassian.net', real: [projects[0].id, projects[1].id] });
 
 const snapshot = () => ({
   projects: projects.map((p) => ({ ...p })),
@@ -275,30 +282,33 @@ window.agentOffice = {
     list: async () => ({ servers: [
       { name: 'github', source: 'user', type: 'http', host: 'api.githubcopilot.com', readOnly: true, where: 'user' },
       { name: 'files', source: 'project', type: 'stdio', host: '', readOnly: true, approved: true, where: 'project' },
-      ...mockMcp.map((s) => ({ ...s, source: 'app', readOnly: false, hasToken: s.type !== 'stdio' })),
+      ...mockMcp.filter((s) => s.real === 'all' || [].concat(s.real).includes(activeId)).map(({ real, ...s }) => ({ ...s, ...shownScope(real), source: 'app', readOnly: false, hasToken: s.type !== 'stdio' })),
     ] }),
     add: async (f) => {
       if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
       if (f?.type === 'stdio') {
         if (!String(f.command || '').trim()) return { ok: false, error: 'command' };
-        mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: 'stdio', host: '', scope: f.scope === 'all' ? 'all' : 'project' });
+        mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: 'stdio', host: '', real: realScope(f.scope) });
         return { ok: true, restarted: [] };
       }
       if (!/^https?:\/\//.test(String(f?.url || ''))) return { ok: false, error: 'url' };
       let host = ''; try { host = new URL(f.url).host; } catch {}
-      mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: f.type === 'sse' ? 'sse' : 'http', host, scope: f.scope === 'all' ? 'all' : 'project' });
+      mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: f.type === 'sse' ? 'sse' : 'http', host, real: realScope(f.scope) });
       return { ok: true, restarted: [] };
     },
     // v3.69: the mock keeps no address, command or token, so the edit form opens with the name, type and scope only
-    get: async (id) => { const s = mockMcp.find((x) => x.id === id); return s ? { ok: true, server: { id: s.id, name: s.name, type: s.type, scope: s.scope === 'all' ? 'all' : (projects[0]?.id || 'all'), url: '', command: '', args: [], env: {}, hasToken: s.type !== 'stdio' } } : { ok: false, error: 'unknown' }; },
+    get: async (id) => { const s = mockMcp.find((x) => x.id === id); return s ? { ok: true, server: { id: s.id, name: s.name, type: s.type, scope: s.real, url: '', command: '', args: [], env: {}, hasToken: s.type !== 'stdio' } } : { ok: false, error: 'unknown' }; },
     update: async (id, f) => {
       const s = mockMcp.find((x) => x.id === id);
       if (!s) return { ok: false, error: 'unknown' };
       if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
       let host = ''; try { host = f?.type === 'stdio' ? '' : new URL(f.url).host; } catch { host = s.host; }
-      Object.assign(s, { name: String(f.name).trim().toLowerCase(), type: f.type === 'stdio' ? 'stdio' : f.type === 'sse' ? 'sse' : 'http', host, scope: f.scope === 'all' ? 'all' : 'project' });
+      Object.assign(s, { name: String(f.name).trim().toLowerCase(), type: f.type === 'stdio' ? 'stdio' : f.type === 'sse' ? 'sse' : 'http', host, real: realScope(f.scope) });
       return { ok: true, restarted: [] };
     },
+    // v3.80 the app-added servers with their projects; a new project set
+    apps: async () => ({ servers: mockMcp.map(({ real, ...s }) => ({ id: s.id, name: s.name, type: s.type, host: s.host, scope: real, hasToken: s.type !== 'stdio' })) }),
+    scope: async (id, sc) => { const s = mockMcp.find((x) => x.id === id); if (!s) return { ok: false, error: 'unknown' }; s.real = realScope(sc); return { ok: true, restarted: [] }; },
     // v3.69 a server in Claude Code's files: values masked, the mock writes nothing
     getFile: async (_pid, where, name) => ({ ok: true, server: name === 'files'
       ? { name, type: 'stdio', command: 'npx', args: ['-y', 'files-mcp'], env: { ROOT: '••••••' }, where }

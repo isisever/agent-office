@@ -41,12 +41,14 @@ contextBridge.exposeInMainWorld('agentOffice', {
   },
   mcp: {   // contract v3.44: one MCP list; the token goes in, never out
     list: (projectId) => ipcRenderer.invoke('mcp:list', projectId),   // { servers: [{ name, source, type, host, readOnly, id?, scope?, hasToken?, approved?, shadowed? }] }
-    add: (form) => ipcRenderer.invoke('mcp:add', form),   // remote { name, url, type: 'http' | 'sse', token?, scope } | stdio { name, type: 'stdio', command, args: string[], env: {k: v}, scope }; scope: 'all' | projectId → { ok, restarted } | { ok: false, error }
+    add: (form) => ipcRenderer.invoke('mcp:add', form),   // remote { name, url, type: 'http' | 'sse', token?, scope } | stdio { name, type: 'stdio', command, args: string[], env: {k: v}, scope }; scope: 'all' | projectId | projectId[] (v3.80) → { ok, restarted } | { ok: false, error }
     get: (id) => ipcRenderer.invoke('mcp:get', id),   // v3.69 → { ok, server: remote { id, name, type, url, urlHidden?, scope, hasToken } | stdio { id, name, type, command, args, env, scope } } (never the token)
     update: (id, form) => ipcRenderer.invoke('mcp:update', id, form),   // v3.69 the add form plus clearToken?; blank token/url keep the stored ones → { ok, restarted } | { ok: false, error }
     getFile: (projectId, where, name) => ipcRenderer.invoke('mcp:getFile', projectId, where, name),   // v3.69 a server in Claude Code's files → { ok, server: { name, type, url, urlHidden?, headers: {k: MASK} | command, args, env: {k: MASK}, where } } (values masked)
     updateFile: (projectId, where, name, form) => ipcRenderer.invoke('mcp:updateFile', projectId, where, name, form),   // v3.69 edits that entry in that file; a MASK value or blank url keeps the stored one → { ok, name } | { ok: false, error }
     remove: (id) => ipcRenderer.invoke('mcp:remove', id),   // → { ok, restarted } | { ok: false, error: 'unknown' }
+    apps: () => ipcRenderer.invoke('mcp:apps'),   // v3.80 → { servers: [{ id, name, type, host, scope: 'all' | projectId | projectId[], hasToken }] }
+    scope: (id, scope) => ipcRenderer.invoke('mcp:scope', id, scope),   // v3.80 scope: 'all' | projectId[] → { ok, restarted } | { ok: false, error: 'unknown' | 'scope' | 'name-used' }
   },
   tabs: {
     add: (projectId, mode) => ipcRenderer.invoke('tabs:add', projectId, mode),   // mode: 'same' | 'worktree' | undefined (menu)

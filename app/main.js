@@ -3070,7 +3070,7 @@ ipcMain.handle('mcp:list', (_e, projectId) => {
   } catch (e) { console.error('mcp:list', e.message); return { servers: [] }; }
 });
 /** Idle Claude Code sessions the change reaches restart in their conversation; busy ones take it at their next start. */
-const restartFor = (...scopes) => state.projects.filter((p) => P.engineOf(p) === 'claude' && scopes.some((scope) => scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));
+const restartFor = (...scopes) => state.projects.filter((p) => P.engineOf(p) === 'claude' && scopes.flat().some((scope) => scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));   // v3.80 a scope can be a list
 // Bundled skill packs (contract v3.45): the list (never a path), the global on/off and the per-project override.
 // A change restarts the idle Claude Code sessions it reaches in their conversation; busy ones take it at their next start.
 ipcMain.handle('skillPacks:list', (_e, projectId) => {
@@ -3161,6 +3161,16 @@ ipcMain.handle('mcp:updateFile', (_e, projectId, where, name, f) => {
   try { r = MF.editFile(tg.file, tg.keys, String(name), f); } catch { return { ok: false, error: 'write' }; }
   if (r.ok) checkMcp();
   return r;
+});
+// v3.80 the servers added in Agent Office (never a URL path, header, env, argument or token) and the projects each
+// reaches; mcp:scope changes that set (the project popup's "Tools" list, the panel's form).
+ipcMain.handle('mcp:apps', () => ({ servers: appServers().filter((s) => !s.held).map((s) => ({ id: s.id, name: s.name, type: s.type, host: s.type === 'stdio' ? '' : MS.hostOf(s.url), scope: s.scope, hasToken: Boolean(tokens().has(s.id)) })) }));
+ipcMain.handle('mcp:scope', (_e, sid, scope) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  const r = MS.setScope(appServers(), String(sid || ''), scope, state.projects.map((p) => p.id));
+  if (!r.servers) return { ok: false, error: r.error };
+  commit({ ...state, mcpServers: r.servers });
+  return { ok: true, restarted: restartFor(r.before.scope, r.server.scope) };
 });
 ipcMain.handle('mcp:remove', (_e, sid) => {
   const s = appServers().find((x) => x.id === sid);

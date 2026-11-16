@@ -1409,3 +1409,11 @@ select option.rt-off { color: #888; }
 [data-look="claude"] .up-bar { background: var(--surface); box-shadow: none; }
 [data-look="claude"] .mc-card { border-color: var(--border); border-radius: 8px; }
 [data-look="claude"] .mc-card.self { border-color: var(--muted); }
+
+/* v3.80 MCP: which projects a server reaches (the form), the project popup's tools */
+.sb-scope { display: flex; flex-direction: column; gap: 4px; }
+.sb-scope-list { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow-y: auto; padding-left: 18px; }
+.sb-scope label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.sb-tool { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+.sb-tool-name { font-weight: bold; }
+.sb-tool-note { opacity: .6; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -674,13 +674,41 @@ export function mountSidebar(el, on) {
     return box;
   }
 
+  /**
+   * v3.80 The tools (MCP servers added in Agent Office) this project's sessions get: one box per server; a server for
+   * every project is ticked and fixed; one that reaches only this project can't be unticked here (remove it in the
+   * MCP panel). Save applies the changes (each server's new project list).
+   */
+  function projectToolsSection(p) {
+    const box = h('div', { class: 'sb-skills sb-tools' }, h('div', { class: 'sb-skills-head' }, t('sidebar.tools')));
+    on.mcp?.apps?.().then((r) => {
+      const list = r?.servers || [];
+      if (!list.length) { box.append(h('div', { class: 'sb-note' }, t('sidebar.toolsNone'))); return; }
+      for (const sv of list) {
+        const ids = sv.scope === 'all' ? [] : Array.isArray(sv.scope) ? sv.scope : [sv.scope];
+        const mine = sv.scope === 'all' || ids.includes(p.id);
+        const only = ids.length === 1 && ids[0] === p.id;
+        const cb = h('input', {
+          type: 'checkbox', checked: mine, disabled: sv.scope === 'all' || only,
+          onchange: (e) => {
+            const next = e.target.checked ? [...new Set([...ids, p.id])] : ids.filter((x) => x !== p.id);
+            queue(`tool:${sv.id}`, () => on.mcp?.scope?.(sv.id, next));
+          },
+        });
+        const note = sv.scope === 'all' ? t('sidebar.toolsAll') : only ? t('sidebar.toolsOnly') : ids.length > 1 ? t('sidebar.mcpScopeSome', { n: ids.length }) : '';
+        box.append(h('label', { class: 'sb-tool', title: note || sv.host || '' }, cb, h('span', { class: 'sb-tool-name' }, sv.name), h('span', { class: 'sb-tool-note' }, [sv.host, note].filter(Boolean).join(' · '))));
+      }
+    });
+    return box;
+  }
+
   /** The project's popup (contract v3.42): every per-project setting; Save applies what changed. */
   function openProjectSettings(p) {
     const map = new Map();
     badFields.clear();
     const body = [
       accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p),
-      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p),
+      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
     ];
     const save = h('button', {
       class: 'sb-btn primary', onclick: async () => {
@@ -709,7 +737,7 @@ export function mountSidebar(el, on) {
     mcpNote.hidden = gate.ok;
     mcpNote.textContent = gate.ok ? '' : t('sidebar.na.claudeOnlyMcp');
     const where = (s) => [
-      t(`sidebar.mcpSrc.${s.source}`) + (s.source === 'app' ? ` · ${s.away ? t('sidebar.mcpAway', { folder: s.folder || '' }) : s.scope === 'all' ? t('sidebar.mcpScopeAll') : t('sidebar.mcpScopeOne')}` : ''),
+      t(`sidebar.mcpSrc.${s.source}`) + (s.source === 'app' ? ` · ${s.away ? t('sidebar.mcpAway', { folder: s.folder || '' }) : s.scope === 'all' ? t('sidebar.mcpScopeAll') : s.scope === 'projects' ? t('sidebar.mcpScopeSome', { n: s.projects || 2 }) : t('sidebar.mcpScopeOne')}` : ''),
       s.host || '',
     ].filter(Boolean).join(' · ');
     const hint = (s) => [
@@ -781,9 +809,15 @@ export function mountSidebar(el, on) {
     env.value = Object.entries(edit?.env || {}).map(([k, v]) => `${k}=${v}`).join('\n');
     const headers = h('textarea', { rows: 3, placeholder: t('sidebar.mcpHeadersPh'), spellcheck: false });
     headers.value = Object.entries(edit?.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+    // v3.80 which projects it reaches: every project, or the ones ticked (one or more)
     const scopeOf = edit ? edit.scope : activeId;
-    const scope = h('select', {}, h('option', { value: 'all', selected: scopeOf === 'all' }, t('sidebar.mcpScopeAll')),
-      ...projects.map((p) => h('option', { value: p.id, selected: p.id === scopeOf }, p.name)));
+    const picked = new Set(scopeOf === 'all' ? [] : Array.isArray(scopeOf) ? scopeOf : [scopeOf]);
+    const allBox = h('input', { type: 'checkbox', checked: scopeOf === 'all', onchange: () => { for (const b of projBoxes) b.disabled = allBox.checked; } });
+    const projBoxes = projects.map((p) => h('input', { type: 'checkbox', value: p.id, checked: picked.has(p.id), disabled: scopeOf === 'all' }));
+    const scope = h('div', { class: 'sb-scope' },
+      h('label', { class: 'sb-scope-all' }, allBox, ' ', t('sidebar.mcpScopeAll')),
+      h('div', { class: 'sb-scope-list' }, ...projects.map((p, i) => h('label', {}, projBoxes[i], ' ', p.name))));
+    const scopeValue = () => (allBox.checked ? 'all' : projBoxes.filter((b) => b.checked).map((b) => b.value));
     const err = h('div', { class: 'sb-note warn', hidden: true });
     const remoteFields = [
       field(t('sidebar.mcpUrl'), url, edit?.urlHidden ? t('sidebar.mcpUrlKeptHint') : t('sidebar.mcpUrlHint')),
@@ -830,8 +864,8 @@ export function mountSidebar(el, on) {
         save.disabled = true;
         err.hidden = true;
         const form = kind.value === 'stdio'
-          ? { name: name.value, type: 'stdio', command: command.value, args: parseArgs(), env: parseEnv(), scope: scope.value }
-          : { name: name.value, url: url.value, type: type.value, token: clearToken.checked ? '' : token.value, scope: scope.value, ...(edit ? { clearToken: clearToken.checked } : {}) };
+          ? { name: name.value, type: 'stdio', command: command.value, args: parseArgs(), env: parseEnv(), scope: scopeValue() }
+          : { name: name.value, url: url.value, type: type.value, token: clearToken.checked ? '' : token.value, scope: scopeValue(), ...(edit ? { clearToken: clearToken.checked } : {}) };
         const r = inFile
           ? await on.mcp?.updateFile(edit.projectId, edit.where, edit.name, kind.value === 'stdio' ? form : { name: name.value, url: url.value, type: type.value, headers: parseHeaders() })
           : edit ? await on.mcp?.update(edit.id, form) : await on.mcp?.add(form);
