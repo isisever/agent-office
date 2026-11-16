@@ -1426,3 +1426,22 @@ In light mode (both looks) the status colours used as text are darkened (`src/ap
 ## Shift+Enter is a new line (v3.75)
 
 In every terminal, Shift+Enter (no Cmd or Ctrl, outside an IME composition) sends `ESC CR` (`SHIFT_ENTER` in `src/terminal-keys.mjs`, through `translateKey`) instead of xterm.js's bare CR, so the prompt gets a new line and is not sent. It is the sequence Option+Enter already sends (Meta+Enter), which Claude Code reads as a newline without `/terminal-setup`; the other engines get the same bytes. Plain Enter still sends; Cmd+Enter / Ctrl+Enter are unchanged (v3.19 keys). On a stopped terminal only plain Enter restarts it.
+
+
+## MCP tools for several projects (v3.80)
+
+A server added in Agent Office (v3.44 remote, v3.59 stdio) can reach any set of projects, not only all or one. This is step 1 of the team model (`.claude/docs/design-staff.md`): tools are defined once in Agent Office and attached to projects; nothing is written into the project folders.
+
+```ts
+mcpServer.scope: 'all' | string /* one project id, as before */ | string[] /* two or more project ids */
+agentOffice.mcp.add(form) / update(id, form)    // form.scope: 'all' | projectId | projectId[]
+agentOffice.mcp.apps(): { servers: [{ id, name, type, host, scope, hasToken }] }   // never a URL path, header, env, argument or token
+agentOffice.mcp.scope(id, scope: 'all' | projectId[]): { ok, restarted } | { ok: false, error: 'unknown' | 'scope' | 'name-used' }
+mcp.list(projectId) rows: scope 'all' | 'project' | 'projects' (+ projects: count) | 'held'
+```
+
+- **Shape**: a list is stored only with two or more ids; one id is a string, so single-project servers and everything built on them (held servers at a handoff, v3.44 migration) are unchanged. Unknown ids are dropped when state is read; a list left with one id becomes that string, with none the server is dropped.
+- **Names**: one name per session, as before: a server whose projects meet another server of that name (either is 'all', or they share a project) is refused (`name-used`); stored string scopes keep the old exact-scope rule.
+- **Removal and handoff**: a project removed from this machine leaves every list it is in (the server stays for the others; its token stays); a server for that project alone goes, with its token, as before. At a handoff a server for that project alone is held as before; a shared one just loses the project.
+- **Sessions**: `serversFor` (and so the tab's 0600 `--mcp-config`) takes the servers whose scope names the project, then the ones for all. A change restarts the idle Claude Code sessions of the projects it left and reached (v3.11 rule).
+- **UI**: the MCP form's "For" field is "All projects" or a box per project (at least one). The project popup lists the Agent Office tools under "Tools (MCP)", one box each: a tool for all projects is ticked and fixed; one that reaches only this project is ticked and fixed too (it is removed in the MCP panel); Save applies the changes (`mcp.scope`). The MCP panel row says "all projects", "this project" or "N projects".
