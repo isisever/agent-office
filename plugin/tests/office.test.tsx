@@ -1712,3 +1712,31 @@ for (const [name, env, type, expected] of [
     } else expect(prompts[0]).toBe('Scan the code')
   })
 }
+
+// team (app contract v3.81): a desk's member section (AGENT_OFFICE_ROLE file) and HQ's team section (AGENT_OFFICE_TEAM)
+const MEMBER_FILE = '/ud/role/p1-2.json'
+const memberFile = { format: 2, member: 'Ayşe', name: 'ERP Developer (Odoo)', description: 'Builds Odoo modules.', brief: 'Never edit Odoo core.', writesCode: true, department: 'Development', project: { name: 'acme', dir: '/work/acme' }, team: [{ name: 'Mert', role: 'QA Engineer' }] }
+
+test('team: a desk gets its member section after the manager section; a teammate does not', async ($, on) => {
+  setUpDirectory(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_ROLE: MEMBER_FILE }, { [MEMBER_FILE]: JSON.stringify(memberFile) })
+  const { sections } = await $.prompt.compose(mainLoop)
+  expect(sections.map(s => s.id)).toEqual(['intro', 'agent-office:manager', 'agent-office:staff', 'agent-office:host'])
+  expect(sections[2]?.text).toContain("You are Ayşe, the team's ERP Developer (Odoo)")
+  expect(sections[2]?.text).toContain('- Mert: QA Engineer')
+  expect((await $.prompt.compose({ ...composing, tools: ['Agent'], traits: ['teammate'] })).sections.map(s => s.id)).not.toContain('agent-office:staff')
+})
+
+test('team: a missing or malformed member file gives no member section', async ($, on) => {
+  setUpDirectory(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_ROLE: MEMBER_FILE }, { [MEMBER_FILE]: '{"member":' })
+  expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(['intro', 'agent-office:host'])
+})
+
+test('team: HQ gets the team section after its own; a project session with AGENT_OFFICE_TEAM gets nothing', async ($, on) => {
+  setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_HQ: '1', AGENT_OFFICE_TEAM: '1' })
+  expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(['intro', 'agent-office:hq', 'agent-office:team', 'agent-office:host'])
+})
+
+test('team: the team env alone on a project session adds no section', async ($, on) => {
+  setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_TEAM: '1' })
+  expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(['intro', 'agent-office:manager', 'agent-office:host'])
+})

@@ -19,12 +19,12 @@ const LINE_MAX = 512 * 1024;
 const TOOLS = [
   {
     name: 'office_machines',
-    description: 'Lists the machines of this Agent Office (this one and the paired devices, online or not) and the projects on each, by name. Read only.',
+    description: 'Lists the machines of this Agent Office (this one and the paired devices, online or not) and the projects on each, by name. In team mode this machine also lists its staff: each member\'s role, department, the projects it may work on and its desks (busy or idle). Read only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'office_dispatch',
-    description: 'Gives a task to the boss of a project on this machine or on a paired device. The task is typed into that project as a marked prompt; when its turn is done (and its agents finished) a report comes back: you are told "report ready" and read it with office_reports. Returns { id, status } or a refusal reason (offline, logged-out, not-allowed, engine, queue-full, unknown-machine, unknown-project, no-report, too-large, self: the boss own project, locked: being handed off; v3.77 staged: after-unknown, after-other-request, after-no-request, after-cycle, after-ended, too-many-stages, stages-routine, after-hq-only). With then, also { stages: [ids] }; a waiting stage has status waiting.',
+    description: 'Gives a task to the boss of a project on this machine or on a paired device. The task is typed into that project as a marked prompt; when its turn is done (and its agents finished) a report comes back: you are told "report ready" and read it with office_reports. Returns { id, status } or a refusal reason (staff-not-allowed, unknown-staff, no-team, staff-local-only, offline, logged-out, not-allowed, engine, queue-full, unknown-machine, unknown-project, no-report, too-large, self: the boss own project, locked: being handed off; v3.77 staged: after-unknown, after-other-request, after-no-request, after-cycle, after-ended, too-many-stages, stages-routine, after-hq-only). With then, also { stages: [ids] }; a waiting stage has status waiting.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -37,8 +37,9 @@ const TOOLS = [
         after: { type: 'string', description: 'HQ only: id of a task of the same request this one waits for. It starts by itself, with that report appended, once that task has fully reported; it is blocked when that task ends otherwise.' },
         then: {
           type: 'array', maxItems: 7, description: 'HQ only: later stages, in order, each starting by itself once the one before it fully reported (its report appended). The person approves the whole chain when you dispatch it.',
-          items: { type: 'object', properties: { machine: { type: 'string' }, project: { type: 'string' }, task: { type: 'string' }, title: { type: 'string' } }, required: ['project', 'task'], additionalProperties: false },
+          items: { type: 'object', properties: { machine: { type: 'string' }, project: { type: 'string' }, staff: { type: 'string' }, task: { type: 'string' }, title: { type: 'string' } }, required: ['project', 'task'], additionalProperties: false },
         },
+        staff: { type: 'string', description: 'HQ, team mode, this machine only: a staff member\'s name from office_machines. The task goes to that member\'s own desk (session) in the project, which must be one of its projects (else staff-not-allowed). A member can work on several projects at once; one project folder has one desk at work at a time, so the task may wait.' },
       },
       required: ['project', 'task'],
       additionalProperties: false,

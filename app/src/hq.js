@@ -220,7 +220,7 @@ const depthRefused = (board, fromTab) => fromTab !== HQ_ID && board.tasks.some((
 function addTask(board, t, now = Date.now()) {
   const task = {
     id: t.id, request: t.request || '', title: line(t.title || t.task || '', TITLE_MAX), machine: t.pub === 'self' || !t.pub ? 'self' : t.pub,
-    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}),
+    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}), ...(t.staff ? { staff: line(t.staff, 40) } : {}),   // v3.81 the staff member's desk
     status: STATUSES.includes(t.status) ? t.status : 'queued', ...(t.reason ? { reason: line(t.reason, 40) } : {}),
     at: now, brief: `tasks/${t.id}/brief.md`, commits: [], prs: [], read: false,
     ...(typeof t.after === 'string' && t.after ? { after: t.after.slice(0, 64) } : {}),   // v3.77 the stage it waits for

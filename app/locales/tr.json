@@ -577,7 +577,23 @@
       "name-used": "Bu adla bir personel zaten var.",
       "too-many": "Ekip dolu (50 personel).",
       "failed": "Personel kaydedilemedi."
-    }
+    },
+    "working": "{role} · çalışıyor: {projects}",
+    "desk": {
+      "busy": "{project} masasında çalışıyor: masayı aç",
+      "idle": "{project} masası: aç",
+      "asleep": "{project} masası (uyuyor): aç",
+      "off": "{project} masası (durdu): aç",
+      "none": "{project} projesinde henüz masası yok: aç (kendi oturumu)"
+    },
+    "deskError": {
+      "staff-not-allowed": "Bu personel o projede çalışamaz.",
+      "engine": "Masalar Claude Code projeleri içindir.",
+      "git": "Proje paralel çalışmaya açık ama kendi kopyası (git worktree) oluşturulamadı.",
+      "failed": "Masa açılamadı."
+    },
+    "parallel": "Aynı anda birden çok personel",
+    "parallelTitle": "Personel bu projede aynı anda çalışır, her biri kendi kopyasında (Agent Office'in veri klasöründe tutulan bir git worktree; proje klasörüne hiçbir şey yazılmaz). Kapalı: aynı anda tek masa çalışır, Müdür'ün sıradaki işi bekler. Bağımlılıklar (node_modules vb.) her kopyada ayrı kurulur."
   },
   "chat": {
     "placeholder": "Mesaj… (Enter gönderir, Shift+Enter: yeni satır)",
@@ -815,6 +831,7 @@
     "hqAllow": "Görevi ver",
     "hqDeny": "Vazgeç",
     "hqAsk": "Müdür {project} projesine görev vermek istiyor.",
+    "hqAskStaff": "Müdür {staff} adlı personele {project} projesinde görev vermek istiyor.",
     "hqAskRemote": "Müdür {machine} makinesindeki {project} projesine görev vermek istiyor.",
     "hqAskStages": "Müdür bu makinede {n} aşamalı görev vermek istiyor. Her aşama, ondan önceki tam rapor verince kendiliğinden başlar.",
     "hqAskStagesNote": "Her aşamanın tam metni Panoda (bekleyen kartlar); bekleyen bir aşamayı oradan iptal edebilirsin.",

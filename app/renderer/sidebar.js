@@ -136,6 +136,7 @@ export function mountSidebar(el, on) {
   const managerRow = h('label', { class: 'sb-botcolor sb-langrow' }, managerLabel, managerBox);
   // v3.81 team: the TEAM panel (staff kept in Agent Office, renderer/staff.js); off = no panel
   let team = { teamMode: false, staff: [], presets: [] };
+  let desks = [];   // v3.81 main's desk states
   const teamLabel = h('span', {});
   const teamBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.team?.setMode(e.target.checked) });
   const teamRow = h('label', { class: 'sb-botcolor sb-langrow' }, teamLabel, teamBox);
@@ -455,6 +456,17 @@ export function mountSidebar(el, on) {
     return control(p, 'projectFiles', t('sidebar.projectFiles'), box);
   }
 
+  // v3.81 team: several desks may work in this project at once, each in its own worktree (userData/work); team mode only
+  function parallelToggle(p) {
+    if (!team.teamMode || p.engine && p.engine !== 'claude') return null;
+    const box = h('input', {
+      type: 'checkbox', class: 'sb-files', checked: p.parallel === true, title: t('staff.parallelTitle'),
+      onclick: (e) => e.stopPropagation(),
+      onchange: (e) => queue('parallel', () => on.team?.setParallel(p.id, e.target.checked)),
+    });
+    return h('label', { class: 'sb-acct-wrap', title: t('staff.parallelTitle'), onclick: (e) => e.stopPropagation() }, h('span', { class: 'sb-acct-label' }, t('staff.parallel')), box);
+  }
+
   // "Auto-approve permission prompts" (contract v3.71): off by default; Claude Code only. The title says what still asks.
   function autoApproveToggle(p) {
     const box = h('input', {
@@ -722,7 +734,7 @@ export function mountSidebar(el, on) {
     const map = new Map();
     badFields.clear();
     const body = [
-      accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p),
+      accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p), parallelToggle(p),
       contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
     ];
     const save = h('button', {
@@ -908,7 +920,7 @@ export function mountSidebar(el, on) {
     if (panelEl) panelEl.hidden = !team.teamMode;
     teamBox.checked = team.teamMode;
     if (!team.teamMode) return;
-    teamList.replaceChildren(...teamRows({ h, t, lang: locale(), staff: team.staff, presets: team.presets, projects, accounts, labelOf, onEdit: (m) => editMember(m) }));
+    teamList.replaceChildren(...teamRows({ h, t, lang: locale(), staff: team.staff, presets: team.presets, projects, accounts, labelOf, onEdit: (m) => editMember(m), desks, onDesk: (pid, sid) => on.team?.openDesk(pid, sid) }));
   }
   function editMember(m) {
     openMemberEditor({
@@ -1319,6 +1331,12 @@ export function mountSidebar(el, on) {
     /** Manager mode setting (the boss delegates to agents). */
     setManager(on) { managerBox.checked = on !== false; },
     /** v3.81 team mode, the staff and the preset roles (main's staff:list). */
+    setDesks(list) {
+      const next = Array.isArray(list) ? list : [];
+      if (JSON.stringify(next) === JSON.stringify(desks)) return;
+      desks = next;
+      renderTeam();
+    },
     setTeam(v) {
       team = { teamMode: v?.teamMode === true, staff: Array.isArray(v?.staff) ? v.staff : [], presets: Array.isArray(v?.presets) ? v.presets : [] };
       renderTeam();

@@ -7,7 +7,8 @@ const hueOf = (s) => { let x = 7; for (const c of String(s)) x = (Math.imul(x, 3
 
 /**
  * The TEAM list: department headers (none when no member has one), a card per member.
- * @param {{ h: Function, t: Function, lang: string, staff: any[], presets: any[], projects: any[], accounts: any[], labelOf: Function, onEdit: (m: any) => void }} c
+ * @param {{ h: Function, t: Function, lang: string, staff: any[], presets: any[], projects: any[], accounts: any[], labelOf: Function, onEdit: (m: any) => void,
+ *   desks?: any[], onDesk?: (projectId: string, staffId: string) => void }} c  desks: main's desk states (v3.81)
  * @returns {HTMLElement[]}
  */
 export function teamRows(c) {
@@ -27,6 +28,19 @@ function card(c, m) {
   const projects = m.projects === 'all' ? t('staff.allProjects')
     : m.projects.map((id) => c.projects.find((p) => p.id === id)?.name).filter(Boolean).join(', ') || t('staff.noProjects');
   const acc = m.accountId ? c.accounts.find((a) => a.id === m.accountId) : null;
+  // v3.81 desks: one chip per project the member may work on (● at work, ○ open, ◌ asleep, + no desk yet); a click opens it
+  const allowed = m.projects === 'all' ? c.projects.filter((p) => !p.hq) : c.projects.filter((p) => m.projects.includes(p.id));
+  const deskOf = (pid) => (c.desks || []).find((d) => d.staffId === m.id && d.projectId === pid);
+  const mark = { busy: '●', idle: '○', asleep: '◌', off: '○' };
+  const chips = allowed.slice(0, 12).map((p) => {
+    const d = deskOf(p.id);
+    return h('button', {
+      class: `sb-desk ${d ? d.state : 'none'}`, title: t(`staff.desk.${d ? d.state : 'none'}`, { project: p.name }),
+      onclick: (e) => { e.stopPropagation(); c.onDesk?.(p.id, m.id); },
+    }, `${d ? mark[d.state] : '+'} ${p.name}`);
+  });
+  const atWork = (c.desks || []).filter((d) => d.staffId === m.id && d.state === 'busy')
+    .map((d) => c.projects.find((p) => p.id === d.projectId)?.name).filter(Boolean);
   return h('li', {
     class: 'sb-proj sb-staff sb-member-card', 'data-staff': m.id, style: `--staff-h: ${hueOf(m.name)}`,
     title: [role.description, role.writesCode ? '' : t('staff.noCode')].filter(Boolean).join('\n'),
@@ -35,8 +49,9 @@ function card(c, m) {
   h('span', { class: 'sb-dot sb-avatar' }, h('span', { class: 'sb-eyes' })),
   h('span', { class: 'sb-name' }, m.name),
   h('span', { class: 'sb-icons' }, h('button', { class: 'sb-x sb-gear', title: t('staff.edit'), onclick: (e) => { e.stopPropagation(); c.onEdit(m); } }, '⚙')),
-  h('div', { class: 'sb-staff-state' }, role.name),
-  h('div', { class: 'sb-staff-where', title: projects }, t('staff.where', { projects }) + (acc ? ` · ${c.labelOf(acc)}` : '')));
+  h('div', { class: `sb-staff-state${atWork.length ? ' working' : ''}` }, atWork.length ? t('staff.working', { role: role.name, projects: atWork.join(', ') }) : role.name),
+  chips.length ? h('div', { class: 'sb-desks' }, ...chips) : h('div', { class: 'sb-staff-where', title: projects }, t('staff.where', { projects })),
+  acc ? h('div', { class: 'sb-staff-where' }, c.labelOf(acc)) : null);
 }
 
 /**

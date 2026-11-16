@@ -139,7 +139,76 @@ const dropAccount = (staff, accountId) => (Array.isArray(staff) ? staff : [])
 /** May the member work on this project? */
 const mayWork = (member, projectId) => member?.projects === 'all' || (Array.isArray(member?.projects) && member.projects.includes(projectId));
 
+// ---------- desks (step 3) and HQ (step 4) ----------
+// A desk is a staff member's tab in a project (tab.staffId): its own session, with the member's account and role.
+// One project folder, one desk at work at a time (the lock), unless the project allows parallel work: then each desk
+// works in its own git worktree under userData/work/<project>/<member> (never next to the project, never in Projects).
+
+/** The member's role for the model (English), from its preset with its own words on top. */
+function memberRole(member, defs) {
+  const def = member?.role?.preset ? (defs || []).find((d) => d.id === member.role.preset) || null : null;
+  return {
+    name: member?.role?.name || def?.name?.en || '',
+    description: member?.role?.description || def?.description?.en || '',
+    brief: member?.role?.brief || def?.brief || '',
+    writesCode: member?.role?.writesCode === false ? false : def ? def.writesCode : true,
+    skillPacks: Array.isArray(member?.skillPacks) ? member.skillPacks : def?.skillPacks || [],
+  };
+}
+
+/** Where a parallel desk works: its folder and branch (path joined by the caller's `join`, so tests run on any OS). */
+const deskWorktree = (userData, projectId, staffId, join = path.join) => ({
+  root: join(userData, 'work', projectId, staffId),
+  branch: `agent-office/${staffId}`,
+});
+
+/**
+ * Must HQ's task for this desk wait (the lock)? A project that does not allow parallel work has one desk (or its main
+ * tab) at work at a time: the desk waits while another of the project's tabs is busy. busyOf(ptyId) → boolean.
+ * @param {{ parallel?: boolean, tabs?: any[] } } project @param {string} deskPty @param {string[]} ptyIds the project's ptys
+ */
+function deskWaits(project, deskPty, ptyIds, busyOf) {
+  if (project?.parallel === true) return false;
+  return ptyIds.some((id) => id !== deskPty && busyOf(id));
+}
+
+/** The role file a desk's session reads (AGENT_OFFICE_ROLE, plugin hooks/staff.ts). Never a token or a path outside. */
+function deskRoleFile(member, defs, project, staff) {
+  const r = memberRole(member, defs);
+  const team = (Array.isArray(staff) ? staff : []).filter((m) => m.id !== member.id).slice(0, 20)
+    .map((m) => ({ name: m.name, role: memberRole(m, defs).name }));
+  return {
+    format: 2, member: member.name, name: r.name, description: r.description, brief: r.brief, writesCode: r.writesCode,
+    ...(member.department ? { department: member.department } : {}),
+    project: { name: project.name, dir: project.dir }, team,
+  };
+}
+
+/**
+ * HQ's view of the team (office_machines, team mode only): each member's role, department, the projects it may work
+ * on (names) and its desks with their state. deskState(projectId, staffId) → 'busy' | 'idle' | 'none'.
+ */
+function machineStaff(staff, defs, projects, deskState) {
+  return (Array.isArray(staff) ? staff : []).map((m) => {
+    const r = memberRole(m, defs);
+    const allowed = m.projects === 'all' ? projects : projects.filter((p) => m.projects.includes(p.id));
+    const desks = allowed.map((p) => ({ project: p.name, state: deskState(p.id, m.id) })).filter((d) => d.state !== 'none');
+    return {
+      name: m.name, role: r.name, ...(r.description ? { description: r.description } : {}), ...(m.department ? { department: m.department } : {}),
+      writesCode: r.writesCode, projects: m.projects === 'all' ? 'all' : allowed.map((p) => p.name), desks,
+      busy: desks.some((d) => d.state === 'busy'),
+    };
+  });
+}
+
+/** A member by id or by name (case and Turkish dotted/dotless i ignored), or null. */
+function findMember(staff, key) {
+  const k = String(key || '').trim().toLocaleLowerCase('tr');
+  if (!k) return null;
+  return (Array.isArray(staff) ? staff : []).find((m) => m.id === key || m.name.toLocaleLowerCase('tr') === k) || null;
+}
+
 module.exports = {
   STAFF_MAX, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
-  dropProject, dropAccount, mayWork,
+  dropProject, dropAccount, mayWork, memberRole, deskWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
 };
