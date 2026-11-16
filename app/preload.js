@@ -95,6 +95,11 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onReloaded: listen('pty:reloaded'),                 // v3.11: restarted in its session because its MCP servers changed
     onSleep: listen('pty:sleep'),                       // an idle background claude was ended to save memory
   },
+  // v3.78 chat view: a Claude Code tab's conversation read from its transcript; a message is typed into the tab
+  chat: {
+    read: (id, cursor) => ipcRenderer.invoke('chat:read', id, cursor),   // → { unsupported } | { sid, cursor, items, reset, more }
+    send: (id, text) => ipcRenderer.invoke('chat:send', id, text),       // → 'ok' | why not ('empty', 'not-running', 'permission', 'draft', 'locked', …)
+  },
   work: {
     resumeUnfinished: () => ipcRenderer.invoke('work:resumeUnfinished'), // v3.8: { resumed: [{ id, name }], skipped: [{ id, name }] }
     onResumed: listen('work:resumed'),                  // the same result after the menu item
@@ -112,7 +117,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     install: () => ipcRenderer.send('update:install'),
   },
   prefs: {
-    get: () => ipcRenderer.invoke('prefs:get'),         // { resume: boolean, resumeWork: boolean, theme: 'auto' | name, look: 'pixel' | 'claude', mode: 'system' | 'light' | 'dark', manager: boolean, shareMcp: boolean, reloadMcp: boolean, fallback: boolean, sleepMinutes: 0 | 15 | 30 | 60, showAgyAccount: boolean | null, showCmdAccount: boolean | null, showOcAccount: boolean | null } (theme: v3.1, manager: v3.2, sleepMinutes: v3.3, resumeWork: v3.7, shareMcp: v3.9, reloadMcp: v3.11, fallback: v3.17, showAgyAccount/showCmdAccount: v3.30, showOcAccount: v3.40, look/mode: v3.74)
+    get: () => ipcRenderer.invoke('prefs:get'),         // { resume: boolean, resumeWork: boolean, theme: 'auto' | name, look: 'pixel' | 'claude', mode: 'system' | 'light' | 'dark', manager: boolean, shareMcp: boolean, reloadMcp: boolean, fallback: boolean, sleepMinutes: 0 | 15 | 30 | 60, showAgyAccount: boolean | null, showCmdAccount: boolean | null, showOcAccount: boolean | null } (theme: v3.1, manager: v3.2, sleepMinutes: v3.3, resumeWork: v3.7, shareMcp: v3.9, reloadMcp: v3.11, fallback: v3.17, showAgyAccount/showCmdAccount: v3.30, showOcAccount: v3.40, look/mode: v3.74, chatView: v3.78)
     set: (p) => ipcRenderer.invoke('prefs:set', p),
   },
   language: {

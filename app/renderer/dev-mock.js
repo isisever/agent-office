@@ -151,10 +151,30 @@ let shareMcpSetting = true;
 let reloadMcpSetting = true;
 let fallbackSetting = true;
 let sleepSetting = 30;
+// v3.78 chat view: ?chat starts with the setting on; every Claude tab has a short fake conversation, a sent message
+// gets an answer after a second
+let chatViewSetting = q.has('chat');
+const mockChats = new Map();   // pty id → items
+const chatOf = (id) => {
+  if (!mockChats.has(id)) {
+    const at = Date.now();
+    mockChats.set(id, [
+      { key: `${id}-1`, at, kind: 'user', text: 'README için kısa bir kurulum bölümü yaz.' },
+      { key: `${id}-2`, at, kind: 'tool', id: `${id}-t1`, name: 'Read', detail: '/Users/me/web/README.md' },
+      { key: `${id}-3`, at, kind: 'toolDone', id: `${id}-t1`, error: false },
+      { key: `${id}-4`, at, kind: 'tool', id: `${id}-t2`, name: 'Bash', detail: 'npm test' },
+      { key: `${id}-5`, at, kind: 'toolDone', id: `${id}-t2`, error: true },
+      { key: `${id}-6`, at, kind: 'assistant', text: 'README\'ye "Kurulum" bölümünü ekledim:\n\n```sh\nnpm install\nnpm start\n```\n\nTestler bir yerde kalıyor; bakmamı ister misin?' },
+      { key: `${id}-7`, at, kind: 'command', text: '/model sonnet' },
+      { key: `${id}-8`, at, kind: 'note', note: 'compact' },
+    ]);
+  }
+  return mockChats.get(id);
+};
 // "Resume unfinished work" (v3.8): the first click finds two projects with unfinished work (?unfinished=0: none);
 // a stopped one starts, as main starts a lazy tab with --resume
 let mockUnfinished = q.get('unfinished') !== '0';
-const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows });
+const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows, chatView: chatViewSetting });
 const engineRows = { showAgyAccount: null, showCmdAccount: null, showOcAccount: null }; // v3.30
 
 window.agentOffice = {
@@ -383,6 +403,23 @@ window.agentOffice = {
     shown: () => {},
     onSleep: () => {},
   },
+  // v3.78: the cursor is how many items were handed over
+  chat: {
+    read: async (id, cursor) => {
+      if (String(id).startsWith('login:')) return { unsupported: true };
+      const items = chatOf(id);
+      const from = cursor && cursor.file === id ? cursor.size : 0;
+      return { sid: `mock-${id}`, cursor: { file: id, ino: 1, size: items.length }, items: items.slice(from), reset: from === 0, more: false };
+    },
+    send: async (id, text) => {
+      if (q.has('asking')) return 'permission';
+      const items = chatOf(id);
+      const at = Date.now();
+      items.push({ key: `${id}-u${at}`, at, kind: 'user', text: String(text).trim() });
+      setTimeout(() => items.push({ key: `${id}-a${at}`, at, kind: 'assistant', text: `Tamam: "${String(text).trim().slice(0, 60)}"` }), 1000);
+      return 'ok';
+    },
+  },
   work: {
     resumeUnfinished: async () => {
       const hit = mockUnfinished ? projects.slice(1, 3) : [];
@@ -401,6 +438,7 @@ window.agentOffice = {
       if (typeof p?.shareMcp === 'boolean') shareMcpSetting = p.shareMcp;
       if (typeof p?.reloadMcp === 'boolean') reloadMcpSetting = p.reloadMcp;
       if (typeof p?.fallback === 'boolean') fallbackSetting = p.fallback;
+      if (typeof p?.chatView === 'boolean') chatViewSetting = p.chatView;
       if (typeof p?.theme === 'string') themeSetting = p.theme.trim() || 'auto';
       if (p?.look !== undefined) lookSetting = normalizeLook(p.look);
       if (p?.mode !== undefined) modeSetting = normalizeMode(p.mode);

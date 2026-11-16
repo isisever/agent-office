@@ -1,5 +1,6 @@
 // Wires everything together: sidebar (projects, accounts), per-project terminal(s) (tabs, v3.0), office and theme colors.
 import { mountTerminal, pasteIntoFocused } from './terminal.js';
+import { mountChat } from './chat.js';
 import { mountSidebar } from './sidebar.js';
 import { mountHq } from './hq-board.js';
 import { mountLogin } from './login.js';
@@ -58,7 +59,8 @@ const activeProject = () => (hqSelected ? HQ_ROW : projects.find((p) => p.id ===
 /** pty id of the visible terminal. */
 const activePty = () => { const p = activeProject(); return p ? tabPtyId(p.id, tabOf(p)) : null; };
 // While the login overlay is open, focus stays on its terminal.
-const focusActive = () => (login?.isOpen() ? login.focus() : panes.get(activePty())?.term.focus());
+// v3.78: a tab shown as a chat takes the focus in its input box (the hidden terminal must not get keys)
+const focusActive = () => { if (login?.isOpen()) return login.focus(); const p = panes.get(activePty()); return (p?.chatOn ? p.chat : p?.term)?.focus(); };
 let login = null; // login overlay (login.js)
 
 // ---- Theme ----
@@ -195,6 +197,7 @@ function syncPanes() {
   const ids = new Set([HQ_ROW, ...projects].flatMap(ptyIdsOf).filter((id) => !isLoginId(id)));
   for (const [id, p] of panes) {
     if (ids.has(id)) continue;
+    p.chat?.destroy();
     p.term.destroy();
     p.el.remove();
     panes.delete(id);
@@ -210,6 +213,65 @@ function isAsleep(id) {
   return Boolean(n ? st?.tabs?.find((x) => x.n === Number(n))?.isAsleep : st?.isAsleep);
 }
 
+// ---- Chat view (contract v3.78, chat.js): with the setting on, a Claude Code tab shows its conversation; the
+// terminal stays mounted under it and is one click away. Off: nothing below runs and the pane is as before.
+let chatView = false;
+const chatOff = new Set();   // pty ids the person switched back to the terminal (this window only)
+let chatSwitch = null;       // the "chat" button over a terminal (made when first needed)
+/** Can this tab be shown as a chat? Claude Code tabs only (not Antigravity / Command Code / OpenCode, not a shell tab). */
+function chatCapable(id) {
+  if (!id) return false;
+  const [projectId, n] = String(id).split(':');
+  if (projectId === HQ_ROW.id) return true;
+  const p = projects.find((x) => x.id === projectId);
+  if (!p || (p.engine && p.engine !== 'claude')) return false;
+  return !n || !tabsOf(p).find((x) => x.n === Number(n))?.shell;
+}
+function setChatMode(id, on) {
+  if (on) chatOff.delete(id); else chatOff.add(id);
+  syncChat();
+  focusActive();
+}
+/** Shows the visible tab as chat or terminal; the terminal gets a resize nudge when it comes back. */
+function syncChat() {
+  const visible = activePty();
+  const attn = (id) => status.find((x) => x.id === String(id).split(':')[0])?.attention || null;
+  for (const [id, p] of panes) {
+    const want = chatView && id === visible && chatCapable(id) && !chatOff.has(id);
+    if (want && !p.chat) {
+      const host = document.createElement('div');
+      host.className = 'chat-host';
+      p.el.append(host);
+      p.chat = mountChat(host, { ptyId: id, onTerminal: () => setChatMode(id, false) });
+    }
+    const was = Boolean(p.chatOn);
+    p.chatOn = want;
+    p.el.querySelector('.term-host').hidden = want;
+    if (want) { p.chat.setAttention(attn(id)); p.chat.show(); } else p.chat?.hide();
+    if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
+  }
+  const canSwitch = chatView && chatCapable(visible) && chatOff.has(visible);
+  if (canSwitch && !chatSwitch) {
+    chatSwitch = document.createElement('button');
+    chatSwitch.id = 'chat-switch';
+    chatSwitch.addEventListener('click', () => { const id = activePty(); if (id) setChatMode(id, true); });
+    $('terminal').append(chatSwitch);
+  }
+  if (chatSwitch) {
+    chatSwitch.hidden = !canSwitch;
+    chatSwitch.textContent = t('chat.chat');
+    chatSwitch.title = t('chat.chatTitle');
+  }
+}
+
+/** v3.78 the chat view setting from main's prefs (startup and the settings checkbox). */
+function applyChatView(p) {
+  chatView = p?.chatView === true;
+  sidebar?.setChatView?.(chatView);
+  syncChat();
+  focusActive();
+}
+
 let shownId; // visible terminal; focus/resize only when it changes
 let shownSent; // last tab told to main (pty:shown): main types a routine into HQ only when HQ is not on screen
 function showActive() {
@@ -220,10 +282,11 @@ function showActive() {
   // the shown tab always runs: a sleeping claude starts (and continues its session)
   if (visible && isAsleep(visible)) api.pty.wake?.(visible);
   if (shownSent !== visible) { shownSent = visible; api.pty.shown?.(visible || ''); }
+  syncChat();
   if (shownId === visible) return;
   shownId = visible;
   const p = panes.get(visible);
-  if (p) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
+  if (p) requestAnimationFrame(() => { p.term.fit(); (p.chatOn ? p.chat : p.term).focus(); });
 }
 
 // The tab strip shows only when the project has more than one tab; a single terminal looks as before
@@ -638,6 +701,7 @@ sidebar = mountSidebar($('sidebar'), {
   setManager: (on) => api.prefs?.set({ manager: on }).then((p) => sidebar.setManager(p?.manager)).catch((e) => console.error(e)),
   setShareMcp: (on) => api.prefs?.set({ shareMcp: on }).then((p) => sidebar.setShareMcp(p?.shareMcp)).catch((e) => console.error(e)),
   setReloadMcp: (on) => api.prefs?.set({ reloadMcp: on }).then((p) => sidebar.setReloadMcp(p?.reloadMcp)).catch((e) => console.error(e)),
+  setChatView: (on) => api.prefs?.set({ chatView: on }).then(applyChatView).catch((e) => console.error(e)),   // v3.78
   setFallback: (on) => api.prefs?.set({ fallback: on }).then((p) => sidebar.setFallback(p?.fallback)).catch((e) => console.error(e)),
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
   setTheme: setThemeSetting,
@@ -790,6 +854,7 @@ async function applyLanguage(li) {
   sidebar.setLanguage(li);
 }
 onLang(applyStaticText);
+onLang(() => { for (const p of panes.values()) p.chat?.texts(); syncChat(); });   // v3.78
 applyStaticText();
 // "Resume unfinished work" (contract v3.8): the sidebar button; the app menu's item sends its result as work:resumed
 async function resumeUnfinished() {
@@ -805,6 +870,7 @@ api.prefs?.get().then((p) => {
   sidebar.setManager(p?.manager);
   sidebar.setShareMcp(p?.shareMcp);
   sidebar.setReloadMcp(p?.reloadMcp);
+  applyChatView(p);
   sidebar.setFallback(p?.fallback);
   sidebar.setSleep(p?.sleepMinutes);
   sidebar.setEngineRows(p);
