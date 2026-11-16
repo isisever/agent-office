@@ -1489,3 +1489,31 @@ mcp.list(projectId) rows: scope 'all' | 'project' | 'projects' (+ projects: coun
 - **Removal and handoff**: a project removed from this machine leaves every list it is in (the server stays for the others; its token stays); a server for that project alone goes, with its token, as before. At a handoff a server for that project alone is held as before; a shared one just loses the project.
 - **Sessions**: `serversFor` (and so the tab's 0600 `--mcp-config`) takes the servers whose scope names the project, then the ones for all. A change restarts the idle Claude Code sessions of the projects it left and reached (v3.11 rule).
 - **UI**: the MCP form's "For" field is "All projects" or a box per project (at least one). The project popup lists the Agent Office tools under "Tools (MCP)", one box each: a tool for all projects is ticked and fixed; one that reaches only this project is ticked and fixed too (it is removed in the MCP panel); Save applies the changes (`mcp.scope`). The MCP panel row says "all projects", "this project" or "N projects".
+
+## Team: staff (v3.81)
+
+Step 2 of the team model (`.claude/docs/design-staff.md`): the team is kept in Agent Office, never in a project folder. A staff member has a name, a role, an optional department label, an optional Claude account and the projects it may work on. This step only keeps the list; desks (sessions) and HQ's dispatch to staff follow.
+
+```ts
+state.teamMode?: boolean      // the TEAM panel; absent = off (not written until changed)
+state.staff?: Staff[]         // ≤ 50; absent until the first member
+type Staff = {
+  id: string                  // 's-<6–16 hex>'
+  name: string                // ≤ 40, unique ignoring case
+  role: { preset?: string /* roles/<id>.json */; name?: string /* ≤ 40, an own role */; description?: string /* ≤ 400 */; brief?: string /* ≤ 4000 */; writesCode?: false }
+  department?: string         // ≤ 30, a free label
+  accountId?: string          // absent: the project's account
+  skillPacks?: string[]       // absent: the role's suggested packs
+  projects: string[] | 'all'  // the projects it may work on (several at the same time)
+}
+// roles/<id>.json at the repo root, shipped as extraResources → Resources/roles
+type RoleDef = { id; name: { en; tr }; short?: { en; tr }; description: { en; tr }; brief: string /* English */; skillPacks: string[]; writesCode: boolean }
+agentOffice.staff.list(): { teamMode, presets: RoleDef[], staff: Staff[] }
+agentOffice.staff.save(form): { ok, member } | { ok: false, error: 'name' | 'role' | 'name-used' | 'too-many' | 'state' }   // no id = add
+agentOffice.staff.remove(id): { ok } | { ok: false, error: 'unknown' }
+agentOffice.prefs.get(): { …; teamMode: boolean }      agentOffice.prefs.set({ teamMode })
+```
+
+- **Presets**: `erp-odoo`, `rpa`, `chatbot`, `product`, `qa` (tests and bug reports with a PASS / FAIL / BLOCKED verdict, never changes product code), `devops` (deploys only what QA passed; production only when asked, with a rollback), `data-analyst` (read only), `assistant` (documents, `writesCode: false`). An own role is a name and a brief written on the member.
+- **Cleaning**: when state is read, members lose projects that are gone, an account that is gone (they use the project's again) and a preset that is gone (a member left with no role is dropped). Removing a project or an account does the same at once.
+- **UI**: Settings "Team" turns the TEAM panel on (above PROJECTS). A card per member: a small bot in a colour from the name, the name, the role, the projects (and its own account); department headers when any member has one, members without one last under "No department". "+ Add team member" and a click on a card open the member popup: name, role (a preset with its description, or "Own role…" with a name, instructions and "writes documents, not code"), department (existing ones suggested), Claude account (or the project's), the projects it may work on ("All projects" or boxes), Remove.

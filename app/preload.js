@@ -50,6 +50,12 @@ contextBridge.exposeInMainWorld('agentOffice', {
     apps: () => ipcRenderer.invoke('mcp:apps'),   // v3.80 → { servers: [{ id, name, type, host, scope: 'all' | projectId | projectId[], hasToken }] }
     scope: (id, scope) => ipcRenderer.invoke('mcp:scope', id, scope),   // v3.80 scope: 'all' | projectId[] → { ok, restarted } | { ok: false, error: 'unknown' | 'scope' | 'name-used' }
   },
+  // v3.81 team: staff kept in Agent Office (never in a project folder); team mode is prefs.teamMode
+  staff: {
+    list: () => ipcRenderer.invoke('staff:list'),           // → { teamMode, presets: RoleDef[], staff: Staff[] }
+    save: (form) => ipcRenderer.invoke('staff:save', form), // add (no id) or edit → { ok, member } | { ok: false, error: 'name' | 'role' | 'name-used' | 'too-many' | 'state' }
+    remove: (id) => ipcRenderer.invoke('staff:remove', id), // → { ok } | { ok: false, error: 'unknown' }
+  },
   tabs: {
     add: (projectId, mode) => ipcRenderer.invoke('tabs:add', projectId, mode),   // mode: 'same' | 'worktree' | undefined (menu)
     close: (projectId, n) => ipcRenderer.invoke('tabs:close', projectId, n),    // { closed, restarted? }
@@ -120,7 +126,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     install: () => ipcRenderer.send('update:install'),
   },
   prefs: {
-    get: () => ipcRenderer.invoke('prefs:get'),         // { resume: boolean, resumeWork: boolean, theme: 'auto' | name, look: 'pixel' | 'claude', mode: 'system' | 'light' | 'dark', manager: boolean, shareMcp: boolean, reloadMcp: boolean, fallback: boolean, sleepMinutes: 0 | 15 | 30 | 60, showAgyAccount: boolean | null, showCmdAccount: boolean | null, showOcAccount: boolean | null, office3d: boolean } (theme: v3.1, manager: v3.2, sleepMinutes: v3.3, resumeWork: v3.7, shareMcp: v3.9, reloadMcp: v3.11, fallback: v3.17, showAgyAccount/showCmdAccount: v3.30, showOcAccount: v3.40, look/mode: v3.74, chatView: v3.78, office3d: v3.79)
+    get: () => ipcRenderer.invoke('prefs:get'),         // { resume: boolean, resumeWork: boolean, theme: 'auto' | name, look: 'pixel' | 'claude', mode: 'system' | 'light' | 'dark', manager: boolean, shareMcp: boolean, reloadMcp: boolean, fallback: boolean, sleepMinutes: 0 | 15 | 30 | 60, showAgyAccount: boolean | null, showCmdAccount: boolean | null, showOcAccount: boolean | null, office3d: boolean, teamMode: boolean } (theme: v3.1, manager: v3.2, sleepMinutes: v3.3, resumeWork: v3.7, shareMcp: v3.9, reloadMcp: v3.11, fallback: v3.17, showAgyAccount/showCmdAccount: v3.30, showOcAccount: v3.40, look/mode: v3.74, chatView: v3.78, office3d: v3.79, teamMode: v3.81)
     set: (p) => ipcRenderer.invoke('prefs:set', p),
   },
   language: {

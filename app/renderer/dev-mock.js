@@ -185,10 +185,16 @@ const chatOf = (id) => {
   return mockChats.get(id);
 };
 let office3dSetting = q.has('office3d'); // v3.79 ?office3d: the 3D office from the start
+// v3.81 team: ?staff turns team mode on with three members; the presets are read as main reads them
+let teamSetting = q.has('staff');
+const ROLE_IDS = ['assistant', 'chatbot', 'data-analyst', 'devops', 'erp-odoo', 'product', 'qa', 'rpa'];
+const rolePresets = (await Promise.all(ROLE_IDS.map((n) => fetch(`../../roles/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
+/** @type {any[]} */
+const mockStaff = [];
 // "Resume unfinished work" (v3.8): the first click finds two projects with unfinished work (?unfinished=0: none);
 // a stopped one starts, as main starts a lazy tab with --resume
 let mockUnfinished = q.get('unfinished') !== '0';
-const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows, chatView: chatViewSetting, office3d: office3dSetting });
+const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows, chatView: chatViewSetting, office3d: office3dSetting, teamMode: teamSetting });
 const engineRows = { showAgyAccount: null, showCmdAccount: null, showOcAccount: null }; // v3.30
 
 window.agentOffice = {
@@ -317,6 +323,21 @@ window.agentOffice = {
     remove: async (id) => { const i = mockMcp.findIndex((s) => s.id === id); if (i >= 0) mockMcp.splice(i, 1); return { ok: i >= 0, restarted: [] }; },
   },
 
+  staff: { // v3.81
+    list: async () => ({ teamMode: teamSetting, presets: rolePresets, staff: structuredClone(mockStaff) }),
+    save: async (f) => {
+      if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
+      if (!f?.role?.preset && !String(f?.role?.name || '').trim()) return { ok: false, error: 'role' };
+      if (mockStaff.some((m) => m.id !== f.id && m.name.toLowerCase() === String(f.name).trim().toLowerCase())) return { ok: false, error: 'name-used' };
+      const member = { ...f, id: f.id || `s-${rid().slice(0, 8).padEnd(8, '0').replace(/[^0-9a-f]/g, 'a')}`, name: String(f.name).trim() };
+      if (!member.accountId) delete member.accountId;
+      if (!member.department) delete member.department;
+      const i = mockStaff.findIndex((m) => m.id === member.id);
+      if (i >= 0) mockStaff[i] = member; else mockStaff.push(member);
+      return { ok: true, member };
+    },
+    remove: async (id) => { const i = mockStaff.findIndex((m) => m.id === id); if (i >= 0) mockStaff.splice(i, 1); return { ok: i >= 0 }; },
+  },
   tabs: {
     add: async (projectId, mode) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === projectId));
@@ -464,6 +485,7 @@ window.agentOffice = {
       if (typeof p?.fallback === 'boolean') fallbackSetting = p.fallback;
       if (typeof p?.chatView === 'boolean') chatViewSetting = p.chatView;
       if (typeof p?.office3d === 'boolean') office3dSetting = p.office3d;
+      if (typeof p?.teamMode === 'boolean') teamSetting = p.teamMode;
       if (typeof p?.theme === 'string') themeSetting = p.theme.trim() || 'auto';
       if (p?.look !== undefined) lookSetting = normalizeLook(p.look);
       if (p?.mode !== undefined) modeSetting = normalizeMode(p.mode);
@@ -785,3 +807,9 @@ if (q.has('remotes')) {
   const cancel = (id) => { const t = hv.board.tasks.find((x) => x.id === id); if (t && t.status === 'waiting') Object.assign(t, { status: 'rejected', reason: 'cancelled' }); return hok(); };
   window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, cancel, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
 }
+// ?staff: three members in two departments
+if (q.has('staff') && projects.length >= 3) mockStaff.push(
+  { id: 's-a1a1a1', name: 'Ayşe', role: { preset: 'erp-odoo' }, department: 'Geliştirme', accountId: 'is', projects: [projects[0].id, projects[1].id] },
+  { id: 's-b2b2b2', name: 'Mert', role: { preset: 'qa' }, department: 'Geliştirme', projects: 'all' },
+  { id: 's-c3c3c3', name: 'Deniz', role: { preset: 'devops' }, department: 'Operasyon', projects: [projects[1].id] },
+);

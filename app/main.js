@@ -24,6 +24,7 @@ const CHAT = require('./src/chat.js');
 const SC = require('./src/shared-config.js');
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
+const ST = require('./src/staff.js');
 const MR = require('./src/mcp-reload.js');
 const SP = require('./src/skill-packs.js');
 const R = require('./src/resume.js');
@@ -3188,6 +3189,26 @@ ipcMain.handle('projects:openFolder', async (_e, id) => {
 });
 
 // Removing a project closes all its tabs; worktree folders are left untouched (like the project folder).
+// --- team: staff (contract v3.81, src/staff.js). The preset roles ship in roles/ (extraResources). With state.teamMode
+// off the TEAM panel is hidden; the stored staff is kept. Nothing here starts a session (desks come in step 3).
+const rolesRoot = () => (app.isPackaged ? path.join(process.resourcesPath, 'roles') : path.join(__dirname, '..', 'roles'));
+let rolePresets = null;
+const presetRoles = () => rolePresets || (rolePresets = ST.loadRoles(rolesRoot()));
+const staffKnown = () => ({ projectIds: state.projects.map((p) => p.id), accountIds: state.accounts.map((a) => a.id), presetIds: presetRoles().map((d) => d.id) });
+ipcMain.handle('staff:list', () => ({ teamMode: state.teamMode === true, presets: presetRoles(), staff: state.staff || [] }));
+ipcMain.handle('staff:save', (_e, form) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  const r = ST.saveMember(state.staff || [], form && typeof form === 'object' ? form : {}, staffKnown());
+  if (!r.staff) return { ok: false, error: r.error };
+  commit({ ...state, staff: r.staff });
+  return { ok: true, member: r.member };
+});
+ipcMain.handle('staff:remove', (_e, id) => {
+  if (!(state.staff || []).some((m) => m.id === id)) return { ok: false, error: 'unknown' };
+  commit({ ...state, staff: ST.removeMember(state.staff, String(id)) });
+  return { ok: true };
+});
+
 ipcMain.handle('projects:remove', (_e, id) => {
   const p = P.findProject(state, id);
   if (p && P.projectFilesOf(p)) syncProjectFiles(p, { gone: true }); // our files leave with the project (v3.38)
@@ -3198,7 +3219,8 @@ ipcMain.handle('projects:remove', (_e, id) => {
     sizes.delete(pid);
     if (p) try { fs.rmSync(path.join(usageRoot(), p.accountId, `${usageKey(pid)}.json`), { force: true }); } catch {}
   }
-  commit(P.removeProject(state, id));
+  const next = P.removeProject(state, id);
+  commit(state.staff ? { ...next, staff: ST.dropProject(next.staff || state.staff, id) } : next);   // v3.81 it leaves the staff's projects
 });
 // the project left in the background starts its idle time now: it was in view until this moment (src/sleep.js)
 ipcMain.handle('projects:setActive', (_e, id) => {
@@ -3397,7 +3419,7 @@ ipcMain.handle('accounts:remove', (_e, id) => {
   usages.delete(id);
   try { fs.rmSync(delegateKeyFile(id), { force: true }); } catch {}   // v3.56: its delegate key file goes too
   try { fs.rmSync(path.join(usageRoot(), id), { recursive: true, force: true }); } catch {}
-  commit(r.state, { accounts: true });
+  commit(r.state.staff ? { ...r.state, staff: ST.dropAccount(r.state.staff, id) } : r.state, { accounts: true });   // v3.81 its members use their projects' accounts
   for (const pid of r.moved) moveProject(pid, from);
 });
 
@@ -4191,8 +4213,9 @@ function buildMenu() {
 // false (removed), null (the old rule: shown when installed or a project runs it) (contract v3.30);
 // chatView = Claude Code tabs can be shown as a conversation (contract v3.78); off unless set, and unset is not written
 // office3d = the office drawn in 3D (contract v3.79); off unless set, and unset is not written
+// teamMode = the TEAM panel (contract v3.81); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, office3d: state.office3d === true });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, office3d: state.office3d === true, teamMode: state.teamMode === true });
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
@@ -4203,6 +4226,7 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
   if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) commit({ ...state, chatView: p.chatView });   // v3.78 chat view (the renderer switches)
   if (p && typeof p.office3d === 'boolean' && p.office3d !== prefs().office3d) commit({ ...state, office3d: p.office3d });   // v3.79 3D office (the renderer switches)
+  if (p && typeof p.teamMode === 'boolean' && p.teamMode !== prefs().teamMode) commit({ ...state, teamMode: p.teamMode });   // v3.81 the TEAM panel
   for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (p && typeof p[k] === 'boolean' && p[k] !== prefs()[k]) commit({ ...state, [k]: p[k] });
   if (p && typeof p.theme === 'string' && themeSetting(p.theme) !== prefs().theme) commit({ ...state, theme: themeSetting(p.theme) });
   // appearance (v3.74): an unknown look or mode is stored as the default
@@ -4278,7 +4302,9 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  // v3.81 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
+  if (Array.isArray(raw.staff)) state = { ...state, staff: ST.normalizeStaff(raw.staff, staffKnown()) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
   const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });
