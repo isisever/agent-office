@@ -216,7 +216,8 @@ function readJson(file) {
 
 /** Writes a JSON file through a temp file beside it (mode kept, 0600 for a new file; a link's target is written). */
 function writeJson(file, value) {
-  const real = realOr(file);
+  let real = file; // the link's target as the file system names it (no NFC step: the write must land on the real file)
+  try { real = fs.realpathSync(file); } catch {}
   let mode = 0o600;
   try { mode = fs.statSync(real).mode & 0o777; } catch {}
   fs.mkdirSync(path.dirname(real), { recursive: true });
