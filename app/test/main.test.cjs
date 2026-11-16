@@ -3392,68 +3392,146 @@ test('backup account (v3.77): a compaction that failed at the usage limit is fou
   assert.ok(!FB.isUsageLimitText(COMPACT_MSG), 'not one of the plain usage-limit messages');
 });
 
-test('backup account (v3.77): the compaction failure counts unless the transcript or the tab contradicts it', () => {
+test('backup account (v3.77): what was sent to the tab: an Enter, typed or pasted text, keys that are neither', () => {
+  const t = 1_800_000_000_000;
+  assert.deepEqual(FB.inputAfter(undefined, '', t), { submitAt: 0, typedAt: 0, paste: false });
+  assert.deepEqual(FB.inputAfter(undefined, 'fix it', t), { submitAt: 0, typedAt: t, paste: false });
+  assert.deepEqual(FB.inputAfter({ submitAt: 0, typedAt: t - 9, paste: false }, '\r', t), { submitAt: t, typedAt: 0, paste: false }, 'Enter sends what was typed');
+  assert.deepEqual(FB.inputAfter(undefined, 'go\r', t), { submitAt: t, typedAt: 0, paste: false });
+  assert.deepEqual(FB.inputAfter(undefined, '\rnext', t), { submitAt: t, typedAt: t, paste: false });
+  // arrows, focus and mouse reports, function keys, Ctrl+O, backspace: nothing
+  assert.deepEqual(FB.inputAfter(undefined, '\x1b[A\x1b[I\x1b[<0;10;5M\x1bOP\x0f\x7f', t), { submitAt: 0, typedAt: 0, paste: false });
+  // Ctrl+C clears the prompt, but what was typed was echoed: it is not a submit and typedAt stays
+  assert.deepEqual(FB.inputAfter({ submitAt: 5, typedAt: t - 9, paste: false }, '\x03', t), { submitAt: 5, typedAt: t - 9, paste: false });
+  // a bracketed paste is text, its line breaks too; also when it arrives in pieces
+  assert.deepEqual(FB.inputAfter(undefined, '\x1b[200~line one\rline two\x1b[201~', t), { submitAt: 0, typedAt: t, paste: false });
+  const open = FB.inputAfter(undefined, '\x1b[200~line one\r', t);
+  assert.deepEqual(open, { submitAt: 0, typedAt: t, paste: true });
+  assert.deepEqual(FB.inputAfter(open, 'line two\x1b[201~\r', t + 5), { submitAt: t + 5, typedAt: 0, paste: false });
+});
+
+test('backup account (v3.77): the compaction failure is a limit only after an Enter or a running turn, with nothing against it', () => {
   const at = Date.parse('2026-10-17T10:00:05.000Z');
   const now = at + FB.COMPACT_SETTLE_MS;
   const answer = (text, ts, extra = {}) => JSON.stringify({ type: 'assistant', timestamp: ts, message: { role: 'assistant', content: [{ type: 'text', text }] }, ...extra });
-  const before = `{"partial line"\n${userEntry('do the thing')}\n${answer('done', '2026-10-17T10:00:03.000Z')}\n{"type":"system","subtype":"turn_duration","timestamp":"2026-10-17T10:00:09.000Z"}\n`;
-  const state = (tail, o = {}) => FB.compactionState({ at, now, transcript: true, contradicted: FB.compactionContradicted(tail, { at }), ...o });
-  // nothing was written about it (what Claude Code 2.1.325 does): the screen decides
-  assert.equal(FB.compactionContradicted(before, { at }), false);
-  assert.equal(state(before), 'limit');
-  // a prompt or an answer came after: the session went on
-  assert.equal(state(`${before}${userEntry('carry on', '2026-10-17T10:00:20.000Z')}\n`), 'void');
-  assert.equal(state(`${before}${answer('still working', '2026-10-17T10:00:06.000Z')}\n`), 'void');
+  const before = `{"partial line"\n${userEntry('do the thing', '2026-10-17T09:50:00.000Z')}\n${answer('done', '2026-10-17T09:50:30.000Z')}\n{"type":"system","subtype":"turn_duration","timestamp":"2026-10-17T10:00:09.000Z"}\n`;
+  const entered = FB.compactionSighting({ at, input: { submitAt: at - 2000, typedAt: 0 }, busyAt: 0 });
+  assert.deepEqual(entered, { at, typing: false, submitAt: at - 2000, busyAt: 0 });
+  const midTurn = FB.compactionSighting({ at, input: { submitAt: at - 5 * 60e3, typedAt: 0 }, busyAt: at - 1500 });
+  const verdict = (o = {}) => FB.compactionVerdict({ sighting: entered, now, status: 'idle', draft: false, tail: before, ...o });
+
+  // the reported case: Enter, the failure on screen, nothing written about it (Claude Code 2.1.325)
+  assert.equal(verdict(), 'limit');
+  assert.equal(verdict({ status: 'shell' }), 'limit', 'an idle prompt with a background task');
+  assert.equal(verdict({ status: undefined }), 'limit', 'an older Claude Code without a status');
+  assert.deepEqual(FB.compactionHit(entered), { at, resetsAt: null, type: null, text: 'automatic compaction failed' });
+  // the failure in the middle of a turn: a turn was seen running just before
+  assert.equal(verdict({ sighting: midTurn }), 'limit');
+  const midTail = `${before}${userEntry('next', '2026-10-17T09:59:00.000Z')}\n${answer('working', '2026-10-17T10:00:02.000Z')}\n`;
+  assert.equal(verdict({ sighting: midTurn, tail: midTail }), 'limit', 'answers before a mid-turn failure are its own turn');
+
+  // item 1: nothing caused it → old words redrawn (a resize, the transcript view, a long resume)
+  assert.equal(verdict({ sighting: FB.compactionSighting({ at }) }), 'void');
+  assert.equal(verdict({ sighting: FB.compactionSighting({ at, input: { submitAt: at - FB.COMPACT_SUBMIT_MS - 1, typedAt: 0 }, busyAt: at - FB.COMPACT_BUSY_MS - 1 }) }), 'void');
+  assert.equal(verdict({ sighting: FB.compactionSighting({ at, input: { submitAt: at - FB.COMPACT_SUBMIT_MS, typedAt: 0 } }) }), 'limit');
+  assert.equal(verdict({ sighting: FB.compactionSighting({ at, busyAt: at - FB.COMPACT_BUSY_MS }) }), 'limit');
+  assert.equal(verdict({ sighting: FB.compactionSighting({ at, input: { submitAt: at + 1, typedAt: 0 }, busyAt: at + 1 }) }), 'void', 'what came after did not cause it');
+  // an Enter whose turn was answered before the words appeared: a redraw after that turn
+  const answered = `${before}${userEntry('quick one', '2026-10-17T10:00:03.200Z')}\n${answer('here', '2026-10-17T10:00:04.000Z')}\n`;
+  assert.equal(verdict({ tail: answered }), 'void');
+  assert.equal(verdict({ tail: `${before}${userEntry('the prompt that failed', '2026-10-17T10:00:03.200Z')}\n` }), 'limit', 'the refused prompt itself may be written');
+
+  // item 2: the words pasted (echoed) and cleared with Ctrl+C: typed text was unsent when they appeared
+  let input = FB.inputAfter({ submitAt: at - 20000, typedAt: 0, paste: false }, `\x1b[200~${COMPACT_MSG}\x1b[201~`, at - 10);
+  const pasted = FB.compactionSighting({ at, input });
+  assert.equal(pasted.typing, true);
+  input = FB.inputAfter(input, '\x03', at + 500);
+  assert.equal(verdict({ sighting: pasted, draft: false }), 'void', 'although an Enter was recent, the tab is idle and no draft is left');
+  // … and the same paste, sent: it is a prompt
+  assert.equal(verdict({ sighting: pasted, tail: `${before}${userEntry(COMPACT_MSG, '2026-10-17T10:00:06.000Z')}\n` }), 'void');
+
+  // the transcript contradicts: the session went on
+  assert.equal(verdict({ tail: `${before}${userEntry('carry on', '2026-10-17T10:00:20.000Z')}\n` }), 'void');
+  assert.equal(verdict({ tail: `${before}${answer('still working', '2026-10-17T10:00:06.000Z')}\n` }), 'void');
   // meta lines and sub-agent lines are not the session going on
-  assert.equal(state(`${before}${userEntry('<caveat>', '2026-10-17T10:00:20.000Z', { isMeta: true })}\n${answer('x', '2026-10-17T10:00:21.000Z', { isSidechain: true })}\n`), 'limit');
+  assert.equal(verdict({ tail: `${before}${userEntry('<caveat>', '2026-10-17T10:00:20.000Z', { isMeta: true })}\n${answer('x', '2026-10-17T10:00:21.000Z', { isSidechain: true })}\n` }), 'limit');
   // the words are conversation: a prompt quoting them, the model writing them, a tool result holding them
-  assert.equal(state(`${before}${userEntry(`what is this? ${COMPACT_MSG}`, '2026-10-17T10:00:04.000Z')}\n`), 'void');
-  assert.equal(state(`${before}${answer(`The screen said: ${COMPACT_MSG}`, '2026-10-17T10:00:04.500Z')}\n`), 'void');
-  const toolResult = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:04.900Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: `fallback.js: ${COMPACT_MSG}` }] } });
-  assert.equal(state(`${before}${toolResult}\n`), 'void');
-  // … but an old quote does not explain a sighting much later
-  const late = at + 10 * 60e3;
   const quoted = `${before}${userEntry(`what is this? ${COMPACT_MSG}`, '2026-10-17T10:00:04.000Z')}\n`;
+  assert.equal(verdict({ tail: quoted }), 'void');
+  assert.equal(verdict({ sighting: midTurn, tail: `${before}${answer(`The screen said: ${COMPACT_MSG}`, '2026-10-17T10:00:04.500Z')}\n` }), 'void');
+  const toolResult = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:04.900Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: `fallback.js: ${COMPACT_MSG}` }] } });
+  assert.equal(verdict({ sighting: midTurn, tail: `${before}${toolResult}\n` }), 'void');
+  // an old quote does not explain a later sighting by itself (the cause rule does: see item 1) …
+  const late = at + 10 * 60e3;
   assert.equal(FB.compactionContradicted(quoted, { at: late }), false);
+  assert.equal(FB.compactionVerdict({ sighting: FB.compactionSighting({ at: late }), now: late + FB.COMPACT_SETTLE_MS, status: 'idle', tail: quoted }), 'void', 'the old quote redrawn while idle');
+  // item 3: … and a real failure later in the same run counts (main.js replaces a void sighting with the new one)
+  const real = FB.compactionSighting({ at: late, input: { submitAt: late - 1000, typedAt: 0 } });
+  assert.equal(FB.compactionVerdict({ sighting: real, now: late + FB.COMPACT_SETTLE_MS, status: 'idle', tail: quoted }), 'limit');
+
   // Claude Code's own error entry, should a version write one, is not a quote: the transcript rule takes it (v3.17)
   const own = limitEntry({ apiError: null, info: null, text: COMPACT_MSG });
-  assert.equal(FB.compactionContradicted(`${before}${own}\n`, { at: Date.parse('2026-10-17T10:00:04.000Z') }), false);
-  const since = Date.parse('2026-10-17T10:00:00.000Z');
+  assert.equal(verdict({ tail: `${before}${own}\n` }), 'limit');
+  const since = Date.parse('2026-10-17T09:00:00.000Z');
   assert.deepEqual(FB.limitFromTranscript(`${before}${own}\n`, { since }), { at, resetsAt: null, type: null, text: COMPACT_MSG.slice(0, 200) });
   assert.equal(FB.limitFromTranscript(`${before}${limitEntry({ apiError: null, info: null, text: 'Prompt is too long' })}\n`, { since }), null);
   assert.equal(FB.limitFromTranscript(`${before}${answer(COMPACT_MSG, '2026-10-17T10:00:05.000Z')}\n`, { since }), null, 'the model writing the words');
-  // not yet: the transcript may still catch up, a turn is running (the model printing the words), text is being typed, no transcript
-  assert.equal(state(before, { now: at + FB.COMPACT_SETTLE_MS - 1 }), 'wait');
-  assert.equal(state(before, { busy: true }), 'wait');
-  assert.equal(state(before, { draft: true }), 'wait');
-  assert.equal(state(before, { transcript: false }), 'wait');
-  // too old to act on: the default window is over
-  assert.equal(state(before, { now: at + FB.DEFAULT_LIMIT_MS - 1 }), 'limit');
-  assert.equal(state(before, { now: at + FB.DEFAULT_LIMIT_MS }), 'void');
-  assert.equal(FB.compactionState({ at: undefined, now, transcript: true }), 'void');
+
+  // not yet: the transcript may catch up, a turn is running or a dialog is open, text is waiting unsent, no transcript
+  assert.equal(verdict({ now: at + FB.COMPACT_SETTLE_MS - 1 }), 'wait');
+  assert.equal(verdict({ status: 'busy' }), 'wait');
+  assert.equal(verdict({ status: 'waiting' }), 'wait');
+  assert.equal(verdict({ draft: true }), 'wait');
+  assert.equal(verdict({ tail: null }), 'wait');
+  assert.equal(verdict({ tail: '' }), 'limit', 'an empty transcript end holds nothing against it');
+  // too old to act on, or no sighting
+  assert.equal(verdict({ now: at + FB.DEFAULT_LIMIT_MS - 1 }), 'limit');
+  assert.equal(verdict({ now: at + FB.DEFAULT_LIMIT_MS }), 'void');
+  assert.equal(verdict({ sighting: null }), 'void');
+  assert.equal(verdict({ sighting: { at: undefined } }), 'void');
 });
 
-test('backup account (v3.77): the tab stopped by the compaction failure moves and carries on by itself', () => {
+test('backup account (v3.77): a limit without a reset time is marked from when it was seen, and no quota reading clears it', () => {
+  const now = 1_800_000_000_000;
+  const seen = now - 1500;
+  // a known reset time: the mark of v3.17, which a newer quota reading with room left clears
+  assert.deepEqual(FB.limitMark({ resets: [now + 3600e3, now + 60e3, null], seenAt: seen, now }), { at: now, until: now + 3600e3 });
+  // none known (the compaction failure, a model's own limit): 5 h from the sighting, firm
+  const firm = FB.limitMark({ resets: [], seenAt: seen, now });
+  assert.deepEqual(firm, { at: now, until: seen + FB.DEFAULT_LIMIT_MS, firm: true });
+  // looked at again an hour later while stuck: the same end, so the mark is not pushed out
+  assert.equal(FB.limitMark({ resets: [], seenAt: seen, now: now + 3600e3 }).until, seen + FB.DEFAULT_LIMIT_MS);
+  assert.equal(FB.limitMark({ resets: [], seenAt: now + 999, now }).until, now + FB.DEFAULT_LIMIT_MS, 'never from the future');
+  // item 4: the home account's quota shows room (a model's limit is in no window): an ordinary mark is cleared, a firm one is not
+  const usage = { updatedAt: now + 1000, fiveHour: { pct: 40 }, sevenDay: { pct: 10 } };
+  assert.equal(FB.limitedUntil({ mark: { at: now, until: firm.until }, usage, now: now + 2000 }), 0);
+  assert.equal(FB.limitedUntil({ mark: firm, usage, now: now + 2000 }), firm.until);
+  assert.equal(FB.limitedUntil({ mark: firm, usage, now: firm.until }), 0, 'until it expires');
+  const home = { id: 'default', auth: { state: 'in' }, usage };
+  const back = { home, current: 'b', idle: true, lastSwitch: now - 10 * 60e3, now: now + 2000 };
+  assert.equal(FB.shouldReturn({ ...back, mark: { at: now, until: firm.until } }), true);
+  assert.equal(FB.shouldReturn({ ...back, mark: firm }), false, 'no way home while the limit holds: no ping-pong');
+  assert.equal(FB.shouldReturn({ ...back, mark: firm, now: firm.until + 1 }), true);
+  assert.deepEqual(FB.pickBackup({ choice: 'auto', current: 'b', accounts: [{ id: 'b', auth: { state: 'in' } }, home], marks: { default: firm }, now: now + 2000 }), { reason: 'allLimited' });
+  // kept across a restart; replaced only by a longer mark, or by a firm one when the kept one is not
+  assert.deepEqual(FB.normalizeMarks({ default: firm, b: { at: 1, until: now + 5 } }, ['default', 'b'], now), { default: firm, b: { at: 1, until: now + 5 } });
+  assert.equal(FB.markReplaces(undefined, firm), true);
+  assert.equal(FB.markReplaces(firm, { ...firm }), false);
+  assert.equal(FB.markReplaces({ at: now, until: firm.until + 1 }, firm), true);
+  assert.equal(FB.markReplaces(firm, { at: now, until: firm.until + 1 }), true);
+  assert.equal(FB.markReplaces({ at: now, until: now + 9 }, { at: now, until: now + 5 }), false);
+});
+
+test('backup account (v3.77): the tab stopped by the compaction failure carries on by itself after the move', () => {
   const R = require('../src/resume.js');
+  // the wiring only: the verdict's hit is one of onLimit's hits, and onLimit's hits are moveProject's carryOn
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  // the sighting is one of the project's hits, so the switch rules of v3.17 apply and the tab is in carryOn
   assert.match(src, /if \(!hit\) hit = compactionSeen\(id, r\.dir, account\.configDir, w, now\);/);
-  assert.match(src, /if \(hit && !limitDone\.has\(`\$\{id\}\|\$\{hit\.at\}`\)\) hits\.push\(\{ id, hit \}\);/);
   assert.match(src, /moveProject\(p\.id, account, \{ carryOn: hits\.map\(\(h\) => h\.id\) \}\);/);
-  assert.match(src, /busy = Boolean\(sid\) && \(carryOn\.includes\(id\) \|\|/);
   // a carried-on tab resumes its own conversation with the prompt as claude's positional argument: no key is pressed
   const opts = PD.restartAfterMove({ sessionId: 'abc-1', busy: true }, R.UNFINISHED_PROMPT);
   assert.deepEqual(opts, { sessionId: 'abc-1', prompt: R.UNFINISHED_PROMPT });
-  const args = R.claudeArgs(['--model', 'x'], ['--resume', 'abc-1'], opts.prompt);
-  assert.deepEqual(args, ['--model', 'x', '--resume', 'abc-1', R.promptArg(R.UNFINISHED_PROMPT)]);
-  // the reset time is unknown: the account is marked for the default window from the sighting, also when looked at again later
-  const seen = 1_800_000_000_000;
-  assert.deepEqual(FB.markFor(seen + FB.DEFAULT_LIMIT_MS, seen + 1500), { at: seen + 1500, until: seen + FB.DEFAULT_LIMIT_MS });
-  assert.deepEqual(FB.markFor(seen + FB.DEFAULT_LIMIT_MS, seen + 3600e3), { at: seen + 3600e3, until: seen + FB.DEFAULT_LIMIT_MS });
-  assert.match(src, /Math\.min\(now, \.\.\.hits\.map\(\(h\) => h\.hit\.at\)\) \+ FB\.DEFAULT_LIMIT_MS/);
-  // no backup that can take over: the switch guard of v3.17 still refuses, and the notice is the existing one
-  assert.equal(FB.switchAllowed([seen - 30000], seen).reason, 'soon');
-  assert.deepEqual(FB.pickBackup({ choice: null, current: 'default', accounts: [] }), { reason: 'off' });
+  assert.deepEqual(R.claudeArgs(['--model', 'x'], ['--resume', 'abc-1'], opts.prompt), ['--model', 'x', '--resume', 'abc-1', R.promptArg(R.UNFINISHED_PROMPT)]);
 });
 
 test('yedek hesap (v3.17): hesabın limitte olduğu süre (kota %100, görülen limit, yeni kota okuması)', () => {

@@ -374,6 +374,8 @@ function killPty(id) {
   mcpPrint.delete(id);
   ptyStart.delete(id);
   ptyLimit.delete(id);
+  tailSeen.delete(id);
+  compactTail.delete(id);
   release(t);   // dispose its onData/onExit listeners before the kill: nothing is left to fire from a dying pty
   if (quitting && t.pid) dying.push(t.pid);   // will-quit waits for these (≤ 1 s)
   try { t.kill(); } catch {}
@@ -434,6 +436,8 @@ function checkTurns() {
     const sid = validSid(claude?.sessionId);
     const busy = R.isTurnBusy({ claude, office: sid ? office()?.readSession(sid) : undefined });
     if (sid) lastSid.set(id, sid);
+    const w = ptyLimit.get(id);
+    if (w && claude?.status === 'busy') w.busyAt = Date.now(); // v3.77: a compaction failure follows a running turn
     next = R.nextInterrupted(next, id, { busy, sessionId: sid });
   }
   setMarks(next);
@@ -1263,6 +1267,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       mcpPrint.delete(id);
       ptyStart.delete(id);
       ptyLimit.delete(id);
+      tailSeen.delete(id);
+      compactTail.delete(id);
       // the session it was in, for Enter-restart: the pid file may still be there, else the last poll's
       const last = validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId);
       if (last) lastSid.set(id, last);
@@ -1631,10 +1637,16 @@ function unfinishedTabs() {
   return tabs;
 }
 /** v3.47 an HQ keystroke held during a routine prompt's paste→Enter: minted and drafted as if typed now. */
+/** v3.77: what was sent to the tab (FB.inputAfter): an Enter, or text the terminal will echo. */
+function noteInput(id, d) {
+  const w = ptyLimit.get(id);
+  if (w) w.input = FB.inputAfter(w.input, d, Date.now());
+}
 function hqWriteTyped(id, d) {
   if (HQ.submitsTyped(activity.get(id)?.draft, d)) hqMinter.mint();
   const a = activity.get(id);
   if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); }
+  noteInput(id, d);
   ptyOf(id)?.write(d);
 }
 /** Types the prompt into a running claude's input box and submits it. */
@@ -1652,7 +1664,7 @@ function typePrompt(id, text, { taskId = '' } = {}) {
   if (P.isHqId(id)) hqGate.hold();   // v3.47 the person's HQ keystrokes wait until the pasted prompt's Enter
   t.write(R.typedPrompt(text));
   setTimeout(() => {
-    if (terms.get(id) === t) t.write('\r');
+    if (terms.get(id) === t) { t.write('\r'); noteInput(id, '\r'); }
     if (P.isHqId(id)) for (const d of hqGate.release()) hqWriteTyped(id, d);   // held keys go through the same mint/draft logic
   }, ENTER_DELAY_MS);
   const a = activity.get(id);
@@ -2765,9 +2777,10 @@ function watchLimit(id, d, startedAt) {
   w.scan = r.scan;
   if (!r.hit || Date.now() - startedAt <= FB.PTY_GRACE_MS) return;
   w.hitAt = Date.now();
-  // v3.77: "automatic compaction failed: <usage limit>" leaves no transcript entry, so its first sighting in this run
-  // of the tab is kept and judged in checkLimits (compactionSeen); later sightings are the same words redrawn.
-  if (r.compaction && !w.compact) w.compact = { at: w.hitAt, void: false };
+  // v3.77: "automatic compaction failed: <usage limit>" leaves no transcript entry, so the sighting is kept with what
+  // the tab had just done (an Enter, a running turn, unsent typing) and judged in checkLimits (compactionSeen). A
+  // sighting still being judged or acted on stays: the same words redrawn are not a second failure. A void one is replaced.
+  if (r.compaction && (!w.compact || w.compact.void)) w.compact = { ...FB.compactionSighting({ at: w.hitAt, input: w.input, busyAt: w.busyAt }), void: false };
 }
 /** The end of a file (FB.TAIL_BYTES), or ''. */
 function readTail(file) {
@@ -2781,7 +2794,7 @@ function readTail(file) {
     return buf.toString('utf8');
   } catch { return ''; } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch {} }
 }
-const tailSeen = new Map(); // transcript → { key: "size|mtime|since", hit }
+const tailSeen = new Map(); // pty id → { key: "file|size|mtime|since", hit }
 /** Does the tab's session end on a usage limit written since the tab started? → FB.limitFromTranscript result | null */
 function transcriptLimit(id, dir, configDir) {
   const sid = lastSid.get(id);
@@ -2790,17 +2803,17 @@ function transcriptLimit(id, dir, configDir) {
   const st = file ? statOrNull(file) : null;
   if (!st) return null;
   const since = ptyStart.get(id) || 0;
-  const key = `${st.size}|${st.mtimeMs}|${since}`;
-  const old = tailSeen.get(file);
+  const key = `${file}|${st.size}|${st.mtimeMs}|${since}`;
+  const old = tailSeen.get(id);
   if (old?.key === key) return old.hit;
   const hit = FB.limitFromTranscript(readTail(file), { since });
-  tailSeen.set(file, { key, hit });
+  tailSeen.set(id, { key, hit });
   return hit;
 }
-const compactTail = new Map(); // transcript → { key: "size|mtime|at", contradicted }
+const compactTail = new Map(); // pty id → { key: "file|size|mtime", tail }: read again only when the transcript changed
 /**
- * v3.77: the compaction failure seen on the tab's screen (w.compact) → a limit hit, or null. FB.compactionState decides:
- * the tab's transcript must not contradict it, no turn may be running and no text may be waiting unsent.
+ * v3.77: the compaction failure seen on the tab's screen (w.compact) → a limit hit, or null. Glue only: the tab's
+ * transcript end, Claude Code's status and the unsent-text flag go to FB.compactionVerdict, which decides.
  */
 function compactionSeen(id, dir, configDir, w, now) {
   const c = w?.compact;
@@ -2808,25 +2821,23 @@ function compactionSeen(id, dir, configDir, w, now) {
   const sid = lastSid.get(id);
   const file = sid ? TIO.findTranscript(dir, sid, configDir, app.getPath('home'))?.file : null;
   const st = file ? statOrNull(file) : null;
-  let contradicted = false;
+  let tail = null;
   if (st) {
-    const key = `${st.size}|${st.mtimeMs}|${c.at}`;
-    const old = compactTail.get(file);
-    contradicted = old?.key === key ? old.contradicted : FB.compactionContradicted(readTail(file), { at: c.at });
-    compactTail.set(file, { key, contradicted });
+    const key = `${file}|${st.size}|${st.mtimeMs}`;
+    const old = compactTail.get(id);
+    tail = old?.key === key ? old.tail : readTail(file);
+    compactTail.set(id, { key, tail });
   }
-  const status = liveSession(id, configDir)?.claude?.status;
-  const busy = typeof status === 'string' && status !== '' && status !== 'idle' && status !== 'shell';
-  const s = FB.compactionState({ at: c.at, now, transcript: Boolean(st), contradicted, busy, draft: Boolean(activity.get(id)?.draft) });
-  if (s === 'void') c.void = true;
-  return s === 'limit' ? { at: c.at, resetsAt: null, type: null, text: 'automatic compaction failed' } : null;
+  const verdict = FB.compactionVerdict({ sighting: c, now, status: liveSession(id, configDir)?.claude?.status, draft: Boolean(activity.get(id)?.draft), tail });
+  if (verdict === 'void') { c.void = true; compactTail.delete(id); }
+  return verdict === 'limit' ? FB.compactionHit(c) : null;
 }
 const accountName = (a) => (a.id === A.DEFAULT_ID ? T('main.defaultAccount') : a.label);
 /** Accounts as FB.pickBackup reads them: login state and quota. */
 const fallbackAccounts = () => state.accounts.map((a) => ({ id: a.id, provider: a.provider, auth: auths.get(a.id), usage: usages.get(a.id) }));
 function setLimitMark(accountId, mark) {
   const old = limitMarks()[accountId];
-  if (old && old.until >= mark.until) return;
+  if (!FB.markReplaces(old, mark)) return;
   state = { ...state, accountLimits: { ...FB.normalizeMarks(limitMarks(), state.accounts.map((a) => a.id)), [accountId]: mark } };
   saveState();
 }
@@ -2861,9 +2872,7 @@ function checkLimits() {
 }
 function onLimit(p, account, hits, now) {
   const resets = hits.map((h) => h.hit.resetsAt).filter(Number.isFinite);
-  // no reset time known: the default window counts from when the limit was seen, so a project that stays stuck
-  // (looked at again every 1.5 s) does not push the account's mark further out
-  const mark = FB.markFor(resets.length ? Math.max(...resets) : Math.min(now, ...hits.map((h) => h.hit.at)) + FB.DEFAULT_LIMIT_MS, now);
+  const mark = FB.limitMark({ resets, seenAt: Math.min(...hits.map((h) => h.hit.at)), now });
   setLimitMark(account.id, mark);
   const done = () => { for (const h of hits) limitDone.add(`${h.id}|${h.hit.at}`); };
   const choice = P.backupOf(p);
@@ -3730,6 +3739,7 @@ ipcMain.on('pty:write', (_e, id, d) => {
   if (!terms.has(id)) wake(id);
   const a = activity.get(id);
   if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); }
+  noteInput(id, d);
   agyWatch.get(id)?.watch.input(d);
   ptyOf(id)?.write(d);
 });

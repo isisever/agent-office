@@ -18,9 +18,10 @@
 //   automatic compaction's own request is refused for the usage limit, the turn ends on
 //   "Prompt is too long · automatic compaction failed: You've reached your Fable limit. Run /usage-credits …". Claude
 //   Code builds it as an API error message with error "invalid_request" and no apiError, and no such entry was found
-//   in any transcript: the screen is the only place it is seen. So for this one phrase the terminal decides, guarded
-//   by the transcript (compactionState): the session must not have gone on, and no entry may hold the words (a prompt,
-//   an answer or a tool result that quotes them is conversation, not the failure).
+//   in any transcript: the screen is the only place it is seen. So for this one phrase the terminal decides
+//   (compactionVerdict), guarded three ways: the words must follow an Enter or a running turn (a redraw of old text
+//   and a paste do not), no unsent typing may be pending when they appear, and the transcript must not contradict
+//   them (the session went on, or an entry holds the words: a prompt, an answer or a tool result quoting them).
 
 const LIMIT_PREFIXES = ["You've hit your", "You've reached your", "You're out of usage credits", "You're out of extra usage"];
 // Fast mode's own cooldown ("You've hit your fast limit · resets in 8m") turns fast mode off; it does not stop work.
@@ -34,6 +35,8 @@ const MAX_SWITCHES = 4;
 const PTY_GRACE_MS = 10000;          // terminal text in the first seconds of a start is the resumed conversation redrawn
 const COMPACT_SETTLE_MS = 3000;      // a compaction failure on screen is acted on after this long (the transcript catches up)
 const COMPACT_QUOTE_MS = 60000;      // an entry this long before the sighting that holds the words explains the sighting
+const COMPACT_SUBMIT_MS = 30000;     // the failure follows an Enter within this long …
+const COMPACT_BUSY_MS = 5000;        // … or a turn seen running this shortly before (the 1.5 s poll plus the status file's lag)
 const TAIL_BYTES = 64 * 1024;        // how much of a transcript's end is read
 
 const normQuote = (s) => String(s ?? '').replace(/[‘’]/g, "'");
@@ -138,15 +141,56 @@ function scanPty(scan, chunk) {
   return { scan: { tail: text.slice(-PTY_TAIL) }, hit: null, compaction: false };
 }
 
-// --- a compaction that failed at the limit (v3.77): the terminal decides, the transcript may contradict
+// --- a compaction that failed at the limit (v3.77): the terminal decides, what the tab did and its transcript may contradict
+/**
+ * What the person (or the app) sent to the tab, as far as this rule needs it. state: { submitAt, typedAt, paste }.
+ * An Enter outside a bracketed paste is a submit: it sets submitAt and clears typedAt. Text (typed or pasted, a pasted
+ * line break too) sets typedAt: the terminal will echo it. Escape sequences (arrows, focus and mouse reports) and
+ * control keys change nothing: Ctrl+C clears the prompt but the echo was already on screen, so typedAt stays.
+ * @param {{ submitAt?: number, typedAt?: number, paste?: boolean } | undefined} state @param {string} data @param {number} now
+ */
+function inputAfter(state, data, now = Date.now()) {
+  let { submitAt = 0, typedAt = 0, paste = false } = state || {};
+  const s = String(data ?? '');
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 0x1b) {
+      const n = s[i + 1];
+      if (n === '[') { // CSI: parameters, then a final byte @..~
+        let j = i + 2;
+        while (j < s.length && (s.charCodeAt(j) < 0x40 || s.charCodeAt(j) > 0x7e)) j++;
+        const seq = s.slice(i + 2, j + 1);
+        if (seq === '200~') paste = true;
+        else if (seq === '201~') paste = false;
+        i = j;
+      } else if (n === 'O') i += 2; // SS3: one more byte
+      else if (n !== undefined) i += 1;
+      continue;
+    }
+    if (c === 0x0d && !paste) { submitAt = now; typedAt = 0; continue; }
+    if (paste || (c >= 0x20 && c !== 0x7f)) typedAt = now;
+  }
+  return { submitAt, typedAt, paste };
+}
+
+/**
+ * The compaction failure as it was seen: when, and what the tab had just done. input: inputAfter's state;
+ * busyAt: when Claude Code's pid file last said a turn was running. Kept with the sighting, because later input and
+ * later turns must not change what caused it.
+ */
+const compactionSighting = ({ at, input = null, busyAt = 0 }) => ({ at, typing: Boolean(input?.typedAt), submitAt: input?.submitAt || 0, busyAt: busyAt || 0 });
+
 /**
  * Does the end of the transcript contradict a compaction failure seen on screen at `at` (ms)? It does when
  * - a prompt or an answer was written after the sighting (the session went on, or the words were being written), or
  * - an entry written from COMPACT_QUOTE_MS before the sighting on holds the words: a prompt, an answer or a tool
- *   result quoting them is what the screen showed. Claude Code's own API error entry is not a quote.
- * @param {string} tail @param {{ at: number }} o
+ *   result quoting them is what the screen showed, or
+ * - (answeredSince given: the sighting rests on an Enter at that time) an answer was written between that Enter and
+ *   the sighting: the Enter's turn went through, so the words are a redraw after it.
+ * Claude Code's own API error entries are never a contradiction.
+ * @param {string} tail @param {{ at: number, answeredSince?: number }} o
  */
-function compactionContradicted(tail, { at }) {
+function compactionContradicted(tail, { at, answeredSince = 0 }) {
   for (const raw of String(tail || '').split('\n')) {
     const line = raw.trim();
     if (!line) continue;
@@ -157,29 +201,49 @@ function compactionContradicted(tail, { at }) {
     if (!Number.isFinite(ts) || e.isApiErrorMessage) continue;
     const turn = (e.type === 'user' || e.type === 'assistant') && !e.isMeta && !e.isSidechain;
     if (turn && ts > at) return true;
+    if (turn && e.type === 'assistant' && answeredSince > 0 && ts > answeredSince) return true;
     if (ts >= at - COMPACT_QUOTE_MS && line.includes(COMPACT_FAILED)) return true;
   }
   return false;
 }
 
 /**
- * What a compaction failure seen on screen at `at` means now.
- * transcript: the tab's session has a transcript; contradicted: compactionContradicted of its end;
- * busy: Claude Code says a turn is running or a dialog is open (the failure ends the turn; a model printing the
- * words is mid-turn); draft: text typed but not sent (the words may be the person's typing).
- * → 'limit' (act as on a usage limit) | 'wait' (look again) | 'void' (not a failure, or too old: never acted on)
+ * What a compaction failure seen on screen means now.
+ * sighting: compactionSighting; status: Claude Code's pid file status now ('idle' | 'shell' | 'busy' | 'waiting' |
+ * undefined); draft: text typed but not sent now; tail: the end of the tab's transcript, null when it has none.
+ * 'void' (never acted on; a newer sighting may replace it) when
+ * - text was typed and not sent when the words appeared (they may be its echo: a paste, cleared or not), or
+ * - nothing caused it: no Enter within COMPACT_SUBMIT_MS before it and no running turn within COMPACT_BUSY_MS before
+ *   it (old text redrawn on a resize, in the transcript view, or by a long resume), or
+ * - the transcript contradicts it (compactionContradicted), or it is older than DEFAULT_LIMIT_MS.
+ * 'wait' (look again) while it is younger than COMPACT_SETTLE_MS, there is no transcript, a turn is running or a
+ * dialog is open (the failure ends the turn; a model printing the words is mid-turn), or text is waiting unsent.
+ * Otherwise 'limit': act as on a usage limit.
+ * @returns {'limit' | 'wait' | 'void'}
  */
-function compactionState({ at, now = Date.now(), transcript = false, contradicted = false, busy = false, draft = false }) {
-  if (!Number.isFinite(at) || contradicted || now - at >= DEFAULT_LIMIT_MS) return 'void';
-  if (!transcript || busy || draft || now - at < COMPACT_SETTLE_MS) return 'wait';
+function compactionVerdict({ sighting, now = Date.now(), status = undefined, draft = false, tail = null }) {
+  const { at, typing = false, submitAt = 0, busyAt = 0 } = sighting || {};
+  if (!Number.isFinite(at) || typing || now - at >= DEFAULT_LIMIT_MS) return 'void';
+  const afterTurn = busyAt > 0 && busyAt <= at && at - busyAt <= COMPACT_BUSY_MS;
+  const afterEnter = submitAt > 0 && submitAt <= at && at - submitAt <= COMPACT_SUBMIT_MS;
+  if (!afterTurn && !afterEnter) return 'void';
+  if (tail === null || tail === undefined) return 'wait';
+  if (compactionContradicted(tail, { at, answeredSince: afterTurn ? 0 : submitAt })) return 'void';
+  const busy = typeof status === 'string' && status !== '' && status !== 'idle' && status !== 'shell';
+  if (busy || draft || now - at < COMPACT_SETTLE_MS) return 'wait';
   return 'limit';
 }
+
+/** The limit hit of a compaction sighting whose verdict is 'limit' (the shape limitFromTranscript returns). */
+const compactionHit = (sighting) => ({ at: sighting.at, resetsAt: null, type: null, text: COMPACT_FAILED });
 
 // --- accounts at their limit
 /**
  * Until when the account is at its limit (ms), or 0. usage: its AccountUsage (v2.4); mark: { at, until } a limit seen
  * in one of its sessions. A window at 100 % counts until its reset (no reset time: 5 h after the reading). A mark counts
- * until its time, unless a quota reading newer than the mark shows every window below 100 %.
+ * until its time, unless a quota reading newer than the mark shows every window below 100 %. A firm mark (v3.77: a
+ * limit without a known reset time, e.g. a model's own limit, which no quota window shows) counts until its time
+ * whatever the quota says.
  */
 function limitedUntil({ usage = null, mark = null, now = Date.now() } = {}) {
   let until = 0;
@@ -190,13 +254,25 @@ function limitedUntil({ usage = null, mark = null, now = Date.now() } = {}) {
     if (end > now) { until = Math.max(until, end); full = true; }
   }
   const markOk = mark && Number.isFinite(mark.until) && mark.until > now
-    && !(usage && Number.isFinite(usage.updatedAt) && usage.updatedAt > (mark.at || 0) && !full);
+    && (mark.firm === true || !(usage && Number.isFinite(usage.updatedAt) && usage.updatedAt > (mark.at || 0) && !full));
   if (markOk) until = Math.max(until, mark.until);
   return until;
 }
 
 /** The mark kept for an account after a limit: until its reset time, else DEFAULT_LIMIT_MS from now. */
 const markFor = (resetsAt, now = Date.now()) => ({ at: now, until: Number.isFinite(resetsAt) && resetsAt > now ? resetsAt : now + DEFAULT_LIMIT_MS });
+/**
+ * The mark for the limits a project stopped on (v3.77). resets: their known reset times (ms); seenAt: when the
+ * earliest was seen. A known reset time gives the mark of v3.17. None known: DEFAULT_LIMIT_MS from when it was seen
+ * (not from now, so looking again does not push it out), and firm, so a quota reading cannot clear it early.
+ */
+function limitMark({ resets = [], seenAt, now = Date.now() }) {
+  const known = resets.filter(Number.isFinite);
+  if (known.length) return markFor(Math.max(...known), now);
+  return { ...markFor(Math.min(now, Number.isFinite(seenAt) ? seenAt : now) + DEFAULT_LIMIT_MS, now), firm: true };
+}
+/** Does the new mark replace the one kept? Not when the kept one lasts as long, unless only the new one is firm. */
+const markReplaces = (old, mark) => !old || old.until < mark.until || (mark.firm === true && old.firm !== true);
 
 /** How full the account's quota is (0–100, the fuller window; unknown 0), to prefer the emptier backup. */
 function fullness(usage, now = Date.now()) {
@@ -265,14 +341,15 @@ function normalizeMarks(raw, accountIds, now = Date.now()) {
   if (!raw || typeof raw !== 'object') return out;
   for (const id of accountIds) {
     const m = raw[id];
-    if (m && Number.isFinite(m.until) && m.until > now) out[id] = { at: Number.isFinite(m.at) ? m.at : now, until: m.until };
+    if (m && Number.isFinite(m.until) && m.until > now) out[id] = { at: Number.isFinite(m.at) ? m.at : now, until: m.until, ...(m.firm === true ? { firm: true } : {}) };
   }
   return out;
 }
 
 module.exports = {
-  LIMIT_PREFIXES, DEFAULT_LIMIT_MS, MIN_STAY_MS, MAX_SWITCHES, PTY_GRACE_MS, TAIL_BYTES, COMPACT_SETTLE_MS, COMPACT_QUOTE_MS,
+  LIMIT_PREFIXES, DEFAULT_LIMIT_MS, MIN_STAY_MS, MAX_SWITCHES, PTY_GRACE_MS, TAIL_BYTES,
+  COMPACT_SETTLE_MS, COMPACT_QUOTE_MS, COMPACT_SUBMIT_MS, COMPACT_BUSY_MS,
   isUsageLimitText, isCompactionLimitText, parseResetText, limitFromTranscript, plainText, scanPty,
-  compactionContradicted, compactionState,
+  inputAfter, compactionSighting, compactionContradicted, compactionVerdict, compactionHit, limitMark, markReplaces,
   limitedUntil, markFor, fullness, pickBackup, switchAllowed, shouldReturn, normalizeMarks,
 };
