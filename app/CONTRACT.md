@@ -1426,3 +1426,15 @@ In light mode (both looks) the status colours used as text are darkened (`src/ap
 ## Shift+Enter is a new line (v3.75)
 
 In every terminal, Shift+Enter (no Cmd or Ctrl, outside an IME composition) sends `ESC CR` (`SHIFT_ENTER` in `src/terminal-keys.mjs`, through `translateKey`) instead of xterm.js's bare CR, so the prompt gets a new line and is not sent. It is the sequence Option+Enter already sends (Meta+Enter), which Claude Code reads as a newline without `/terminal-setup`; the other engines get the same bytes. Plain Enter still sends; Cmd+Enter / Ctrl+Enter are unchanged (v3.19 keys). On a stopped terminal only plain Enter restarts it.
+
+
+## 3D office (v3.79)
+
+The office can be drawn in 3D instead of 8-bit pixels. Off by default: until the setting is turned on nothing is built, no WebGL context exists and `state.json` has no new key; the 8-bit office (and the plugin's own viewer) is unchanged, and the visual snapshots stay the same.
+
+- **Setting**: `prefs.office3d: boolean` (`false` unless set; `state.office3d` is written only once changed). One checkbox in the settings popup ("3D office", after Mode); it applies at once.
+- **One office, two pictures**: `core.mjs` still runs the office every frame (seats, paths, the dance floor, deliveries) and draws its frame. `sceneOf()` (new export, filled while the frame is drawn; it changes nothing in it) hands over what that frame showed: `{ now, LW, LH, L /* layout */, C /* theme colours */, bots: [{ id, x, y, pose: 'type' | 'stand' | 'walk' | 'dance', seated?, isBoss?, frame?, look?, hat?, hasMug?, paper?, carry? }], tags: [{ id, lines: [text, 0xRRGGBB][], edge }], desks: [{ cx, by, busy, proj }], stack, lastOk, isBossBusy, isAsking, hot, today }`.
+- **Boxes** (`src/office3d.mjs`, pure): x = core's x, z = core's y (toward the camera), y = up, one unit per logical pixel. `buildStatic(scene)` (floors, walls 30 high, a low wall to the hall with its doors, furniture; rebuilt when the size or theme colours change, `staticKey`) and `buildDynamic(scene)` (dance-floor lights, server LEDs, screens, desk plates in project colours, the paper stack, every bot) → triangles with position, normal, colour and an emissive amount. `cameraFor(LW, LH, w, h)`: a perspective camera above the front of the office, pitch 50°–66° by the canvas's shape (`pitchFor`), as far as needed for the whole office to fit.
+- **Drawing** (`renderer/office3d.js`): WebGL 1, no library. One sun from the top left with a 2048² shadow map (depth packed into RGBA, 3×3 PCF), a sky/ground fill, emissive surfaces, a slight fall-off far from the camera. The picture is drawn into an offscreen canvas and copied onto the office canvas; the bots' tags, the desk plates and the board's "today" line are drawn over it with the 2D context, and an arrow marks the selected bot.
+- **Picking**: a click picks the tag under it, else the bot whose projected body is under it (nearest to the camera first); the agent panel opens as in the 8-bit office.
+- **Fallback**: no WebGL, a shader that does not compile or an error while drawing → the 8-bit office for that window (the setting stays on).
