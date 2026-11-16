@@ -1,5 +1,6 @@
 // Office view: draws core.mjs frames to a <canvas> with crisp (nearest-neighbor) scaling.
-import { FRAME_MS, hitTest, render, setGeometry, setThemes as coreSetThemes, setTheme as coreSetTheme, themeInfo, setBotColor as coreSetBotColor, setLanguage as coreSetLanguage } from '../src/office/core.mjs'
+import { createOffice3d } from './office3d.js'
+import { FRAME_MS, hitTest, render, sceneOf, setGeometry, setThemes as coreSetThemes, setTheme as coreSetTheme, themeInfo, setBotColor as coreSetBotColor, setLanguage as coreSetLanguage } from '../src/office/core.mjs'
 
 const EMPTY = { workers: [], delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' }
 
@@ -21,6 +22,9 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
   let timer = 0
   let dead = false
   let selected = null
+  // v3.79 the 3D office: core.mjs still runs the office every frame; its scene is drawn in 3D instead of its pixels
+  let r3d = null
+  let use3d = false
 
   // the canvas back buffer is the CSS box × devicePixelRatio
   function resize() {
@@ -41,6 +45,17 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     setGeometry(canvas.width, canvas.height)
     // if a focus is given, the theme comes from it and its desks are highlighted; otherwise the newest session's project
     const { fb, LW, LH, S } = render(Date.now(), data, { focus: focus ?? '', selected })
+    if (use3d && r3d) {
+      try {
+        r3d.draw(ctx, canvas.width, canvas.height, sceneOf(), selected)
+        themeChanged()
+        return
+      } catch (err) {
+        // a lost or failing WebGL context: back to the 8-bit office for this window
+        console.error('3D office:', err)
+        r3d = null
+      }
+    }
     if (!image || image.width !== LW || image.height !== LH) {
       off.width = LW
       off.height = LH
@@ -61,7 +76,11 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     const dw = LW * S
     const dh = LH * S
     ctx.drawImage(off, Math.floor((canvas.width - dw) / 2), Math.floor((canvas.height - dh) / 2), dw, dh)
+    themeChanged()
+  }
 
+  function themeChanged() {
+    const t = themeInfo()
     const key = `${t.name}|${t.title}|${t.frame}|${t.accent}|${t.statusBg}|${t.statusText}`
     if (key !== lastThemeKey) {
       lastThemeKey = key
@@ -80,6 +99,9 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     const r = canvas.getBoundingClientRect()
     if (!r.width || !r.height || !geo) return null
     setGeometry(canvas.width, canvas.height)
+    const x = ((e.clientX - r.left) * canvas.width) / r.width
+    const y = ((e.clientY - r.top) * canvas.height) / r.height
+    if (use3d && r3d) return r3d.pick(x, y, canvas.width, canvas.height)
     return hitTest(((e.clientX - r.left) * canvas.width) / r.width, ((e.clientY - r.top) * canvas.height) / r.height)
   }
   function onClick(e) {
@@ -149,6 +171,13 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     setBotColor(hex) {
       coreSetBotColor(hex)
       draw()
+    },
+    /** v3.79 the 3D office on or off (off, or no WebGL: the 8-bit office). → whether 3D is drawn. */
+    set3d(on) {
+      use3d = Boolean(on)
+      if (use3d && !r3d) r3d = createOffice3d()
+      draw()
+      return Boolean(use3d && r3d)
     },
     // language of the office's text ('en' | 'tr'); the title depends on it too (themeInfo().title)
     setLanguage(lang) {

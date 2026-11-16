@@ -177,10 +177,11 @@ const chatOf = (id) => {
   }
   return mockChats.get(id);
 };
+let office3dSetting = q.has('office3d'); // v3.79 ?office3d: the 3D office from the start
 // "Resume unfinished work" (v3.8): the first click finds two projects with unfinished work (?unfinished=0: none);
 // a stopped one starts, as main starts a lazy tab with --resume
 let mockUnfinished = q.get('unfinished') !== '0';
-const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows, chatView: chatViewSetting });
+const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows, chatView: chatViewSetting, office3d: office3dSetting });
 const engineRows = { showAgyAccount: null, showCmdAccount: null, showOcAccount: null }; // v3.30
 
 window.agentOffice = {
@@ -452,6 +453,7 @@ window.agentOffice = {
       if (typeof p?.reloadMcp === 'boolean') reloadMcpSetting = p.reloadMcp;
       if (typeof p?.fallback === 'boolean') fallbackSetting = p.fallback;
       if (typeof p?.chatView === 'boolean') chatViewSetting = p.chatView;
+      if (typeof p?.office3d === 'boolean') office3dSetting = p.office3d;
       if (typeof p?.theme === 'string') themeSetting = p.theme.trim() || 'auto';
       if (p?.look !== undefined) lookSetting = normalizeLook(p.look);
       if (p?.mode !== undefined) modeSetting = normalizeMode(p.mode);
