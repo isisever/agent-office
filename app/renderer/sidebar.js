@@ -6,6 +6,7 @@ import { modLabel, platform } from './platform.js';
 import { isBossHere, projectStatus } from '../src/project-status.mjs';
 import { BOSS_MODEL_CHOICES, bossModelChoices, cap, isCustomModelId } from '../src/engine-caps.mjs';
 import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
+import { teamRows, openMemberEditor } from './staff.js';
 
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -133,6 +134,14 @@ export function mountSidebar(el, on) {
   const managerLabel = h('span', {});
   const managerBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setManager?.(e.target.checked) });
   const managerRow = h('label', { class: 'sb-botcolor sb-langrow' }, managerLabel, managerBox);
+  // v3.81 team: the TEAM panel (staff kept in Agent Office, renderer/staff.js); off = no panel
+  let team = { teamMode: false, staff: [], presets: [] };
+  const teamLabel = h('span', {});
+  const teamBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.team?.setMode(e.target.checked) });
+  const teamRow = h('label', { class: 'sb-botcolor sb-langrow' }, teamLabel, teamBox);
+  const teamHead = h('span', {});
+  const teamList = h('ul', { class: 'sb-list', id: 'sb-team' });
+  const addStaffBtn = h('button', { class: 'sb-add', id: 'sb-add-staff', onclick: () => editMember(null) });
   // every session also gets the other office projects' MCP servers (contract v3.9); sessions started afterwards
   const shareMcpLabel = h('span', {});
   const shareMcpBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setShareMcp?.(e.target.checked) });
@@ -176,6 +185,7 @@ export function mountSidebar(el, on) {
     return d;
   }
   el.append(
+    panel('team', [teamHead], h('div', { class: 'sb-top' }, teamList, addStaffBtn), 'sb-team-panel'),
     panel('projects', [projHead], h('div', { class: 'sb-top', id: 'sb-top' }, projList, addProjectBtn, resumeAllBtn, resumeNote)),
     panel('accounts', [acctHead, settingsBtn], h('div', { class: 'sb-panel-body' }, acctList), 'sb-accounts'),
     panel('mcp', [mcpHead], h('div', { class: 'sb-panel-body' }, mcpNote, mcpList, addMcpBtn), 'sb-mcp-panel'),
@@ -204,6 +214,10 @@ export function mountSidebar(el, on) {
     resumeWorkLabel.textContent = t('sidebar.resumeWork');
     resumeWorkRow.title = t('sidebar.resumeWorkTitle');
     managerLabel.textContent = t('sidebar.manager');
+    teamLabel.textContent = t('staff.mode');
+    teamRow.title = t('staff.modeTitle');
+    teamHead.textContent = t('staff.panel');
+    addStaffBtn.textContent = t('staff.add');
     managerRow.title = t('sidebar.managerTitle');
     shareMcpLabel.textContent = t('sidebar.shareMcp');
     shareMcpRow.title = t('sidebar.shareMcpTitle');
@@ -248,6 +262,7 @@ export function mountSidebar(el, on) {
     );
   }
   renderChrome();
+  el.querySelector('#sb-panel-team').hidden = true;   // v3.81 until team mode is known on
 
   // Settings popups: the project popup collects its changes as a draft and applies them on Save (account first, it
   // may restart the tabs); Cancel / Escape / a click outside discards. The global popup applies each change at once.
@@ -841,10 +856,25 @@ export function mountSidebar(el, on) {
     ], [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
   }
 
+  /** v3.81 the TEAM panel: shown only with team mode on; one card per member, department headers when any. */
+  function renderTeam() {
+    const panelEl = el.querySelector('#sb-panel-team');
+    if (panelEl) panelEl.hidden = !team.teamMode;
+    teamBox.checked = team.teamMode;
+    if (!team.teamMode) return;
+    teamList.replaceChildren(...teamRows({ h, t, lang: locale(), staff: team.staff, presets: team.presets, projects, accounts, labelOf, onEdit: (m) => editMember(m) }));
+  }
+  function editMember(m) {
+    openMemberEditor({
+      h, t, lang: locale(), member: m, staff: team.staff, presets: team.presets, projects, accounts, labelOf, openModal, closeModal,
+      save: (form) => on.team?.save(form), remove: (id) => on.team?.remove(id),
+    });
+  }
+
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, lookRow, modeRow, themeRow, botRow, skillsSection()],
+      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, lookRow, modeRow, themeRow, botRow, skillsSection()],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 
@@ -1192,6 +1222,7 @@ export function mountSidebar(el, on) {
   onLang(() => {
     renderChrome();
     renderProjects();
+    renderTeam();
     if (!editing) renderAccounts();
   });
 
@@ -1241,6 +1272,11 @@ export function mountSidebar(el, on) {
     },
     /** Manager mode setting (the boss delegates to agents). */
     setManager(on) { managerBox.checked = on !== false; },
+    /** v3.81 team mode, the staff and the preset roles (main's staff:list). */
+    setTeam(v) {
+      team = { teamMode: v?.teamMode === true, staff: Array.isArray(v?.staff) ? v.staff : [], presets: Array.isArray(v?.presets) ? v.presets : [] };
+      renderTeam();
+    },
     /** "Share MCP servers between projects" setting (v3.9). */
     setShareMcp(on) { shareMcpBox.checked = on !== false; },
     /** "Reload sessions when MCP changes" setting (v3.11). */
@@ -1264,7 +1300,7 @@ export function mountSidebar(el, on) {
       asleep = new Set((s.status || []).filter((x) => x.isAsleep).map((x) => x.id));
       attn = new Map((s.status || []).filter((x) => x.attention).map((x) => [x.id, x.attention]));
       const pk = JSON.stringify([projects, activeId, [...status], [...asleep], [...attn], accounts.map((a) => [a.id, a.label, a.auth?.state])]);
-      if (pk !== projKey) { projKey = pk; renderProjects(); }
+      if (pk !== projKey) { projKey = pk; renderProjects(); renderTeam(); }
       const ak = JSON.stringify([accounts, agyShown(), cmdShown(), ocShown()]);
       if (ak !== acctKey && !editing) { acctKey = ak; renderAccounts(); }
     },

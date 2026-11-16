@@ -375,6 +375,10 @@ async function refreshAccounts() {
 }
 
 // ---- Actions ----
+/** v3.81 team mode and the staff into the sidebar. */
+async function loadStaff() {
+  try { sidebar?.setTeam(await api.staff?.list()); } catch (e) { console.error(e); }
+}
 async function addProject() {
   try {
     const p = await api.projects.add();
@@ -638,6 +642,12 @@ sidebar = mountSidebar($('sidebar'), {
   setManager: (on) => api.prefs?.set({ manager: on }).then((p) => sidebar.setManager(p?.manager)).catch((e) => console.error(e)),
   setShareMcp: (on) => api.prefs?.set({ shareMcp: on }).then((p) => sidebar.setShareMcp(p?.shareMcp)).catch((e) => console.error(e)),
   setReloadMcp: (on) => api.prefs?.set({ reloadMcp: on }).then((p) => sidebar.setReloadMcp(p?.reloadMcp)).catch((e) => console.error(e)),
+  // v3.81 team: the setting and the member popup's calls; every change reloads the list from main
+  team: {
+    setMode: (on) => api.prefs?.set({ teamMode: on }).then(loadStaff).catch((e) => console.error(e)),
+    save: (form) => api.staff.save(form).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+    remove: (id) => api.staff.remove(id).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+  },
   setFallback: (on) => api.prefs?.set({ fallback: on }).then((p) => sidebar.setFallback(p?.fallback)).catch((e) => console.error(e)),
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
   setTheme: setThemeSetting,
@@ -805,6 +815,7 @@ api.prefs?.get().then((p) => {
   sidebar.setManager(p?.manager);
   sidebar.setShareMcp(p?.shareMcp);
   sidebar.setReloadMcp(p?.reloadMcp);
+  loadStaff();
   sidebar.setFallback(p?.fallback);
   sidebar.setSleep(p?.sleepMinutes);
   sidebar.setEngineRows(p);
