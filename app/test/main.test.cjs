@@ -3345,6 +3345,117 @@ test('yedek hesap (v3.17): terminal ipucu renkli ve parça parça gelen iletiyi 
   assert.equal(FB.plainText('a\x1b]0;title\x07b\x1b[2Cc'), 'ab c');
 });
 
+// v3.77: a compaction that failed at the usage limit ("Prompt is too long · automatic compaction failed: …")
+const COMPACT_MSG = "Prompt is too long · automatic compaction failed: You've reached your Fable limit. Run /usage-credits to continue or switch models with /model. · /clear to start fresh";
+const COMPACT_HIT = "automatic compaction failed: You've reached your Fable limit";
+
+test('backup account (v3.77): a compaction that failed at the usage limit is found on the terminal, nothing near it is', () => {
+  assert.deepEqual(FB.scanPty({ tail: '' }, COMPACT_MSG), { scan: { tail: '' }, hit: COMPACT_HIT, compaction: true });
+  // in pieces
+  let r = FB.scanPty({ tail: '' }, 'Prompt is too long · automatic compac');
+  assert.equal(r.hit, null);
+  r = FB.scanPty(r.scan, "tion failed: You've reached your Fa");
+  assert.equal(r.hit, null);
+  r = FB.scanPty(r.scan, 'ble limit. Run /usage-credits to continue');
+  assert.deepEqual([r.hit, r.compaction], [COMPACT_HIT, true]);
+  assert.equal(FB.scanPty(r.scan, ' or switch models with /model.').hit, null, 'found once');
+  // colors, and a line wrapped by the terminal
+  r = FB.scanPty({ tail: '' }, "\x1b[31mPrompt is too long\x1b[0m · \x1b[1mautomatic compaction failed:\x1b[22m\r\n  \x1b[2mYou've reached your \x1b[1mFable\x1b[22m limit.\x1b[0m");
+  assert.deepEqual([r.hit, r.compaction], [COMPACT_HIT, true]);
+  // a curly apostrophe
+  r = FB.scanPty({ tail: '' }, COMPACT_MSG.replace("'", '’'));
+  assert.deepEqual([r.hit, r.compaction], [COMPACT_HIT, true]);
+  // the other usage-limit causes
+  for (const s of [
+    "Prompt is too long · automatic compaction failed: You've hit your session limit · resets 3pm (Europe/Istanbul)",
+    "Prompt is too long · automatic compaction failed: You've hit your Opus 4.7 limit · resets 5pm",
+    "Prompt is too long · automatic compaction failed: You're out of usage credits",
+    'Prompt is too long · automatic compaction failed: You’re out of extra usage',
+  ]) {
+    assert.equal(FB.scanPty({ tail: '' }, s).compaction, true, s);
+    assert.ok(FB.isCompactionLimitText(s), s);
+  }
+  // too long without a limit, a failure for another reason, fast mode's cooldown: nothing
+  for (const s of [
+    'Prompt is too long · /clear to start fresh', 'Prompt is too long',
+    'Prompt is too long · automatic compaction failed: API Error: 529 overloaded',
+    'Prompt is too long · automatic compaction failed: The response stopped arriving.',
+    "Prompt is too long · automatic compaction failed: You've hit your fast limit · resets in 8m",
+    "You've hit your fast limit · resets in 8m",
+  ]) {
+    assert.deepEqual(FB.scanPty({ tail: '' }, s), { scan: { tail: s.slice(-400) }, hit: null, compaction: false }, s);
+    assert.ok(!FB.isCompactionLimitText(s), s);
+  }
+  // the limit words alone, or not as the failure's cause, stay the hint they were (v3.17)
+  assert.deepEqual(FB.scanPty({ tail: '' }, "You've reached your Fable limit. Run /usage-credits"), { scan: { tail: '' }, hit: "You've reached your Fable limit", compaction: false });
+  assert.equal(FB.scanPty({ tail: '' }, "automatic compaction failed: timeout. Earlier: You've reached your Fable limit").compaction, false);
+  assert.ok(!FB.isUsageLimitText(COMPACT_MSG), 'not one of the plain usage-limit messages');
+});
+
+test('backup account (v3.77): the compaction failure counts unless the transcript or the tab contradicts it', () => {
+  const at = Date.parse('2026-10-17T10:00:05.000Z');
+  const now = at + FB.COMPACT_SETTLE_MS;
+  const answer = (text, ts, extra = {}) => JSON.stringify({ type: 'assistant', timestamp: ts, message: { role: 'assistant', content: [{ type: 'text', text }] }, ...extra });
+  const before = `{"partial line"\n${userEntry('do the thing')}\n${answer('done', '2026-10-17T10:00:03.000Z')}\n{"type":"system","subtype":"turn_duration","timestamp":"2026-10-17T10:00:09.000Z"}\n`;
+  const state = (tail, o = {}) => FB.compactionState({ at, now, transcript: true, contradicted: FB.compactionContradicted(tail, { at }), ...o });
+  // nothing was written about it (what Claude Code 2.1.325 does): the screen decides
+  assert.equal(FB.compactionContradicted(before, { at }), false);
+  assert.equal(state(before), 'limit');
+  // a prompt or an answer came after: the session went on
+  assert.equal(state(`${before}${userEntry('carry on', '2026-10-17T10:00:20.000Z')}\n`), 'void');
+  assert.equal(state(`${before}${answer('still working', '2026-10-17T10:00:06.000Z')}\n`), 'void');
+  // meta lines and sub-agent lines are not the session going on
+  assert.equal(state(`${before}${userEntry('<caveat>', '2026-10-17T10:00:20.000Z', { isMeta: true })}\n${answer('x', '2026-10-17T10:00:21.000Z', { isSidechain: true })}\n`), 'limit');
+  // the words are conversation: a prompt quoting them, the model writing them, a tool result holding them
+  assert.equal(state(`${before}${userEntry(`what is this? ${COMPACT_MSG}`, '2026-10-17T10:00:04.000Z')}\n`), 'void');
+  assert.equal(state(`${before}${answer(`The screen said: ${COMPACT_MSG}`, '2026-10-17T10:00:04.500Z')}\n`), 'void');
+  const toolResult = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:04.900Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: `fallback.js: ${COMPACT_MSG}` }] } });
+  assert.equal(state(`${before}${toolResult}\n`), 'void');
+  // … but an old quote does not explain a sighting much later
+  const late = at + 10 * 60e3;
+  const quoted = `${before}${userEntry(`what is this? ${COMPACT_MSG}`, '2026-10-17T10:00:04.000Z')}\n`;
+  assert.equal(FB.compactionContradicted(quoted, { at: late }), false);
+  // Claude Code's own error entry, should a version write one, is not a quote: the transcript rule takes it (v3.17)
+  const own = limitEntry({ apiError: null, info: null, text: COMPACT_MSG });
+  assert.equal(FB.compactionContradicted(`${before}${own}\n`, { at: Date.parse('2026-10-17T10:00:04.000Z') }), false);
+  const since = Date.parse('2026-10-17T10:00:00.000Z');
+  assert.deepEqual(FB.limitFromTranscript(`${before}${own}\n`, { since }), { at, resetsAt: null, type: null, text: COMPACT_MSG.slice(0, 200) });
+  assert.equal(FB.limitFromTranscript(`${before}${limitEntry({ apiError: null, info: null, text: 'Prompt is too long' })}\n`, { since }), null);
+  assert.equal(FB.limitFromTranscript(`${before}${answer(COMPACT_MSG, '2026-10-17T10:00:05.000Z')}\n`, { since }), null, 'the model writing the words');
+  // not yet: the transcript may still catch up, a turn is running (the model printing the words), text is being typed, no transcript
+  assert.equal(state(before, { now: at + FB.COMPACT_SETTLE_MS - 1 }), 'wait');
+  assert.equal(state(before, { busy: true }), 'wait');
+  assert.equal(state(before, { draft: true }), 'wait');
+  assert.equal(state(before, { transcript: false }), 'wait');
+  // too old to act on: the default window is over
+  assert.equal(state(before, { now: at + FB.DEFAULT_LIMIT_MS - 1 }), 'limit');
+  assert.equal(state(before, { now: at + FB.DEFAULT_LIMIT_MS }), 'void');
+  assert.equal(FB.compactionState({ at: undefined, now, transcript: true }), 'void');
+});
+
+test('backup account (v3.77): the tab stopped by the compaction failure moves and carries on by itself', () => {
+  const R = require('../src/resume.js');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  // the sighting is one of the project's hits, so the switch rules of v3.17 apply and the tab is in carryOn
+  assert.match(src, /if \(!hit\) hit = compactionSeen\(id, r\.dir, account\.configDir, w, now\);/);
+  assert.match(src, /if \(hit && !limitDone\.has\(`\$\{id\}\|\$\{hit\.at\}`\)\) hits\.push\(\{ id, hit \}\);/);
+  assert.match(src, /moveProject\(p\.id, account, \{ carryOn: hits\.map\(\(h\) => h\.id\) \}\);/);
+  assert.match(src, /busy = Boolean\(sid\) && \(carryOn\.includes\(id\) \|\|/);
+  // a carried-on tab resumes its own conversation with the prompt as claude's positional argument: no key is pressed
+  const opts = PD.restartAfterMove({ sessionId: 'abc-1', busy: true }, R.UNFINISHED_PROMPT);
+  assert.deepEqual(opts, { sessionId: 'abc-1', prompt: R.UNFINISHED_PROMPT });
+  const args = R.claudeArgs(['--model', 'x'], ['--resume', 'abc-1'], opts.prompt);
+  assert.deepEqual(args, ['--model', 'x', '--resume', 'abc-1', R.promptArg(R.UNFINISHED_PROMPT)]);
+  // the reset time is unknown: the account is marked for the default window from the sighting, also when looked at again later
+  const seen = 1_800_000_000_000;
+  assert.deepEqual(FB.markFor(seen + FB.DEFAULT_LIMIT_MS, seen + 1500), { at: seen + 1500, until: seen + FB.DEFAULT_LIMIT_MS });
+  assert.deepEqual(FB.markFor(seen + FB.DEFAULT_LIMIT_MS, seen + 3600e3), { at: seen + 3600e3, until: seen + FB.DEFAULT_LIMIT_MS });
+  assert.match(src, /Math\.min\(now, \.\.\.hits\.map\(\(h\) => h\.hit\.at\)\) \+ FB\.DEFAULT_LIMIT_MS/);
+  // no backup that can take over: the switch guard of v3.17 still refuses, and the notice is the existing one
+  assert.equal(FB.switchAllowed([seen - 30000], seen).reason, 'soon');
+  assert.deepEqual(FB.pickBackup({ choice: null, current: 'default', accounts: [] }), { reason: 'off' });
+});
+
 test('yedek hesap (v3.17): hesabın limitte olduğu süre (kota %100, görülen limit, yeni kota okuması)', () => {
   const now = 1_000_000_000_000;
   assert.equal(FB.limitedUntil({ now }), 0);

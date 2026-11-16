@@ -14,6 +14,13 @@
 //   echoed, and the model may print the words, so the terminal alone never switches an account.
 // - The quota. An account whose 5-hour or weekly window is at 100 % and not reset yet is "at its limit": it is never
 //   picked as a backup and a project does not go back to it.
+// - A compaction that failed at the limit (v3.77, Claude Code 2.1.325). When the conversation is too long and the
+//   automatic compaction's own request is refused for the usage limit, the turn ends on
+//   "Prompt is too long · automatic compaction failed: You've reached your Fable limit. Run /usage-credits …". Claude
+//   Code builds it as an API error message with error "invalid_request" and no apiError, and no such entry was found
+//   in any transcript: the screen is the only place it is seen. So for this one phrase the terminal decides, guarded
+//   by the transcript (compactionState): the session must not have gone on, and no entry may hold the words (a prompt,
+//   an answer or a tool result that quotes them is conversation, not the failure).
 
 const LIMIT_PREFIXES = ["You've hit your", "You've reached your", "You're out of usage credits", "You're out of extra usage"];
 // Fast mode's own cooldown ("You've hit your fast limit · resets in 8m") turns fast mode off; it does not stop work.
@@ -25,6 +32,8 @@ const MIN_STAY_MS = 2 * 60e3;        // a project stays at least this long on an
 const LOOP_WINDOW_MS = 3600e3;       // at most MAX_SWITCHES automatic moves of one project in this window
 const MAX_SWITCHES = 4;
 const PTY_GRACE_MS = 10000;          // terminal text in the first seconds of a start is the resumed conversation redrawn
+const COMPACT_SETTLE_MS = 3000;      // a compaction failure on screen is acted on after this long (the transcript catches up)
+const COMPACT_QUOTE_MS = 60000;      // an entry this long before the sighting that holds the words explains the sighting
 const TAIL_BYTES = 64 * 1024;        // how much of a transcript's end is read
 
 const normQuote = (s) => String(s ?? '').replace(/[‘’]/g, "'");
@@ -35,6 +44,12 @@ function isUsageLimitText(text) {
   if (!s || NOT_LIMITS.some((p) => s.startsWith(p))) return false;
   return LIMIT_PREFIXES.some((p) => s.startsWith(p)) || LEGACY.test(s);
 }
+
+// "automatic compaction failed: " followed at once by one of the usage-limit messages (never fast mode's cooldown).
+const COMPACT_FAILED = 'automatic compaction failed';
+const COMPACT_LIMIT = /automatic compaction failed: (?:You've (?:hit|reached) your (?!fast limit)[A-Za-z0-9.' -]{0,40}?limit|You're out of (?:usage credits|extra usage))/;
+/** Is this text Claude Code's "automatic compaction failed" message with a usage limit as its cause? */
+const isCompactionLimitText = (text) => COMPACT_LIMIT.test(normQuote(text));
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 /**
@@ -83,7 +98,7 @@ function limitFromTranscript(tail, { since = 0 } = {}) {
     if (e.type === 'user') return null;
     if (!e.isApiErrorMessage) return null;
     const text = textOf(e.message?.content);
-    if (e.apiError !== 'usage_limit_reached' && !isUsageLimitText(text)) return null;
+    if (e.apiError !== 'usage_limit_reached' && !isUsageLimitText(text) && !isCompactionLimitText(text)) return null;
     const at = Date.parse(e.timestamp);
     if (!Number.isFinite(at) || at < since) return null;
     const info = e.apiErrorParams?.rate_limit_info;
@@ -111,13 +126,53 @@ const PTY_TAIL = 400;
 
 /**
  * Scans a chunk of a tab's terminal output. scan: { tail } carried between chunks (a message can arrive in pieces).
- * → { scan, hit: the matched words or null }. After a hit the tail starts over, so the same words are not hit twice.
+ * → { scan, hit: the matched words or null, compaction: the hit is a compaction that failed at the limit (v3.77) }.
+ * After a hit the tail starts over, so the same words are not hit twice.
  */
 function scanPty(scan, chunk) {
   const text = (scan?.tail || '') + normQuote(plainText(chunk));
+  const c = COMPACT_LIMIT.exec(text);
+  if (c) return { scan: { tail: '' }, hit: c[0], compaction: true };
   const m = PTY_LIMIT.exec(text);
-  if (m) return { scan: { tail: '' }, hit: m[0] };
-  return { scan: { tail: text.slice(-PTY_TAIL) }, hit: null };
+  if (m) return { scan: { tail: '' }, hit: m[0], compaction: false };
+  return { scan: { tail: text.slice(-PTY_TAIL) }, hit: null, compaction: false };
+}
+
+// --- a compaction that failed at the limit (v3.77): the terminal decides, the transcript may contradict
+/**
+ * Does the end of the transcript contradict a compaction failure seen on screen at `at` (ms)? It does when
+ * - a prompt or an answer was written after the sighting (the session went on, or the words were being written), or
+ * - an entry written from COMPACT_QUOTE_MS before the sighting on holds the words: a prompt, an answer or a tool
+ *   result quoting them is what the screen showed. Claude Code's own API error entry is not a quote.
+ * @param {string} tail @param {{ at: number }} o
+ */
+function compactionContradicted(tail, { at }) {
+  for (const raw of String(tail || '').split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (!e || typeof e !== 'object') continue;
+    const ts = Date.parse(e.timestamp);
+    if (!Number.isFinite(ts) || e.isApiErrorMessage) continue;
+    const turn = (e.type === 'user' || e.type === 'assistant') && !e.isMeta && !e.isSidechain;
+    if (turn && ts > at) return true;
+    if (ts >= at - COMPACT_QUOTE_MS && line.includes(COMPACT_FAILED)) return true;
+  }
+  return false;
+}
+
+/**
+ * What a compaction failure seen on screen at `at` means now.
+ * transcript: the tab's session has a transcript; contradicted: compactionContradicted of its end;
+ * busy: Claude Code says a turn is running or a dialog is open (the failure ends the turn; a model printing the
+ * words is mid-turn); draft: text typed but not sent (the words may be the person's typing).
+ * → 'limit' (act as on a usage limit) | 'wait' (look again) | 'void' (not a failure, or too old: never acted on)
+ */
+function compactionState({ at, now = Date.now(), transcript = false, contradicted = false, busy = false, draft = false }) {
+  if (!Number.isFinite(at) || contradicted || now - at >= DEFAULT_LIMIT_MS) return 'void';
+  if (!transcript || busy || draft || now - at < COMPACT_SETTLE_MS) return 'wait';
+  return 'limit';
 }
 
 // --- accounts at their limit
@@ -216,7 +271,8 @@ function normalizeMarks(raw, accountIds, now = Date.now()) {
 }
 
 module.exports = {
-  LIMIT_PREFIXES, DEFAULT_LIMIT_MS, MIN_STAY_MS, MAX_SWITCHES, PTY_GRACE_MS, TAIL_BYTES,
-  isUsageLimitText, parseResetText, limitFromTranscript, plainText, scanPty,
+  LIMIT_PREFIXES, DEFAULT_LIMIT_MS, MIN_STAY_MS, MAX_SWITCHES, PTY_GRACE_MS, TAIL_BYTES, COMPACT_SETTLE_MS, COMPACT_QUOTE_MS,
+  isUsageLimitText, isCompactionLimitText, parseResetText, limitFromTranscript, plainText, scanPty,
+  compactionContradicted, compactionState,
   limitedUntil, markFor, fullness, pickBackup, switchAllowed, shouldReturn, normalizeMarks,
 };

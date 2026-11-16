@@ -2746,7 +2746,8 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
 
 // --- backup account at the usage limit (contract v3.17, src/fallback.js)
 // A tab whose session ends on Claude Code's usage-limit error (its transcript; the terminal's words only with the
-// account's quota at 100 %) moves its project to the project's backup account with moveProject: every tab resumes its
+// account's quota at 100 %; v3.77: "automatic compaction failed: <usage limit>" on screen, which no transcript entry
+// records, unless the transcript contradicts it) moves its project to the project's backup account with moveProject: every tab resumes its
 // own conversation there and the tabs stopped by the limit are told to carry on. The account it left is its home; once
 // the home's limit resets and every tab is idle, the project goes back. Each account's limit is remembered until its
 // reset (state.accountLimits), so no project moves onto an account at its limit and none ping-pongs.
@@ -2762,7 +2763,11 @@ function watchLimit(id, d, startedAt) {
   if (!w) return;
   const r = FB.scanPty(w.scan, d);
   w.scan = r.scan;
-  if (r.hit && Date.now() - startedAt > FB.PTY_GRACE_MS) w.hitAt = Date.now();
+  if (!r.hit || Date.now() - startedAt <= FB.PTY_GRACE_MS) return;
+  w.hitAt = Date.now();
+  // v3.77: "automatic compaction failed: <usage limit>" leaves no transcript entry, so its first sighting in this run
+  // of the tab is kept and judged in checkLimits (compactionSeen); later sightings are the same words redrawn.
+  if (r.compaction && !w.compact) w.compact = { at: w.hitAt, void: false };
 }
 /** The end of a file (FB.TAIL_BYTES), or ''. */
 function readTail(file) {
@@ -2791,6 +2796,30 @@ function transcriptLimit(id, dir, configDir) {
   const hit = FB.limitFromTranscript(readTail(file), { since });
   tailSeen.set(file, { key, hit });
   return hit;
+}
+const compactTail = new Map(); // transcript → { key: "size|mtime|at", contradicted }
+/**
+ * v3.77: the compaction failure seen on the tab's screen (w.compact) → a limit hit, or null. FB.compactionState decides:
+ * the tab's transcript must not contradict it, no turn may be running and no text may be waiting unsent.
+ */
+function compactionSeen(id, dir, configDir, w, now) {
+  const c = w?.compact;
+  if (!c || c.void) return null;
+  const sid = lastSid.get(id);
+  const file = sid ? TIO.findTranscript(dir, sid, configDir, app.getPath('home'))?.file : null;
+  const st = file ? statOrNull(file) : null;
+  let contradicted = false;
+  if (st) {
+    const key = `${st.size}|${st.mtimeMs}|${c.at}`;
+    const old = compactTail.get(file);
+    contradicted = old?.key === key ? old.contradicted : FB.compactionContradicted(readTail(file), { at: c.at });
+    compactTail.set(file, { key, contradicted });
+  }
+  const status = liveSession(id, configDir)?.claude?.status;
+  const busy = typeof status === 'string' && status !== '' && status !== 'idle' && status !== 'shell';
+  const s = FB.compactionState({ at: c.at, now, transcript: Boolean(st), contradicted, busy, draft: Boolean(activity.get(id)?.draft) });
+  if (s === 'void') c.void = true;
+  return s === 'limit' ? { at: c.at, resetsAt: null, type: null, text: 'automatic compaction failed' } : null;
 }
 const accountName = (a) => (a.id === A.DEFAULT_ID ? T('main.defaultAccount') : a.label);
 /** Accounts as FB.pickBackup reads them: login state and quota. */
@@ -2822,6 +2851,7 @@ function checkLimits() {
       if (!r) continue;
       let hit = transcriptLimit(id, r.dir, account.configDir);
       const w = ptyLimit.get(id);
+      if (!hit) hit = compactionSeen(id, r.dir, account.configDir, w, now);
       if (!hit && w?.hitAt && now - w.hitAt < 60000 && usageFull()) hit = { at: w.hitAt, resetsAt: null, type: null, text: '' };
       if (hit && !limitDone.has(`${id}|${hit.at}`)) hits.push({ id, hit });
     }
@@ -2831,7 +2861,9 @@ function checkLimits() {
 }
 function onLimit(p, account, hits, now) {
   const resets = hits.map((h) => h.hit.resetsAt).filter(Number.isFinite);
-  const mark = FB.markFor(resets.length ? Math.max(...resets) : null, now);
+  // no reset time known: the default window counts from when the limit was seen, so a project that stays stuck
+  // (looked at again every 1.5 s) does not push the account's mark further out
+  const mark = FB.markFor(resets.length ? Math.max(...resets) : Math.min(now, ...hits.map((h) => h.hit.at)) + FB.DEFAULT_LIMIT_MS, now);
   setLimitMark(account.id, mark);
   const done = () => { for (const h of hits) limitDone.add(`${h.id}|${h.hit.at}`); };
   const choice = P.backupOf(p);
