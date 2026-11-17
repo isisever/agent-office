@@ -971,9 +971,34 @@ export function mountSidebar(el, on) {
     teamList.replaceChildren(...teamRows({ h, t, lang: locale(), staff: team.staff, presets: team.presets, projects, accounts, labelOf, onEdit: (m) => editMember(m), desks, onDesk: (pid, sid) => on.team?.openDesk(pid, sid), onPersonal: (sid) => on.team?.openPersonal?.(sid) }));
   }
   const listPacks = () => Promise.resolve(on.skillPacks?.list(null)).then((r) => r?.packs || []);
+  /**
+   * v3.88 a member's personal workspace is not in the PROJECTS list, so its session settings are edited in the member's
+   * popup: the project popup's own controls and save calls, collected as a draft and applied when the member is saved.
+   * Only what a desk's session reads (model, agent model, context cap, savings, the two permission switches). Before
+   * the workspace exists only the two switches are offered; main keeps them on the member ('personal:<staff id>').
+   */
+  function personalSettings(m) {
+    const map = new Map();
+    const own = m ? projects.find((p) => p.staffOwner === m.id) : null;
+    const p = own || { id: '', name: '', engine: 'claude', ...(m?.personal || {}) };
+    const controls = (own
+      ? [bossModelSelect(p), agentModelSelect(p), contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p)]
+      : [autoApproveToggle(p), skipPermissionsToggle(p)]).filter(Boolean);
+    return {
+      map, exists: Boolean(own), controls,
+      apply: async (memberId) => {
+        if (!own) p.id = `personal:${memberId}`;
+        for (const fn of map.values()) { try { await fn(); } catch (e) { console.error(e); } }
+      },
+    };
+  }
   function editMember(m, initialPreset = '') {
+    const personal = personalSettings(m);
+    badFields.clear();   // the member popup's own Save guards the custom model field (not a project popup's button)
     openMemberEditor({
-      h, t, lang: locale(), member: m, staff: team.staff, presets: team.presets, projects, accounts, labelOf, openModal, closeModal,
+      bindSave: (btn) => { saveButton = btn; syncSave(); }, hasBadFields: () => badFields.size > 0, reload: () => on.team?.reload?.(),
+      h, t, lang: locale(), member: m, staff: team.staff, presets: team.presets, projects, accounts, labelOf, closeModal, personal,
+      openModal: (...a) => { openModal(...a); draft = personal.map; },   // after openModal: its closeModal clears the previous draft
       save: (form) => on.team?.save(form), remove: (id) => on.team?.remove(id),
       listPacks, listTools: () => Promise.resolve(on.team?.tools?.() || []), openWizard: () => openWizard(),
       removeRole: (id) => on.team?.removeRole(id), initialPreset, mailAccounts: mail ? mail.accounts() : [],

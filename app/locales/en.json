@@ -626,6 +626,10 @@
     "resetRole": "↺ Back to the preset",
     "resetRoleTitle": "Refill the role's fields from the preset",
     "applyNote": "Changes reach the member's desks: idle ones restart in their conversation, busy ones get them at their next start.",
+    "personal": "Personal workspace",
+    "personalHint": "Settings of this member's personal workspace (its own folder for work outside any project). They work like a project's settings and are applied when you save.",
+    "personalHintNew": "The personal workspace is made the first time this member works outside a project; these two switches are applied then. Its model and other session settings can be set here once it exists.",
+    "personalMailHint": "This member has mail: the mail guard makes its desks ask before commands, edits and web access, whatever Auto-approve says. Skip permissions removes mail from that desk instead.",
     "dept": {
       "management": "Management",
       "marketing": "Marketing",

@@ -2209,7 +2209,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   if (args.staff) {
     // a personal workspace that is not made yet: the dialog names the folder it will get (`targetName`)
     const c = personal ? { staffName: personal.name, targetName: personalFolderName(personal) } : await hqStaffDesk(args, remote, target, { open: false });
-    if (c.reason) return { status: 'rejected', reason: c.reason };
+    if (c.reason) return { status: 'rejected', reason: c.reason, ...(c.hint ? { hint: c.hint } : {}) };
     args = { ...args, staffName: c.staffName, ...(c.targetName ? { targetName: c.targetName } : {}) };
   }
   const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '' });   // a project routine: only its own project
@@ -2234,7 +2234,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
       args = { ...args, project: own.id };
     }
     const d = await hqStaffDesk(args, remote, byName(state.projects, args.project));   // checked again: the dialog was open meanwhile
-    if (d.reason) return { status: 'rejected', reason: d.reason };
+    if (d.reason) return { status: 'rejected', reason: d.reason, ...(d.hint ? { hint: d.hint } : {}) };
     args = { ...args, desk: d.desk, staffName: d.staffName };
   }
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
@@ -2345,7 +2345,7 @@ async function hqDispatchStages(args, request, rrun) {
       if (s.staff) {
         const m = teamOn() ? ST.findMember(state.staff, s.staff) : null;
         if (!m) return no(teamOn() ? 'unknown-staff' : 'no-team', { stage: s.n });
-        if (!ST.mayWork(m, p)) return no('staff-not-allowed', { stage: s.n });
+        if (!ST.mayWork(m, p)) return no('staff-not-allowed', { stage: s.n, hint: ST.NOT_ALLOWED_HINT });
         s.staff = m.name;
       }
       Object.assign(s, { pub: 'self', machineName: selfName(), projectName: p.name, projectId: p.id });
@@ -4036,6 +4036,13 @@ function ensurePersonal(m) {
   const active = state.activeId;
   const r = P.addProject(state, dir, m.accountId ? { accountId: m.accountId } : {});
   commit({ ...r.state, activeId: active ?? r.state.activeId, projects: r.state.projects.map((p) => (p.id === r.project.id ? { ...p, staffOwner: m.id, ...(appMade ? { appMade: true } : {}) } : p)) });
+  // v3.88 the permission switches the person chose in the member's popup before the workspace existed: applied with
+  // the project's own setters, then gone from the member (off when never chosen)
+  const own = ST.personalOf(state.projects, m.id);
+  const kept = ST.takePersonalDraft(state.staff || [], m.id);
+  if (own && (kept.draft.autoApprove || kept.draft.skipPermissions)) {
+    commit(ST.applyPersonalDraft(state, m.id, own.id, { autoApprove: P.setProjectAutoApprove, skipPermissions: P.setProjectSkipPermissions }));
+  }
   return ST.personalOf(state.projects, m.id);
 }
 /**
@@ -4070,7 +4077,7 @@ async function hqStaffDesk(args, remote, target, { open = true } = {}) {
   const m = ST.findMember(state.staff, args.staff);
   if (!m) return { reason: 'unknown-staff' };
   if (!target) return { reason: 'unknown-project' };
-  if (!ST.mayWork(m, target)) return { reason: 'staff-not-allowed' };
+  if (!ST.mayWork(m, target)) return { reason: 'staff-not-allowed', hint: ST.NOT_ALLOWED_HINT };
   if (P.engineOf(target) !== 'claude') return { reason: 'engine' };
   if (!open) return { staffName: m.name };
   const d = await openDesk(target.id, m.id, { start: false });
@@ -4245,8 +4252,16 @@ ipcMain.handle('projects:setProjectFiles', (_e, id, value) => {
 // Auto-approve permission prompts (contract v3.71): true lets the plugin answer Claude Code's permission dialogs with
 // allow for this project. The session reads it at its start: next start, idle Claude Code tabs at once.
 // Returns the restarted pty ids.
-ipcMain.handle('projects:setAutoApprove', (_e, id, value) => {
-  const next = P.setProjectAutoApprove(state, id, value === true);
+/**
+ * v3.88 a project-setting call may name a member's personal workspace ('personal:<staff id>', from the member's
+ * popup): the same setter runs on that workspace's project, or, while it is not made yet, on the member's draft
+ * (ST.setPersonalDraft; applied by ensurePersonal). → { next, id } (id: the project to restart, '' for a draft)
+ */
+function personalSetting(id, set) {
+  return ST.routePersonalSetting(state, id, set);
+}
+ipcMain.handle('projects:setAutoApprove', (_e, target, value) => {
+  const { next, id } = personalSetting(target, (s, pid) => P.setProjectAutoApprove(s, pid, value === true));
   if (next === state) return { restarted: [] };
   commit(next);
   const p = P.findProject(state, id);
@@ -4254,8 +4269,8 @@ ipcMain.handle('projects:setAutoApprove', (_e, id, value) => {
 });
 // Skip permissions (contract v3.72): true starts the project's Claude Code tabs with --dangerously-skip-permissions.
 // claude reads its arguments at its start: next start, idle Claude Code tabs at once. Returns the restarted pty ids.
-ipcMain.handle('projects:setSkipPermissions', (_e, id, value) => {
-  const next = P.setProjectSkipPermissions(state, id, value === true);
+ipcMain.handle('projects:setSkipPermissions', (_e, target, value) => {
+  const { next, id } = personalSetting(target, (s, pid) => P.setProjectSkipPermissions(s, pid, value === true));
   if (next === state) return { restarted: [] };
   commit(next);
   const p = P.findProject(state, id);

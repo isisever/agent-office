@@ -752,6 +752,7 @@ sidebar = mountSidebar($('sidebar'), {
   team: {
     setMode: (on) => api.prefs?.set({ teamMode: on }).then(loadStaff).catch((e) => console.error(e)),
     save: (form) => api.staff.save(form).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+    reload: () => loadStaff(),
     remove: (id) => api.staff.remove(id).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
     openDesk: (projectId, staffId) => openDesk(projectId, staffId),
     openPersonal: (staffId) => openDesk('', staffId),   // v3.83 amendment: the member's personal workspace

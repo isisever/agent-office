@@ -119,8 +119,74 @@ function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds 
   return {
     id: raw.id, name, role, ...(department ? { department } : {}), ...(accountId ? { accountId } : {}),
     ...(Object.keys(packMap(raw.skillPacks)).length ? { skillPacks: packMap(raw.skillPacks) } : {}), ...(tools.length ? { tools } : {}), ...(mail.length ? { mail } : {}), projects,
+    ...(Object.keys(personalDraft(raw.personal)).length ? { personal: personalDraft(raw.personal) } : {}),
   };
 }
+
+// ---------- the personal workspace's settings before it exists (v3.88) ----------
+// A member's personal workspace is a project (`staffOwner`) that is not in the PROJECTS list; its session settings are
+// edited in the member's popup with the project popup's controls and save calls. Until the workspace is made, the two
+// permission switches are kept on the member (`personal`), written by the project's own setters, and move to the
+// project when it is created. Both are off unless the person turned them on.
+const PERSONAL_PREFIX = 'personal:';
+const DRAFT_ID = 'personal-draft';
+/** The switches a member may carry for a workspace that is not made yet. @param {any} raw */
+const personalDraft = (raw) => ({ ...(raw?.autoApprove === true ? { autoApprove: true } : {}), ...(raw?.skipPermissions === true ? { skipPermissions: true } : {}) });
+/** 'personal:<staff id>' (a project-setting call for a member's personal workspace) → the staff id, else ''. */
+const personalTarget = (id) => (typeof id === 'string' && id.startsWith(PERSONAL_PREFIX) && STAFF_ID_RE.test(id.slice(PERSONAL_PREFIX.length)) ? id.slice(PERSONAL_PREFIX.length) : '');
+const withPersonal = ({ personal: _p, ...rest }, draft) => (Object.keys(draft).length ? { ...rest, personal: draft } : rest);
+/**
+ * Runs a project setter (`set(state, projectId)`, e.g. P.setProjectAutoApprove) on the member's draft, so the draft
+ * gets the project's own validation. → the staff list (the same array when nothing changed or the member is unknown).
+ * @param {any[]} staff @param {string} memberId @param {(state: any, projectId: string) => any} set
+ */
+function setPersonalDraft(staff, memberId, set) {
+  const list = Array.isArray(staff) ? staff : [];
+  const m = list.find((x) => x.id === memberId);
+  if (!m) return staff;
+  const before = { projects: [{ id: DRAFT_ID, ...personalDraft(m.personal) }] };
+  const after = set(before, DRAFT_ID);
+  if (!after || after === before) return staff;
+  const draft = personalDraft(after.projects?.find((p) => p.id === DRAFT_ID));
+  return list.map((x) => (x.id === memberId ? withPersonal(x, draft) : x));
+}
+/** The member's draft leaves the member (the workspace was made). → { staff, draft } */
+function takePersonalDraft(staff, memberId) {
+  const list = Array.isArray(staff) ? staff : [];
+  const m = list.find((x) => x.id === memberId);
+  const draft = personalDraft(m?.personal);
+  return { staff: m?.personal ? list.map((x) => (x.id === memberId ? withPersonal(x, {}) : x)) : list, draft };
+}
+/**
+ * Routes a project-setting call: a real project with that id always wins; only when no project has it does
+ * 'personal:<staff id>' name the member's workspace (the project, or the member's draft while it is not made yet).
+ * @param {any} state @param {string} id @param {(state: any, projectId: string) => any} set
+ * @returns {{ next: any, id: string }} id: the project to restart, '' for a draft
+ */
+function routePersonalSetting(state, id, set) {
+  const projects = Array.isArray(state?.projects) ? state.projects : [];
+  const sid = projects.some((p) => p?.id === id) ? '' : personalTarget(id);
+  if (!sid) return { next: set(state, id), id };
+  const own = personalOf(projects, sid);
+  if (own) return { next: set(state, own.id), id: own.id };
+  const cur = state.staff || [];
+  const staff = setPersonalDraft(cur, sid, set);
+  return { next: staff === cur ? state : { ...state, staff }, id: '' };
+}
+/**
+ * The workspace was made: the member's draft moves onto the project (with the project's own setters) and leaves the member.
+ * @param {any} state @param {string} memberId @param {string} projectId
+ * @param {{ autoApprove: Function, skipPermissions: Function }} setters (state, projectId, true) → state
+ */
+function applyPersonalDraft(state, memberId, projectId, setters) {
+  const kept = takePersonalDraft(state.staff || [], memberId);
+  let next = { ...state, staff: kept.staff };
+  if (kept.draft.autoApprove) next = setters.autoApprove(next, projectId, true);
+  if (kept.draft.skipPermissions) next = setters.skipPermissions(next, projectId, true);
+  return next;
+}
+/** What HQ reads next to the refusal `staff-not-allowed` (the reason code itself is unchanged). */
+const NOT_ALLOWED_HINT = 'The member is not assigned to that project. The person can assign it in the member\'s settings (TEAM panel, edit the member, Projects); tell them so.';
 
 // ---------- the person's role library (v3.84) ----------
 // Roles the person made (the role wizard, or "save as a role" later) live in state.customRoles and are offered with
@@ -211,7 +277,8 @@ function saveMember(staff, form, known = {}, newId = newStaffId) {
   for (let i = 0; !exists && i < 20 && list.some((m) => m.id === id); i++) id = newId();   // a new id never takes an old one
   if (!exists && list.some((m) => m.id === id)) return { error: 'too-many' };
   if (!str(form?.name, NAME_MAX)) return { error: 'name' };
-  const member = normalizeMember({ ...form, id }, known);
+  // v3.88 the personal workspace's draft is written by the project setters only, never by the form
+  const member = normalizeMember({ ...form, id, personal: exists ? list.find((m) => m.id === id)?.personal : undefined }, known);
   if (!member) return { error: 'role' };
   if (list.some((m) => m.id !== id && m.name.toLocaleLowerCase('tr') === member.name.toLocaleLowerCase('tr'))) return { error: 'name-used' };
   if (!exists && list.length >= STAFF_MAX) return { error: 'too-many' };
@@ -313,6 +380,7 @@ function findMember(staff, key) {
 }
 
 module.exports = {
+  personalDraft, personalTarget, setPersonalDraft, takePersonalDraft, routePersonalSetting, applyPersonalDraft, NOT_ALLOWED_HINT,
   STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
   dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
 };
