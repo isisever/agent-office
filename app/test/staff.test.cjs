@@ -289,7 +289,7 @@ test('office_dispatch: a model-supplied desk (or staffName) is ignored; only the
   assert.ok(!('desk' in d.inputSchema.properties) && !('staffName' in d.inputSchema.properties), 'neither is a declared argument');
   // the app's own boundary (the socket's handler) drops them before any dispatch code runs
   const src = require('fs').readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  assert.match(src, /function officeTool\(tab, tool, args\) \{\n  args = OM\.modelArgs\(tool, args\);/);
+  assert.match(src, /function officeTool\(tab, tool, args\) \{\n {2}args = OM\.modelArgs\(tool, args\);/);
 });
 
 test('main.js: HQ dispatch to staff asks before it creates — workspace, desk and worktree only after consent', () => {
@@ -313,5 +313,5 @@ test('main.js: HQ dispatch to staff asks before it creates — workspace, desk a
   // a held task keeps its member, so approval sends it to the desk
   assert.match(fn('holdDispatch'), /\.\.\.\(args\.staff \? \{ staff: String\(args\.staff\) \} : \{\}\)/);
   // removing a member is refused like the other writes when state.json could not be read
-  assert.match(src, /ipcMain\.handle\('staff:remove', \(_e, id\) => \{\n  if \(!stateWritable\) return \{ ok: false, error: 'state' \};/);
+  assert.match(src, /ipcMain\.handle\('staff:remove', \(_e, id\) => \{\n {2}if \(!stateWritable\) return \{ ok: false, error: 'state' \};/);
 });

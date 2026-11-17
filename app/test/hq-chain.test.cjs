@@ -245,5 +245,5 @@ test('stageProject: a frozen stage is released to its project by id; a gone id i
   assert.equal(CH.stageProject({ projectId: 'p1' }, null), '');
   const src = fs.readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(src, /\.\.\.\(!s\.remote && s\.projectId \? \{ projectId: s\.projectId \} : \{\}\)/, 'stage.json stores the id');
-  assert.match(src, /const project = st\.remote \? st\.project : CH\.stageProject\(st, state\.projects\);\n  if \(!project\) \{ hqStatus\(id, 'rejected', 'unknown-project'\); return; \}/);
+  assert.match(src, /const project = st\.remote \? st\.project : CH\.stageProject\(st, state\.projects\);\n {2}if \(!project\) \{ hqStatus\(id, 'rejected', 'unknown-project'\); return; \}/);
 });
