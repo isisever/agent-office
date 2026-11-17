@@ -15,6 +15,7 @@
 // ?longDir → the first project's folder is a long path (title bar cuts it from the left, v3.18).
 // ?usage[=<n>] → opens project n's token usage panel (v3.13; default the first) after a moment.
 // ?remotes → three paired machines (one with a long name, one offline) whose projects are rows in PROJECTS (v3.46 HQ).
+// ?stages (with ?remotes) → the Board shows a staged request (v3.79): one running stage, one waiting (Cancel), one blocked.
 // ?machines[=<n>] → a fake device link (v3.31/v3.32) with n paired machines (default 2; one v1, one offline from n ≥ 3); opens the Machines panel.
 // ?theme=<name> → theme picker setting (v3.1; e.g. ?theme=sakura, ?theme=forest); default auto. The gallery is read from
 // ?look=pixel|claude and ?mode=system|light|dark → the appearance setting (v3.74; default pixel + system).
@@ -99,6 +100,13 @@ const running = new Map(projects.flatMap((p, i) => tabIds(p).map((id) => [id, i 
 let activeId = projects[0]?.id ?? null;
 /** @type {any[]} */
 const mockMcp = [];
+// v3.82 a server's scope as main keeps it ('all' | id | id[]); the list shows it as 'all' | 'project' | 'projects'
+const shownScope = (sc) => (sc === 'all' ? { scope: 'all' } : Array.isArray(sc) && sc.length > 1 ? { scope: 'projects', projects: sc.length } : { scope: 'project' });
+const realScope = (sc) => (sc === 'all' ? 'all' : Array.isArray(sc) ? (sc.length === 1 ? sc[0] : sc) : sc);
+// ?tools (v3.82): two tools added in Agent Office, one for every project, one for the first two
+if (q.has('tools') && projects.length >= 2) mockMcp.push(
+  { id: 'm1', name: 'notion', type: 'http', host: 'mcp.notion.com', real: 'all' },
+  { id: 'm2', name: 'jira', type: 'http', host: 'acme.atlassian.net', real: [projects[0].id, projects[1].id] });
 
 const snapshot = () => ({
   projects: projects.map((p) => ({ ...p })),
@@ -119,6 +127,8 @@ function boot(id) {
   setTimeout(() => ev.data.emit(id,
     `\x1b[38;5;173m✻\x1b[0m Welcome to \x1b[1mClaude Code\x1b[0m (sahte)\r\n\r\n` +
     `  cwd: ${tab?.dir || p?.dir}\r\n  hesap: ${acc?.label}${tab?.worktree ? `\r\n  dal: ${tab.worktree.branch}` : ''}\r\n\r\n> `), 50);
+  // v3.80 ?menu: the main tab then shows Claude Code's approval menu (?menu=q: an AskUserQuestion); an answer clears it
+  if (q.has('menu') && !n) setTimeout(() => ev.data.emit(id, q.get('menu') === 'q' ? MOCK_QUESTION : MOCK_APPROVAL), 120);
   changed();
 }
 for (const p of projects) for (const id of tabIds(p)) if (running.get(id)) boot(id);
@@ -151,11 +161,57 @@ let shareMcpSetting = true;
 let reloadMcpSetting = true;
 let fallbackSetting = true;
 let sleepSetting = 30;
+const MOCK_RULE = `${'─'.repeat(60)}\r\n`;
+const MOCK_APPROVAL = `\r\n${MOCK_RULE} Bash command\r\n npm test\r\n Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. Yes, and don't ask again for npm test commands in /Users/me/web\r\n   3. No\r\n Esc to cancel · Tab to amend\r\n`;
+const MOCK_QUESTION = `\r\n${MOCK_RULE}←  ☐ Scope  ✔ Submit  →\r\nWhich scope?\r\n❯ 1. Only README\r\n     The setup section\r\n  2. README and docs/\r\n     Every page that mentions setup\r\n  3. Type something.\r\n${MOCK_RULE}  4. Chat about this\r\nEnter to select · ↑/↓ to navigate · Esc to cancel\r\n`;
+// v3.80 chat view: ?chat starts with the setting on; every Claude tab has a short fake conversation, a sent message
+// gets an answer after a second
+let chatViewSetting = q.has('chat');
+const mockChats = new Map();   // pty id → items
+const chatOf = (id) => {
+  if (!mockChats.has(id)) {
+    const at = Date.now();
+    mockChats.set(id, [
+      { key: `${id}-1`, at, kind: 'user', text: 'README için kısa bir kurulum bölümü yaz.' },
+      { key: `${id}-2`, at, kind: 'tool', id: `${id}-t1`, name: 'Read', detail: '/Users/me/web/README.md' },
+      { key: `${id}-3`, at, kind: 'toolDone', id: `${id}-t1`, error: false },
+      { key: `${id}-4`, at, kind: 'tool', id: `${id}-t2`, name: 'Bash', detail: 'npm test' },
+      { key: `${id}-5`, at, kind: 'toolDone', id: `${id}-t2`, error: true },
+      { key: `${id}-6`, at, kind: 'assistant', text: 'README\'ye "Kurulum" bölümünü ekledim:\n\n```sh\nnpm install\nnpm start\n```\n\nTestler bir yerde kalıyor; bakmamı ister misin?' },
+      { key: `${id}-7`, at, kind: 'command', text: '/model sonnet' },
+      { key: `${id}-8`, at, kind: 'note', note: 'compact' },
+    ]);
+  }
+  return mockChats.get(id);
+};
+let office3dSetting = q.has('office3d'); // v3.81 ?office3d: the 3D office from the start
+// v3.83 team: ?staff turns team mode on with three members; the presets are read as main reads them
+let teamSetting = q.has('staff');
+const ROLE_IDS = ['accountant', 'assistant', 'chatbot', 'content-writer', 'customer-support', 'data-analyst', 'devops', 'digital-marketer', 'erp-odoo',
+  'financial-analyst', 'hr-specialist', 'operations-specialist', 'product', 'project-manager', 'qa', 'rpa', 'sales-rep', 'social-media-designer', 'software-developer'];
+// v3.85 mail
+const mailEv = { accounts: listeners(), outbox: listeners() };
+const mockMail = {
+  accounts: [{ id: 'm-aaaa1111', label: 'Destek', provider: 'gmail', address: 'destek@acme.com', hasSecret: true }],
+  drafts: q.has('staff') ? [
+    { id: 'd-aaaa0001', status: 'pending', account: 'm-aaaa1111', from: 'destek@acme.com', to: ['musteri@ornek.com'], cc: [], subject: 'Re: Sipariş #4512 nerede?', body: 'Merhaba Ayşe Hanım,\n\nSiparişiniz dün kargoya verildi; takip numarası 7781234. Yarın elinizde olur.\n\nİyi günler,\nDestek', replyTo: { id: '812', from: 'Ayşe Kaya <musteri@ornek.com>', subject: 'Sipariş #4512 nerede?', flags: [] }, warnings: ['external'], staffId: 's-a1a1a1', staffName: 'Ayşe', projectId: 'p1', projectName: 'agent-office', createdAt: Date.now() - 600000 },
+    { id: 'd-aaaa0002', status: 'pending', account: 'm-aaaa1111', from: 'destek@acme.com', to: ['finans@ornek-tedarik.com'], cc: [], subject: 'Re: Banka hesabımız değişti', body: 'Merhaba,\n\nBildiriminizi aldık; değişikliği yetkili kişiyle telefonla teyit etmeden ödeme bilgisi güncellemiyoruz.\n\nSaygılarımızla', replyTo: { id: '813', from: 'Finans <finans@ornek-tedarik.com>', subject: 'Banka hesabımız değişti', flags: ['urgent-action', 'ignore-instructions'] }, warnings: ['external', 'source-flagged'], staffId: 's-a1a1a1', staffName: 'Ayşe', projectId: 'p1', projectName: 'agent-office', createdAt: Date.now() - 120000 },
+  ] : [],
+};
+const mailOut = () => mailEv.outbox.emit({ drafts: structuredClone(mockMail.drafts), pending: mockMail.drafts.filter((d) => d.status === 'pending').length });
+/** @type {any[]} */
+const mockRoles = [];   // v3.84 the person's roles
+const rolePresets = (await Promise.all(ROLE_IDS.map((n) => fetch(`../../roles/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
+/** @type {any[]} */
+const mockStaff = [];
+const mockDesks = new Map();   // pty id → desk state
+/** @type {Function[]} */
+const deskListeners = [];
 let keepAwakeSetting = 'working';
 // "Resume unfinished work" (v3.8): the first click finds two projects with unfinished work (?unfinished=0: none);
 // a stopped one starts, as main starts a lazy tab with --resume
 let mockUnfinished = q.get('unfinished') !== '0';
-const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, keepAwake: keepAwakeSetting, ...engineRows });
+const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, keepAwake: keepAwakeSetting, ...engineRows, chatView: chatViewSetting, office3d: office3dSetting, teamMode: teamSetting });
 const engineRows = { showAgyAccount: null, showCmdAccount: null, showOcAccount: null }; // v3.30
 
 window.agentOffice = {
@@ -249,30 +305,33 @@ window.agentOffice = {
     list: async () => ({ servers: [
       { name: 'github', source: 'user', type: 'http', host: 'api.githubcopilot.com', readOnly: true, where: 'user' },
       { name: 'files', source: 'project', type: 'stdio', host: '', readOnly: true, approved: true, where: 'project' },
-      ...mockMcp.map((s) => ({ ...s, source: 'app', readOnly: false, hasToken: s.type !== 'stdio' })),
+      ...mockMcp.filter((s) => s.real === 'all' || [].concat(s.real).includes(activeId)).map(({ real, ...s }) => ({ ...s, ...shownScope(real), source: 'app', readOnly: false, hasToken: s.type !== 'stdio' })),
     ] }),
     add: async (f) => {
       if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
       if (f?.type === 'stdio') {
         if (!String(f.command || '').trim()) return { ok: false, error: 'command' };
-        mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: 'stdio', host: '', scope: f.scope === 'all' ? 'all' : 'project' });
+        mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: 'stdio', host: '', real: realScope(f.scope) });
         return { ok: true, restarted: [] };
       }
       if (!/^https?:\/\//.test(String(f?.url || ''))) return { ok: false, error: 'url' };
       let host = ''; try { host = new URL(f.url).host; } catch {}
-      mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: f.type === 'sse' ? 'sse' : 'http', host, scope: f.scope === 'all' ? 'all' : 'project' });
+      mockMcp.push({ id: rid(), name: String(f.name).trim().toLowerCase(), type: f.type === 'sse' ? 'sse' : 'http', host, real: realScope(f.scope) });
       return { ok: true, restarted: [] };
     },
     // v3.69: the mock keeps no address, command or token, so the edit form opens with the name, type and scope only
-    get: async (id) => { const s = mockMcp.find((x) => x.id === id); return s ? { ok: true, server: { id: s.id, name: s.name, type: s.type, scope: s.scope === 'all' ? 'all' : (projects[0]?.id || 'all'), url: '', command: '', args: [], env: {}, hasToken: s.type !== 'stdio' } } : { ok: false, error: 'unknown' }; },
+    get: async (id) => { const s = mockMcp.find((x) => x.id === id); return s ? { ok: true, server: { id: s.id, name: s.name, type: s.type, scope: s.real, url: '', command: '', args: [], env: {}, hasToken: s.type !== 'stdio' } } : { ok: false, error: 'unknown' }; },
     update: async (id, f) => {
       const s = mockMcp.find((x) => x.id === id);
       if (!s) return { ok: false, error: 'unknown' };
       if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
       let host = ''; try { host = f?.type === 'stdio' ? '' : new URL(f.url).host; } catch { host = s.host; }
-      Object.assign(s, { name: String(f.name).trim().toLowerCase(), type: f.type === 'stdio' ? 'stdio' : f.type === 'sse' ? 'sse' : 'http', host, scope: f.scope === 'all' ? 'all' : 'project' });
+      Object.assign(s, { name: String(f.name).trim().toLowerCase(), type: f.type === 'stdio' ? 'stdio' : f.type === 'sse' ? 'sse' : 'http', host, real: realScope(f.scope) });
       return { ok: true, restarted: [] };
     },
+    // v3.82 the app-added servers with their projects; a new project set
+    apps: async () => ({ servers: mockMcp.map(({ real, ...s }) => ({ id: s.id, name: s.name, type: s.type, host: s.host, scope: real, hasToken: s.type !== 'stdio' })) }),
+    scope: async (id, sc) => { const s = mockMcp.find((x) => x.id === id); if (!s) return { ok: false, error: 'unknown' }; s.real = realScope(sc); return { ok: true, restarted: [] }; },
     // v3.69 a server in Claude Code's files: values masked, the mock writes nothing
     getFile: async (_pid, where, name) => ({ ok: true, server: name === 'files'
       ? { name, type: 'stdio', command: 'npx', args: ['-y', 'files-mcp'], env: { ROOT: '••••••' }, where }
@@ -281,6 +340,85 @@ window.agentOffice = {
     remove: async (id) => { const i = mockMcp.findIndex((s) => s.id === id); if (i >= 0) mockMcp.splice(i, 1); return { ok: i >= 0, restarted: [] }; },
   },
 
+  // v3.84 the role library and a scripted wizard: a question first, then a role (no claude in the browser)
+  // v3.85 mail: one Gmail account and, with ?staff, two drafts waiting (sending only changes their status here)
+  mail: {
+    accounts: async () => ({ accounts: structuredClone(mockMail.accounts), encryption: true }),
+    save: async (f) => {
+      if (!/@/.test(String(f?.address || ''))) return { ok: false, error: 'address' };
+      if (!f.id && !f.password) return { ok: false, error: 'password' };
+      await new Promise((r) => setTimeout(r, 600));   // the test: IMAP and SMTP sign-in
+      // a company Exchange with its own certificate authority: refused until the person trusts the certificate
+      if (/\.local$/.test(f.imap?.host || '') && !f.trust?.imap) return { ok: false, error: 'cert', where: 'imap', detail: 'SELF_SIGNED_CERT_IN_CHAIN', cert: { subject: f.imap.host, issuer: 'FIRMA-CA', validTo: 'Jun  1 00:00:00 2028 GMT', altNames: `DNS:${f.imap.host}`, fingerprint: Array.from({ length: 32 }, (_, i) => (i * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':') } };
+      if (f.password === 'yanlis') return { ok: false, error: 'auth', where: 'imap', detail: 'NO [AUTHENTICATIONFAILED] Invalid credentials' };
+      const a = { id: f.id || `m-${rid().slice(0, 8).replace(/[^0-9a-f]/g, 'a').padEnd(8, '0')}`, label: f.label || f.address, provider: f.provider, address: f.address, hasSecret: true, ...(f.provider === 'imap' ? { user: f.user, imap: f.imap, smtp: f.smtp } : {}) };
+      const i = mockMail.accounts.findIndex((x) => x.id === a.id);
+      if (i >= 0) mockMail.accounts[i] = a; else mockMail.accounts.push(a);
+      mailEv.accounts.emit({ accounts: structuredClone(mockMail.accounts), encryption: true });
+      return { ok: true, account: a };
+    },
+    remove: async (id) => { mockMail.accounts = mockMail.accounts.filter((a) => a.id !== id); mailEv.accounts.emit({ accounts: structuredClone(mockMail.accounts), encryption: true }); return { ok: true }; },
+    test: async () => { await new Promise((r) => setTimeout(r, 300)); return { ok: true }; },
+    m365Start: async (f) => (/^[0-9a-f-]{36}$/i.test(f?.clientId || '') ? { ok: true, userCode: 'ABCD-EFGH', verificationUri: 'https://microsoft.com/devicelogin' } : { ok: false, error: 'client' }),
+    m365Cancel: async () => ({ ok: true }),
+    onM365: () => () => {},
+    onAccounts: mailEv.accounts.add,
+    outbox: async () => ({ drafts: structuredClone(mockMail.drafts), pending: mockMail.drafts.filter((d) => d.status === 'pending').length }),
+    onOutbox: mailEv.outbox.add,
+    edit: async (id, f) => { const d = mockMail.drafts.find((x) => x.id === id); if (!d) return { ok: false, error: 'unknown' }; Object.assign(d, { to: String(f.to).split(',').map((x) => x.trim()).filter(Boolean), cc: String(f.cc).split(',').map((x) => x.trim()).filter(Boolean), subject: f.subject, body: f.body }); mailOut(); return { ok: true, draft: structuredClone(d) }; },
+    send: async (id) => { const d = mockMail.drafts.find((x) => x.id === id); if (!d) return { ok: false, error: 'state' }; d.status = 'sent'; mailOut(); return { ok: true }; },
+    discard: async (id) => { const d = mockMail.drafts.find((x) => x.id === id); if (d) d.status = 'discarded'; mailOut(); return { ok: true }; },
+    retry: async (id) => { const d = mockMail.drafts.find((x) => x.id === id); if (d) d.status = 'pending'; mailOut(); return { ok: true }; },
+  },
+  roles: {
+    save: async (f) => {
+      if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
+      const one = (s) => ({ en: String(s || ''), tr: String(s || '') });
+      const role = { id: f.id || `my-${rid().slice(0, 8).padEnd(8, '0').replace(/[^0-9a-f]/g, 'a')}`, name: one(f.name), short: one(f.short), department: f.department, description: one(f.description), brief: f.brief, skillPacks: f.skillPacks || [], tools: f.tools || [], writesCode: f.writesCode === true, custom: true };
+      const i = mockRoles.findIndex((r) => r.id === role.id);
+      if (i >= 0) mockRoles[i] = role; else mockRoles.push(role);
+      return { ok: true, role };
+    },
+    remove: async (id) => { const i = mockRoles.findIndex((r) => r.id === id); if (i >= 0) mockRoles.splice(i, 1); return { ok: i >= 0 }; },
+    wizard: async (req) => {
+      await new Promise((r) => setTimeout(r, 400));
+      const asked = (req?.messages || []).filter((m) => m.who === 'user').length;
+      if (asked < 2) return { ok: true, say: 'Anladım: bayram ve özel günlerde sosyal medya tasarımı hazırlayacak biri.', questions: ['Hangi platformlar için (Instagram, LinkedIn…)?', 'Tasarımlar Canva\'da mı hazırlansın?'] };
+      return { ok: true, say: 'Rolü hazırladım; Pazarlama departmanına koydum.', questions: [], role: { name: 'Özel Gün Tasarımcısı', short: 'ÖZELGÜN', department: 'marketing', description: 'Özel günler için Instagram ve LinkedIn tasarımları hazırlar, Canva kullanır.', brief: "You are the team's special-day designer. You check the calendar for the next day's special days and prepare posts in Canva…", writesCode: false, skillPacks: ['ui-ux-pro-max'], tools: ['canva'] } };
+    },
+  },
+
+  staff: { // v3.83
+    list: async () => ({ teamMode: teamSetting, presets: [...rolePresets, ...mockRoles], staff: structuredClone(mockStaff) }),
+    save: async (f) => {
+      if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
+      if (!f?.role?.preset && !String(f?.role?.name || '').trim()) return { ok: false, error: 'role' };
+      if (mockStaff.some((m) => m.id !== f.id && m.name.toLowerCase() === String(f.name).trim().toLowerCase())) return { ok: false, error: 'name-used' };
+      const member = { ...f, id: f.id || `s-${rid().slice(0, 8).padEnd(8, '0').replace(/[^0-9a-f]/g, 'a')}`, name: String(f.name).trim() };
+      if (!member.accountId) delete member.accountId;
+      if (!member.department) delete member.department;
+      const i = mockStaff.findIndex((m) => m.id === member.id);
+      if (i >= 0) mockStaff[i] = member; else mockStaff.push(member);
+      return { ok: true, member };
+    },
+    remove: async (id) => { const i = mockStaff.findIndex((m) => m.id === id); if (i >= 0) mockStaff.splice(i, 1); return { ok: i >= 0 }; },
+    // v3.83 desks: a desk is a tab with staffId; opening one adds the tab and boots it (busy for ?staff, see below)
+    desk: async (projectId, staffId) => {
+      const p = /** @type {any} */ (projects.find((x) => x.id === projectId));
+      if (!p) return { ok: false, error: 'unknown' };
+      p.tabs = p.tabs || [];
+      let tab = p.tabs.find((x) => x.staffId === staffId);
+      if (!tab) { tab = { n: Math.max(1, ...p.tabs.map((x) => x.n)) + 1, staffId }; p.tabs.push(tab); }
+      const id = `${projectId}:${tab.n}`;
+      if (!running.get(id)) boot(id);
+      mockDesks.set(id, { id, projectId, n: tab.n, staffId, state: 'idle' });
+      deskListeners.forEach((f) => f([...mockDesks.values()]));
+      return { ok: true, id };
+    },
+    desks: async () => [...mockDesks.values()],
+    onDesks: (f) => deskListeners.push(f),
+    setParallel: async (projectId, on) => { const p = /** @type {any} */ (projects.find((x) => x.id === projectId)); if (p) { if (on) p.parallel = true; else delete p.parallel; changed(); } return { ok: true }; },
+  },
   tabs: {
     add: async (projectId, mode) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === projectId));
@@ -384,6 +522,42 @@ window.agentOffice = {
     shown: () => {},
     onSleep: () => {},
   },
+  // v3.80: the cursor is how many items were handed over
+  chat: {
+    // the "/" list main builds from Claude Code's built-ins and the tab's commands, skills and plugins
+    commands: async () => [
+      { name: 'compact', description: 'Free up context by summarizing the conversation so far', source: 'builtin' },
+      { name: 'context', description: 'Visualize current context usage', source: 'builtin', ui: true },
+      { name: 'clear', description: 'Start a new session with empty context', source: 'builtin' },
+      { name: 'code-review', description: 'Review the current diff, a PR or a path for correctness bugs', source: 'builtin' },
+      { name: 'model', description: 'Set the AI model for Claude Code', source: 'builtin', ui: true },
+      { name: 'mcp', description: 'Manage MCP servers', source: 'builtin', ui: true },
+      { name: 'deploy', description: 'Deploy to staging with the checklist', source: 'project' },
+      { name: 'superpowers:brainstorming', description: 'Use when the user asks to design or plan', source: 'plugin' },
+      { name: 'office', description: 'Agent Office: ofis özeti ve istatistikler', source: 'plugin' },
+    ],
+    read: async (id, cursor) => {
+      if (String(id).startsWith('login:')) return { unsupported: true };
+      const items = chatOf(id);
+      const from = cursor && cursor.file === id ? cursor.size : 0;
+      return { sid: `mock-${id}`, cursor: { file: id, ino: 1, size: items.length }, items: items.slice(from), reset: from === 0, more: false };
+    },
+    // a menu answer clears the screen (the menu is gone) and lands in the chat as Claude Code would show it
+    keys: async (id, steps) => {
+      const at = Date.now();
+      setTimeout(() => ev.data.emit(id, '\x1b[2J\x1b[H> '), 100);
+      chatOf(id).push({ key: `${id}-k${at}`, at, kind: 'note', note: 'message' }, { key: `${id}-r${at}`, at, kind: 'assistant', text: `(sahte) tuşlar: ${JSON.stringify(steps)}` });
+      return 'ok';
+    },
+    send: async (id, text) => {
+      if (q.has('asking')) return 'permission';
+      const items = chatOf(id);
+      const at = Date.now();
+      items.push({ key: `${id}-u${at}`, at, kind: 'user', text: String(text).trim() });
+      setTimeout(() => items.push({ key: `${id}-a${at}`, at, kind: 'assistant', text: `Tamam: "${String(text).trim().slice(0, 60)}"` }), 1000);
+      return 'ok';
+    },
+  },
   work: {
     resumeUnfinished: async () => {
       const hit = mockUnfinished ? projects.slice(1, 3) : [];
@@ -402,6 +576,9 @@ window.agentOffice = {
       if (typeof p?.shareMcp === 'boolean') shareMcpSetting = p.shareMcp;
       if (typeof p?.reloadMcp === 'boolean') reloadMcpSetting = p.reloadMcp;
       if (typeof p?.fallback === 'boolean') fallbackSetting = p.fallback;
+      if (typeof p?.chatView === 'boolean') chatViewSetting = p.chatView;
+      if (typeof p?.office3d === 'boolean') office3dSetting = p.office3d;
+      if (typeof p?.teamMode === 'boolean') teamSetting = p.teamMode;
       if (typeof p?.theme === 'string') themeSetting = p.theme.trim() || 'auto';
       if (p?.look !== undefined) lookSetting = normalizeLook(p.look);
       if (p?.mode !== undefined) modeSetting = normalizeMode(p.mode);
@@ -715,6 +892,42 @@ if (q.has('remotes')) {
     row(B, 'r3', 'notes', 'very-long-machine-name-build-server-01.local', true, false, 'working'),
     row(C, 'r4', 'website', 'Old Mac', false, true),
   ] };
+  if (q.has('stages')) {
+    const task = (id, title, project, status, o = {}) => ({ id, request: 'rmock1', title, machine: 'self', machineName: 'Mac', project, status, at: Date.now(), brief: `tasks/${id}/brief.md`, commits: [], prs: [], read: true, ...o });
+    hv.board.tasks = [task('c1', 'Scope ACME', 'office', 'running'), task('wmock2', 'Build ACME module', 'erp', 'waiting', { after: 'c1' }),
+      task('wmock3', 'ACME delivery form', 'office', 'blocked', { after: 'wx', reason: 'after-partial' })];
+  }
   const hok = () => Promise.resolve(structuredClone(hv));
-  window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
+  const cancel = (id) => { const t = hv.board.tasks.find((x) => x.id === id); if (t && t.status === 'waiting') Object.assign(t, { status: 'rejected', reason: 'cancelled' }); return hok(); };
+  window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, cancel, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
+  // ?routines: the routine list and editor (v3.47), with the staff a project routine may name (v3.83 amendment)
+  if (q.has('routines')) {
+    const rv = { routines: [], cfg: { quiet: null, dailyCap: 48 }, runs: [], next: {}, problems: {}, held: [], remotes: [],
+      projects: projects.map((p) => ({ id: p.id, name: p.name, engine: 'claude' })), staff: [] };
+    const v = () => {
+      rv.staff = mockStaff.map((m) => ({ id: m.id, name: m.name, projects: m.projects === 'all' ? projects.map((p) => p.id) : m.projects }));
+      return Promise.resolve(structuredClone(rv));
+    };
+    window.agentOffice.routines = {
+      get: v, onChange: listeners().add, preview: () => Promise.resolve([Date.now() + 3600e3, Date.now() + 86400e3]),
+      save: (r) => { const id = r.id || `rt${String(rv.routines.length + 1).padStart(8, '0')}`; rv.routines = [...rv.routines.filter((x) => x.id !== id), { ...r, id }]; return Promise.resolve({ ok: true, id, view: structuredClone(rv) }); },
+      runNow: () => Promise.resolve({ view: structuredClone(rv) }), setPaused: v, remove: v, markRead: v, setCfg: v, approve: v, summary: () => Promise.resolve(''),
+    };
+  }
+}
+// ?staff: three members in two departments
+if (q.has('staff') && projects.length >= 3) mockStaff.push(
+  { id: 's-a1a1a1', name: 'Ayşe', role: { preset: 'erp-odoo' }, department: 'Geliştirme', accountId: 'is', projects: [projects[0].id, projects[1].id] },
+  { id: 's-b2b2b2', name: 'Mert', role: { preset: 'qa' }, department: 'Geliştirme', projects: 'all' },
+  { id: 's-c3c3c3', name: 'Deniz', role: { preset: 'devops' }, department: 'Operasyon', projects: [projects[1].id] },
+);
+// ?staff: Ayşe has a desk at work in the first project, Mert an idle one in the second
+if (q.has('staff') && projects.length >= 3) {
+  for (const [pi, sid, st] of /** @type {[number, string, string][]} */ ([[0, 's-a1a1a1', 'busy'], [1, 's-b2b2b2', 'idle']])) {
+    const p = /** @type {any} */ (projects[pi]);
+    p.tabs = [...(p.tabs || []), { n: 7 + pi, staffId: sid }];
+    const id = `${p.id}:${7 + pi}`;
+    running.set(id, true);
+    mockDesks.set(id, { id, projectId: p.id, n: 7 + pi, staffId: sid, state: st });
+  }
 }

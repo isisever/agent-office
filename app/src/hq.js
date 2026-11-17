@@ -18,8 +18,9 @@ const ROUTINE_MINT_MS = 4 * 3600 * 1000;   // v3.47 a routine run's request id (
 const HELD_MS = 12 * 3600 * 1000;   // v3.47 a held (awaiting-consent) task expires after this
 const TITLE_MAX = 80;
 const SUMMARY_MAX = REPORT2_MAX;   // v3.48 report2: the larger summary (cut with TRUNC_MARK)
-const STATUSES = ['queued', 'delivered', 'running', 'needs-approval', 'awaiting-consent', 'reported', 'partial', 'failed', 'rejected', 'expired', 'lost'];
-const TERMINAL = new Set(['reported', 'partial', 'failed', 'rejected', 'expired', 'lost']);
+// v3.79 staged requests: 'waiting' (a stage waiting for the one before it, src/hq-chain.js) and 'blocked' (that one ended without a full report)
+const STATUSES = ['queued', 'delivered', 'running', 'needs-approval', 'awaiting-consent', 'waiting', 'reported', 'partial', 'failed', 'rejected', 'expired', 'lost', 'blocked'];
+const TERMINAL = new Set(['reported', 'partial', 'failed', 'rejected', 'expired', 'lost', 'blocked']);
 const OPEN = (t) => !TERMINAL.has(t.status);
 // HQ's built-in tools are an allowlist (--tools Read): it never edits code, runs commands, searches or reaches the
 // net itself. The denylist stays as a second belt. Read is auto-allowed only inside its own folder.
@@ -180,7 +181,8 @@ function capReason(board, request) {
 function renameTask(board, from, to, patch = {}) {
   if (!board.tasks.some((t) => t.id === from)) return board;
   return {
-    tasks: board.tasks.filter((t) => t.id !== to).map((t) => (t.id === from ? { ...t, ...patch, id: to, brief: `tasks/${to}/brief.md` } : t)),
+    // v3.79 a stage that waited on the old id now waits on the new one
+    tasks: board.tasks.filter((t) => t.id !== to).map((t) => (t.id === from ? { ...t, ...patch, id: to, brief: `tasks/${to}/brief.md` } : t.after === from ? { ...t, after: to } : t)),
     requests: board.requests.map((r) => ({ ...r, tasks: r.tasks.map((x) => (x === from ? to : x)) })),
   };
 }
@@ -212,14 +214,16 @@ function createRestarter({ now = Date.now } = {}) {
   };
 }
 /** Depth 1: a project boss working on an HQ task may not dispatch further. */
-const depthRefused = (board, fromTab) => fromTab !== HQ_ID && board.tasks.some((t) => OPEN(t) && t.projectId === fromTab && t.machine === 'self');
+// v3.79 a waiting stage is not being worked on yet: it does not count
+const depthRefused = (board, fromTab) => fromTab !== HQ_ID && board.tasks.some((t) => OPEN(t) && t.status !== 'waiting' && t.projectId === fromTab && t.machine === 'self');
 
 function addTask(board, t, now = Date.now()) {
   const task = {
     id: t.id, request: t.request || '', title: line(t.title || t.task || '', TITLE_MAX), machine: t.pub === 'self' || !t.pub ? 'self' : t.pub,
-    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}),
+    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}), ...(t.staff ? { staff: line(t.staff, 40) } : {}),   // v3.83 the staff member's desk
     status: STATUSES.includes(t.status) ? t.status : 'queued', ...(t.reason ? { reason: line(t.reason, 40) } : {}),
     at: now, brief: `tasks/${t.id}/brief.md`, commits: [], prs: [], read: false,
+    ...(typeof t.after === 'string' && t.after ? { after: t.after.slice(0, 64) } : {}),   // v3.79 the stage it waits for
   };
   const tasks = [task, ...board.tasks.filter((x) => x.id !== t.id)];
   let requests = board.requests;
@@ -292,7 +296,8 @@ function expireHeld(board, now = Date.now(), ms = HELD_MS) {
 }
 /** At startup: an open task whose queue entry is gone (isKnown false) becomes lost; no automatic re-dispatch. A held
  *  card (awaiting-consent, v3.47) was never queued: it stays answerable across a restart. */
-const markLost = (board, isKnown, now = Date.now()) => ({ ...board, tasks: board.tasks.map((t) => (OPEN(t) && t.status !== 'awaiting-consent' && !isKnown(t) ? { ...t, status: 'lost', finishedAt: now } : t)) });
+// v3.79 a waiting stage was never queued either: it stays and is settled (released, blocked, expired) by src/hq-chain.js
+const markLost = (board, isKnown, now = Date.now()) => ({ ...board, tasks: board.tasks.map((t) => (OPEN(t) && t.status !== 'awaiting-consent' && t.status !== 'waiting' && !isKnown(t) ? { ...t, status: 'lost', finishedAt: now } : t)) });
 /** 500 tasks / 90 days → { board, removed: task ids whose folders go }. */
 function prune(board, now = Date.now()) {
   const keep = board.tasks.filter((t) => OPEN(t) || now - (t.finishedAt || t.at) <= RETAIN_MS).slice(0, RETAIN_TASKS);
@@ -325,7 +330,7 @@ const waitState = (tab, isAsleep) => (tab === 'ready' || tab === 'busy' || tab =
 /** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string }} [o] */
 const boardView = (board, { request = '', status = '' } = {}) => board.tasks
   .filter((t) => (!request || t.request === request) && (!status || t.status === status)).slice(0, 50)
-  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
+  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
 
 // --- paired devices: dispatcher-side pacing (the receiver allows a burst of 3, one per 10 s) and the peer cache
 function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {

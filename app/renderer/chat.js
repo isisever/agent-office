@@ -1,0 +1,356 @@
+// Chat view (contract v3.80): a Claude Code tab shown as a conversation instead of its terminal. Main reads the
+// session's transcript (src/chat.js) and hands over chat items a little at a time; a message typed here is typed into
+// the tab's terminal like a prompt (chat:send), so the session, its plugin and HQ work exactly as with the terminal.
+// Claude Code's own menus (approvals, AskUserQuestion, /model, …) are drawn only in the terminal: the chat reads the open
+// one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
+import { t } from './i18n.js';
+import { parseMenu, isFreeOption, menuKey, liveStatus } from '../src/tui-menu.mjs';
+import { slashQuery, matchCommands } from '../src/slash-match.mjs';
+import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
+
+const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
+const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
+const MENU_MS = 400;    // the terminal screen is checked for an open menu this often while shown
+
+/** @returns {any} */
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'class') el.className = v;
+    else el.setAttribute(k, v);
+  }
+  el.append(...kids.filter((x) => x !== null && x !== undefined));
+  return el;
+}
+
+/** Message text: ``` fences become code blocks, the rest keeps its line breaks (no other markdown, no HTML). */
+function textBody(text) {
+  const box = h('div', { class: 'chat-text' });
+  const parts = String(text).split(/^```[^\n]*\n?/m);
+  parts.forEach((part, n) => {
+    if (!part) return;
+    if (n % 2) box.append(h('pre', { class: 'chat-code' }, part.replace(/\n$/, '')));
+    else box.append(h('div', { class: 'chat-p' }, part.replace(/^\n+|\n+$/g, '')));
+  });
+  return box;
+}
+
+/**
+ * @param {HTMLElement} el the pane's chat host
+ * @param {{ ptyId: string, onTerminal: () => void, screen: () => string[] }} opts onTerminal: the person wants the
+ *   terminal; screen: the tab's terminal screen lines
+ */
+export function mountChat(el, { ptyId, onTerminal, screen }) {
+  const api = window.agentOffice;
+  const list = h('div', { class: 'chat-list' });
+  const empty = h('p', { class: 'chat-empty dim' });
+  const bannerText = h('span', {});
+  const bannerBtn = h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() });
+  const banner = h('div', { class: 'chat-banner' }, bannerText, bannerBtn);
+  const input = h('textarea', { class: 'chat-input', rows: '1' });
+  const send = h('button', { class: 'chat-send', onclick: () => submit() });
+  const term = h('button', { class: 'chat-term', onclick: () => onTerminal() });
+  const why = h('span', { class: 'chat-why' });
+  const card = h('div', { class: 'chat-menu' });
+  // the "/" list above the input (Claude Code's commands for this tab, chat:commands)
+  const slash = h('ul', { class: 'chat-slash', role: 'listbox' });
+  slash.hidden = true;
+  // the message being replied to, above the input (✕ drops it)
+  const replyText = h('span', { class: 'chat-reply-text' });
+  const replyBar = h('div', { class: 'chat-reply' }, h('span', { class: 'chat-reply-label' }), replyText,
+    h('button', { class: 'chat-reply-x', onclick: () => replyTo('') }, '✕'));
+  replyBar.hidden = true;
+  let replying = '';
+  // what Claude Code is doing right now (its spinner row off the terminal screen): the transcript gets a message only
+  // once it is complete, so this is the live part
+  const live = h('div', { class: 'chat-live' });
+  live.hidden = true;
+  el.append(banner, list, empty, live, card, replyBar, h('div', { class: 'chat-form' }, slash, input, send, term), why);
+  card.hidden = true;
+  banner.hidden = true;
+  why.hidden = true;
+
+  let shown = false;
+  let timer = 0;
+  let menuTimer = 0;
+  let menu = null;      // the open menu (parseMenu), or null
+  let menuShown = '';   // its key, as drawn
+  let attention = null;
+  let waitUntil = 0;    // a button was pressed: the others wait for the menu to change (or 2 s)
+  let reading = false;
+  let cursor = null;
+  let sid;   // undefined until the first read
+  const tools = new Map();   // tool call id → its line (marked done/failed by its result)
+
+  function texts() {
+    input.placeholder = t('chat.placeholder');
+    send.textContent = t('chat.send');
+    term.textContent = t('chat.terminal');
+    term.title = t('chat.terminalTitle');
+    bannerText.textContent = t('chat.permission');
+    bannerBtn.textContent = t('chat.terminal');
+    empty.textContent = t('chat.empty');
+  }
+  texts();
+
+  function clear() { list.replaceChildren(); tools.clear(); pending.length = 0; }
+  // messages sent from here, shown at once until the transcript has them (then the transcript's copy replaces them)
+  /** @type {HTMLElement[]} */
+  const pending = [];
+  function echo(text) {
+    const n = h('div', { class: 'chat-msg user pending' }, textBody(text));
+    pending.push(n);
+    list.append(n);
+    empty.hidden = true;
+    list.scrollTop = list.scrollHeight;
+    setTimeout(() => { const i = pending.indexOf(n); if (i >= 0) { pending.splice(i, 1); n.remove(); } }, 120000);
+  }
+  // ---- a message's own buttons (shown on hover): copy its text, reply to it
+  async function copyText(text, btn) {
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch {
+      // fallback: a hidden text box and the document's copy command
+      const box = h('textarea', { class: 'chat-copy-buf' });
+      box.value = text;
+      document.body.append(box);
+      box.select();
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
+      box.remove();
+    }
+    btn.textContent = ok ? t('chat.copied') : t('chat.copyFailed');
+    setTimeout(() => { btn.textContent = t('chat.copy'); }, 1200);
+  }
+  function message(kind, text, body) {
+    const copy = h('button', { class: 'chat-act', onclick: () => copyText(String(text), copy) }, t('chat.copy'));
+    const reply = h('button', { class: 'chat-act', onclick: () => replyTo(String(text)) }, t('chat.reply'));
+    return h('div', { class: `chat-msg ${kind}` }, body, h('div', { class: 'chat-acts' }, copy, kind === 'error' ? null : reply));
+  }
+  function item(it) {
+    if (it.kind === 'toolDone') {
+      const line = tools.get(it.id);
+      if (line) { line.classList.remove('pending'); line.classList.add(it.error ? 'failed' : 'done'); tools.delete(it.id); }
+      return null;
+    }
+    if (it.kind === 'user') {
+      const body = textBody(it.text);
+      if (it.images) body.append(h('div', { class: 'chat-images dim' }, t('chat.images', { count: it.images })));
+      return message('user', it.text, body);
+    }
+    if (it.kind === 'assistant') return message('assistant', it.text, textBody(it.text));
+    if (it.kind === 'error') return message('error', it.text, textBody(it.text));
+    if (it.kind === 'tool') {
+      const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''));
+      if (it.id) tools.set(it.id, line);
+      return line;
+    }
+    if (it.kind === 'command') return h('div', { class: 'chat-cmd' }, it.text);
+    if (it.kind === 'note') return h('div', { class: 'chat-note dim' }, t(`chat.note.${it.note}`));
+    return null;
+  }
+  function append(items) {
+    if (!items.length) return;
+    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    const frag = document.createDocumentFragment();
+    for (const it of items) {
+      if ((it.kind === 'user' || it.kind === 'command') && pending.length) pending.shift()?.remove();
+      const n = item(it);
+      if (n) frag.append(n);
+    }
+    if (pending.length) list.insertBefore(frag, pending[0]); else list.append(frag);
+    while (list.childElementCount > KEEP) list.firstElementChild.remove();
+    if (atBottom) list.scrollTop = list.scrollHeight;
+  }
+
+  // ---- the open menu as a card
+  async function press(steps) {
+    waitUntil = Date.now() + 2000;
+    for (const b of card.querySelectorAll('button, input')) b.disabled = true;
+    let r;
+    try { r = await api.chat.keys(ptyId, steps); } catch (e) { console.error(e); r = 'error'; }
+    if (r !== 'ok') { waitUntil = 0; menuShown = ''; note(t(`chat.why.${['not-running', 'locked'].includes(r) ? r : 'other'}`)); }
+    setTimeout(checkMenu, 300);
+  }
+  /** "Type something": a text box in the card; its answer is the option's number, the text, Enter. */
+  function freeAnswer(o, row) {
+    const box = h('input', { class: 'chat-free', type: 'text', placeholder: t('chat.freePlaceholder') });
+    const go = () => { if (box.value.trim()) press([String(o.n), { text: box.value }, '\r']); };
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });
+    row.replaceWith(h('div', { class: 'chat-free-row' }, box, h('button', { class: 'chat-send', onclick: go }, t('chat.send'))));
+    box.focus();
+  }
+  function drawMenu() {
+    const key = menuKey(menu);
+    if (key === menuShown) return;
+    menuShown = key;
+    card.hidden = !menu;
+    banner.hidden = Boolean(menu) || attention !== 'permission';
+    if (!menu) { card.replaceChildren(); return; }
+    const titles = menu.title.map((l, n) => h('div', { class: n === menu.title.length - 1 ? 'chat-menu-q' : 'chat-menu-ctx' }, l));
+    const opts = menu.options.filter((o) => o.n <= 9).map((o) => {
+      const row = h('button', { class: `chat-opt${o.checked ? ' checked' : ''}`, title: o.desc || '' },
+        h('span', { class: 'chat-opt-n' }, menu.multi && o.checked !== undefined ? (o.checked ? '☑' : '☐') : String(o.n)),
+        h('span', { class: 'chat-opt-label' }, o.label),
+        o.desc ? h('span', { class: 'chat-opt-desc' }, o.desc) : null);
+      row.addEventListener('click', () => (isFreeOption(o) && !menu.multi ? freeAnswer(o, row) : press([String(o.n)])));
+      return row;
+    });
+    const nav = [];
+    if (menu.tabs) nav.push(h('button', { class: 'chat-nav', onclick: () => press(['\x1b[D']) }, t('chat.menuBack')));
+    if (menu.multi || menu.tabs) nav.push(h('button', { class: 'chat-nav', onclick: () => press(['\x1b[C']) }, t('chat.menuNext')));
+    nav.push(h('button', { class: 'chat-nav', onclick: () => press(['\x1b']) }, t('chat.menuCancel')));
+    card.replaceChildren(h('div', { class: 'chat-menu-title' }, ...titles), h('div', { class: 'chat-opts' }, ...opts), h('div', { class: 'chat-menu-nav' }, ...nav));
+    if (atBottomNow()) list.scrollTop = list.scrollHeight;
+  }
+  const atBottomNow = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  function checkMenu() {
+    if (!shown) return;
+    let m = null;
+    try { m = parseMenu(screen()); } catch (e) { console.error(e); }
+    if (menuKey(m) !== menuShown) waitUntil = 0;
+    if (Date.now() < waitUntil) return;
+    menu = m;
+    drawMenu();
+    let s = { busy: false, text: '' };
+    try { s = liveStatus(screen()); } catch (e) { console.error(e); }
+    live.hidden = !s.busy || Boolean(menu);
+    const txt = s.text || t('chat.working');
+    if (live.textContent !== txt) live.textContent = txt;
+  }
+
+  async function poll() {
+    if (!shown || reading) return;
+    reading = true;
+    try {
+      for (let n = 0; n < 20; n++) {
+        const r = await api.chat.read(ptyId, cursor);
+        if (!r || r.unsupported) { onTerminal(); return; }
+        if (r.reset || r.sid !== sid) clear();
+        sid = r.sid;
+        cursor = r.cursor;
+        append(r.items || []);
+        if (!r.more || !shown) break;
+      }
+      empty.hidden = list.childElementCount > 0;
+    } catch (e) { console.error(e); } finally { reading = false; }
+  }
+
+  function replyTo(text) {
+    replying = text;
+    replyBar.hidden = !text;
+    replyBar.firstElementChild.textContent = t('chat.replyingTo');
+    replyText.textContent = quoteExcerpt(text, 160);
+    if (text) input.focus();
+  }
+  function note(text) {
+    why.textContent = text;
+    why.hidden = !text;
+  }
+  async function submit() {
+    const text = input.value;
+    if (!text.trim()) return;
+    if (menu) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
+    // a slash command is sent as typed (a quote in front would stop it being a command)
+    const out = replying && !/^\s*\//.test(text) ? withReply(replying, text) : text;
+    let r;
+    try { r = await api.chat.send(ptyId, out); } catch (e) { console.error(e); r = 'error'; }
+    if (r === 'ok') {
+      echo(out);
+      input.value = '';
+      replyTo('');
+      fitInput();
+      note('');
+      closeSlash();
+      setTimeout(poll, 150);
+      // a command that opens a screen of its own (settings, pickers, panels) is answered in the terminal
+      const cmd = text.trim().match(/^\/([\w:.-]+)/)?.[1];
+      if (cmd && commands?.some((c) => c.name === cmd && c.ui)) setTimeout(() => onTerminal(), 400);
+      return;
+    }
+    note(t(`chat.why.${['not-running', 'permission', 'draft', 'locked', 'too-long'].includes(r) ? r : 'other'}`));
+  }
+  const fitInput = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; };
+
+  // ---- "/" commands: the list loads on the first "/" (and again after 30 s), filters as the person types
+  /** @type {{ name: string, description: string, source: string, ui?: boolean }[] | null} */
+  let commands = null;
+  let loadedAt = 0;
+  /** @type {{ name: string, description: string, source: string, ui?: boolean }[]} */
+  let shownCmds = [];
+  let pick = 0;
+  async function loadCommands() {
+    if (commands && Date.now() - loadedAt < 30000) return;
+    loadedAt = Date.now();
+    try { commands = await api.chat.commands(ptyId); } catch { commands = commands || []; }
+  }
+  function closeSlash() { slash.hidden = true; shownCmds = []; }
+  function drawSlash() {
+    slash.replaceChildren(...shownCmds.map((c, i) => h('li', {
+      class: `chat-slash-row${i === pick ? ' on' : ''}`, role: 'option',
+      onmousedown: (e) => { e.preventDefault(); pick = i; complete(); },
+    }, h('span', { class: 'chat-slash-name' }, `/${c.name}`), h('span', { class: 'chat-slash-desc' }, c.description || ''),
+    c.source !== 'builtin' ? h('span', { class: 'chat-slash-src' }, t(`chat.slash.${c.source}`)) : null)));
+    slash.hidden = !shownCmds.length;
+    slash.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+  }
+  async function updateSlash() {
+    const q = slashQuery(input.value, input.selectionStart ?? input.value.length);
+    if (q === null) { closeSlash(); return; }
+    await loadCommands();
+    const again = slashQuery(input.value, input.selectionStart ?? input.value.length);
+    if (again === null) { closeSlash(); return; }
+    shownCmds = matchCommands(commands, again, 8);
+    pick = 0;
+    drawSlash();
+  }
+  /** The chosen command into the input, with a space for its arguments. */
+  function complete() {
+    const c = shownCmds[pick];
+    if (!c) return;
+    input.value = `/${c.name} ${input.value.replace(/^\/\S*\s?/, '')}`;
+    input.setSelectionRange(c.name.length + 2, c.name.length + 2);
+    closeSlash();
+    fitInput();
+    input.focus();
+  }
+  input.addEventListener('input', () => { fitInput(); note(''); updateSlash(); });
+  input.addEventListener('blur', () => setTimeout(closeSlash, 150));
+  input.addEventListener('keydown', (e) => {
+    if (!slash.hidden && shownCmds.length && !e.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); pick = (pick + (e.key === 'ArrowDown' ? 1 : -1) + shownCmds.length) % shownCmds.length; drawSlash(); return; }
+      if (e.key === 'Tab') { e.preventDefault(); complete(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); closeSlash(); return; }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        // the typed word is already the chosen command: send it; otherwise take the choice first
+        const typed = input.value.trim().slice(1);
+        if (typed !== shownCmds[pick].name) { e.preventDefault(); complete(); return; }
+      }
+    }
+    // Enter sends, Shift+Enter is a new line; not while an input method is composing (Turkish/CJK IMEs)
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+    else if (e.key === 'Escape' && replying) { e.preventDefault(); replyTo(''); }
+  });
+
+  return {
+    show() {
+      if (shown) return;
+      shown = true;
+      el.hidden = false;
+      poll();
+      timer = window.setInterval(poll, POLL_MS);
+      checkMenu();
+      menuTimer = window.setInterval(checkMenu, MENU_MS);
+    },
+    hide() {
+      shown = false;
+      el.hidden = true;
+      window.clearInterval(timer);
+      window.clearInterval(menuTimer);
+    },
+    /** The project's attention ('permission' shows the banner: Claude Code waits for an answer in the terminal). */
+    setAttention(a) { attention = a; banner.hidden = Boolean(menu) || a !== 'permission'; },
+    texts() { texts(); menuShown = ''; drawMenu(); },
+    focus() { input.focus(); },
+    destroy() { shown = false; window.clearInterval(timer); window.clearInterval(menuTimer); el.remove(); },
+  };
+}

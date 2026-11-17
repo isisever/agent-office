@@ -173,6 +173,13 @@
         ]
       },
       {
+        "from": "../roles",
+        "to": "roles",
+        "filter": [
+          "*.json"
+        ]
+      },
+      {
         "from": "../themes",
         "to": "themes",
         "filter": [

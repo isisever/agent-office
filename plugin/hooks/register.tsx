@@ -23,7 +23,9 @@ import type { StopInput } from './finish'
 import { appendEntry, directoryProjects, entryOf, JOURNAL_FILE, LOOKBACK_MS, newsText, parseJournal, placeOfDir, selectNews } from './journal'
 import type { Host, JournalSeen, OfficeProject } from './journal'
 import { readyText, ReportTracker, typedTaskId, writeReport } from './reports'
-import { DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from './hq'
+import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from './hq'
+import { memberText, parseMember, STAFF_SECTION_ID, TEAM_SECTION_ID, TEAM_TEXT } from './staff'
+import { MAIL_SECTION_ID, MAIL_TEXT, mailGuardDecision } from './mail-guard'
 
 // Claude Code side of Agent Office: writes agent arrivals, tools, deliveries and background shells to
 // ~/.claude/agent-office/sessions/<session>.json. The office itself is drawn by the
@@ -76,6 +78,7 @@ const STRINGS = {
     task: (text: string) => `Task from Agent Office: ${text}\n\nIf it fits, split the work across subagents and run them in parallel.`,
     reportReady: (id: string, project: string, machine: string) => `Remote task #${id} on ${project}@${machine} finished; read it with office_reports.`,
     requestDone: (request: string, n: number) => `Request #${request} finished (${n} tasks); read them with office_board and office_reports, save the summary with office_summary and answer.`,
+    stageBlocked: (id: string, reason: string) => `Stage #${id} will not start (${reason}): the stage before it did not fully report. Check office_board and tell the person; do not re-dispatch on your own.`,
     stats: {
       heading: (date: string) => `Agent Office · today (${date})`,
       delivered: (count: number, failed: number, time: string) =>
@@ -114,6 +117,7 @@ const STRINGS = {
     task: (text: string) => `Agent Ofis'ten görev: ${text}\n\nUygunsa işi alt agent'lara bölerek paralel yürüt.`,
     reportReady: (id: string, project: string, machine: string) => `Uzak görev #${id} (${project}@${machine}) bitti; office_reports ile oku.`,
     requestDone: (request: string, n: number) => `İstek #${request} bitti (${n} görev); office_board ve office_reports ile oku, özeti office_summary ile kaydet ve yanıtla.`,
+    stageBlocked: (id: string, reason: string) => `Aşama #${id} başlamayacak (${reason}): ondan önceki aşama tam rapor vermedi. office_board'a bak ve kişiye söyle; kendiliğinden yeniden dağıtma.`,
     stats: {
       heading: (date: string) => `Agent Ofis · bugün (${date})`,
       delivered: (count: number, failed: number, time: string) =>
@@ -402,6 +406,12 @@ let verifyOn = false
 // AGENT_OFFICE_AUTO_APPROVE=1 (the project's switch in the app, contract v3.71): permission dialogs are answered
 // "allow" for the person, except what auto-approve.ts leaves to them. Never nested, never in HQ.
 let autoApproveOn = false
+// AGENT_OFFICE_MAIL_GUARD=1 (app contract v3.85): this session can read the person's mail; every call beyond reading
+// waits for the person (mail-guard.ts), auto-approve is off, and nested sessions keep the guard (the env is inherited)
+let mailGuardOn = false
+let guardLang: 'en' | 'tr' = 'en'
+// read from the env on every check too: the guard must hold even before session.start ran (a reload mid-session)
+const isMailSession = async ($: EngineInterface): Promise<boolean> => mailGuardOn || (await $.env.get('AGENT_OFFICE_MAIL_GUARD')) === '1'
 let isBriefReminded = false
 let factsFile = ''
 const FACTS_SECTION_ID = 'agent-office:facts'
@@ -821,14 +831,21 @@ async function submitTasks($: EngineInterface, raw: string) {
     })
     .filter(
       (t): t is { at: number; text?: string; kind?: string } =>
-        t !== null && typeof t === 'object' && typeof t.at === 'number' && t.at > inboxSeen && (Boolean(t.text) || t.kind === 'report-ready' || t.kind === 'request-done'),
+        t !== null && typeof t === 'object' && typeof t.at === 'number' && t.at > inboxSeen && (Boolean(t.text) || t.kind === 'report-ready' || t.kind === 'request-done' || t.kind === 'stage-blocked'),
     )
   if (tasks.length === 0) return
   inboxSeen = await update($, inboxAtom, () => Math.max(...tasks.map(t => t.at)))
   for (const task of tasks) {
     // a report-ready row is a fixed notice with its own wrapper, never a task, and carries no report text (v3.35)
-    const ready = task.kind === 'report-ready' ? readyText(task, t.reportReady) : task.kind === 'request-done' ? doneText(task, t.requestDone) : undefined
-    if ((task.kind === 'report-ready' || task.kind === 'request-done') && !ready) continue
+    const ready =
+      task.kind === 'report-ready'
+        ? readyText(task, t.reportReady)
+        : task.kind === 'request-done'
+          ? doneText(task, t.requestDone)
+          : task.kind === 'stage-blocked'
+            ? blockedText(task, t.stageBlocked) // v3.79
+            : undefined
+    if ((task.kind === 'report-ready' || task.kind === 'request-done' || task.kind === 'stage-blocked') && !ready) continue
     await $.prompt.submit({ asUser: true, text: ready ?? t.task(task.text ?? '') })
   }
 }
@@ -1358,7 +1375,9 @@ export const register: Register = on => {
     isStepCapped = stepBudget > 0 && (await $.env.get('AGENT_OFFICE_STEP_CAP')) === '1'
     const verify = (await $.env.get('AGENT_OFFICE_VERIFY')) ?? ''
     verifyOn = !isNested && (verify === '1' || (verify !== '0' && stepBudget > 0))
-    autoApproveOn = !isNested && !isHq && (await $.env.get('AGENT_OFFICE_AUTO_APPROVE')) === '1'
+    mailGuardOn = (await $.env.get('AGENT_OFFICE_MAIL_GUARD')) === '1'
+    guardLang = t === STRINGS.tr ? 'tr' : 'en'
+    autoApproveOn = !isNested && !isHq && !mailGuardOn && (await $.env.get('AGENT_OFFICE_AUTO_APPROVE')) === '1'
     await $.command.register(
       isInApp
         ? { name: 'office', description: t.appDescription, argumentHint: t.appArgumentHint }
@@ -1395,6 +1414,8 @@ export const register: Register = on => {
     const result = await next(e)
     if (isNested || (await nestedOf($))) return result
     const sections = [...result.sections]
+    // mail (v3.85): every loop of a mail session, subagents too, gets the mail rules
+    if ((await isMailSession($)) && !sections.some(section => section.id === MAIL_SECTION_ID)) sections.push({ id: MAIL_SECTION_ID, text: MAIL_TEXT, scope: 'session' as const })
     const isLoopManager =
       (await $.env.get('AGENT_OFFICE_MANAGER')) === '1' && !e.traits.includes('teammate') && e.tools.some(tool => AGENT_TOOLS.includes(tool))
     // HQ (v3.46): its own brief instead of the manager's, never both
@@ -1403,6 +1424,14 @@ export const register: Register = on => {
     if (kind === 'manager' && !sections.some(section => section.id === MANAGER_SECTION_ID)) {
       const pinned = pinnedModel(await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL_FORCE'), await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL'))
       sections.push({ id: MANAGER_SECTION_ID, text: managerText(pinned), scope: 'session' as const })
+    }
+    // team (v3.83): HQ's team section and a desk's member section, each keyed on its own env var
+    if (kind === 'hq' && (await $.env.get('AGENT_OFFICE_TEAM')) === '1' && !sections.some(section => section.id === TEAM_SECTION_ID))
+      sections.push({ id: TEAM_SECTION_ID, text: TEAM_TEXT, scope: 'session' as const })
+    const memberFile = e.traits.includes('teammate') ? undefined : await $.env.get('AGENT_OFFICE_ROLE')
+    if (memberFile && !sections.some(section => section.id === STAFF_SECTION_ID)) {
+      const m = parseMember(await $.fs.read(memberFile).catch(() => ''))
+      if (m) sections.push({ id: STAFF_SECTION_ID, text: memberText(m), scope: 'session' as const })
     }
     // account delegates (v3.56): keyed only on AGENT_OFFICE_DELEGATES, independent of the manager flag
     if (!e.traits.includes('teammate') && !sections.some(section => section.id === DELEGATES_SECTION_ID)) {
@@ -1623,13 +1652,23 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // mail guard (v3.85): in a session that reads mail, every call beyond reading asks the person (or is refused where
+  // the mode answers without them); a refusal another hook made stands
+  on('classic.PreToolUse', async ($, e, next) => {
+    if (!(await isMailSession($))) return next(e)
+    const decision = mailGuardDecision(typeof e.tool_name === 'string' ? e.tool_name : '', typeof e.permission_mode === 'string' ? e.permission_mode : undefined, guardLang)
+    const answer = await next(e)
+    if (!decision || answer.deny) return answer
+    return { ...answer, allow: undefined, ...decision }
+  }).catch(($, e, next) => (mailGuardOn ? { ask: 'Agent Office mail guard: this call waits for your approval.' } : next(e)))   // fails closed
+
   // a permission dialog opens (main session or a subagent): the app tells the person (contract v2.6)
   on('classic.PermissionRequest', async ($, e, next) => {
     noteTranscript(e)
     const tool = typeof e.tool_name === 'string' ? e.tool_name : ''
     // auto-approve (contract v3.71): answered for the person, so no dialog opens and nothing waits; a decision
     // another hook already made stands
-    if (autoApproveOn && canAutoApprove(tool, e.tool_input)) {
+    if (autoApproveOn && !(await isMailSession($)) && canAutoApprove(tool, e.tool_input)) {
       const answer = await next(e)
       return answer.decision ? answer : { ...answer, decision: { behavior: 'allow' } }
     }

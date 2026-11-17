@@ -3,7 +3,7 @@
 // A project's Claude Code sessions get MCP servers from Claude Code's own files (read-only here: ~/.claude.json
 // top-level and projects[dir].mcpServers, the account's .claude.json, the project's approved .mcp.json), from other
 // office projects (v3.9 share) and from servers added in Agent Office. The last are kept in state.json as either a
-// remote server `{ id, name, type: 'http' | 'sse', url, scope: 'all' | <projectId> }` whose token is in the token
+// remote server `{ id, name, type: 'http' | 'sse', url, scope: 'all' | <projectId> | <projectId>[] }` whose token is in the token
 // store below (safeStorage, keyed by the server id), or (v3.59) a stdio/CLI server
 // `{ id, name, type: 'stdio', command, args: string[], env: { [k]: string }, scope }` whose command/args/env live in
 // state.json: stdio carries no token, and its env is for non-secret values (paths, flags), never a key or password.
@@ -14,6 +14,29 @@ const path = require('path');
 const SC = require('./shared-config.js');
 
 const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
+// v3.82 a server can reach several projects: scope 'all', one project id (as before), or a list of two or more ids.
+// A list is kept only with two or more ids; one id is stored as a string, so single-project servers (and the held /
+// handoff logic built on them) are unchanged.
+/**
+ * A scope as typed or stored → 'all' | id | id[] (≥ 2), or null when nothing valid is left; ids must be in `known`.
+ * @param {any} raw @param {Set<string> | null} [known]
+ * @returns {string | string[] | null}
+ */
+function cleanScope(raw, known = null) {
+  if (raw === 'all') return 'all';
+  const ok = (v) => typeof v === 'string' && /^[\w-]{1,64}$/.test(v) && (!known || known.has(v));
+  if (typeof raw === 'string') return ok(raw) ? raw : null;
+  if (!Array.isArray(raw)) return null;
+  const ids = [...new Set(raw.filter(ok))];
+  return ids.length === 0 ? null : ids.length === 1 ? ids[0] : ids;
+}
+/** The project ids a scope names ([] for 'all'). @param {string | string[]} scope */
+const scopeIds = (scope) => (scope === 'all' ? [] : Array.isArray(scope) ? scope : [scope]);
+/** Does the server reach this project's sessions (its own scope, or all projects)? */
+const inScope = (s, projectId) => s.scope === 'all' || scopeIds(s.scope).includes(projectId);
+/** Do two scopes reach a common session (either is 'all', or they share a project)? */
+const overlaps = (a, b) => a === 'all' || b === 'all' || scopeIds(a).some((id) => scopeIds(b).includes(id));
 const TYPES = ['http', 'sse'];
 const NAME_MAX = 48;
 
@@ -78,12 +101,12 @@ const typeOf = (c) => (isObj(c) && typeof c.type === 'string' && c.type ? c.type
  * state.json `mcpServers` → the valid entries (unknown fields, a token among them, dropped). A server scoped to a
  * project that is not in `projectIds` is dropped; duplicate ids and duplicate names within one scope too.
  * @param {any} list @param {string[]} [projectIds]
- * @returns {({ id: string, name: string, type: 'http' | 'sse', url: string, scope: string, held?: string }
- *   | { id: string, name: string, type: 'stdio', command: string, args: string[], env: Record<string, string>, scope: string, held?: string })[]}
+ * @returns {({ id: string, name: string, type: 'http' | 'sse', url: string, scope: string | string[], held?: string }
+ *   | { id: string, name: string, type: 'stdio', command: string, args: string[], env: Record<string, string>, scope: string | string[], held?: string })[]}
  */
 function normalizeServers(list, projectIds) {
   const known = projectIds ? new Set(projectIds) : null;
-  /** @type {({ id: string, name: string, type: 'http' | 'sse', url: string, scope: string, held?: string } | { id: string, name: string, type: 'stdio', command: string, args: string[], env: Record<string, string>, scope: string, held?: string })[]} */
+  /** @type {({ id: string, name: string, type: 'http' | 'sse', url: string, scope: string | string[], held?: string } | { id: string, name: string, type: 'stdio', command: string, args: string[], env: Record<string, string>, scope: string | string[], held?: string })[]} */
   const out = [];
   const ids = new Set(), names = new Set();
   for (const s of Array.isArray(list) ? list : []) {
@@ -93,10 +116,13 @@ function normalizeServers(list, projectIds) {
     const command = stdio ? cleanCommand(s.command) : '';
     const url = stdio ? '' : cleanUrl(s.url);
     // held: the folder of a project handed off from here (v3.44) — the server waits for it to come back
-    const held = typeof s.held === 'string' && s.held && s.scope !== 'all' && (!known || !known.has(s.scope)) ? s.held : null;
-    const scope = s.scope === 'all' || (typeof s.scope === 'string' && s.scope && (!known || known.has(s.scope) || held)) ? s.scope : null;
-    if (!name || (stdio ? !command : !url) || !scope || names.has(`${scope}\0${name}`)) continue;
-    ids.add(s.id); names.add(`${scope}\0${name}`);
+    const held = typeof s.held === 'string' && s.held && typeof s.scope === 'string' && s.scope !== 'all' && (!known || !known.has(s.scope)) ? s.held : null;
+    const scope = Array.isArray(s.scope) ? cleanScope(s.scope, known)
+      : s.scope === 'all' || (typeof s.scope === 'string' && s.scope && (!known || known.has(s.scope) || held)) ? s.scope : null;
+    // a later server of the same name in the same scope is dropped (v3.82: a list meeting another scope too)
+    const dup = (o) => o.name === name && (Array.isArray(o.scope) || Array.isArray(scope) ? !o.held && !held && overlaps(o.scope, scope) : o.scope === scope);
+    if (!name || (stdio ? !command : !url) || !scope || out.some(dup)) continue;
+    ids.add(s.id); names.add(name);
     out.push(stdio
       ? { id: s.id, name, type: 'stdio', command, args: cleanArgs(s.args), env: cleanEnv(s.env), scope, ...(held ? { held } : {}) }
       : { id: s.id, name, type: TYPES.includes(s.type) ? s.type : 'http', url, scope, ...(held ? { held } : {}) });
@@ -117,13 +143,14 @@ function validate(f, projectIds = [], { keptUrl = false } = {}) {
     if (bad) return bad;
     if (f?.type !== undefined && !TYPES.includes(f.type)) return 'type';
   }
-  if (f?.scope !== 'all' && !projectIds.includes(f?.scope)) return 'scope';
+  if (!cleanScope(f?.scope, new Set(projectIds))) return 'scope';
+  if (Array.isArray(f?.scope) && f.scope.some((id) => !projectIds.includes(id))) return 'scope';
   return null;
 }
 
 /** The servers that apply to a project's sessions: its own (by scope) first, then the ones for all projects. */
 const serversFor = (servers, projectId) => [
-  ...servers.filter((s) => s.scope === projectId), ...servers.filter((s) => s.scope === 'all'),
+  ...servers.filter((s) => s.scope !== 'all' && inScope(s, projectId)), ...servers.filter((s) => s.scope === 'all'),
 ];
 
 /**
@@ -131,10 +158,11 @@ const serversFor = (servers, projectId) => [
  * same sessions (same scope, or one side is 'all' and the other a project).
  */
 function addServer(servers, f, newId) {
+  const scope = cleanScope(f.scope) ?? f.scope;
   const server = f.type === 'stdio'
-    ? { id: newId, name: serverName(f.name), type: 'stdio', command: cleanCommand(f.command), args: cleanArgs(f.args), env: cleanEnv(f.env), scope: f.scope }
-    : { id: newId, name: serverName(f.name), type: TYPES.includes(f.type) ? f.type : 'http', url: cleanUrl(f.url), scope: f.scope };
-  const clash = servers.some((s) => s.name === server.name && (s.scope === server.scope || s.scope === 'all' || server.scope === 'all'));
+    ? { id: newId, name: serverName(f.name), type: 'stdio', command: cleanCommand(f.command), args: cleanArgs(f.args), env: cleanEnv(f.env), scope }
+    : { id: newId, name: serverName(f.name), type: TYPES.includes(f.type) ? f.type : 'http', url: cleanUrl(f.url), scope };
+  const clash = servers.some((s) => !s.held && s.name === server.name && overlaps(s.scope, server.scope));
   return clash ? { error: 'name-used' } : { servers: [...servers, server], server };
 }
 const removeServer = (servers, id) => servers.filter((s) => s.id !== id);
@@ -169,9 +197,33 @@ function editable(s, hasToken = false) {
   const hidden = urlDisplaySecret(s.url);
   return { id: s.id, name: s.name, type: s.type, url: hidden ? '' : s.url, ...(hidden ? { urlHidden: true } : {}), scope: s.scope, hasToken: Boolean(hasToken) };
 }
-/** The servers of a project removed from this machine: → { servers, gone: ids whose token must go } */
+/**
+ * v3.82 Which projects a server reaches, changed from the project popup or the panel: → { servers, server, before }
+ * | { error: 'unknown' | 'scope' | 'name-used' }. A held server is not changed.
+ */
+function setScope(servers, id, scope, projectIds = []) {
+  const before = servers.find((s) => s.id === id);
+  if (!before || before.held) return { error: 'unknown' };
+  const next = cleanScope(scope, new Set(projectIds));
+  if (!next || (Array.isArray(scope) && scope.some((x) => !projectIds.includes(x)))) return { error: 'scope' };
+  if (servers.some((s) => s.id !== id && !s.held && s.name === before.name && overlaps(s.scope, next))) return { error: 'name-used' };
+  const server = { ...before, scope: next };
+  return { servers: servers.map((s) => (s.id === id ? server : s)), server, before };
+}
+
+/** The project leaves a server's list (removed or handed off): one id left is stored as a string again. */
+const leaveScope = (s, projectId) => ({ ...s, scope: cleanScope(scopeIds(s.scope).filter((x) => x !== projectId)) });
+const listed = (s, projectId) => Array.isArray(s.scope) && s.scope.includes(projectId);
+
+/**
+ * The servers of a project removed from this machine: → { servers, gone: ids whose token must go }. A server shared
+ * with other projects (a list) stays for them; only one that reached this project alone goes.
+ */
 function dropProject(servers, projectId) {
-  return { servers: servers.filter((s) => s.scope !== projectId), gone: servers.filter((s) => s.scope === projectId).map((s) => s.id) };
+  return {
+    servers: servers.filter((s) => s.scope !== projectId).map((s) => (listed(s, projectId) ? leaveScope(s, projectId) : s)),
+    gone: servers.filter((s) => s.scope === projectId).map((s) => s.id),
+  };
 }
 
 /**
@@ -190,7 +242,8 @@ function dirKey(dir) {
  * A project handed off from here (v3.44): its own servers and their tokens stay on this machine, held for its folder
  * (`held: dir`), and come back to it when a project at that folder is adopted again (`adoptHeld`).
  */
-const holdProject = (servers, projectId, dir) => servers.map((s) => (s.scope === projectId ? { ...s, held: dirKey(dir) } : s));
+// A server shared with other projects (v3.82 list) stays theirs: the handed-off project only leaves its list.
+const holdProject = (servers, projectId, dir) => servers.map((s) => (s.scope === projectId ? { ...s, held: dirKey(dir) } : listed(s, projectId) ? leaveScope(s, projectId) : s));
 /**
  * A project arrives at `dir` (handed back, or the folder added again): the servers held for that folder are its own
  * again — except one whose name the project already has a server of; that one stays held (the panel lists it as
@@ -198,7 +251,7 @@ const holdProject = (servers, projectId, dir) => servers.map((s) => (s.scope ===
  */
 function adoptHeld(servers, dir, projectId) {
   const key = dirKey(dir);
-  const names = new Set(servers.filter((s) => !s.held && s.scope === projectId).map((s) => s.name));
+  const names = new Set(servers.filter((s) => !s.held && s.scope !== 'all' && inScope(s, projectId)).map((s) => s.name));
   return servers.map((s) => {
     if (typeof s.held !== 'string' || dirKey(s.held) !== key || names.has(s.name)) return s;
     names.add(s.name);
@@ -226,6 +279,13 @@ function appConfigs(servers, projectId, tokenOf) {
  * The app-added servers a session of `engine` gets (v3.44, engine-caps `appMcp`): only Claude Code; for any other
  * engine nothing, and no token is read (leak rule).
  */
+/**
+ * v3.84 a desk's member may have tools of its own (member.tools: server ids): those servers reach the desk's session
+ * as if they were scoped to its project. → the list to pass on (unchanged without tools).
+ */
+const withTools = (servers, projectId, toolIds) => (Array.isArray(toolIds) && toolIds.length
+  ? servers.map((s) => (toolIds.includes(s.id) && !s.held && !inScope(s, projectId) ? { ...s, scope: projectId } : s)) : servers);
+
 const sessionServers = (engine, servers, projectId, tokenOf) => (engine === 'claude' ? appConfigs(servers, projectId, tokenOf) : {});
 
 /**
@@ -390,7 +450,7 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
     const shadowed = seen.has(s.name);
     const bossShadowed = !shadowed && boss && s.name === 'agent-office';
     if (!shadowed) seen.add(s.name);
-    out.push({ name: s.name, source: 'app', type: s.type, host: s.type === 'stdio' ? '' : hostOf(s.url), readOnly: false, id: s.id, scope: s.scope === 'all' ? 'all' : 'project', hasToken: Boolean(hasToken(s.id)), ...(shadowed ? { shadowed: true } : {}), ...(bossShadowed ? { bossShadowed: true } : {}) });
+    out.push({ name: s.name, source: 'app', type: s.type, host: s.type === 'stdio' ? '' : hostOf(s.url), readOnly: false, id: s.id, scope: s.scope === 'all' ? 'all' : Array.isArray(s.scope) ? 'projects' : 'project', ...(Array.isArray(s.scope) ? { projects: s.scope.length } : {}), hasToken: Boolean(hasToken(s.id)), ...(shadowed ? { shadowed: true } : {}), ...(bossShadowed ? { bossShadowed: true } : {}) });
   }
   for (const s of servers.filter((x) => x.held)) {
     out.push({ name: s.name, source: 'app', type: s.type, host: s.type === 'stdio' ? '' : hostOf(s.url), readOnly: false, id: s.id, scope: 'held', away: true, folder: path.basename(s.held), hasToken: Boolean(hasToken(s.id)) });
@@ -399,7 +459,9 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
 }
 
 module.exports = {
+  withTools,
   TYPES, serverName, cleanUrl, urlProblem, urlDisplaySecret, hostOf, cleanToken, typeOf, normalizeServers, validate, serversFor, addServer, removeServer, updateServer, editable,
+  cleanScope, scopeIds, inScope, overlaps, setScope,
   dropProject, dirKey, holdProject, adoptHeld, serverConfig, appConfigs, sessionServers, migrateConnections, tokenStore, moveToken,
   pendingMoves, settleTokens, listing,
 };

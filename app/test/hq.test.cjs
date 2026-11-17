@@ -384,6 +384,62 @@ function waitHost(t, over = {}) {
   return { host, typed };
 }
 
+test('v3.83: HQ\'s task for a staff member reaches the member\'s desk tab; a paired device cannot target a desk', (t) => {
+  const tab = { 'p1:2': 'ready' };
+  const { host, typed } = waitHost(t, {
+    tabState: (id) => tab[id] || 'gone',
+    desk: (id) => (id === 'p1:2' ? { id: 'p1:2', name: 'pii · Ahmet', engine: 'claude' } : null),
+    type: (id, text) => { typed.push([id, text]); },
+  });
+  const seen = [];
+  const r = host.dispatchLocal('p1:2', 'deploy the SaaS', 'HQ', (id, s, why) => seen.push([s, why]), { ttl: 3600000, revive: true });
+  assert.notEqual(r.status, 'rejected', JSON.stringify(r));
+  host.pump();
+  assert.equal(typed.length, 1);
+  assert.equal(typed[0][0], 'p1:2', 'typed into the desk, not the project boss');
+  assert.match(typed[0][1], /deploy the SaaS/);
+  assert.ok(seen.some((x) => x[0] === 'delivered'));
+  assert.equal(host.dispatchLocal('p9:2', 'x', 'HQ', () => {}).reason, 'unknown-project', 'a tab that is no desk stays unknown');
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /desk: \(id\) => \{\s+const r = String\(id\)\.includes\(':'\) \? P\.resolvePty\(state, String\(id\)\) : null;/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'link-host.js'), 'utf8'), /\(device\.pub === SELF \? d\.desk\?\.\(project\) \|\| null : null\)/);
+});
+
+test('v3.83 amendment: a gone desk starts at once with HQ\'s task as its first prompt; a tab stuck starting gets it after 20 s', (t) => {
+  const real = Date.now; let clock = real(); Date.now = () => clock;
+  t.after(() => { Date.now = real; });
+  const tab = { 'p1:2': 'gone', p1: 'starting' };
+  const started = []; let refuse = false;
+  const { host, typed } = waitHost(t, {
+    tabState: (id) => tab[id] || 'gone',
+    desk: (id) => (id === 'p1:2' ? { id: 'p1:2', name: 'pii · Ahmet', engine: 'claude' } : null),
+    manage: () => { throw new Error('not used when startWith takes it'); },
+    startWith: (id, text) => { if (refuse) return false; started.push([id, text]); tab[id] = 'starting'; return true; },
+  });
+  const seen = [];
+  host.dispatchLocal('p1:2', 'deploy the SaaS', 'HQ', (id, s) => seen.push(s), { ttl: 3600000, revive: true });
+  host.pump();
+  assert.equal(started.length, 1, 'no minute of waiting for a desk');
+  assert.equal(started[0][0], 'p1:2');
+  assert.match(started[0][1], /deploy the SaaS/);
+  assert.deepEqual(seen, ['queued', 'delivered']);
+  // a running boss tab that never had a prompt: waits, then is restarted with the task (once main agrees)
+  const seen2 = [];
+  host.dispatchLocal('p1', 'scan', 'HQ', (id, s) => seen2.push(s), { ttl: 3600000, revive: true });
+  refuse = true;
+  for (let e = 0; e < 30000; e += 1500) { clock += 1500; host.pump(); }
+  assert.deepEqual(seen2, ['queued'], 'main refused: still waiting');
+  refuse = false;
+  for (let e = 0; e < 21000; e += 1500) { clock += 1500; host.pump(); }
+  assert.deepEqual(started.at(-1)[0], 'p1');
+  assert.deepEqual(seen2, ['queued', 'delivered']);
+  assert.equal(typed.length, 0, 'nothing typed into a tab that takes no typing');
+  // a device's command never restarts a tab (revive is this machine's own)
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /startWith: startWithPrompt/);
+  assert.match(MAIN, /if \(startedWith\.get\(id\) === t \|\| tabStateOf\(id\) !== 'starting' \|\| activity\.get\(id\)\?\.draft\) return false;/);
+});
+
 test('v3.46 amendment: waitState names why a task waits', () => {
   assert.deepEqual(['ready', 'busy', 'starting'].map((s) => HQ.waitState(s, false)), ['ready', 'busy', 'starting']);
   assert.equal(HQ.waitState('gone', true), 'asleep');
@@ -545,4 +601,57 @@ test('HQ boss model: a listed model or a valid custom id; anything else is dropp
   for (const v of ['a b', 'x;rm -rf ~', '-p', 'flash', 'fixcloud/glm-4.6', '', 5]) assert.equal('bossModel' in HQ.normalizeHq({ bossModel: v }), false, String(v));
   assert.equal('bossModel' in P.normalizeState({ hq: { bossModel: '$(id)' } }).hq, false);
   assert.match(fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8'), /o\.bossModel === '' \|\| HQ\.hqBossModel\(o\.bossModel\)/); // the IPC setter leaves an invalid value out
+});
+
+test('v3.83 amendment: a task started as the first-prompt argument keeps a marker the plugin reads', () => {
+  const C = require('../src/link-core.js');
+  const R = require('../src/resume.js');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'hooks', 'reports.ts'), 'utf8');
+  const MARKER = new RegExp(src.match(/^const MARKER = \/(.*)\/$/m)[1]);
+  const typed = C.markedTask('edb2d4505fa1dd57', 'Yasin-MacBook-Air', 'deploy\n1. "check" it');
+  assert.equal(MARKER.exec(typed)?.[1], 'edb2d4505fa1dd57');
+  assert.equal(MARKER.exec(R.promptArg(typed))?.[1], 'edb2d4505fa1dd57', 'quotes and line breaks dropped, the id still read');
+});
+
+test('v3.83 amendment task watch: live board status, and a task whose session never reports ends with a partial report', () => {
+  const TW = require('../src/task-watch.js');
+  let r = TW.watchStep({ status: 'queued', live: 'idle', now: 0 });
+  assert.deepEqual(r, { mem: {} }, 'not delivered yet: nothing to watch');
+  r = TW.watchStep({ status: 'delivered', live: 'busy', now: 1000 });
+  assert.equal(r.status, 'running');
+  r = TW.watchStep({ status: 'running', live: 'permission', now: 2000, mem: r.mem });
+  assert.equal(r.status, 'needs-approval');
+  r = TW.watchStep({ status: 'needs-approval', live: 'idle', now: 3000, mem: r.mem });
+  assert.deepEqual([r.status, r.end], ['delivered', undefined]);
+  r = TW.watchStep({ status: 'delivered', live: 'idle', now: 3000 + TW.IDLE_MS - 1, mem: r.mem });
+  assert.equal(r.end, undefined, 'not yet');
+  const busyAgain = TW.watchStep({ status: 'delivered', live: 'busy', now: 3000 + TW.IDLE_MS - 1, mem: r.mem });
+  assert.equal(busyAgain.mem.idleSince, undefined, 'work again: the idle clock starts over');
+  r = TW.watchStep({ status: 'delivered', live: 'idle', now: 3000 + TW.IDLE_MS, mem: r.mem });
+  assert.equal(r.end, 'idle');
+  let g = TW.watchStep({ status: 'running', live: 'gone', now: 0, mem: { since: 0 } });
+  g = TW.watchStep({ status: 'running', live: 'gone', now: TW.GONE_MS, mem: g.mem });
+  assert.equal(g.end, 'gone');
+  assert.equal(TW.watchStep({ status: 'reported', live: 'gone', now: 9e9, mem: g.mem }).end, undefined);
+  const rep = TW.fallbackReport({ why: 'idle', answer: 'Sunucuya giremedim.', now: 5 });
+  assert.deepEqual([rep.ok, rep.partial, rep.at, rep.commits], [false, true, 5, []]);
+  assert.match(rep.summary, /^\[Agent Office\] .*went idle[\s\S]*Sunucuya giremedim\.$/);
+  assert.match(TW.fallbackReport({ why: 'gone', answer: '', now: 1 }).summary, /stopped[\s\S]*no answer/);
+  // the queue takes the report like the plugin's own: same file, same scan
+  const C = require('../src/link-core.js');
+  assert.equal(C.cleanReport(rep, true).partial, true);
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /rec = \{ machine: selfName\(\), project: officeName\(p\.name\), pub: 'self', into \};/);
+  assert.ok(MAIN.includes("if (fs.existsSync(f)) continue;   // the plugin's own report is on its way"));
+});
+
+test('v3.83 amendment: lastAnswer reads the newest assistant text of a transcript', () => {
+  const CHAT = require('../src/chat.js');
+  const f = path.join(tmp('ao-last-'), 's.jsonl');
+  const line = (o) => `${JSON.stringify({ timestamp: '2026-11-17T10:00:00.000Z', uuid: String(Math.random()), ...o })}\n`;
+  fs.writeFileSync(f, line({ type: 'user', message: { role: 'user', content: 'deploy' } })
+    + line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'first' }] } })
+    + line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Sunucuya giremedim.' }] } }));
+  assert.equal(CHAT.lastAnswer(f), 'Sunucuya giremedim.');
+  assert.equal(CHAT.lastAnswer(path.join(path.dirname(f), 'none.jsonl')), '');
 });

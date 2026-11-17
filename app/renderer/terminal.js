@@ -165,6 +165,13 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
       resize();
     },
     setTheme(t) { term.options.theme = xtermTheme(t); },
+    /** The visible screen's lines (v3.80 chat view: Claude Code's open menu is read off it). */
+    screen() {
+      const b = term.buffer.active;
+      const out = [];
+      for (let i = 0; i < term.rows; i++) out.push(b.getLine(b.viewportY + i)?.translateToString(true) ?? '');
+      return out;
+    },
     focus() { term.focus(); },
     fit: resize,
     /** Clears the terminal; restarting: the pty is being restarted by main. */

@@ -1,6 +1,6 @@
 // Agent Office shell: window, projects, accounts, one claude pty per project (several with tabs), and office data.
 const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, nativeTheme, safeStorage, powerMonitor, powerSaveBlocker, shell: eShell } = require('electron');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -20,9 +20,22 @@ const M = require('./src/memory.js');
 const Z = require('./src/sleep.js');
 const TR = require('./src/transfer.js');
 const TIO = require('./src/transfer-io.js');
+const CHAT = require('./src/chat.js');
+const TW = require('./src/task-watch.js');
 const SC = require('./src/shared-config.js');
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
+const ST = require('./src/staff.js');
+const RW = require('./src/role-wizard.js');
+// v3.85 mail: accounts, the outbox, the read-only readers, the guard and the desk's mail server
+const MG = require('./src/mail/guard.js');
+const MIME = require('./src/mail/mime.js');
+const IMAP = require('./src/mail/imap.js');
+const SMTP = require('./src/mail/smtp.js');
+const GRAPH = require('./src/mail/graph.js');
+const MST = require('./src/mail/store.js');
+const MMCP = require('./src/mail-mcp.js');
+const SLASH = require('./src/slash-commands.js');
 const MR = require('./src/mcp-reload.js');
 const SP = require('./src/skill-packs.js');
 const R = require('./src/resume.js');
@@ -42,6 +55,7 @@ const LH = require('./src/link-host.js');
 const LC = require('./src/link-core.js');
 const OM = require('./src/office-mcp.js');
 const HQ = require('./src/hq.js');
+const CH = require('./src/hq-chain.js');
 const ROUT = require('./src/routines.js');
 const KA = require('./src/keep-awake.js');
 const PTY = require('./src/pty-attach.js');
@@ -358,8 +372,11 @@ function dropProjectServers(projectId) {
 }
 function removeMcpFile(id) {
   officeSock?.remove(id);   // v3.35 its office_* token stops working with it
+  mailSock?.remove(id);     // v3.85 its mail_* token too
+  mailRead.delete(id);
   try { fs.rmSync(path.join(mcpDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
   try { fs.rmSync(path.join(directoryDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
+  try { fs.rmSync(path.join(deskRoleDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}   // v3.83 a desk's role file
 }
 
 // Killed on purpose (restart, removal, sleep, account change): its interrupted mark goes too, except while quitting.
@@ -1203,17 +1220,21 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const dir = pluginDir();
   const sl = usageStatusLine(project, configDir, cwd, usageKey(id));
   const settings = M.withMemorySetting(sl?.settings, isDir(cwd) ? projectMemoryDir(cwd, configDir) : null);
+  // v3.83 a desk continues its own conversation (kept on the tab), when its transcript is still there
+  if (!sessionId && tab?.staffId && tab.sessionId && TIO.findTranscript(cwd, tab.sessionId, configDir, app.getPath('home'))) sessionId = tab.sessionId;
   const isResume = Boolean(sessionId) || (resume && (!tab || Boolean(tab.worktree)) && hasHistory(cwd, configDir));
   const resumeArgs = sessionId ? ['--resume', sessionId] : isResume ? ['--continue'] : [];
-  const settingsArg = IS_WIN && settings ? settingsFile(usageKey(id), settings) : settings;
   // Default's plugins and MCP servers for other accounts, other projects' MCP servers (--plugin-dir each,
   // --mcp-config <file>; see shared-config.js) and the office directory naming them (contract v3.9)
   // v3.35 one boss: a manager-mode boss tab (the main tab) gets the agent-office MCP server; its token only in that file
-  const bossMcp = officeServerFor(id, project);
+  const officeMcp = officeServerFor(id, project);
+  // v3.85 a desk whose member has mail accounts gets the mail server (and the plugin's guard, AGENT_OFFICE_MAIL_GUARD)
+  const mailMcp = project.hq ? null : mailServerFor(id, project, tab);
+  const bossMcp = officeMcp && mailMcp ? { ...officeMcp, ...mailMcp } : officeMcp || mailMcp;
   // v3.44 servers added in Agent Office, Claude Code only: into this tab's 0600 MCP file, unless the name is taken
   // v3.46 HQ: none of these (no Default/other projects' servers, no app servers, no skill packs): its own MCP file
   // holds only the agent-office server and it runs with --strict-mcp-config (HQ.launchArgs)
-  const appMcp = project.hq ? null : MS.sessionServers(P.engineOf(project), appServers(), project.id, (sid) => tokens().load(sid));
+  const appMcp = project.hq ? null : MS.sessionServers(P.engineOf(project), MS.withTools(appServers(), project.id, project.staffTools), project.id, (sid) => tokens().load(sid));
   const prepared = project.hq ? hqMcpConfig(usageKey(id), bossMcp) : sharedConfig(account, project, cwd, usageKey(id), bossMcp, appMcp);
   const shared = project.hq ? [] : SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
@@ -1227,7 +1248,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const hqArgs = project.hq ? HQ.launchArgs({ dir: cwd, mcpConfig: prepared.mcpConfig || '' }) : [];
   // v3.72 skip permissions: the project's switch adds --dangerously-skip-permissions here, for every Claude Code tab
   // start (fresh, --continue, --resume, worktree tabs, Windows); never the HQ session (P.skipPermissionsArgs)
-  const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
+  // v3.85 a mail session: Claude Code itself asks the person for every action beyond reading (ask rules for the
+  // built-in tools and every other MCP server of its file, bypass and auto mode off) and loads only the servers of
+  // its --mcp-config file (no claude.ai connectors, no account servers: none of them could send mail behind the outbox)
+  const guarded = mailMcp ? MG.guardSettings(settings, Object.keys(readJson(prepared.mcpConfig || '')?.mcpServers || {}).filter((n) => n !== MMCP.SERVER_NAME)) : settings;
+  const settingsArg = IS_WIN && guarded ? settingsFile(usageKey(id), guarded) : guarded;
+  const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(mailMcp ? ['--strict-mcp-config'] : []), ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
@@ -1250,7 +1276,19 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   if (directory) env.AGENT_OFFICE_DIRECTORY = directory;
   delete env.AGENT_OFFICE_HQ;
   if (project.hq) env.AGENT_OFFICE_HQ = '1';   // v3.46 the plugin gives the HQ section instead of the manager one
-  if (bossMcp && (linkHost?.link()?.devices.length || 0) > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
+  // v3.83 team: a desk's session gets its member's role section (AGENT_OFFICE_ROLE, a 0600 file); HQ the team section
+  delete env.AGENT_OFFICE_ROLE;
+  delete env.AGENT_OFFICE_TEAM;
+  const roleFile = tab?.staffId ? writeDeskRole(id, project, tab.staffId) : null;
+  if (roleFile) env.AGENT_OFFICE_ROLE = roleFile;
+  if (project.hq && teamOn()) env.AGENT_OFFICE_TEAM = '1';
+  delete env.AGENT_OFFICE_MAIL_GUARD;
+  if (mailMcp) {
+    env.AGENT_OFFICE_MAIL_GUARD = '1';           // v3.85 the plugin's second layer and the mail rules section
+    env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false';   // no claude.ai connector (a Gmail one could send behind the outbox)
+    delete env.AGENT_OFFICE_AUTO_APPROVE;        // and Agent Office never answers its permission dialogs
+  }
+  if (officeMcp && (linkHost?.link()?.devices.length || 0) > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
   if (sl?.userCommand) env.AGENT_OFFICE_STATUSLINE = sl.userCommand;
   delete env[D.DELEGATE_ENV];
   delete env.AGENT_OFFICE_DELEGATE_BIN;
@@ -1648,7 +1686,7 @@ function unfinishedTabs() {
     for (const id of P.ptyIdsOf(p)) {
       const r = P.resolvePty(state, id);
       if (!r) continue;
-      const { configDir } = A.accountOf(state, p);
+      const { configDir } = A.accountOf(state, r.project);   // v3.83 a desk's own account (resolvePty)
       const t = terms.get(id);
       const continues = !r.tab || Boolean(r.tab.worktree);
       let sid = '';
@@ -1691,7 +1729,7 @@ function typePrompt(id, text, { taskId = '' } = {}) {
   const t = terms.get(id);
   if (!t || handoffLocked(id)) return false;
   if (taskId) {
-    const p = P.findProject(state, id);
+    const p = P.resolvePty(state, id)?.project;   // a desk too (v3.83)
     const sid = p ? validSid(readJson(Z.claudePidFile(A.accountOf(state, p).configDir, app.getPath('home'), t.pid))?.sessionId) : null;
     const dir = path.join(app.getPath('home'), '.claude', 'agent-office', 'tasks');
     if (sid) try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, `${sid}.json`), JSON.stringify({ id: taskId, at: Date.now() }), { mode: 0o600 }); } catch (e) { console.error('task id:', e.message); }
@@ -1708,6 +1746,27 @@ function typePrompt(id, text, { taskId = '' } = {}) {
 }
 // --- device link (v3.28, src/link-host.js): remote commands go to the project's main tab, only when it is idle
 let linkHost = null;
+// v3.83 amendment: tabs started with a queued task as their first prompt (the pty object), so one is never restarted twice
+const startedWith = new Map();
+/** The queue's way into a tab that takes no typing: starts it (gone) or restarts it (running, but never had a prompt and
+ *  the person is not typing in it) with `text` as its first prompt. Claude Code tabs of a project or desk only, never
+ *  HQ; → false when refused (the queue keeps waiting). */
+function startWithPrompt(id, text) {
+  const r = P.resolvePty(state, id);
+  if (!r || r.project.hq || r.tab?.shell || P.engineOf(r.project) !== 'claude' || handoffLocks.has(r.project.id) || !win || !isLoaded) return false;
+  const t = terms.get(id);
+  if (t) {
+    if (startedWith.get(id) === t || tabStateOf(id) !== 'starting' || activity.get(id)?.draft) return false;
+    const sid = validSid(readJson(Z.claudePidFile(A.accountOf(state, r.project).configDir, app.getPath('home'), t.pid))?.sessionId);
+    if (sid && sessionPrompted(sid, A.accountOf(state, r.project).configDir)) return false;
+  }
+  startPty(id, { resume: r.tab ? true : state.resume !== false, prompt: text, forcePrompt: true });
+  const now = terms.get(id);
+  if (!now) return false;
+  startedWith.set(id, now);
+  broadcast();
+  return true;
+}
 
 // --- v3.35 one boss (src/office-mcp.js): office_machines / office_dispatch / office_reports for the boss tab
 let officeSock = null;
@@ -1724,6 +1783,13 @@ async function startOffice() {
     console.error('office socket:', e.message);
     notify(T('main.officeUnavailable'), String(e.message || e).slice(0, 120), null);
   }
+  // v3.85 the mail server's socket, next to the office one (no mail for desks when it cannot listen)
+  if (officeSock) try {
+    mailScript = MMCP.writeServerScript(path.join(ud, 'office'));
+    const sock = MMCP.createSocket({ socketFile: MMCP.socketPath(officeSock.socketFile), handle: mailTool, ownDir: ud });
+    if (!(await sock.ready)) { sock.close(); throw new Error('cannot listen'); }
+    mailSock = sock;
+  } catch (e) { console.error('mail socket:', e.message); }
 }
 const dispatchFile = () => path.join(app.getPath('userData'), 'link', 'dispatches.json');
 let dispatches = null;   // id → { id, tab, machine, project, pub, at, status, reason?, report? } (newest 50, 0600)
@@ -1746,6 +1812,8 @@ function officeMachines() {
   const l = linkHost?.link();
   const v = l ? l.view() : null;
   const here = { machine: selfName(), thisMachine: true, online: true, projects: state.projects.map((p) => ({ id: p.id, name: officeName(p.name), engine: P.engineOf(p), state: terms.has(p.id) ? 'running' : asleep.has(p.id) ? 'asleep' : 'stopped' })) };
+  // v3.83 team mode: the staff (role, department, projects each may work on, desks and whether they are at work)
+  if (teamOn()) here.staff = ST.machineStaff(state.staff, presetRoles(), state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: officeName(p.name), ...(p.staffOwner ? { staffOwner: p.staffOwner } : {}) })), deskStateOf);
   const there = (v?.devices || []).map((dv) => ({ machine: officeName(dv.name), online: dv.online, reports: dv.caps.includes('report'), manage: dv.caps.includes('manage') && Boolean(dv.catalog),
     // v3.46 an offline machine shows its last-known projects (peer cache: names and ids only)
     lastSeen: peerCache()[dv.id]?.lastSeen || 0,
@@ -1753,6 +1821,8 @@ function officeMachines() {
   return { machines: [here, ...there] };
 }
 function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {}) {
+  // v3.79 only HQ chains stages; a project boss keeps the one-task dispatch (depth rule unchanged)
+  if (tab !== HQ.HQ_ID && ((typeof args.after === 'string' && args.after) || (Array.isArray(args.then) && args.then.length))) return { status: 'rejected', reason: 'after-hq-only' };
   // v3.46 obvious secrets never leave in a task (journal patterns), and a boss working on an HQ task does not dispatch on (depth 1)
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   if (HQ.depthRefused(loadHqBoard(), tab)) return { status: 'rejected', reason: 'depth' };
@@ -1768,7 +1838,8 @@ function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {
     if (!p || !linkHost) return { status: 'rejected', reason: 'unknown-project' };
     if (p.id === tab) return { status: 'rejected', reason: 'self' };   // the boss's own project: it would type into itself
     // every later status (delivered, or rejected e.g. locked/expired) lands in the record office_reports reads
-    r = linkHost.dispatchLocal(p.id, task, selfName(), (id, status, reason) => {
+    const into = args.desk && P.resolvePty(state, args.desk)?.tab?.staffId && String(args.desk).split(':')[0] === p.id ? args.desk : p.id;   // v3.83 a desk
+    r = linkHost.dispatchLocal(into, task, selfName(), (id, status, reason) => {
       const x = loadDispatches().get(id);
       hqStatus(id, status, reason);
       if (!x || x.report) return;
@@ -1776,7 +1847,7 @@ function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {
       if (reason) x.reason = reason; else delete x.reason;
       saveDispatches();
     }, { ttl, revive });
-    rec = { machine: selfName(), project: officeName(p.name), pub: 'self' };
+    rec = { machine: selfName(), project: officeName(p.name), pub: 'self', into };   // into: the tab it goes to (task watch)
   } else {
     const dv = byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
     if (!dv) return { status: 'rejected', reason: 'unknown-machine' };
@@ -1791,11 +1862,15 @@ function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {
   return { id: r.id, status: r.status, ...(r.reason ? { reason: r.reason } : {}) };
 }
 function officeReports(args) {
+  const board = loadHqBoard();
   const out = l => l.map((x) => {
     const o = x.pub !== 'self' ? linkHost?.remoteTask(x.id) || linkHost?.link()?.outgoing.find((y) => y.id === x.id) : null;
-    const status = x.report ? 'reported' : o?.status || x.status;
-    const reason = x.report ? '' : o ? o.reason : x.reason;
-    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), at: x.at, ...(x.report ? { report: x.report } : {}) };
+    // v3.83 amendment: a local task's live status is the board's (the task watch: running, needs-approval), and its tab
+    const live = x.pub === 'self' && !x.report ? board.tasks.find((t) => t.id === x.id) : null;
+    const status = x.report ? (x.report.partial ? 'partial' : 'reported') : o?.status || live?.status || x.status;
+    const reason = x.report ? '' : o ? o.reason : live?.reason || x.reason;
+    const member = live?.staff ? `${x.project} · ${live.staff}` : '';
+    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), ...(member ? { tab: member } : {}), at: x.at, ...(x.report ? { report: x.report } : {}) };
   });
   const all = [...loadDispatches().values()].sort((x, y) => y.at - x.at);
   const list = args.id ? all.filter((x) => x.id === args.id) : all.slice(0, 10);
@@ -1847,6 +1922,58 @@ function onOfficeReport({ id, pub, report }) {
   inboxRow(sid, rec.tab, { kind: 'report-ready', id, machine: officeName(rec.machine), project: officeName(rec.project) });
   for (const r of done) inboxRow(sid, rec.tab, { kind: 'request-done', request: r.id, n: r.n });
 }
+// --- v3.83 amendment task watch (src/task-watch.js): this machine's own dispatched tasks, followed in their tab every
+// 5 s: the Board shows running / needs-approval, and a task whose session never reports (idle 3 min, or its tab gone
+// 1 min) ends with a partial report of the session's last answer, written where the plugin writes reports (the
+// queue's report scan takes it like any other), so HQ is always told.
+const watchMem = new Map();   // task id → watchStep's memory
+/** A tab's state for the watch: gone | permission (a prompt or dialog open) | busy (a turn, agents, a shell) | idle. */
+function tabLive(id) {
+  const r = P.resolvePty(state, id);
+  const t = terms.get(id);
+  if (!r || !t) return 'gone';
+  const claude = readJson(Z.claudePidFile(A.accountOf(state, r.project).configDir, app.getPath('home'), t.pid));
+  if (claude?.status === 'waiting') return 'permission';
+  const sid = validSid(claude?.sessionId);
+  return R.isTurnBusy({ claude, office: sid ? office()?.readSession(sid) : undefined }) ? 'busy' : 'idle';
+}
+/** The last answer in a tab's conversation (running: its session; else a desk's kept one or the tab's last). */
+function tabLastAnswer(id) {
+  const r = P.resolvePty(state, id);
+  if (!r) return '';
+  const { configDir } = A.accountOf(state, r.project);
+  const t = terms.get(id);
+  const sid = (t && validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId)) || validSid(r.tab?.sessionId) || validSid(lastSid.get(id));
+  const f = sid ? TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file : null;
+  try { return f ? CHAT.lastAnswer(f) : ''; } catch { return ''; }
+}
+function watchTasks() {
+  if (!state || !isLoaded) return;
+  const now = Date.now();
+  const board = loadHqBoard();
+  const seen = new Set();
+  for (const rec of loadDispatches().values()) {
+    if (rec.pub !== 'self' || rec.report || !rec.into || !rec.id) continue;
+    const task = board.tasks.find((x) => x.id === rec.id);
+    const status = task ? task.status : rec.status;
+    seen.add(rec.id);
+    const r = TW.watchStep({ status, live: tabLive(rec.into), now, mem: watchMem.get(rec.id) });
+    watchMem.set(rec.id, r.mem);
+    if (task && r.status && r.status !== task.status) hqStatus(rec.id, r.status);
+    if (!r.end) continue;
+    const dir = path.join(app.getPath('home'), '.claude', 'agent-office', 'reports');
+    const f = path.join(dir, `${rec.id}.json`);
+    if (fs.existsSync(f)) continue;   // the plugin's own report is on its way
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      SF.writeAtomic(f, JSON.stringify(TW.fallbackReport({ why: r.end, answer: tabLastAnswer(rec.into), now })));
+      watchMem.delete(rec.id);
+      linkHost?.scanReports?.();
+    } catch (e) { console.error('task watch:', e.message); }
+  }
+  for (const id of [...watchMem.keys()]) if (!seen.has(id)) watchMem.delete(id);
+}
+setInterval(() => { try { watchTasks(); } catch (e) { console.error('task watch:', e.message); } }, 5000).unref?.();
 /** The session of the dispatching boss tab (HQ resolves through resolvePty; a gone HQ pty: its last session). */
 function bossSid(tab) {
   const t = terms.get(tab);
@@ -1996,7 +2123,7 @@ async function confirmHqDispatch(args, remote) {
 
   if (!win || win.isDestroyed()) return false;
   const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
-    message: T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: LC.cleanLine(HQ.redact(String(args.task || '')), 300) });
+    message: args.staffName ? T('main.hqAskStaff', { staff: args.staffName, project: officeName(args.project) }) : T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: LC.cleanLine(HQ.redact(String(args.task || '')), 300) });
   return r.response === 0;
 }
 /** v3.47/v3.49 a routine's own project or remote run: its dispatch record names the run, so the report ends the run
@@ -2006,7 +2133,8 @@ function tagRoutineRec(id, rrun) {
   if (rec) { rec.routine = rrun.id; saveDispatches(); }
 }
 /** HQ's office_dispatch: caps, consent, auto-start of a local target, 4 h queue wait, dispatcher-side pacing for devices. */
-async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
+// v3.79 waitingId: a released stage (approved at creation, src/hq-chain.js) takes over its waiting row instead of a new one
+async function hqDispatch(args, { approved = false, excludeId = '', waitingId = '' } = {}) {
   const capBoard = () => { const b = loadHqBoard(); return excludeId ? { ...b, tasks: b.tasks.filter((t) => t.id !== excludeId) } : b; };
   // only ids the minter issued; else the current one; else the one capped 'adhoc' bucket. An approved held task keeps
   // the request it was held under (v3.47: no re-resolve).
@@ -2014,11 +2142,27 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   const board = capBoard();   // an approved held task does not count against itself
   const cap = HQ.capReason(board, request);
   if (cap) return { status: 'rejected', reason: cap };
+  // v3.83 amendment: a task for a staff member outside any project goes to the member's personal workspace
+  if (args.staff && !String(args.project || '').trim() && !String(args.machine || '').trim() && !args.after && !(Array.isArray(args.then) && args.then.length)) {
+    const m = teamOn() ? ST.findMember(state.staff, args.staff) : null;
+    if (!m) return { status: 'rejected', reason: teamOn() ? 'unknown-staff' : 'no-team' };
+    const own = ensurePersonal(m);
+    if (!own) return { status: 'rejected', reason: 'desk-failed' };
+    args = { ...args, project: own.id };
+  }
   const key = HQ.parseRemoteKey(args.project);
   const machine = String(args.machine || '').trim();
   const remote = Boolean(key) || !isHere(machine);
   const rrun = routineRunOfRequest(request);
+  // v3.79 staged: a call with `after` or `then` takes its own path (one consent for its local stages, waiting rows)
+  if (!approved && ((typeof args.after === 'string' && args.after) || (Array.isArray(args.then) && args.then.length))) return hqDispatchStages(args, request, rrun);
   const target = key ? null : byName(state.projects, args.project);
+  // v3.83 team: a task for a staff member goes to the member's desk in that project (the desk is opened, not started yet)
+  if (args.staff) {
+    const d = await hqStaffDesk(args, remote, target);
+    if (d.reason) return { status: 'rejected', reason: d.reason };
+    args = { ...args, desk: d.desk, staffName: d.staffName };
+  }
   const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '' });   // a project routine: only its own project
   const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
@@ -2031,6 +2175,13 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   }
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   const row = (r, extra) => {
+    if (waitingId) {
+      if (!r.id || r.status === 'rejected') return hqStatus(waitingId, 'rejected', r.reason || 'failed');
+      if (r.id === waitingId) return hqStatus(waitingId, r.status, r.reason);
+      saveHqBoard(HQ.renameTask(loadHqBoard(), waitingId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : {}) }));
+      try { const a = HQ.taskFile(hqDir(), waitingId, '.'); const b = HQ.taskFile(hqDir(), r.id, '.'); if (a && b) fs.renameSync(path.dirname(a), path.dirname(b)); } catch {}
+      return;
+    }
     if (!r.id || r.status === 'rejected') return;
     saveHqBoard(HQ.addTask(loadHqBoard(), { id: r.id, request, title: args.title, task, status: r.status, reason: r.reason, prompt: rrun ? rrun.name : '', ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), ...extra }));
     const f = HQ.taskFile(hqDir(), r.id, 'brief.md');
@@ -2038,9 +2189,11 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   };
   if (!remote) {
     const p = byName(state.projects, args.project);
-    if (p && !terms.has(p.id)) projectOp('start', p.id);   // a stopped or sleeping target starts first; pump waits for 'starting'
+    const startId = args.desk || p?.id;   // v3.83 a staff member's desk, else the project's boss tab
+    if (startId && !terms.has(startId)) projectOp('start', startId);   // a stopped or sleeping target starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
-    if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id });
+    if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName } : {}) });
+    else if (waitingId) row(r, {});   // v3.79 a released stage whose project is gone: its row is refused
     // v3.47 a routine's own project run: its report finishes the run and writes no HQ inbox row
     tagRoutineRec(/** @type {any} */ (r).id, rrun);
     return { ...r, ...(request ? { request } : {}) };
@@ -2067,7 +2220,7 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   }
   /** @type {any} */ let now = null;
   // a held (paced) task gets a 'queued' row now, so the caps count it and the person sees it; sent → its real id
-  const heldId = `h${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
+  const heldId = waitingId || `h${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;   // v3.79 a released stage keeps its row
   let held = false;
   const sent = hqPacer.submit(pub, () => {
     /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task }, { ttl: HQ.HQ_TTL_MS });   // v3.48 4 h wait there (cap task-status)
@@ -2088,6 +2241,115 @@ async function hqDispatch(args, { approved = false, excludeId = '' } = {}) {
   row(now, extra);
   return { ...now, ...(request ? { request } : {}) };
 }
+// --- v3.79 staged requests (src/hq-chain.js): `then` / `after` on HQ's office_dispatch. Consent is asked when HQ
+// dispatches (today's rule; local stages of one call in one dialog, every remote stage its own); a waiting stage's text
+// is frozen in tasks/<id>/stage.json then and released unchanged except for the previous report, appended as marked data.
+async function confirmHqStages(stages) {
+  if (!win || win.isDestroyed()) return false;
+  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
+    message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.project)}` : officeName(s.project), machine: '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}` });
+  return r.response === 0;
+}
+async function hqDispatchStages(args, request, rrun) {
+  const no = (reason, extra = {}) => ({ status: 'rejected', reason, ...extra });
+  // a routine turn never chains (its tasks are held for the Board); stages belong to one real, issued request
+  if (rrun || HQ.holdsOffId({ approved: false, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return no('stages-routine');
+  if (!request || request === HQ.ADHOC) return no('after-no-request');
+  const { first, then, tooMany } = CH.stagesOf(args);
+  if (tooMany) return no('too-many-stages');
+  const after = typeof args.after === 'string' ? args.after.trim() : '';
+  if (after) { const why = CH.afterRefused(loadHqBoard(), request, after); if (why) return no(why); }
+  const l = linkHost?.link();
+  const stages = [first, ...then].map((s, i) => ({ ...s, n: i + 1, task: HQ.redact(s.task), after: i === 0 ? after : '' }));
+  for (const s of stages) {
+    if (!s.task || Buffer.byteLength(s.task, 'utf8') > OM.TASK_MAX) return no(s.task ? 'too-large' : 'empty-task', { stage: s.n });
+    s.key = HQ.parseRemoteKey(s.project);
+    s.remote = Boolean(s.key) || !isHere(s.machine.trim());
+    if (!s.remote) {
+      const p = byName(state.projects, s.project);
+      if (!p) return no('unknown-project', { stage: s.n });
+      // v3.83 a stage for a staff member: checked now (team on, known member, allowed on the project), its desk at release
+      if (s.staff) {
+        const m = teamOn() ? ST.findMember(state.staff, s.staff) : null;
+        if (!m) return no(teamOn() ? 'unknown-staff' : 'no-team', { stage: s.n });
+        if (!ST.mayWork(m, p)) return no('staff-not-allowed', { stage: s.n });
+        s.staff = m.name;
+      }
+      Object.assign(s, { pub: 'self', machineName: selfName(), projectName: p.name, projectId: p.id });
+    } else {
+      const dv = s.key ? (l?.devices || []).find((x) => x.pub === s.key.pub) : byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), s.machine.trim());
+      if (!dv) return no('unknown-machine', { stage: s.n });
+      if (s.staff) return no('staff-local-only', { stage: s.n });   // v3.83 paired devices know no staff
+      Object.assign(s, { pub: s.key ? s.key.pub : dv.id, machineName: dv.name, projectName: s.project, projectId: s.key ? s.key.id : '' });
+    }
+  }
+  const caps = () => CH.capFor(loadHqBoard(), request, stages.length, { maxOpen: HQ.MAX_OPEN, maxPerRequest: HQ.MAX_PER_REQUEST });
+  if (caps()) return no(caps());
+  const local = stages.filter((s) => !s.remote);
+  if (local.length && HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote: false, request, minter: hqMinter, routineNoAsk: false }) !== 'none'
+    && !(await confirmHqStages(local))) return no('declined');
+  for (const s of stages.filter((x) => x.remote)) if (!(await confirmHqDispatch(s, true))) return no('declined', { stage: s.n });
+  if (caps()) return no(caps());   // dialogs can overlap: the caps again on the fresh board
+  const ids = [];
+  let prev = after;
+  for (const s of stages) {
+    if (!prev) {   // the first stage without `after` goes now, the normal way
+      /** @type {any} */ const r = await hqDispatch({ machine: s.machine, project: s.project, title: s.title, request, task: s.task, ...(s.staff ? { staff: s.staff } : {}) }, { approved: true });   // consent was just given
+      if (!r.id || r.status === 'rejected') return { ...r, request };   // nothing after it is created
+      ids.push(r.id); prev = r.id; continue;
+    }
+    prev = hqWaitRow(s, request, prev);
+    ids.push(prev);
+  }
+  hqChainSweep();   // a first stage whose `after` already reported starts now
+  const lead = loadHqBoard().tasks.find((t) => t.id === ids[0]);
+  return { id: ids[0], status: lead?.status || 'waiting', request, stages: ids };
+}
+/** A waiting stage: its board row, brief and frozen text (stage.json). → its id. */
+function hqWaitRow(s, request, after) {
+  const id = `w${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
+  saveHqBoard(HQ.addTask(loadHqBoard(), { id, request, title: s.title, task: s.task, status: CH.WAITING, after, pub: s.pub, machineName: s.machineName, project: s.projectName, ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}) }));
+  const f = HQ.taskFile(hqDir(), id, 'brief.md');
+  if (f) try {
+    fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
+    SF.writeAtomic(f, `# ${LC.cleanLine(s.title || '', 80)}\n\nProject: ${s.projectName} (${s.machineName})\nAfter: #${after}\n\n${s.task}\n`);
+    SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify({ machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(s.staff ? { staff: s.staff } : {}) }));
+  } catch (e) { console.error('hq stage:', e.message); }
+  return id;
+}
+/** Releases a stage whose previous stage reported: its frozen text plus that report (marked data), sent the normal way. */
+async function hqReleaseStage({ id, after }) {
+  const b = loadHqBoard();
+  const t = b.tasks.find((x) => x.id === id);
+  if (!t || t.status !== CH.WAITING) return;
+  const st = readJson(HQ.taskFile(hqDir(), id, 'stage.json'));
+  if (!st || typeof st.task !== 'string' || !st.task) { hqStatus(id, 'rejected', 'stage-lost'); return; }
+  const report = readJson(HQ.taskFile(hqDir(), after, 'report.json')) || {};
+  const text = HQ.redact(CH.stageText(st.task, { id: after, report, file: HQ.taskFile(hqDir(), after, 'report.md') }, OM.TASK_MAX));
+  saveHqBoard(HQ.setStatus(b, id, 'queued', 'released'));   // never released twice
+  // approved: consent was given at creation; excludeId: the row does not count against itself (as an approved held card)
+  /** @type {any} */ const r = await hqDispatch({ machine: st.machine, project: st.project, title: st.title, request: t.request, task: text, ...(st.staff ? { staff: st.staff } : {}) }, { approved: true, excludeId: id, waitingId: id });
+  const cur = loadHqBoard().tasks.find((x) => x.id === id);
+  if (r?.status === 'rejected' && cur && !HQ.TERMINAL.has(cur.status)) hqStatus(id, 'rejected', r.reason || 'failed');
+}
+/** Waiting stages whose previous stage ended: released, blocked (HQ gets a fixed row) or expired; repeats while a block cascades. */
+function hqChainSweep() {
+  for (let i = 0; i < 20; i++) {
+    const { release, block } = CH.settle(loadHqBoard());
+    if (!release.length && !block.length) return;
+    if (block.length) {
+      let b = loadHqBoard();
+      for (const x of block) b = HQ.setStatus(b, x.id, x.status, x.reason);
+      const { board, done } = HQ.finishRequests(b);
+      saveHqBoard(board);
+      const sid = bossSid(HQ.HQ_ID);
+      if (sid) for (const x of block) inboxRow(sid, HQ.HQ_ID, { kind: 'stage-blocked', id: x.id, reason: x.reason });
+      hqRequestsDone(done);
+    }
+    for (const x of release) hqReleaseStage(x).catch((e) => console.error('hq stage:', e.message));
+    if (!block.length) return;
+  }
+}
 /** Every 5 s: HQ running once wanted and on (restarted with backoff when gone, never asleep), paced sends, remote
  *  statuses mirrored, the peer cache. */
 function hqTick() {
@@ -2100,6 +2362,7 @@ function hqTick() {
     hqWasRunning = running;
   }
   hqPacer.flush();
+  hqChainSweep();   // v3.79 stages whose previous stage ended: released (≤ 5 s after its report), blocked or expired
   hqWaitsPush();
   const l = linkHost?.link();
   if (l) {
@@ -2129,6 +2392,7 @@ function setupHq() {
   // restart: an open task whose queue entry is gone is lost (no automatic re-dispatch)
   // v3.48 a remote task with a persisted record stays open: it is asked about on the device's next hello
   saveHqBoard(HQ.markLost(loadHqBoard(), (t) => (t.machine === 'self' ? Boolean(linkHost?.knows(t.id)) : HQ.remoteOpen(linkHost?.remoteTask(t.id)))));
+  hqChainSweep();   // v3.79 stages whose previous stage ended while the app was closed
   setInterval(() => { hqTick(); routinesTick(); }, 5000).unref?.();
   setupRoutines();
 }
@@ -2152,7 +2416,8 @@ ipcMain.handle('hq:markRead', (_e, id) => { const b = loadHqBoard(); saveHqBoard
 ipcMain.handle('hq:cancel', (_e, id) => {
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return hqView();
   const t = loadHqBoard().tasks.find((x) => x.id === id);
-  if (t && t.status === 'queued' && t.machine === 'self') linkHost?.cancel(id);   // its reply sets the card (hqStatus)
+  if (t && t.status === CH.WAITING) hqStatus(id, 'rejected', 'cancelled');   // v3.79 a waiting stage: the stages after it are blocked
+  else if (t && t.status === 'queued' && t.machine === 'self') linkHost?.cancel(id);   // its reply sets the card (hqStatus)
   else if (t && t.status === 'queued') { linkHost?.cancelRemote(id); hqMirrorRemote(); }   // v3.48 held here, or queued there (cap task-status)
   return hqView();
 });
@@ -2185,12 +2450,21 @@ const openRunOf = (rid) => rt().runs.some((r) => r.routine === rid && ROUT.OPEN_
 function routineProblem(r) {
   if (r.target.kind === 'hq') return hqSettings().enabled ? '' : 'hq-off';
   if (r.target.kind === 'remote') return ROUT.remoteProblem(r.target, { paired: (linkHost?.link()?.devices || []).map((d) => d.pub), cache: peerCache() });
+  if (r.target.kind === 'staff') return !teamOn() ? 'no-team' : memberById(r.target.staffId) ? '' : 'staff-gone';   // v3.83 amendment
   const p = P.findProject(state, r.target.projectId);
   if (!p) return 'target-gone';
-  return P.engineOf(p) === 'claude' ? '' : 'engine';
+  if (P.engineOf(p) !== 'claude') return 'engine';
+  // v3.83 amendment: a routine for a staff member needs team mode, the member, and the member's right to work there
+  if (r.target.staffId) {
+    const m = teamOn() ? memberById(r.target.staffId) : null;
+    if (!m) return teamOn() ? 'staff-gone' : 'no-team';
+    if (!ST.mayWork(m, p)) return 'staff-not-allowed';
+  }
+  return '';
 }
 function addRun(a, routine, now) {
-  const run = { id: `ru${crypto.randomBytes(4).toString('hex')}`, routine: routine.id, name: routine.name, kind: routine.target.kind, slotAt: a.slotAt, at: now,
+  // a member's task outside a project runs like a project run (its personal workspace is a project)
+  const run = { id: `ru${crypto.randomBytes(4).toString('hex')}`, routine: routine.id, name: routine.name, kind: routine.target.kind === 'staff' ? 'project' : routine.target.kind, slotAt: a.slotAt, at: now,
     trigger: a.trigger, status: a.kind === 'skip' ? 'skipped' : 'waiting', ...(a.reason ? { reason: a.reason } : {}), ...(a.missedCount ? { missedCount: a.missedCount } : {}),
     ...(a.notBefore ? { notBefore: a.notBefore } : {}), tasks: [], read: a.kind === 'skip' };
   rt().runs.unshift(run);
@@ -2307,12 +2581,13 @@ async function deliverRun(run, now) {
     }
     // v3.49 a remote target goes through HQ's remote path by its `<pub>:<id>` key: always a held card first (remote asks)
     const tg = routine.target;
-    const project = tg.kind === 'remote' ? HQ.remoteKey(tg.pub, tg.projectId) : P.findProject(state, tg.projectId).name;
+    const project = tg.kind === 'remote' ? HQ.remoteKey(tg.pub, tg.projectId) : tg.kind === 'staff' ? '' : P.findProject(state, tg.projectId).name;
     run.request = hqMinter.mint({ origin: 'routine', run: run.id });
     Object.assign(run, { status: 'running', typedAt: now });
     saveRt();
     const text = ROUT.wrapText({ routine, request: run.request, slotAt: run.slotAt, t: T });
-    const r = await hqDispatch({ project, title: routine.name, task: text, request: run.request });
+    const member = (tg.kind === 'project' || tg.kind === 'staff') && tg.staffId ? memberById(tg.staffId) : null;   // checked by routineProblem
+    const r = await hqDispatch({ project, title: routine.name, task: text, request: run.request, ...(member ? { staff: member.name } : {}) });
     hqMinter.endLive(run.request);   // the dispatch is done: HQ cannot borrow this id (office_board shows it) for no-ask
     if (r.status === 'rejected') {
       hqMinter.endRun(run.request);
@@ -2395,7 +2670,9 @@ function routinesView() {
     next: Object.fromEntries(Object.entries(f.sched).map(([k, x]) => [k, x.nextAt])),
     problems: Object.fromEntries((state.routines || []).map((r) => [r.id, routineProblem(r)])),
     held: board.tasks.filter((t) => t.status === 'awaiting-consent').map((t) => t.id),
-    projects: state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p) })),
+    projects: state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p), ...(p.staffOwner ? { staffOwner: p.staffOwner } : {}) })),
+    // v3.83 amendment: the staff a project routine may name (team mode), with the projects each may work on
+    staff: teamOn() ? state.staff.map((m) => ({ id: m.id, name: m.name, projects: state.projects.filter((p) => ST.mayWork(m, p)).map((p) => p.id) })) : [],
     // v3.49 remote targets: paired devices' projects (last-known list), with the machine and whether it is online
     remotes: HQ.remoteRows(peerCache(), liveRemotes()).map((r) => ({ pub: HQ.parseRemoteKey(r.key)?.pub || '', id: r.id, name: r.name, machine: r.machine, online: r.online })).filter((r) => r.pub),
   };
@@ -2447,6 +2724,14 @@ ipcMain.handle('hq:remoteOp', async (_e, key, op) => {
 // sleep and stop refuse a busy tab (a turn, a dialog, a draft, a permission prompt) and a non-Claude engine for sleep.
 function projectOp(op, projectId) {
   if (P.isHqId(projectId)) return { ok: false, reason: 'unknown-project' };   // v3.46 HQ is never a project target
+  // v3.83 HQ's task for a desk starts or wakes that desk (only start / wake: a desk is managed from its tab)
+  const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
+  if (desk?.tab?.staffId && (op === 'start' || op === 'wake')) {
+    if (handoffLocks.has(desk.project.id)) return { ok: false, reason: 'locked' };
+    if (!terms.has(projectId)) { if (asleep.has(projectId)) wake(projectId); else startPty(projectId, { resume: true }); }
+    broadcast();
+    return { ok: true };
+  }
   const p = P.findProject(state, projectId);
   if (!p) return { ok: false, reason: 'unknown-project' };
   const id = p.id;
@@ -2480,6 +2765,14 @@ function projectOp(op, projectId) {
 }
 /** The link sees projects only: HQ (and any non-project id) is 'gone' for remote commands. */
 function linkTabState(projectId) {
+  // v3.83 a desk (a staff member's tab): its own state; with the project's lock it waits while another tab works
+  const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
+  if (desk?.tab?.staffId) {
+    const ts = tabStateOf(projectId);
+    const project = P.findProject(state, desk.project.id);
+    if (ts === 'ready' && project && ST.deskWaits(project, projectId, P.ptyIdsOf(project), (id) => terms.has(id) && (tabStateOf(id) === 'busy' || tabWorkRunning(id)))) return 'busy';
+    return ts;
+  }
   return P.findProject(state, projectId) ? tabStateOf(projectId) : 'gone';
 }
 /** A tab's state for typing from outside; resolves through resolvePty, so HQ ('hq') is known (v3.47 routines). */
@@ -2536,11 +2829,18 @@ function startLink() {
     app, safeStorage, ipcMain, send, T,
     notify: (title, body) => notify(title, body, null),
     projects: () => state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p) })),
+    // v3.83 HQ's task for a staff member goes to the member's desk tab: the queue knows it by its tab id (local only)
+    desk: (id) => {
+      const r = String(id).includes(':') ? P.resolvePty(state, String(id)) : null;
+      const m = r?.tab?.staffId ? memberById(r.tab.staffId) : null;
+      return m ? { id: String(id), name: `${r.project.name} · ${m.name}`, engine: P.engineOf(r.project) } : null;
+    },
     tabState: linkTabState,
     asleep: (id) => asleep.has(id), attentionOf: (id) => attention.get(id) || '',   // v3.48 task-status for a device's task
+    startWith: startWithPrompt,   // v3.83 amendment: a tab that takes no typing yet gets the task as its first prompt
     type: typePrompt,
     answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices
-    loginOf: (projectId) => { const p = P.findProject(state, projectId); const s = p ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },
+    loginOf: (projectId) => { const p = P.resolvePty(state, String(projectId))?.project; const s = p && !p.hq ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },   // v3.83 a desk: its member's account
     reportsDir: path.join(app.getPath('home'), '.claude', 'agent-office', 'reports'),
     onReport: onOfficeReport,
     manage: projectOp,   // v3.33 proj-op from a device allowed to manage
@@ -3035,7 +3335,7 @@ ipcMain.handle('mcp:list', (_e, projectId) => {
   } catch (e) { console.error('mcp:list', e.message); return { servers: [] }; }
 });
 /** Idle Claude Code sessions the change reaches restart in their conversation; busy ones take it at their next start. */
-const restartFor = (...scopes) => state.projects.filter((p) => P.engineOf(p) === 'claude' && scopes.some((scope) => scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));
+const restartFor = (...scopes) => state.projects.filter((p) => P.engineOf(p) === 'claude' && scopes.flat().some((scope) => scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));   // v3.82 a scope can be a list
 // Bundled skill packs (contract v3.45): the list (never a path), the global on/off and the per-project override.
 // A change restarts the idle Claude Code sessions it reaches in their conversation; busy ones take it at their next start.
 ipcMain.handle('skillPacks:list', (_e, projectId) => {
@@ -3127,6 +3427,16 @@ ipcMain.handle('mcp:updateFile', (_e, projectId, where, name, f) => {
   if (r.ok) checkMcp();
   return r;
 });
+// v3.82 the servers added in Agent Office (never a URL path, header, env, argument or token) and the projects each
+// reaches; mcp:scope changes that set (the project popup's "Tools" list, the panel's form).
+ipcMain.handle('mcp:apps', () => ({ servers: appServers().filter((s) => !s.held).map((s) => ({ id: s.id, name: s.name, type: s.type, host: s.type === 'stdio' ? '' : MS.hostOf(s.url), scope: s.scope, hasToken: Boolean(tokens().has(s.id)) })) }));
+ipcMain.handle('mcp:scope', (_e, sid, scope) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  const r = MS.setScope(appServers(), String(sid || ''), scope, state.projects.map((p) => p.id));
+  if (!r.servers) return { ok: false, error: r.error };
+  commit({ ...state, mcpServers: r.servers });
+  return { ok: true, restarted: restartFor(r.before.scope, r.server.scope) };
+});
 ipcMain.handle('mcp:remove', (_e, sid) => {
   const s = appServers().find((x) => x.id === sid);
   if (!s) return { ok: false, error: 'unknown' };
@@ -3143,6 +3453,530 @@ ipcMain.handle('projects:openFolder', async (_e, id) => {
 });
 
 // Removing a project closes all its tabs; worktree folders are left untouched (like the project folder).
+// --- team: staff (contract v3.83, src/staff.js). The preset roles ship in roles/ (extraResources). With state.teamMode
+// off the TEAM panel is hidden; the stored staff is kept. Nothing here starts a session (desks come in step 3).
+const rolesRoot = () => (app.isPackaged ? path.join(process.resourcesPath, 'roles') : path.join(__dirname, '..', 'roles'));
+let rolePresets = null;
+const builtinRoles = () => rolePresets || (rolePresets = ST.loadRoles(rolesRoot()));
+// v3.84 the presets and the person's own roles (state.customRoles: the role wizard), one list for every reader
+const presetRoles = () => [...builtinRoles(), ...(state.customRoles || [])];
+const staffKnown = () => ({
+  projectIds: state.projects.map((p) => p.id), accountIds: state.accounts.map((a) => a.id), presetIds: presetRoles().map((d) => d.id),
+  toolIds: appServers().map((s) => s.id), mailIds: (state.mailAccounts || []).map((a) => a.id),
+});
+ipcMain.handle('staff:list', () => ({ teamMode: state.teamMode === true, presets: presetRoles(), departments: ST.DEPARTMENTS, staff: state.staff || [] }));
+ipcMain.handle('staff:save', (_e, form) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  const r = ST.saveMember(state.staff || [], form && typeof form === 'object' ? form : {}, staffKnown());
+  if (!r.staff) return { ok: false, error: r.error };
+  commit({ ...state, staff: r.staff });
+  // the member's role or packs may have changed: its idle desks restart in their conversation (new role file and
+  // packs at start); busy ones get them at their next start
+  for (const p of state.projects) for (const t of P.desksOf(p)) {
+    if (t.staffId !== r.member.id) continue;
+    const pid = `${p.id}:${t.n}`;
+    const sid = terms.has(pid) ? idleSession(pid) : '';
+    if (sid) startPty(pid, { sessionId: sid, resume: true });
+  }
+  return { ok: true, member: r.member };
+});
+ipcMain.handle('staff:remove', (_e, id) => {
+  if (!(state.staff || []).some((m) => m.id === id)) return { ok: false, error: 'unknown' };
+  commit({ ...state, staff: ST.removeMember(state.staff, String(id)) });
+  return { ok: true };
+});
+
+// --- the person's roles and the role wizard (contract v3.84, src/staff.js role library, src/role-wizard.js)
+ipcMain.handle('roles:save', (_e, form) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  const r = ST.saveCustomRole(state.customRoles || [], form && typeof form === 'object' ? form : {}, builtinRoles());
+  if (!r.roles) return { ok: false, error: r.error };
+  commit({ ...state, customRoles: r.roles });
+  return { ok: true, role: r.role };
+});
+ipcMain.handle('roles:remove', (_e, id) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  if (!(state.customRoles || []).some((r) => r.id === id)) return { ok: false, error: 'unknown' };
+  const r = ST.removeCustomRole(state.customRoles, state.staff, String(id));
+  commit({ ...state, customRoles: r.roles, ...(state.staff ? { staff: r.staff } : {}) });
+  return { ok: true };
+});
+/**
+ * One non-interactive claude run with `input` on stdin, from the login shell like the ptys (Windows: claude itself).
+ * → { err, stdout, stderr }. The output stays in main; the caller parses it.
+ */
+function runClaudeInput(account, args, input, { cwd, timeout }) {
+  return new Promise((resolve) => {
+    let child;
+    let stdout = '';
+    let stderr = '';
+    let done = false;
+    const finish = (err) => { if (done) return; done = true; clearTimeout(timer); resolve({ err, stdout, stderr }); };
+    const env = accountEnv(account);
+    try {
+      if (IS_WIN) {
+        const cmd = windowsClaude(args, env);
+        if (!cmd) return resolve({ err: Object.assign(new Error('claude not found'), { code: 127 }), stdout: '', stderr: '' });
+        child = spawn(cmd.file, cmd.args, { env, cwd, windowsVerbatimArguments: cmd.verbatim, windowsHide: true });
+      } else {
+        child = spawn(shell(), ['-l', '-i', '-c', A.claudeCommand('"$@"'), 'claude', ...args], { env, cwd });
+      }
+    } catch (err) { return resolve({ err, stdout: '', stderr: '' }); }
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} finish(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })); }, timeout);
+    child.stdout.on('data', (d) => { if (stdout.length < (4 << 20)) stdout += d; });
+    child.stderr.on('data', (d) => { if (stderr.length < (1 << 16)) stderr += d; });
+    child.on('error', (err) => finish(err));
+    child.on('close', (code) => finish(code ? Object.assign(new Error(`exit ${code}`), { code }) : null));
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+let wizardBusy = false;
+/**
+ * The wizard's next message: { messages: [{ who: 'user' | 'wizard', text }], lang } → { ok, say, questions, role? } |
+ * { ok: false, error: 'busy' | 'empty' | 'no-claude' | 'timeout' | 'failed' }. One run at a time, with the Default
+ * account, in an empty folder of its own (no project, no tools, no MCP, nothing kept).
+ */
+ipcMain.handle('roles:wizard', async (_e, req) => {
+  if (wizardBusy) return { ok: false, error: 'busy' };
+  const input = RW.transcript(req?.messages);
+  if (!input) return { ok: false, error: 'empty' };
+  wizardBusy = true;
+  try {
+    const dir = path.join(app.getPath('userData'), 'role-wizard');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const lang = req?.lang === 'tr' ? 'tr' : req?.lang === 'en' ? 'en' : uiLang();
+    const packs = skillPacks();
+    const promptFile = path.join(dir, 'system.md');
+    SF.writeAtomic(promptFile, RW.systemPrompt({
+      lang,
+      roles: presetRoles().map((d) => ({ id: d.id, name: d.name[lang === 'tr' ? 'tr' : 'en'], department: d.department, description: d.description.en })),
+      packs: packs.map((p) => ({ id: p.id, name: p.name })),
+      tools: [...new Set(appServers().filter((s) => !s.held).map((s) => s.name))],
+    }));
+    const account = A.accountOf(state, null);
+    const args = ['-p', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands',
+      '--model', 'sonnet', '--system-prompt-file', promptFile, ...(IS_WIN ? [] : ['--json-schema', JSON.stringify(RW.SCHEMA)])];
+    const { err, stdout } = await runClaudeInput(account, args, input, { cwd: dir, timeout: 180000 });
+    if (err?.code === 127) return { ok: false, error: 'no-claude' };
+    if (err?.code === 'ETIMEDOUT') return { ok: false, error: 'timeout' };
+    const r = RW.parseReply(stdout, packs.map((p) => p.id));
+    if (r.error) { console.error('role wizard: no usable reply', err ? `(${err.message})` : ''); return { ok: false, error: 'failed' }; }
+    return { ok: true, ...r };
+  } catch (e) {
+    console.error('role wizard:', e.message);
+    return { ok: false, error: 'failed' };
+  } finally { wizardBusy = false; }
+});
+
+// --- mail (contract v3.85): accounts (state.mailAccounts, no secret), their passwords / tokens (userData/mail-secrets,
+// encrypted with safeStorage; never saved where no keychain encrypts them), the outbox (userData/mail/outbox.json,
+// 0600) and an audit log (userData/mail/audit.log: who called what, never a mail's text). A desk whose member was given
+// accounts gets the `agent-office-mail` server: read only, and drafts go to the outbox. Sending is only ever the
+// person's click on a draft here (mail:send); no session, MCP tool, routine or paired device can send.
+let mailSock = null;
+let mailScript = '';
+const mailRead = new Map();   // tab → Map(mail id → the mail it read: from, to, cc, subject, messageId, flags) for replies
+const mailDir = () => path.join(app.getPath('userData'), 'mail');
+const mailSecrets = () => MS.tokenStore(path.join(app.getPath('userData'), 'mail-secrets'), safeStorage);
+const mailAccounts = () => state.mailAccounts || [];
+const mailToken = new Map();  // m365 account id → { accessToken, expiresAt } (memory only)
+let outbox = null;
+const outboxFile = () => path.join(mailDir(), 'outbox.json');
+function loadOutbox() { if (!outbox) outbox = MST.normalizeOutbox(readJson(outboxFile()) || MST.emptyOutbox()); return outbox; }
+function saveOutbox(next) {
+  outbox = next;
+  try { fs.mkdirSync(mailDir(), { recursive: true, mode: 0o700 }); SF.writeAtomic(outboxFile(), JSON.stringify(next)); } catch (e) { console.error('mail outbox:', e.message); }
+  send('mail:outbox', outboxView());
+}
+const outboxView = () => ({ drafts: loadOutbox().drafts.slice(0, 100), pending: MST.pendingOf(loadOutbox()).length });
+function mailAudit(entry) {
+  try {
+    fs.mkdirSync(mailDir(), { recursive: true, mode: 0o700 });
+    const f = path.join(mailDir(), 'audit.log');
+    try { if (fs.statSync(f).size > 1 << 20) fs.renameSync(f, `${f}.1`); } catch { /* new */ }
+    fs.appendFileSync(f, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, { mode: 0o600 });
+  } catch { /* the log is best effort */ }
+}
+/** The member's mail accounts (ids that still exist). */
+const mailIdsOf = (m) => (Array.isArray(m?.mail) ? m.mail.filter((id) => mailAccounts().some((a) => a.id === id)) : []);
+
+/** The mail server for a desk's tab, or null: a Claude Code desk, its member given accounts, the project not skipping permissions. */
+function mailServerFor(id, project, tab) {
+  if (!tab?.staffId || !mailSock || !mailScript || P.engineOf(project) !== 'claude' || project.skipPermissions === true) return null;
+  if (!mailIdsOf(memberById(tab.staffId)).length) return null;
+  const token = mailSock.add(id);
+  return { [MMCP.SERVER_NAME]: MMCP.serverConfig({ socket: mailSock.socketFile, token, script: mailScript }) };
+}
+
+/** A fresh access token for an m365 account (refreshed and the rotated refresh token stored). */
+async function m365Token(a) {
+  const c = mailToken.get(a.id);
+  if (c && c.expiresAt > Date.now()) return c.accessToken;
+  const refreshToken = mailSecrets().load(a.id);
+  if (!refreshToken) throw new Error('no-secret');
+  const t = await GRAPH.refresh(fetch, { clientId: a.clientId, tenant: a.tenant, refreshToken });
+  if (t.refreshToken !== refreshToken) mailSecrets().save(a.id, t.refreshToken);
+  mailToken.set(a.id, { accessToken: t.accessToken, expiresAt: t.expiresAt });
+  return t.accessToken;
+}
+/** Runs fn with an IMAP session of the account (always closed). */
+async function withImap(a, fn) {
+  const password = mailSecrets().load(a.id);
+  if (!password) throw new Error('no-secret');
+  const s = await IMAP.open({ host: a.imap.host, port: a.imap.port, user: a.user, password, pin: a.imap.pin });
+  try { return await fn(s); } finally { await s.close(); }
+}
+/** The newest messages, as a model may see them (cleaned one-liners). */
+async function mailList(a, q) {
+  const rows = a.provider === 'm365'
+    ? await GRAPH.list(fetch, await m365Token(a), q)
+    : (await withImap(a, (s) => s.list(q))).map((r) => {
+      const h = MIME.parseMessage(r.header);
+      return { id: String(r.uid), from: h.from, subject: h.subject, date: h.date, seen: r.seen, hasAttachments: /multipart\/mixed/i.test(r.header.toString('latin1')) };
+    });
+  return rows.map((r) => ({ id: r.id, from: MG.cleanLine(r.from, 120), subject: MG.cleanLine(r.subject), date: MG.cleanLine(r.date, 60), seen: r.seen, attachments: r.hasAttachments }));
+}
+/** One message parsed: { from, to, cc, subject, date, text, hiddenDropped, attachments, messageId, references } */
+async function mailMessage(a, id) {
+  if (a.provider === 'm365') {
+    const m = await GRAPH.read(fetch, await m365Token(a), id);
+    const html = m.html ? MIME.htmlToText(m.html) : null;
+    return { ...m, text: html ? html.text : m.text, hiddenDropped: Boolean(html?.hiddenDropped), references: '' };
+  }
+  const uid = Number(id);
+  if (!Number.isInteger(uid) || uid <= 0) throw new Error('not-found');
+  const raw = await withImap(a, (s) => s.fetchRaw({ uid }));
+  if (!raw) throw new Error('not-found');
+  return MIME.parseMessage(raw);
+}
+
+/** The desk's member and the project, for a tab; null when the tab is not a desk any more. */
+function deskOfTab(tab) {
+  const r = P.resolvePty(state, tab);
+  const m = r?.tab?.staffId ? memberById(r.tab.staffId) : null;
+  return m ? { member: m, project: P.findProject(state, r.project.id) || r.project } : null;
+}
+const MAIL_ERRORS = ['no-secret', 'auth', 'refused', 'timeout', 'not-found', 'network', 'closed', 'greeting', 'dns', 'refused-port', 'cert', 'login-disabled', 'auth-method', 'tls', 'mailbox', 'bad'];
+/** A failure for the person: its code, which side (imap | smtp | graph), the server's words and, for `cert`, the certificate. */
+const mailFailure = (e, where) => ({ ok: false, error: MAIL_ERRORS.includes(e?.message) ? e.message : 'failed', where, detail: String(e?.detail || '').slice(0, 300), ...(e?.cert ? { cert: e.cert } : {}) });
+/**
+ * Logs in on both sides without sending anything: IMAP (open the inbox read only) and SMTP (log in, quit); Graph
+ * lists one message. → { ok: true } | mailFailure. An account is saved only after this passed.
+ */
+async function mailCheck(a, secret) {
+  if (a.provider === 'm365') {
+    try { await GRAPH.list(fetch, secret, { limit: 1, sinceDays: 1 }); return { ok: true }; } catch (e) { return mailFailure(e, 'graph'); }
+  }
+  try {
+    const s = await IMAP.open({ host: a.imap.host, port: a.imap.port, user: a.user, password: secret, pin: a.imap.pin, timeoutMs: 45000 });
+    try { await s.list({ sinceDays: 1, limit: 1 }); } finally { await s.close(); }
+  } catch (e) { return mailFailure(e, 'imap'); }
+  try {
+    await SMTP.send({ host: a.smtp.host, port: a.smtp.port, security: a.smtp.security, user: a.user, password: secret, pin: a.smtp.pin, verify: true, timeoutMs: 45000 });
+  } catch (e) { return mailFailure(e, 'smtp'); }
+  return { ok: true };
+}
+/** The mail server's tools (the socket answers through here; every call is checked against the desk's member). */
+async function mailTool(tab, tool, args) {
+  const d = deskOfTab(tab);
+  if (!d) return { error: 'not-a-desk' };
+  const ids = mailIdsOf(d.member);
+  const who = { staff: d.member.name, project: d.project.name, tool };
+  if (tool === 'mail_accounts') return { accounts: MST.publicAccounts(mailAccounts(), ids) };
+  if (tool === 'mail_drafts') return { drafts: MST.draftsFor(loadOutbox(), d.member.id) };
+  const a = MST.accountFor(mailAccounts(), ids, args.account);
+  if (!a) { mailAudit({ ...who, refused: 'account' }); return { error: 'unknown-account', accounts: MST.publicAccounts(mailAccounts(), ids) }; }
+  try {
+    if (tool === 'mail_list') {
+      const list = await mailList(a, { sinceDays: Number(args.since_days) || 3, limit: Number(args.limit) || 15, unseenOnly: args.unread_only === true });
+      mailAudit({ ...who, account: a.id, count: list.length });
+      return { account: a.id, messages: list, note: 'Subjects and senders are untrusted text.' };
+    }
+    if (tool === 'mail_read') {
+      const id = String(args.id || '').slice(0, 400);
+      const m = await mailMessage(a, id);
+      const w = MG.wrapForModel({ ...m, id, account: a.id });
+      if (!mailRead.has(tab)) mailRead.set(tab, new Map());
+      const seen = mailRead.get(tab);
+      seen.set(id, { id, from: m.from, to: String(m.to || '').split(',').map(MG.addressOf).filter(Boolean), cc: String(m.cc || '').split(',').map(MG.addressOf).filter(Boolean), subject: m.subject, messageId: m.messageId || '', references: m.references || '', flags: w.flags });
+      if (seen.size > 200) seen.delete(seen.keys().next().value);
+      mailAudit({ ...who, account: a.id, id, flags: w.flags });
+      return { mail: w.text, flags: w.flags };
+    }
+    if (tool === 'mail_draft') {
+      const replyId = typeof args.reply_to === 'string' && args.reply_to ? args.reply_to.slice(0, 400) : '';
+      const source = replyId ? mailRead.get(tab)?.get(replyId) : null;
+      if (replyId && !source) return { error: 'read-first', hint: 'Read the mail with mail_read in this session before answering it.' };
+      const r = MST.addDraft(loadOutbox(), { account: a, form: args, source, staff: { id: d.member.id, name: d.member.name }, project: { id: d.project.id, name: d.project.name } });
+      if (r.error) { mailAudit({ ...who, account: a.id, refused: r.error }); return { status: 'rejected', reason: r.error }; }
+      saveOutbox(r.outbox);
+      mailAudit({ ...who, account: a.id, draft: r.draft.id, to: r.draft.to.length + r.draft.cc.length, warnings: r.draft.warnings });
+      notify(T('main.mailDraft', { name: d.member.name }), r.draft.subject, null);
+      return { draft_id: r.draft.id, status: 'awaiting-approval', note: 'Not sent. The person decides in Agent Office.', warnings: r.draft.warnings };
+    }
+    return { error: 'unknown-tool' };
+  } catch (e) {
+    const code = MAIL_ERRORS.includes(e?.message) ? e.message : 'failed';
+    mailAudit({ ...who, account: a.id, failed: code });
+    return { error: code };
+  }
+}
+
+// IPC for the app: accounts, sign-in, the outbox. Passwords and tokens go in, never out.
+const mailAccountRow = (a) => ({ ...a, hasSecret: mailSecrets().has(a.id) });
+ipcMain.handle('mail:accounts', () => ({ accounts: mailAccounts().map(mailAccountRow), encryption: safeStorage.isEncryptionAvailable() }));
+function mailCommitAccounts(list) {
+  const staff = (state.staff || []).map((m) => (Array.isArray(m.mail) && m.mail.some((id) => !list.some((a) => a.id === id)) ? { ...m, mail: m.mail.filter((id) => list.some((a) => a.id === id)) } : m));
+  commit({ ...state, mailAccounts: list, ...(state.staff ? { staff } : {}) });
+  send('mail:accounts', { accounts: list.map(mailAccountRow), encryption: safeStorage.isEncryptionAvailable() });
+}
+/**
+ * Gmail / Exchange / IMAP: the account and its password (required for a new one; blank keeps the stored one). It is
+ * tested first (IMAP and SMTP log in, nothing is sent) and saved only when both worked; `trust` { imap?, smtp? } holds
+ * the fingerprints of certificates the person chose to trust after a `cert` failure.
+ */
+ipcMain.handle('mail:save', async (_e, f) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  if (f?.provider === 'm365') return { ok: false, error: 'provider' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'no-keychain' };
+  const r = MST.accountFromForm(mailAccounts(), f || {});
+  if (r.error) return { ok: false, error: r.error };
+  let account = r.account;
+  for (const which of ['imap', 'smtp']) if (f?.trust?.[which]) account = MST.withPin(account, which, f.trust[which]);
+  const typed = typeof f.password === 'string' ? f.password.replace(/\s+/g, f.provider === 'gmail' ? '' : ' ').trim() : '';
+  const isNew = !mailAccounts().some((a) => a.id === account.id);
+  const password = typed || (isNew ? '' : mailSecrets().load(account.id));
+  if (!password) return { ok: false, error: 'password' };
+  const check = await mailCheck(account, password);
+  if (!check.ok) return check;
+  if (!mailSecrets().save(account.id, password)) return { ok: false, error: 'secret' };
+  mailCommitAccounts(isNew ? [...mailAccounts(), account] : mailAccounts().map((a) => (a.id === account.id ? account : a)));
+  return { ok: true, account: mailAccountRow(account) };
+});
+ipcMain.handle('mail:remove', (_e, id) => {
+  if (!mailAccounts().some((a) => a.id === id)) return { ok: false, error: 'unknown' };
+  mailSecrets().remove(String(id));
+  mailToken.delete(id);
+  mailCommitAccounts(mailAccounts().filter((a) => a.id !== id));
+  return { ok: true };
+});
+/** Logs in and lists one message: { ok } | { ok: false, error }. */
+ipcMain.handle('mail:test', async (_e, id) => {
+  const a = mailAccounts().find((x) => x.id === id);
+  if (!a) return { ok: false, error: 'unknown' };
+  try {
+    const secret = a.provider === 'm365' ? await m365Token(a) : mailSecrets().load(a.id);
+    if (!secret) return { ok: false, error: 'no-secret' };
+    return await mailCheck(a, secret);
+  } catch (e) { return mailFailure(e, a.provider === 'm365' ? 'graph' : 'imap'); }
+});
+// Microsoft 365: device code sign-in with the person's app registration; the account is saved once it worked
+let m365Flow = null;   // { cancelled }
+ipcMain.handle('mail:m365Start', async (_e, f) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'no-keychain' };
+  if (!GRAPH.validClient(f?.clientId) || !GRAPH.validTenant(f?.tenant || 'common')) return { ok: false, error: 'client' };
+  if (m365Flow) m365Flow.cancelled = true;
+  const flow = { cancelled: false };
+  m365Flow = flow;
+  let code;
+  try { code = await GRAPH.startDeviceCode(fetch, { clientId: f.clientId, tenant: f.tenant || 'common' }); } catch { return { ok: false, error: 'device-code' }; }
+  (async () => {
+    try {
+      const t = await GRAPH.pollDeviceCode(fetch, { clientId: f.clientId, tenant: f.tenant || 'common', ...code, cancelled: () => flow.cancelled });
+      const address = await GRAPH.me(fetch, t.accessToken);
+      const check = await mailCheck({ provider: 'm365' }, t.accessToken);   // Mail.Read really granted
+      if (!check.ok) return send('mail:m365', check);
+      const r = MST.accountFromForm(mailAccounts(), { ...f, provider: 'm365', address, tenant: f.tenant || 'common' });
+      if (r.error) return send('mail:m365', { ok: false, error: r.error });
+      if (!mailSecrets().save(r.account.id, t.refreshToken)) return send('mail:m365', { ok: false, error: 'secret' });
+      mailToken.set(r.account.id, { accessToken: t.accessToken, expiresAt: t.expiresAt });
+      const exists = mailAccounts().some((a) => a.id === r.account.id);
+      mailCommitAccounts(exists ? mailAccounts().map((a) => (a.id === r.account.id ? r.account : a)) : [...mailAccounts(), r.account]);
+      send('mail:m365', { ok: true, address });
+    } catch (e) { if (!flow.cancelled) send('mail:m365', { ok: false, error: ['expired', 'declined'].includes(e?.message) ? e.message : 'token' }); } finally { if (m365Flow === flow) m365Flow = null; }
+  })();
+  if (/^https:\/\/[\w.-]*microsoft(online)?\.com\//i.test(code.verificationUri)) eShell.openExternal(code.verificationUri).catch(() => {});
+  return { ok: true, userCode: code.userCode, verificationUri: code.verificationUri };
+});
+ipcMain.handle('mail:m365Cancel', () => { if (m365Flow) m365Flow.cancelled = true; m365Flow = null; return { ok: true }; });
+ipcMain.handle('mail:outbox', () => outboxView());
+ipcMain.handle('mail:edit', (_e, id, f) => {
+  const r = MST.editDraft(loadOutbox(), String(id), f || {});
+  if (r.error) return { ok: false, error: r.error };
+  saveOutbox(r.outbox);
+  return { ok: true, draft: r.draft };
+});
+ipcMain.handle('mail:discard', (_e, id) => {
+  const r = MST.setStatus(loadOutbox(), String(id), 'discarded', { decidedAt: Date.now() });
+  if (r.error) return { ok: false, error: r.error };
+  saveOutbox(r.outbox);
+  mailAudit({ person: 'discard', draft: id });
+  return { ok: true };
+});
+/** The person's Send: the one way a mail leaves. The draft is checked again; a failure keeps it to retry or discard. */
+ipcMain.handle('mail:send', async (_e, id) => {
+  const d = loadOutbox().drafts.find((x) => x.id === id);
+  const a = d && mailAccounts().find((x) => x.id === d.account);
+  if (!d || d.status !== 'pending') return { ok: false, error: 'state' };
+  if (!a) return { ok: false, error: 'unknown-account' };
+  const c = MG.checkDraft(d);
+  if (c.error) return { ok: false, error: c.error };
+  const started = MST.setStatus(loadOutbox(), d.id, 'sending', { decidedAt: Date.now() });
+  if (started.error) return { ok: false, error: started.error };
+  saveOutbox(started.outbox);
+  try {
+    if (a.provider === 'm365') await GRAPH.sendDraft(fetch, await m365Token(a), { ...c.draft, replyToId: d.replyTo?.id });
+    else {
+      const password = mailSecrets().load(a.id);
+      if (!password) throw new Error('no-secret');
+      const msg = MIME.buildMessage({ from: a.address, ...c.draft, inReplyTo: d.replyTo?.messageId || '', references: d.replyTo?.references || '' });
+      await SMTP.send({ host: a.smtp.host, port: a.smtp.port, security: a.smtp.security, user: a.user, password, pin: a.smtp.pin, from: a.address, recipients: [...c.draft.to, ...c.draft.cc], raw: msg.raw });
+    }
+    saveOutbox(MST.setStatus(loadOutbox(), d.id, 'sent', { sentAt: Date.now() }).outbox);
+    mailAudit({ person: 'send', draft: d.id, account: a.id, to: c.draft.to.length + c.draft.cc.length });
+    return { ok: true };
+  } catch (e) {
+    const f = mailFailure(e, a.provider === 'm365' ? 'graph' : 'smtp');
+    saveOutbox(MST.setStatus(loadOutbox(), d.id, 'failed', { error: f.error, detail: f.detail }).outbox);
+    mailAudit({ person: 'send', draft: d.id, account: a.id, failed: f.error });
+    return f;
+  }
+});
+/** A failed draft back to pending (to send again after fixing the account). */
+ipcMain.handle('mail:retry', (_e, id) => {
+  const r = MST.setStatus(loadOutbox(), String(id), 'pending', { error: undefined });
+  if (r.error) return { ok: false, error: r.error };
+  saveOutbox(r.outbox);
+  return { ok: true };
+});
+
+// --- desks (contract v3.83 step 3): a staff member's tab in a project. Its own session (account, role section,
+// conversation kept on the tab); one desk at work per project folder unless the project allows parallel work, then each
+// desk has its own worktree in userData/work (never in or next to the project folder).
+const teamOn = () => state.teamMode === true && (state.staff || []).length > 0;
+const deskRoleDir = () => path.join(app.getPath('userData'), 'role');
+const memberById = (id) => (state.staff || []).find((m) => m.id === id) || null;
+/** Writes the desk's role file (0600) → its path, or null (no member). */
+function writeDeskRole(id, project, staffId) {
+  const m = memberById(staffId);
+  if (!m) return null;
+  const real = P.findProject(state, project.id) || project;
+  try {
+    fs.mkdirSync(deskRoleDir(), { recursive: true, mode: 0o700 });
+    const f = path.join(deskRoleDir(), SC.mcpFileName(usageKey(id)));
+    SF.writeAtomic(f, JSON.stringify(ST.deskRoleFile(m, presetRoles(), real, state.staff)));   // 0600
+    return f;
+  } catch (e) { console.error('desk role:', e.message); return null; }
+}
+/**
+ * Opens (and starts) a member's desk in a project: the existing one, or a new tab (a worktree of its own when the
+ * project allows parallel work). → { ok, id } | { ok: false, error: 'unknown' | 'staff-not-allowed' | 'engine' | 'git' }
+ */
+async function openDesk(projectId, staffId, { start = true } = {}) {
+  const p = P.findProject(state, projectId);
+  const m = memberById(staffId);
+  if (!p || !m || p.hq) return { ok: false, error: 'unknown' };
+  if (!ST.mayWork(m, p)) return { ok: false, error: 'staff-not-allowed' };
+  if (P.engineOf(p) !== 'claude') return { ok: false, error: 'engine' };
+  const have = P.deskOf(p, m.id);
+  if (have) {
+    const id = P.tabPtyId(p.id, have.n);
+    if (start && !terms.has(id)) { if (asleep.has(id)) wake(id); else startPty(id, { resume: true }); }
+    return { ok: true, id };
+  }
+  const tab = { n: P.nextTabNumber(p), staffId: m.id };
+  if (p.parallel === true) {
+    const repo = await gitTop(p.dir);
+    if (!repo) return { ok: false, error: 'git' };
+    const wt = ST.deskWorktree(app.getPath('userData'), p.id, m.id);
+    if (!fs.existsSync(wt.root)) {
+      try { fs.mkdirSync(path.dirname(wt.root), { recursive: true }); } catch {}
+      const has = (await git(['-C', repo, 'rev-parse', '--verify', '--quiet', `refs/heads/${wt.branch}`])).ok;
+      const g = await git(['-C', repo, 'worktree', 'add', ...(has ? [wt.root, wt.branch] : ['-b', wt.branch, wt.root])]);
+      if (!g.ok) { console.error('desk worktree:', g.stderr); return { ok: false, error: 'git' }; }
+    }
+    let real = p.dir;
+    try { real = fs.realpathSync(p.dir); } catch {}
+    Object.assign(tab, { dir: P.worktreeDir(repo, wt.root, real), worktree: { root: wt.root, repo, branch: wt.branch } });
+  }
+  if (!P.findProject(state, p.id)) return { ok: false, error: 'unknown' };   // removed while git ran
+  commit(P.addTab(state, p.id, tab));
+  const id = P.tabPtyId(p.id, tab.n);
+  if (start) startPty(id);
+  return { ok: true, id };
+}
+/** v3.83 amendment: a member's personal workspace (tasks outside any project): a project of its own, made on first use
+ *  in Documents/Agent Office/<name> - personal, on the member's account; only that member works there (`staffOwner`). */
+function ensurePersonal(m) {
+  const have = ST.personalOf(state.projects, m.id);
+  if (have) return have;
+  // eslint-disable-next-line no-control-regex
+  const safe = String(m.name).replace(/[/\\:*?"<>|\u0000-\u001f]/g, '-').replace(/^\.+/, '').trim().slice(0, 60) || m.id;
+  const dir = path.join(app.getPath('documents'), 'Agent Office', T('main.personalFolder', { name: safe }));
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error('personal workspace:', e.message); return null; }
+  const active = state.activeId;
+  const r = P.addProject(state, dir, m.accountId ? { accountId: m.accountId } : {});
+  commit({ ...r.state, activeId: active ?? r.state.activeId, projects: r.state.projects.map((p) => (p.id === r.project.id ? { ...p, staffOwner: m.id } : p)) });
+  return ST.personalOf(state.projects, m.id);
+}
+ipcMain.handle('staff:personal', async (_e, staffId) => {
+  const m = teamOn() ? memberById(String(staffId || '')) : null;
+  if (!m) return { ok: false, error: 'unknown' };
+  const own = ensurePersonal(m);
+  return own ? openDesk(own.id, m.id) : { ok: false, error: 'failed' };
+});
+/** A desk's state for HQ: 'busy' | 'idle' | 'asleep' | 'off', or 'none' (no desk there yet). */
+function deskStateOf(projectId, staffId) {
+  const p = P.findProject(state, projectId);
+  const t = p ? P.deskOf(p, staffId) : null;
+  if (!t) return 'none';
+  const id = P.tabPtyId(p.id, t.n);
+  return terms.has(id) ? (tabWorkRunning(id) ? 'busy' : 'idle') : asleep.has(id) ? 'asleep' : 'off';
+}
+/** v3.83 HQ's office_dispatch with `staff`: the member's desk in the target project → { desk, staffName } | { reason }. */
+async function hqStaffDesk(args, remote, target) {
+  if (remote) return { reason: 'staff-local-only' };   // paired devices know no staff (the link protocol is unchanged)
+  if (!teamOn()) return { reason: 'no-team' };
+  const m = ST.findMember(state.staff, args.staff);
+  if (!m) return { reason: 'unknown-staff' };
+  if (!target) return { reason: 'unknown-project' };
+  if (!ST.mayWork(m, target)) return { reason: 'staff-not-allowed' };
+  const d = await openDesk(target.id, m.id, { start: false });
+  return d.ok ? { desk: d.id, staffName: m.name } : { reason: d.error === 'engine' ? 'engine' : d.error === 'git' ? 'desk-failed' : 'unknown-project' };
+}
+ipcMain.handle('staff:desk', (_e, projectId, staffId) => openDesk(String(projectId || ''), String(staffId || '')));
+ipcMain.handle('projects:setParallel', (_e, id, on) => { commit(P.setParallel(state, String(id), on === true)); return { ok: true }; });
+/** Every desk's state ('busy' while a turn, a dialog, agents or a background shell run; else running / asleep / off). */
+function deskStates() {
+  const out = [];
+  for (const p of state.projects) for (const t of P.desksOf(p)) {
+    const id = P.tabPtyId(p.id, t.n);
+    out.push({ id, projectId: p.id, n: t.n, staffId: t.staffId, state: terms.has(id) ? (tabWorkRunning(id) ? 'busy' : 'idle') : asleep.has(id) ? 'asleep' : 'off' });
+  }
+  return out;
+}
+// every 3 s: a desk's conversation id is kept on its tab (it continues it after a restart); the renderer gets the states
+let deskKey = '';
+setInterval(() => {
+  if (!state || !isLoaded) return;
+  let next = state;
+  for (const p of state.projects) for (const t of P.desksOf(p)) {
+    const id = P.tabPtyId(p.id, t.n);
+    const term = terms.get(id);
+    if (!term) continue;
+    const r = P.resolvePty(next, id);
+    const sid = r ? validSid(readJson(Z.claudePidFile(A.accountOf(next, r.project).configDir, app.getPath('home'), term.pid))?.sessionId) : '';
+    if (sid) next = P.setDeskSession(next, p.id, t.n, sid);
+  }
+  if (next !== state) commit(next);
+  const desks = deskStates();
+  const k = JSON.stringify(desks);
+  if (k !== deskKey) { deskKey = k; send('staff:desks', desks); }
+}, 3000).unref?.();
+ipcMain.handle('staff:desks', () => deskStates());
+
 ipcMain.handle('projects:remove', (_e, id) => {
   const p = P.findProject(state, id);
   if (p && P.projectFilesOf(p)) syncProjectFiles(p, { gone: true }); // our files leave with the project (v3.38)
@@ -3153,7 +3987,8 @@ ipcMain.handle('projects:remove', (_e, id) => {
     sizes.delete(pid);
     if (p) try { fs.rmSync(path.join(usageRoot(), p.accountId, `${usageKey(pid)}.json`), { force: true }); } catch {}
   }
-  commit(P.removeProject(state, id));
+  const next = P.removeProject(state, id);
+  commit(state.staff ? { ...next, staff: ST.dropProject(next.staff || state.staff, id) } : next);   // v3.83 it leaves the staff's projects
 });
 // the project left in the background starts its idle time now: it was in view until this moment (src/sleep.js)
 ipcMain.handle('projects:setActive', (_e, id) => {
@@ -3352,7 +4187,7 @@ ipcMain.handle('accounts:remove', (_e, id) => {
   usages.delete(id);
   try { fs.rmSync(delegateKeyFile(id), { force: true }); } catch {}   // v3.56: its delegate key file goes too
   try { fs.rmSync(path.join(usageRoot(), id), { recursive: true, force: true }); } catch {}
-  commit(r.state, { accounts: true });
+  commit(r.state.staff ? { ...r.state, staff: ST.dropAccount(r.state.staff, id) } : r.state, { accounts: true });   // v3.83 its members use their projects' accounts
   for (const pid of r.moved) moveProject(pid, from);
 });
 
@@ -3397,7 +4232,7 @@ async function gitTop(dir) {
 
 // "+" menu: a new Claude Code tab in the same folder, a new worktree (git repos only), or a plain terminal (contract
 // v3.42) in the folder of any project or one picked from disk. → 'same' | 'worktree' | { shell: dir } | null (cancelled)
-function pickTabMode({ git: inRepo = false } = {}) {
+function pickTabMode({ git: inRepo = false, staff = [] } = {}) {
   return new Promise((resolve) => {
     let done = false;
     let folderPicking = false;
@@ -3405,6 +4240,11 @@ function pickTabMode({ git: inRepo = false } = {}) {
     /** @type {Electron.MenuItemConstructorOptions[]} */
     const items = [{ label: T('main.tabSame'), click: () => finish('same') }];
     if (inRepo) items.push({ label: T('main.tabWorktree'), click: () => finish('worktree') });
+    // v3.83 amendment: a session with a staff member = the member's desk in this project (opened, or shown when open)
+    if (staff.length) items.push({ type: 'separator' }, {
+      label: T('main.tabStaff'),
+      submenu: staff.map((m) => ({ label: m.name, sublabel: m.role, click: () => finish({ staff: m.id }) })),
+    });
     items.push({ type: 'separator' }, {
       label: T('main.tabShell'),
       submenu: [
@@ -3466,8 +4306,16 @@ ipcMain.handle('tabs:add', async (_e, projectId, mode) => {
   const p = P.findProject(state, projectId);
   if (!p || !win) return null;
   let m = mode === 'same' || mode === 'worktree' ? mode : null;
-  if (!m) m = await pickTabMode({ git: Boolean(await gitTop(p.dir)) }); // always asks since v3.42: the menu has the terminal entry
+  // the staff who may work here (team mode, Claude Code projects): their desks are in the menu too
+  const staff = teamOn() && P.engineOf(p) === 'claude' ? (state.staff || []).filter((x) => ST.mayWork(x, p))
+    .map((x) => ({ id: x.id, name: x.name, role: ST.memberRole(x, presetRoles()).name || '' })) : [];
+  if (!m) m = await pickTabMode({ git: Boolean(await gitTop(p.dir)), staff }); // always asks since v3.42: the menu has the terminal entry
   if (m === 'worktree') return addWorktreeTab(p);
+  if (m && typeof m === 'object' && m.staff) {
+    const d = await openDesk(p.id, String(m.staff));
+    const n = d.ok ? Number(String(d.id).split(':')[1]) : 0;
+    return n ? { n } : null;
+  }
   const now = P.findProject(state, projectId);
   if (m && typeof m === 'object' && m.shell && now) return openTab(now.id, { n: P.nextTabNumber(now), dir: m.shell, shell: true });
   if (m === 'same' && now) return openTab(now.id, { n: P.nextTabNumber(now) });
@@ -3783,6 +4631,72 @@ ipcMain.on('pty:write', (_e, id, d) => {
   agyWatch.get(id)?.watch.input(d);
   ptyOf(id)?.write(d);
 });
+// --- chat view (contract v3.80, src/chat.js): a Claude Code tab shown as a conversation, read from its transcript
+const chatFiles = new Map();   // pty id → { sid, file }: the transcript found for the tab's session
+/** The tab's session id: the running claude's, else the sleeping tab's (null when there is none yet). */
+function chatSession(id, r, configDir) {
+  const t = terms.get(id);
+  if (t) return validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId) || null;
+  return validSid(asleep.get(id)?.sessionId) || null;
+}
+// v3.80 amendment: the chat input's "/" list for a Claude Code tab (src/slash-commands.js): built-ins, the project's
+// and the account's commands and skills, enabled installed plugins, the tab's skill packs and /office. Cached 30 s.
+const slashCache = new Map();   // pty id → { at, list }
+ipcMain.handle('chat:commands', (_e, id) => {
+  const r = P.resolvePty(state, String(id || ''));
+  if (!r || P.engineOf(r.project) !== 'claude') return [];
+  const hit = slashCache.get(id);
+  if (hit && Date.now() - hit.at < 30000) return hit.list;
+  const claudeDir = A.accountOf(state, r.project).configDir || path.join(app.getPath('home'), '.claude');
+  const packs = r.project.hq ? [] : SP.enabledPacks(state, r.project, skillPacks()).map((p) => ({ name: p.name, dir: path.join(packRoot(), p.id) }));
+  const list = SLASH.commandsFor({ cwd: isDir(r.dir) ? r.dir : null, claudeDir, packs, extra: [{ name: 'office', description: T('chat.officeCommand') }] });
+  slashCache.set(id, { at: Date.now(), list });
+  return list;
+});
+ipcMain.handle('chat:read', (_e, id, cursor) => {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return { unsupported: true };
+  const { configDir } = A.accountOf(state, r.project);
+  const sid = chatSession(id, r, configDir);
+  if (!sid) return { sid: null, cursor: null, items: [], reset: true, more: false };
+  let known = chatFiles.get(id);
+  if (!known || known.sid !== sid || !fs.existsSync(known.file)) {
+    const f = TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file;
+    if (!f) return { sid, cursor: null, items: [], reset: true, more: false };   // written with the first prompt
+    known = { sid, file: f };
+    chatFiles.set(id, known);
+  }
+  return { sid, ...CHAT.readChat(known.file, cursor && typeof cursor === 'object' ? cursor : null) };
+});
+// A chat-view menu button (an approval, a question): its keys go straight to the tab, a step every 250 ms so Claude
+// Code's menu takes each one; not through pty:write (they are no draft and mint no HQ request).
+const MENU_STEP_MS = 250;
+ipcMain.handle('chat:keys', (_e, id, steps) => {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return 'unsupported';
+  const keys = CHAT.menuKeys(steps);
+  if (!keys) return 'bad-keys';
+  if (handoffLocked(id)) { lockedNotice(id); return 'locked'; }
+  const t = terms.get(id);
+  if (!t) return 'not-running';
+  if (P.isHqId(id)) hqLastKey = Date.now();
+  const a = activity.get(id);
+  if (a) a.at = Date.now();
+  keys.forEach((k, n) => setTimeout(() => { if (terms.get(id) === t) t.write(k); }, n * MENU_STEP_MS));
+  return 'ok';
+});
+// The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).
+ipcMain.handle('chat:send', (_e, id, text) => {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return 'unsupported';
+  const why = CHAT.sendRefused({ text, running: terms.has(id), locked: handoffLocked(id), draft: Boolean(activity.get(id)?.draft), permission: attention.get(r.project.id) === 'permission' });
+  if (why) { if (why === 'locked') lockedNotice(id); return why; }
+  if (P.isHqId(id)) { hqLastKey = Date.now(); hqMinter.mint(); }
+  return typePrompt(id, String(text).trim()) ? 'ok' : 'not-running';
+});
 // the renderer shows a tab: a sleeping one starts (lazy start, wake from sleep)
 ipcMain.on('pty:wake', (_e, id) => { shownTab = String(id); wake(id); });
 ipcMain.on('pty:shown', (_e, id) => { shownTab = ROUT.shownTabOf(id); });   // v3.47 every tab change (HQ on screen)
@@ -4092,9 +5006,12 @@ function buildMenu() {
 // reloadMcp = an idle running tab whose MCP servers changed restarts in its session (contract v3.11);
 // fallback = a project at the usage limit moves to its backup account and back after the reset (contract v3.17);
 // showAgyAccount / showCmdAccount / showOcAccount = the Antigravity / Command Code / OpenCode row in Accounts: true (added via Add account),
-// false (removed), null (the old rule: shown when installed or a project runs it) (contract v3.30)
+// false (removed), null (the old rule: shown when installed or a project runs it) (contract v3.30);
+// chatView = Claude Code tabs can be shown as a conversation (contract v3.80); off unless set, and unset is not written
+// office3d = the office drawn in 3D (contract v3.81); off unless set, and unset is not written
+// teamMode = the TEAM panel (contract v3.83); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, office3d: state.office3d === true, teamMode: state.teamMode === true });
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
@@ -4103,6 +5020,9 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp });
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
+  if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) commit({ ...state, chatView: p.chatView });   // v3.80 chat view (the renderer switches)
+  if (p && typeof p.office3d === 'boolean' && p.office3d !== prefs().office3d) commit({ ...state, office3d: p.office3d });   // v3.81 3D office (the renderer switches)
+  if (p && typeof p.teamMode === 'boolean' && p.teamMode !== prefs().teamMode) commit({ ...state, teamMode: p.teamMode });   // v3.83 the TEAM panel
   for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (p && typeof p[k] === 'boolean' && p[k] !== prefs()[k]) commit({ ...state, [k]: p[k] });
   if (p && typeof p.theme === 'string' && themeSetting(p.theme) !== prefs().theme) commit({ ...state, theme: themeSetting(p.theme) });
   // appearance (v3.74): an unknown look or mode is stored as the default
@@ -4180,7 +5100,11 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  // v3.83 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
+  if (Array.isArray(raw.customRoles)) state = { ...state, customRoles: ST.normalizeCustomRoles(raw.customRoles) };   // v3.84, before the staff that use them
+  if (Array.isArray(raw.mailAccounts)) state = { ...state, mailAccounts: MST.normalizeAccounts(raw.mailAccounts) };   // v3.85, before the staff given them
+  if (Array.isArray(raw.staff)) state = { ...state, staff: ST.normalizeStaff(raw.staff, staffKnown()) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
   const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });

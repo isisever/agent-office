@@ -4,13 +4,13 @@
 // Every text from the board is put in with textContent: report text is data, never markup.
 
 const COLS = [
-  ['queued', ['queued']],
+  ['queued', ['queued', 'waiting']],   // v3.79 a stage waiting for the one before it
   ['running', ['delivered', 'running']],
   ['needs', ['needs-approval', 'awaiting-consent']],
   ['done', ['reported', 'partial']],
-  ['failed', ['failed', 'rejected', 'expired', 'lost']],
+  ['failed', ['failed', 'rejected', 'expired', 'lost', 'blocked']],
 ];
-const OPEN = new Set(['queued', 'delivered', 'running', 'needs-approval', 'awaiting-consent']);
+const OPEN = new Set(['queued', 'delivered', 'running', 'needs-approval', 'awaiting-consent', 'waiting']);
 const RUN_OPEN = new Set(['waiting', 'typed', 'running', 'awaiting-consent']);
 const pad2 = (n) => String(n).padStart(2, '0');
 const hhmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -58,6 +58,16 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   sidebar.prepend(el('div', { class: 'hq-pinned' }, row, settings, ...(api.routines ? [rtList] : [])));
   const board = el('div', { id: 'hq-board', class: 'hq-board', hidden: true });
   office?.after(board);
+  // v3.83 amendment: while HQ is selected the person picks the Board or the office (all projects' agents and desks); remembered
+  let showOffice = false;
+  try { showOffice = localStorage.getItem('hq.view') === 'office'; } catch { /* storage off */ }
+  const viewBtn = (key, on) => el('button', { class: 'hq-view-btn', 'data-view': key, onclick: () => {
+    showOffice = on;
+    try { localStorage.setItem('hq.view', on ? 'office' : 'board'); } catch { /* storage off */ }
+    render();
+  } }, t(`hq.view.${key}`));
+  const viewBar = el('div', { class: 'hq-viewbar', hidden: true }, viewBtn('board', false), viewBtn('office', true));
+  office?.before(viewBar);
   // remote rows sit right under the local rows of PROJECTS, with the local rows' look (.sb-proj)
   const remoteList = el('ul', { class: 'sb-list sb-rlist', id: 'sb-rprojects' });
   let openKey = '';                 // the remote row showing its command box
@@ -111,14 +121,38 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const counter = el('span', { class: 'rt-note' });
     // v3.49 remote targets: a paired device's project, with its machine; greyed while the device is offline (still allowed:
     // an approved run waits in the outbox). A remote run always asks first, so the no-ask checkbox is off for it.
-    const tvOf = (x) => (x.kind === 'hq' ? 'hq' : x.kind === 'remote' ? `r:${x.pub}:${x.projectId}` : `p:${x.projectId}`);
+    const tvOf = (x) => (x.kind === 'hq' ? 'hq' : x.kind === 'staff' ? 'personal' : x.kind === 'remote' ? `r:${x.pub}:${x.projectId}` : `p:${x.projectId}`);
     const remotes = rv.remotes || [];
     const gone = o.target.kind === 'remote' && !remotes.some((x) => x.pub === o.target.pub && x.id === o.target.projectId);
+    // v3.83 amendment: "outside any project" (a member's personal workspace; members' workspaces are not listed as projects)
     const target = el('select', {}, el('option', { value: 'hq' }, t('routines.targetHq')),
-      ...(rv.projects || []).map((p) => el('option', { value: `p:${p.id}`, disabled: p.engine !== 'claude' }, p.engine === 'claude' ? p.name : `${p.name} (${t('routines.engineOnly')})`)),
+      ...((rv.staff || []).length ? [el('option', { value: 'personal' }, t('routines.targetPersonal'))] : []),
+      ...(rv.projects || []).filter((p) => !p.staffOwner).map((p) => el('option', { value: `p:${p.id}`, disabled: p.engine !== 'claude' }, p.engine === 'claude' ? p.name : `${p.name} (${t('routines.engineOnly')})`)),
       ...remotes.map((x) => el('option', { value: `r:${x.pub}:${x.id}`, class: x.online ? 'rt-remote' : 'rt-remote rt-off' }, `${x.name} · ${x.machine}${x.online ? '' : ` (${t('routines.offline')})`}`)),
       ...(gone ? [el('option', { value: tvOf(o.target), disabled: true }, t('routines.remoteGone'))] : []));
     target.value = tvOf(o.target);
+    // v3.83 amendment: who does it: nobody in particular (HQ, or the project's own session), or a staff member (their
+    // desk). Always on show when there is staff; a member narrows the target to the projects they may work on.
+    const staff = rv.staff || [];
+    const keep0 = o.target.kind === 'project' || o.target.kind === 'staff' ? o.target.staffId || '' : '';
+    const staffSel = el('select', {}, el('option', { value: '' }, t('routines.staffNone')), ...staff.map((m) => el('option', { value: m.id }, m.name)),
+      ...(keep0 && !staff.some((m) => m.id === keep0) ? [el('option', { value: keep0, disabled: true }, t('routines.staffGone'))] : []));
+    staffSel.value = keep0;
+    const fStaff = field(t('routines.staff'), staffSel);
+    fStaff.hidden = !staff.length && !keep0;
+    const memberOf = () => staff.find((m) => m.id === staffSel.value) || null;
+    const fillStaff = () => {
+      const m = memberOf();
+      for (const opt of target.options) {
+        const pid = opt.value.startsWith('p:') ? opt.value.slice(2) : '';
+        const engineOk = !pid || (rv.projects || []).find((p) => p.id === pid)?.engine === 'claude';
+        opt.disabled = opt.value === 'personal' ? !m : !engineOk || (m ? !m.projects.includes(pid) : false) || (opt.value === tvOf(o.target) && gone);
+      }
+      // a member: their personal workspace unless the target is a project they may work on; nobody: not "personal"
+      if (m && !(target.value === 'personal' || (target.value.startsWith('p:') && m.projects.includes(target.value.slice(2))))) target.value = 'personal';
+      if (!m && target.value === 'personal') target.value = 'hq';
+    };
+    staffSel.addEventListener('change', () => syncTarget());
     const kind = el('select', {}, ...['daily', 'weekdays', 'weekly', 'hours'].map((k) => el('option', { value: k }, t(`routines.${k}`))));
     kind.value = sc.kind;
     const at = el('input', { type: 'time', value: sc.at || '09:00' });
@@ -143,13 +177,13 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       const next = await api.routines.preview(schedule());
       preview.textContent = `${t('routines.nextRuns')}: ${(next || []).map(friendly).join(' · ')}`;
     };
-    const syncTarget = () => { const rem = target.value.startsWith('r:'); noAsk.disabled = rem; noAsk.closest('label')?.setAttribute('title', t(rem ? 'routines.noAskRemote' : 'routines.noAskHint')); };
+    const syncTarget = () => { fillStaff(); const rem = target.value.startsWith('r:'); noAsk.disabled = rem; noAsk.closest('label')?.setAttribute('title', t(rem ? 'routines.noAskRemote' : 'routines.noAskHint')); };
     target.addEventListener('change', syncTarget);
     for (const x of [prompt, kind, at, day, every, from, to]) x.addEventListener('input', sync);
     const save = async () => {
       const tv = target.value;
       const rest = tv.slice(2); const cut = rest.lastIndexOf(':');
-      const tg = tv === 'hq' ? { kind: 'hq' } : tv.startsWith('r:') ? { kind: 'remote', pub: rest.slice(0, cut), projectId: rest.slice(cut + 1) } : { kind: 'project', projectId: rest };
+      const tg = tv === 'hq' ? { kind: 'hq' } : tv === 'personal' ? { kind: 'staff', staffId: staffSel.value } : tv.startsWith('r:') ? { kind: 'remote', pub: rest.slice(0, cut), projectId: rest.slice(cut + 1) } : { kind: 'project', projectId: rest, ...(staffSel.value ? { staffId: staffSel.value } : {}) };
       const res = await api.routines.save({ id: r?.id, name: name.value, prompt: prompt.value, target: tg,
         schedule: schedule(), missed: missedSkip.checked ? 'skip' : 'once', maxPerDay: Number(maxPerDay.value), noAsk: noAsk.checked });
       if (!res?.ok) { note.textContent = t(res?.reason === 'too-many' ? 'routines.tooMany' : 'routines.invalid'); return; }
@@ -157,7 +191,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     };
     sync();
     const ed = el('div', { class: 'rt-editor' },
-      field(t('routines.name'), name), field(t('routines.prompt'), prompt), counter, field(t('routines.target'), target),
+      field(t('routines.name'), name), field(t('routines.prompt'), prompt), counter, fStaff, field(t('routines.target'), target),
       field(t('routines.schedule'), kind), fAt, fDay, fEvery, fWin,
       el('div', {}, t('routines.missed'), el('label', { class: 'inline' }, missedOnce, t('routines.missedOnce')), el('label', { class: 'inline' }, missedSkip, t('routines.missedSkip'))),
       field(t('routines.maxPerDay'), maxPerDay), el('label', { class: 'inline', title: t('routines.noAskHint') }, noAsk, t('routines.noAsk')), preview, note,
@@ -209,8 +243,9 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
         el('h3', {}, t(`hq.col.${key}`)),
         ...tasks.filter((x) => sts.includes(x.status)).map((x) => el('div', { class: `hq-task${x.read ? '' : ' unread'}`, onclick: () => showReport(x) },
           el('div', { class: 'hq-task-title' }, x.title || x.id),
-          el('div', { class: 'hq-task-meta' }, `${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.status}${x.reason ? ` (${x.reason})` : ''}`),
+          el('div', { class: 'hq-task-meta' }, `${x.staff ? `${x.staff} @ ` : ''}${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.status}${x.reason ? ` (${x.reason})` : ''}`),
           waitLine(x),
+          stageLine(x),
           x.status === 'awaiting-consent' && api.routines ? el('div', { class: 'rt-actions' },
             el('button', { onclick: async (e) => { e.stopPropagation(); await api.routines.approve(x.id, true); refresh(); } }, t('routines.allow')),
             el('button', { onclick: async (e) => { e.stopPropagation(); await api.routines.approve(x.id, false); refresh(); } }, t('routines.decline'))) : null,
@@ -225,6 +260,12 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     return el('div', { class: 'hq-task-wait' },
       el('span', {}, [t(`hq.wait.${w.state}`, { project: w.project, machine: w.machine || '' }), w.len > 1 ? t('hq.wait.pos', { n: w.pos, len: w.len }) : '', t('hq.wait.expires', { min })].filter(Boolean).join(' · ')),
       w.cancel === false ? null : el('button', { class: 'hq-link', title: t('hq.wait.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
+  }
+  /** v3.79 a waiting stage: which task it waits for, and Cancel (the stages after it are blocked with it). */
+  function stageLine(x) {
+    if (x.status !== 'waiting') return null;
+    return el('div', { class: 'hq-task-wait' }, el('span', {}, t('hq.stage.waiting', { id: x.after || '' })),
+      el('button', { class: 'hq-link', title: t('hq.stage.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
   }
   /** The link's live snapshot of one remote project (engine, counts) and the commands sent to it. */
   function liveOf(r) {
@@ -299,8 +340,10 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       : `▶ ${tasks.filter((x) => OPEN.has(x.status)).length}  ● ${tasks.filter((x) => !x.read && !OPEN.has(x.status)).length}`;
     consent.checked = Boolean(view.settings?.dispatchWithoutAsking);
     row.classList.toggle('active', selected);
-    board.hidden = !selected;
-    if (office) office.hidden = selected;
+    board.hidden = !selected || showOffice;
+    if (office) office.hidden = selected && !showOffice;
+    viewBar.hidden = !selected || !office;
+    for (const b of viewBar.children) b.classList.toggle('on', (b.getAttribute('data-view') === 'office') === showOffice);
     if (api.routines) {
       quietOn.checked = Boolean(rv.cfg?.quiet);
       if (rv.cfg?.quiet && document.activeElement !== quietFrom && document.activeElement !== quietTo) { quietFrom.value = rv.cfg.quiet.from; quietTo.value = rv.cfg.quiet.to; }

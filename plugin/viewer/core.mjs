@@ -539,7 +539,17 @@ function updateParty(workers, now) {
 
 const slots = new Map()
 
-function assignSlots(workers, now) {
+// app team (contract v3.83): the first desks belong to staff members (data.staff, in order; at most half the desks):
+// their plates carry the member's name and a working member sits there. Agents take the other desks.
+function staffDesks(data) {
+  const list = Array.isArray(data.staff) ? data.staff.filter(m => m && m.name) : []
+  const n = Math.min(list.length, Math.floor(L.desks.length / 2))
+  return new Map(list.slice(0, n).map((m, i) => [i, m]))
+}
+/** A staff member's colour (plate, tag edge), from its name like a project's. */
+const staffColor = m => projColor(`staff:${m.name}`)
+
+function assignSlots(workers, now, reserved = new Set()) {
   const live = new Set(workers.map(w => w.id))
   for (const id of slots.keys()) if (!live.has(id)) slots.delete(id)
   for (const w of workers) {
@@ -552,7 +562,7 @@ function assignSlots(workers, now) {
       if (phase === 'in' || phase === 'work') taken.add(s)
     }
     let s = 0
-    while (taken.has(s)) s++
+    while (taken.has(s) || reserved.has(s)) s++
     slots.set(w.id, s)
   }
 }
@@ -1428,6 +1438,15 @@ function drawBackground() {
   chair(L.boss.seat[0], L.boss.by, true)
 }
 
+// ---------- scene (app contract v3.81: the app's 3D office) ----------
+// What the last frame showed, for a renderer other than this framebuffer: the layout, every bot with its pose, the
+// desks' state, the labels (lines of [text, 0xRRGGBB]) and the theme's colours. Filled while the frame is drawn;
+// nothing here changes the frame.
+let scene = null
+export function sceneOf() {
+  return scene
+}
+
 // ---------- frame ----------
 function shortType(type) {
   return fit(T.types[type] ?? String(type).split(':').pop(), 8)
@@ -1454,7 +1473,8 @@ function renderFrame(now, data, focus = '', selected = null) {
   fb.set(background)
 
   const workers = [...data.workers].sort((a, b) => a.spawnAt - b.spawnAt)
-  assignSlots(workers, now)
+  const staffAt = staffDesks(data)
+  assignSlots(workers, now, new Set(staffAt.keys()))
   updateParty(workers, now)
   const poses = workers
     .map(w => {
@@ -1468,6 +1488,7 @@ function renderFrame(now, data, focus = '', selected = null) {
   const pendingDone = workers.filter(w => w.doneAt != null).length - handed.length
   const stack = Math.max(0, data.delivered - Math.max(0, pendingDone))
   const lastOk = handed[handed.length - 1]?.w.isOk ?? true
+  scene = { now, LW, LH, L, C: { ...C }, bots: [], tags: [], desks: [], stack, lastOk, isBossBusy: Boolean(data.isBossBusy), isAsking: Boolean(data.isBossAsking), hot: false, today: [T.today, T.delivered(data.delivered)], title: THEME.sign }
   const busySlots = new Set(poses.filter(({ p }) => p.phase === 'work').map(({ slot }) => slot))
   const isBusy = busySlots.size > 0 || data.isBossBusy
   const typeFrame = Math.floor(now / 200) % 2
@@ -1527,6 +1548,13 @@ function renderFrame(now, data, focus = '', selected = null) {
   if (focusKey !== null)
     for (const [slot, pr] of deskProj) if (pr && slugOf(pr.name) === focusKey) deskGlow(L.desks[slot], projColor(pr.name))
 
+  // staff desks: the member's name on the plate; a working member's laptop is lit
+  for (const [slot, m] of staffAt) {
+    deskProj.set(slot, { name: String(m.name), short: fit(normalize(String(m.short || m.name)), 7), color: staffColor(m) })
+    if (m.busy) busySlots.add(slot)
+  }
+  scene.desks = L.desks.map((d, i) => ({ cx: d.cx, by: d.by, busy: busySlots.has(i), proj: deskProj.get(i) ?? null }))
+  scene.hot = !isBusy
   const drawables = []
   L.desks.forEach((d, i) => drawables.push({ y: d.by + 0.5, draw: () => desk(d, i + 1, busySlots.has(i), now, deskProj.get(i) ?? null) }))
   drawables.push({ y: L.boss.by + 0.5, draw: () => bossDesk(now, data.isBossBusy, stack, lastOk) })
@@ -1540,8 +1568,19 @@ function renderFrame(now, data, focus = '', selected = null) {
         isBlink: now % 4100 < 130,
       })
       hitBot(BOSS_ID, L.boss.seat[0], L.boss.by - SIT)
+      scene.bots.push({ id: BOSS_ID, x: L.boss.seat[0], y: L.boss.by, pose: data.isBossBusy ? 'type' : 'stand', seated: true, isBoss: true, frame: typeFrame })
     },
   })
+  // a working staff member sits at its own desk
+  for (const [slot, m] of staffAt) {
+    if (!m.busy) continue
+    const d = L.desks[slot]
+    const seed = strHash(`staff:${m.id ?? m.name}`)
+    drawables.push({ y: d.by, draw: () => {
+      bot(d.cx - 5, d.by - SIT, { pose: 'type', frame: (typeFrame + seed) % 2, isBlink: (now + seed) % 3700 < 120 })
+      scene.bots.push({ id: `staff:${m.id ?? m.name}`, x: d.cx - 5, y: d.by, pose: 'type', seated: true, frame: (typeFrame + seed) % 2 })   // the 3D office (v3.81)
+    } })
+  }
   const beatMs = hot ? 230 : 320
   for (const [id, g] of party) {
     const p = partyPose(g, now)
@@ -1555,6 +1594,7 @@ function renderFrame(now, data, focus = '', selected = null) {
       draw: () => {
         const hat = neon()[g.seed % 4]
         hitBot(id, p.x, p.y, p.phase === 'walk' ? 7 : 9)
+        scene.bots.push({ id, x: p.x, y: p.y, pose: p.phase === 'walk' ? 'walk' : 'dance', frame: p.phase === 'walk' ? walkFrame : Math.floor((now + (g.seed % 997)) / beatMs) % 3, hat, look: p.look ?? 0, seed: g.seed })
         if (p.phase === 'walk') return bot(p.x, p.y, { pose: 'walk', frame: walkFrame, look: p.look, isBlink, hat })
         // per-dancer phase offset; now and then one spins around
         const frame = Math.floor((now + (g.seed % 997)) / beatMs) % 3
@@ -1585,6 +1625,7 @@ function renderFrame(now, data, focus = '', selected = null) {
         if (p.phase === 'work') {
           const atDesk = seatInfo(slot).kind === 'desk'
           hitBot(w.id, p.x, p.y - (atDesk ? SIT : 0))
+          scene.bots.push({ id: w.id, x: p.x, y: p.y, pose: atDesk ? 'type' : 'stand', seated: atDesk, frame: (typeFrame + seed) % 2, hasMug: !atDesk, project: projOf(w.project)?.color ?? null })
           bot(p.x, p.y - (atDesk ? SIT : 0), {
             pose: atDesk ? 'type' : 'stand',
             frame: (typeFrame + seed) % 2,
@@ -1593,10 +1634,12 @@ function renderFrame(now, data, focus = '', selected = null) {
           })
         } else if (p.phase === 'hand') {
           hitBot(w.id, p.x, p.y, 9)
+          scene.bots.push({ id: w.id, x: p.x, y: p.y, pose: 'stand', paper: isOk, project: projOf(w.project)?.color ?? null })
           bot(p.x, p.y, { isBlink })
           paper(p.x - 3, p.y - 20, isOk)
         } else {
           hitBot(w.id, p.x, p.y)
+          scene.bots.push({ id: w.id, x: p.x, y: p.y, pose: 'walk', frame: walkFrame, look: p.look ?? 0, carry: p.phase === 'carry' ? isOk : null, project: projOf(w.project)?.color ?? null })
           bot(p.x, p.y, { pose: 'walk', frame: walkFrame, look: p.look, isBlink })
           if (p.phase === 'carry') paper(p.x + 6, p.y - 9, isOk)
         }
@@ -1616,7 +1659,16 @@ function renderFrame(now, data, focus = '', selected = null) {
     const pr = projOf(w.project)
     // with several projects the label edge is the project's colour (those in the hall have no plate; this tells them apart too)
     const tb = tag([[shortType(w.type), C.white], [fit(tool, 8), C.yellow]], cx, top, pr ? pr.color : C.ol)
+    scene.tags.push({ id: w.id, lines: [[shortType(w.type), C.white], [fit(tool, 8), C.yellow]], edge: pr ? pr.color : C.ol })
     hits.push({ id: w.id, ...tb })
+  }
+  // staff at work: the name and the projects above them, edged in the member's colour
+  for (const [slot, m] of staffAt) {
+    if (!m.busy) continue
+    const d = L.desks[slot]
+    const lines = [[fit(normalize(String(m.name)), 8), C.white], [fit(normalize((Array.isArray(m.projects) ? m.projects : []).join(',')), 8), C.yellow]]
+    tag(lines, d.cx, d.by - 18, staffColor(m))
+    scene.tags.push({ id: `staff:${m.id ?? m.name}`, lines, edge: staffColor(m) })
   }
   // the sign, in order: a permission dialog is open (contract v2.6: blinks and says which project) → the boss works →
   // its turn ended but agents still run (it waits for them, not for the user) → it waits for the user
@@ -1635,6 +1687,7 @@ function renderFrame(now, data, focus = '', selected = null) {
     if (busy.length > 2) bossLines.push([`+${busy.length - 2}`, C.dim])
   }
   const bt = tag(bossLines, L.boss.seat[0], L.boss.by - 19)
+  scene.tags.push({ id: BOSS_ID, lines: bossLines, edge: C.ol })
   hits.push({ id: BOSS_ID, ...bt })
   // bubble to the right of the sign: must not cover a wide sign (NEEDS YOU, ONAY BEKLİYOR)
   if (poses.some(({ p }) => p.phase === 'hand')) bubbleCheck(Math.max(L.boss.seat[0] + 14, bt.x + bt.w + 1), L.boss.by - 36, lastOk)

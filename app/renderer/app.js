@@ -1,5 +1,6 @@
 // Wires everything together: sidebar (projects, accounts), per-project terminal(s) (tabs, v3.0), office and theme colors.
 import { mountTerminal, pasteIntoFocused } from './terminal.js';
+import { mountChat } from './chat.js';
 import { mountSidebar } from './sidebar.js';
 import { mountHq } from './hq-board.js';
 import { mountLogin } from './login.js';
@@ -58,7 +59,8 @@ const activeProject = () => (hqSelected ? HQ_ROW : projects.find((p) => p.id ===
 /** pty id of the visible terminal. */
 const activePty = () => { const p = activeProject(); return p ? tabPtyId(p.id, tabOf(p)) : null; };
 // While the login overlay is open, focus stays on its terminal.
-const focusActive = () => (login?.isOpen() ? login.focus() : panes.get(activePty())?.term.focus());
+// v3.80: a tab shown as a chat takes the focus in its input box (the hidden terminal must not get keys)
+const focusActive = () => { if (login?.isOpen()) return login.focus(); const p = panes.get(activePty()); return (p?.chatOn ? p.chat : p?.term)?.focus(); };
 let login = null; // login overlay (login.js)
 
 // ---- Theme ----
@@ -195,6 +197,7 @@ function syncPanes() {
   const ids = new Set([HQ_ROW, ...projects].flatMap(ptyIdsOf).filter((id) => !isLoginId(id)));
   for (const [id, p] of panes) {
     if (ids.has(id)) continue;
+    p.chat?.destroy();
     p.term.destroy();
     p.el.remove();
     panes.delete(id);
@@ -210,6 +213,67 @@ function isAsleep(id) {
   return Boolean(n ? st?.tabs?.find((x) => x.n === Number(n))?.isAsleep : st?.isAsleep);
 }
 
+// ---- Chat view (contract v3.80, chat.js): with the setting on, a Claude Code tab shows its conversation; the
+// terminal stays mounted under it and is one click away. Off: nothing below runs and the pane is as before.
+let chatView = false;
+const chatOff = new Set();   // pty ids the person switched back to the terminal (this window only)
+let chatSwitch = null;       // the "chat" button over a terminal (made when first needed)
+/** Can this tab be shown as a chat? Claude Code tabs only (not Antigravity / Command Code / OpenCode, not a shell tab). */
+function chatCapable(id) {
+  if (!id) return false;
+  const [projectId, n] = String(id).split(':');
+  if (projectId === HQ_ROW.id) return true;
+  const p = projects.find((x) => x.id === projectId);
+  if (!p || (p.engine && p.engine !== 'claude')) return false;
+  return !n || !tabsOf(p).find((x) => x.n === Number(n))?.shell;
+}
+function setChatMode(id, on) {
+  if (on) chatOff.delete(id); else chatOff.add(id);
+  syncChat();
+  focusActive();
+}
+/** Shows the visible tab as chat or terminal; the terminal gets a resize nudge when it comes back. */
+function syncChat() {
+  const visible = activePty();
+  const attn = (id) => status.find((x) => x.id === String(id).split(':')[0])?.attention || null;
+  for (const [id, p] of panes) {
+    const want = chatView && id === visible && chatCapable(id) && !chatOff.has(id);
+    if (want && !p.chat) {
+      const host = document.createElement('div');
+      host.className = 'chat-host';
+      p.el.append(host);
+      p.chat = mountChat(host, { ptyId: id, onTerminal: () => setChatMode(id, false), screen: () => p.term.screen() });
+    }
+    const was = Boolean(p.chatOn);
+    p.chatOn = want;
+    // the terminal stays laid out under the chat (invisible, not focusable): it keeps its size, so its screen (where
+    // Claude Code draws its menus) is read the way the pty draws it
+    p.el.classList.toggle('under-chat', want);
+    if (want) { p.chat.setAttention(attn(id)); p.chat.show(); if (!was) requestAnimationFrame(() => p.term.fit()); } else p.chat?.hide();
+    if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
+  }
+  const canSwitch = chatView && chatCapable(visible) && chatOff.has(visible);
+  if (canSwitch && !chatSwitch) {
+    chatSwitch = document.createElement('button');
+    chatSwitch.id = 'chat-switch';
+    chatSwitch.addEventListener('click', () => { const id = activePty(); if (id) setChatMode(id, true); });
+    $('terminal').append(chatSwitch);
+  }
+  if (chatSwitch) {
+    chatSwitch.hidden = !canSwitch;
+    chatSwitch.textContent = t('chat.chat');
+    chatSwitch.title = t('chat.chatTitle');
+  }
+}
+
+/** v3.80 the chat view setting from main's prefs (startup and the settings checkbox). */
+function applyChatView(p) {
+  chatView = p?.chatView === true;
+  sidebar?.setChatView?.(chatView);
+  syncChat();
+  focusActive();
+}
+
 let shownId; // visible terminal; focus/resize only when it changes
 let shownSent; // last tab told to main (pty:shown): main types a routine into HQ only when HQ is not on screen
 function showActive() {
@@ -220,10 +284,11 @@ function showActive() {
   // the shown tab always runs: a sleeping claude starts (and continues its session)
   if (visible && isAsleep(visible)) api.pty.wake?.(visible);
   if (shownSent !== visible) { shownSent = visible; api.pty.shown?.(visible || ''); }
+  syncChat();
   if (shownId === visible) return;
   shownId = visible;
   const p = panes.get(visible);
-  if (p) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
+  if (p) requestAnimationFrame(() => { p.term.fit(); (p.chatOn ? p.chat : p.term).focus(); });
 }
 
 // The tab strip shows only when the project has more than one tab; a single terminal looks as before
@@ -242,7 +307,9 @@ function tabButton(p, tab, active, running) {
   num.textContent = String(n);
   const label = document.createElement('span');
   label.className = 'tab-label';
-  label.textContent = tab?.shell ? `› ${baseName(dir)}` : tab?.worktree ? `⎇ ${tab.worktree.branch}` : baseName(dir);
+  // v3.83 a desk shows its staff member's name
+  const member = tab?.staffId ? staffList.find((m) => m.id === tab.staffId) : null;
+  label.textContent = member ? `● ${member.name}` : tab?.shell ? `› ${baseName(dir)}` : tab?.worktree ? `⎇ ${tab.worktree.branch}` : baseName(dir);
   b.append(num, label);
   b.addEventListener('click', () => selectTab(p.id, n));
   if (tab) {
@@ -341,6 +408,13 @@ api.pty.onExit((id, code) => {
 
 // ---- State ----
 let office = null;
+// v3.81 the 3D office setting (main's prefs); applied to the office view once it is mounted
+let office3dOn = false;
+function applyOffice3d(p) {
+  office3dOn = p?.office3d === true;
+  sidebar?.setOffice3d?.(office3dOn);
+  office?.set3d?.(office3dOn);
+}
 let sidebar = null;
 
 function render() {
@@ -375,6 +449,38 @@ async function refreshAccounts() {
 }
 
 // ---- Actions ----
+/** v3.83 team mode and the staff into the sidebar (and the staff's names for desk tabs). */
+let staffList = [];
+let teamOn = false;
+let deskList = [];
+async function loadStaff() {
+  try {
+    const v = await api.staff?.list();
+    staffList = Array.isArray(v?.staff) ? v.staff : [];
+    teamOn = v?.teamMode === true;
+    sidebar?.setTeam(v);
+    renderTabs();
+  } catch (e) { console.error(e); }
+}
+api.staff?.onDesks?.((list) => { deskList = Array.isArray(list) ? list : []; sidebar?.setDesks?.(list); });
+/** v3.83 the office gets the team: each member's own desk, and whether (and on which projects) it is at work. */
+function withStaff(d) {
+  if (!teamOn || !staffList.length || !d) return d;
+  const name = (pid) => projects.find((p) => p.id === pid)?.name;
+  return { ...d, staff: staffList.map((m) => {
+    const at = deskList.filter((x) => x.staffId === m.id && x.state === 'busy').map((x) => name(x.projectId)).filter(Boolean);
+    return { id: m.id, name: m.name, busy: at.length > 0, projects: at };
+  }) };
+}
+/** v3.83 opens a member's desk in a project and shows it. */
+async function openDesk(projectId, staffId) {
+  const r = await (projectId ? api.staff?.desk(projectId, staffId) : api.staff?.personal?.(staffId))?.catch(() => null);
+  if (!r?.ok) { if (r?.error) alert(t(`staff.deskError.${['staff-not-allowed', 'engine', 'git'].includes(r.error) ? r.error : 'failed'}`)); return; }
+  applyProjects(await api.projects.list());
+  const [pid, n] = String(r.id).split(':');
+  selectProject(pid);
+  if (n) selectTab(pid, Number(n));
+}
 async function addProject() {
   try {
     const p = await api.projects.add();
@@ -638,6 +744,23 @@ sidebar = mountSidebar($('sidebar'), {
   setManager: (on) => api.prefs?.set({ manager: on }).then((p) => sidebar.setManager(p?.manager)).catch((e) => console.error(e)),
   setShareMcp: (on) => api.prefs?.set({ shareMcp: on }).then((p) => sidebar.setShareMcp(p?.shareMcp)).catch((e) => console.error(e)),
   setReloadMcp: (on) => api.prefs?.set({ reloadMcp: on }).then((p) => sidebar.setReloadMcp(p?.reloadMcp)).catch((e) => console.error(e)),
+  setChatView: (on) => api.prefs?.set({ chatView: on }).then(applyChatView).catch((e) => console.error(e)),   // v3.80
+  setOffice3d: (on) => api.prefs?.set({ office3d: on }).then(applyOffice3d).catch((e) => console.error(e)),   // v3.81
+  // v3.83 team: the setting and the member popup's calls; every change reloads the list from main
+  team: {
+    setMode: (on) => api.prefs?.set({ teamMode: on }).then(loadStaff).catch((e) => console.error(e)),
+    save: (form) => api.staff.save(form).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+    remove: (id) => api.staff.remove(id).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+    openDesk: (projectId, staffId) => openDesk(projectId, staffId),
+    openPersonal: (staffId) => openDesk('', staffId),   // v3.83 amendment: the member's personal workspace
+    setParallel: (projectId, on) => api.staff.setParallel(projectId, on).catch((e) => console.error(e)),
+    // v3.84 the role library and the wizard
+    saveRole: (form) => api.roles.save(form).then(async (r) => { await loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+    removeRole: (id) => api.roles.remove(id).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+    wizard: (req) => api.roles.wizard(req).catch(() => ({ ok: false, error: 'failed' })),
+    tools: () => (api.mcp?.apps ? api.mcp.apps().then((r) => r?.servers || []).catch(() => []) : Promise.resolve([])),
+  },
+  mail: api.mail || null,   // v3.85 the MAIL panel talks to main directly (renderer/mail.js)
   setFallback: (on) => api.prefs?.set({ fallback: on }).then((p) => sidebar.setFallback(p?.fallback)).catch((e) => console.error(e)),
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
   setKeepAwake: (v) => api.prefs?.set({ keepAwake: v }).then((p) => sidebar.setKeepAwake(p?.keepAwake)).catch((e) => console.error(e)),
@@ -650,7 +773,7 @@ sidebar = mountSidebar($('sidebar'), {
     set: (id, on) => skillPackChange(() => api.skillPacks?.set(id, on)),
     setProject: (projectId, values) => skillPackChange(() => api.projects.setSkillPacks?.(projectId, values)),
   },
-  mcp: { list: (id) => api.mcp.list(id).catch(() => null), add: (f) => mcpChange(() => api.mcp.add(f)), get: (id) => api.mcp.get(id).catch(() => null), update: (id, f) => mcpChange(() => api.mcp.update(id, f)), getFile: (pid, where, name) => api.mcp.getFile(pid, where, name).catch(() => null), updateFile: (pid, where, name, f) => api.mcp.updateFile(pid, where, name, f).catch(() => ({ ok: false, error: 'failed' })), remove: (id) => mcpChange(() => api.mcp.remove(id)) },
+  mcp: { list: (id) => api.mcp.list(id).catch(() => null), add: (f) => mcpChange(() => api.mcp.add(f)), get: (id) => api.mcp.get(id).catch(() => null), update: (id, f) => mcpChange(() => api.mcp.update(id, f)), getFile: (pid, where, name) => api.mcp.getFile(pid, where, name).catch(() => null), updateFile: (pid, where, name, f) => api.mcp.updateFile(pid, where, name, f).catch(() => ({ ok: false, error: 'failed' })), remove: (id) => mcpChange(() => api.mcp.remove(id)), apps: () => api.mcp.apps?.().catch(() => null), scope: (id, scope) => mcpChange(() => api.mcp.scope(id, scope)) },   // apps/scope: v3.82
 });
 
 login = mountLogin(document.body, { getTheme: () => termTheme(), onClose: () => focusActive() });
@@ -718,6 +841,7 @@ function setCollapsed(c) {
   store.set('sidebarCollapsed', c ? '1' : '0');
   requestAnimationFrame(() => panes.get(activePty())?.term.fit());
 }
+$('settings').addEventListener('click', () => sidebar?.openSettings());
 $('toggle-sidebar').addEventListener('click', () => {
   setCollapsed(!document.body.classList.contains('sidebar-collapsed'));
   focusActive();
@@ -777,6 +901,8 @@ function applyStaticText() {
   $('empty-add').title = t('app.emptyAddTitle', { mod: modLabel });
   $('empty-note').textContent = t('app.emptyNote');
   $('toggle-sidebar').title = document.body.classList.contains('sidebar-collapsed') ? t('app.showSidebar') : t('app.hideSidebar');
+  $('settings').title = t('sidebar.settingsTitle');
+  $('settings').setAttribute('aria-label', t('sidebar.settings'));
   for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.hint-close'))) b.title = t('app.close');
   setTitleProject();
   setStats(lastStats);
@@ -791,6 +917,7 @@ async function applyLanguage(li) {
   sidebar.setLanguage(li);
 }
 onLang(applyStaticText);
+onLang(() => { for (const p of panes.values()) p.chat?.texts(); syncChat(); });   // v3.80
 applyStaticText();
 // "Resume unfinished work" (contract v3.8): the sidebar button; the app menu's item sends its result as work:resumed
 async function resumeUnfinished() {
@@ -800,12 +927,23 @@ async function resumeUnfinished() {
 }
 api.work?.onResumed?.((r) => sidebar.showResumed(r));
 
+// v3.85 mail: accounts and the outbox, then their changes
+if (api.mail) {
+  api.mail.accounts().then((v) => sidebar?.setMailAccounts(v)).catch(() => {});
+  api.mail.outbox().then((v) => sidebar?.setMailOutbox(v)).catch(() => {});
+  api.mail.onAccounts?.((v) => { sidebar?.setMailAccounts(v); loadStaff(); });
+  api.mail.onOutbox?.((v) => sidebar?.setMailOutbox(v));
+}
 api.prefs?.get().then((p) => {
   sidebar.setResume(p?.resume);
   sidebar.setResumeWork(p?.resumeWork);
   sidebar.setManager(p?.manager);
   sidebar.setShareMcp(p?.shareMcp);
   sidebar.setReloadMcp(p?.reloadMcp);
+  applyChatView(p);
+  applyOffice3d(p);
+  loadStaff();
+  api.staff?.desks?.().then((d) => { deskList = Array.isArray(d) ? d : []; sidebar.setDesks?.(d); }).catch(() => {});
   sidebar.setFallback(p?.fallback);
   sidebar.setSleep(p?.sleepMinutes);
   sidebar.setKeepAwake(p?.keepAwake);
@@ -921,6 +1059,7 @@ try {
   const { mountOffice } = await import('./office-view.js');
   office = mountOffice(/** @type {HTMLCanvasElement} */ ($('office')), { onTheme: applyTheme, onSelect: (id) => selectAgent(id) });
   setBotColor(store.get('botColor') || null);
+  office.set3d?.(office3dOn);
   api.office.themes().then((t) => {
     officeThemes = t && typeof t === 'object' ? t : {};
     office.setThemes?.(officeThemes);
@@ -945,7 +1084,7 @@ try {
   console.warn('Makineler paneli yüklenemedi:', e.message);
 }
 api.office.onData((local) => {
-  const d = mergeRemote(local, devices.view());
+  const d = withStaff(mergeRemote(local, devices.view()));
   setStats(d);
   sidebar.setStats(d?.projects);
   try { office?.setData(d); } catch (e) { console.error(e); }

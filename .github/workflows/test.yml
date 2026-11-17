@@ -59,6 +59,18 @@ jobs:
         run: node --test app/test/routines.test.cjs
       - name: Keep computer awake (when the sleep block is held)
         run: node --test app/test/keep-awake.test.cjs
+      - name: Staged HQ requests (then / after)
+        run: node --test app/test/hq-chain.test.cjs
+      - name: Chat view (transcript items, menus, "/" commands, replies)
+        run: node --test app/test/chat.test.cjs app/test/tui-menu.test.mjs app/test/slash-commands.test.cjs
+      - name: 3D office (scene boxes)
+        run: node --test app/test/office3d.test.mjs
+      - name: MCP tools for several projects
+        run: node --test app/test/mcp-scope.test.cjs
+      - name: Team (staff, desks, departments, role wizard)
+        run: node --test app/test/staff.test.cjs app/test/role-wizard.test.cjs
+      - name: Mail (IMAP/SMTP against fake servers, Graph, guard, outbox)
+        run: node --test app/test/mail.test.cjs
       - name: Effective model (what Auto runs on)
         run: node --test app/test/effective-model.test.cjs
       - name: node-pty quit-crash patch + pty guard

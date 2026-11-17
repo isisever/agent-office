@@ -19,22 +19,29 @@ const LINE_MAX = 512 * 1024;
 const TOOLS = [
   {
     name: 'office_machines',
-    description: 'Lists the machines of this Agent Office (this one and the paired devices, online or not) and the projects on each, by name. Read only.',
+    description: 'Lists the machines of this Agent Office (this one and the paired devices, online or not) and the projects on each, by name. In team mode this machine also lists its staff: each member\'s role, department, the projects it may work on and its desks (busy or idle). Read only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'office_dispatch',
-    description: 'Gives a task to the boss of a project on this machine or on a paired device. The task is typed into that project as a marked prompt; when its turn is done (and its agents finished) a report comes back: you are told "report ready" and read it with office_reports. Returns { id, status } or a refusal reason (offline, logged-out, not-allowed, engine, queue-full, unknown-machine, unknown-project, no-report, too-large, self: the boss own project, locked: being handed off).',
+    description: 'Gives a task to the boss of a project on this machine or on a paired device. The task is typed into that project as a marked prompt; when its turn is done (and its agents finished) a report comes back: you are told "report ready" and read it with office_reports. Returns { id, status } or a refusal reason (staff-not-allowed, unknown-staff, no-team, staff-local-only, offline, logged-out, not-allowed, engine, queue-full, unknown-machine, unknown-project, no-report, too-large, self: the boss own project, locked: being handed off; v3.79 staged: after-unknown, after-other-request, after-no-request, after-cycle, after-ended, too-many-stages, stages-routine, after-hq-only). With then, also { stages: [ids] }; a waiting stage has status waiting.',
     inputSchema: {
       type: 'object',
       properties: {
         machine: { type: 'string', description: 'Machine name from office_machines; leave out for this machine.' },
-        project: { type: 'string', description: 'Project name (or id) on that machine.' },
+        project: { type: 'string', description: 'Project name (or id) on that machine. Leave it out, with staff, for a task outside any project (HQ only).' },
         task: { type: 'string', description: 'What to do, self-contained (at most 8 KB).' },
         title: { type: 'string', description: 'Short title for the board (at most 80 characters).' },
         request: { type: 'string', description: 'HQ only: the request id from office_board (groups the tasks of one request).' },
+        // v3.79 staged requests (HQ only; the app refuses them from a project boss)
+        after: { type: 'string', description: 'HQ only: id of a task of the same request this one waits for. It starts by itself, with that report appended, once that task has fully reported; it is blocked when that task ends otherwise.' },
+        then: {
+          type: 'array', maxItems: 7, description: 'HQ only: later stages, in order, each starting by itself once the one before it fully reported (its report appended). The person approves the whole chain when you dispatch it.',
+          items: { type: 'object', properties: { machine: { type: 'string' }, project: { type: 'string' }, staff: { type: 'string' }, task: { type: 'string' }, title: { type: 'string' } }, required: ['project', 'task'], additionalProperties: false },
+        },
+        staff: { type: 'string', description: 'HQ, team mode, this machine only: a staff member\'s name from office_machines. The task goes to that member\'s own desk (session) in the project, which must be one of its projects (else staff-not-allowed); without a project, to the member\'s personal workspace (a folder of its own for work that belongs to no project: designs, documents, research, mail). A member can work on several projects at once; one project folder has one desk at work at a time, so the task may wait.' },
       },
-      required: ['project', 'task'],
+      required: ['task'],
       additionalProperties: false,
     },
   },
@@ -123,9 +130,10 @@ const serverConfig = ({ socket, token, execPath = process.execPath, script = __f
  * Listens on `socketFile` (0600, its folder 0700). Each line { token, tool, args } is answered with one line
  * { ok: true, result } or { ok: false, error }. handle(tab, tool, args) may return a promise.
  * Throws when its folder is not private (secureDir); `ready` resolves false when listening failed.
- * @param {{ socketFile: string, handle: (tab: string, tool: string, args: any) => any, ownDir?: string }} o
+ * v3.85 the mail server (src/mail-mcp.js) runs on a socket of its own with its own tool names (`names`, no HQ tools).
+ * @param {{ socketFile: string, handle: (tab: string, tool: string, args: any) => any, ownDir?: string, names?: Set<string>, hqNames?: Set<string> }} o
  */
-function createOfficeSocket({ socketFile, handle, ownDir = '' }) {
+function createOfficeSocket({ socketFile, handle, ownDir = '', names = TOOL_NAMES, hqNames = HQ_TOOL_NAMES }) {
   const tokens = new Map();   // sha256(token) → tab
   const isPipe = socketFile.startsWith('\\\\.\\pipe\\');
   if (!isPipe) {
@@ -152,8 +160,8 @@ function createOfficeSocket({ socketFile, handle, ownDir = '' }) {
     try { m = JSON.parse(line); } catch { return { ok: false, error: 'bad-request' }; }
     const tab = typeof m?.token === 'string' ? tokens.get(fullHash(m.token)) : undefined;
     if (!tab) return { ok: false, error: 'unauthorized' };
-    if (!TOOL_NAMES.has(m.tool)) return { ok: false, error: 'unknown-tool' };
-    if (HQ_TOOL_NAMES.has(m.tool) && tab !== 'hq') return { ok: false, error: 'unknown-tool' };   // v3.46 HQ only
+    if (!names.has(m.tool)) return { ok: false, error: 'unknown-tool' };
+    if (hqNames.has(m.tool) && tab !== 'hq') return { ok: false, error: 'unknown-tool' };   // v3.46 HQ only
     try { return { ok: true, result: await handle(tab, m.tool, m.args && typeof m.args === 'object' ? m.args : {}) }; } catch (e) { return { ok: false, error: String(e?.message || e).slice(0, 200) }; }
   }
   const ready = new Promise((resolve) => {
@@ -245,24 +253,27 @@ function runStdio({ input = process.stdin, output = process.stdout, env = proces
  * The stdio server as one self-contained script (no require of app files: only Node's net), written to userData and
  * run from there, never from inside app.asar (like the status line script, usage.js).
  */
-const serverScript = () => [
-  "// Agent Office: the agent-office MCP server of a boss tab (contract v3.35). Written by the app; do not edit.",
+const serverScript = ({ name = SERVER_NAME, tools = TOOLS, hqTools = HQ_TOOLS, callMs = CALL_MS, what = 'the agent-office MCP server of a boss tab (contract v3.35)' } = {}) => [
+  `// Agent Office: ${what}. Written by the app; do not edit.`,
   "'use strict';",
   "const net = require('net');",
-  `const SERVER_NAME = ${JSON.stringify(SERVER_NAME)};`,
+  `const SERVER_NAME = ${JSON.stringify(name)};`,
   `const TASK_MAX = ${TASK_MAX};`,
-  `const CALL_MS = ${CALL_MS};`,
-  `const TOOLS = ${JSON.stringify(TOOLS)};`,
-  `const HQ_TOOLS = ${JSON.stringify(HQ_TOOLS)};`,
+  `const CALL_MS = ${callMs};`,
+  `const TOOLS = ${JSON.stringify(tools)};`,
+  `const HQ_TOOLS = ${JSON.stringify(hqTools)};`,
   callApp.toString(),
   runStdio.toString(),
   'runStdio().then(() => setTimeout(() => process.exit(0), 200));',
   '',
 ].join('\n');
-/** Writes the script to <dir>/office-mcp.js (0600, only when changed). → its path. Throws when it cannot. */
-function writeServerScript(dir) {
-  const f = path.join(dir, 'office-mcp.js');
-  const text = serverScript();
+/**
+ * Writes the script to <dir>/office-mcp.js (0600, only when changed). → its path. Throws when it cannot.
+ * @param {string} dir @param {{ file?: string, name?: string, tools?: any[], hqTools?: any[], callMs?: number, what?: string }} [opts]
+ */
+function writeServerScript(dir, { file = 'office-mcp.js', ...opts } = {}) {
+  const f = path.join(dir, file);
+  const text = serverScript(opts);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   let same = false;
   try { same = fs.readFileSync(f, 'utf8') === text; } catch { /* not there yet */ }

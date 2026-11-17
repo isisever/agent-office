@@ -7,6 +7,7 @@ const { withSkillPacks } = require('./skill-packs.js');
 const { withDelegates, delegatesValue } = require('./delegate.js');
 const HQ = require('./hq.js');
 const ROUT = require('./routines.js');
+const { customRoleFile } = require('./staff.js');
 
 // v3.46 HQ: its folder (userData/hq) is set by main at startup; 'hq' is never in state.projects.
 let hqDir = '';
@@ -47,6 +48,9 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withSavings(p.savings),
       ...withEngine(p.engine),
       ...withProjectFiles(p.projectFiles),
+      ...(p.parallel === true ? { parallel: true } : {}),   // v3.83 several desks may change the folder at once (own copies)
+      // v3.83 amendment: a staff member's personal workspace (tasks outside any project): only that member works here
+      ...(typeof p.staffOwner === 'string' && /^s-[0-9a-f]{6,16}$/.test(p.staffOwner) ? { staffOwner: p.staffOwner } : {}),
       ...withAutoApprove(p.autoApprove),
       ...withSkipPermissions(p.skipPermissions),
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
@@ -80,6 +84,11 @@ function normalizeTabs(list) {
     if (t.shell === true && !(isStr(t.dir) && t.dir)) continue; // a shell tab needs its folder: never turn into a Claude tab
     seen.add(t.n);
     const tab = { n: t.n };
+    // v3.83 a desk: a staff member's tab (src/staff.js); sessionId = the conversation it continues
+    if (isStr(t.staffId) && /^s-[0-9a-f]{6,16}$/.test(t.staffId) && t.shell !== true) {
+      tab.staffId = t.staffId;
+      if (isStr(t.sessionId) && /^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/.test(t.sessionId)) tab.sessionId = t.sessionId;
+    }
     const w = t.worktree;
     if (isStr(t.dir) && isObj(w) && isStr(w.root) && isStr(w.repo) && isStr(w.branch)) {
       tab.dir = t.dir;
@@ -120,7 +129,19 @@ function resolvePty(state, id) {
   if (!project) return null;
   if (r.n === MAIN_TAB) return { project, tab: null, dir: project.dir };
   const tab = tabsOf(project).find((t) => t.n === r.n);
-  return tab ? { project, tab, dir: tabDir(project, tab) } : null;
+  if (!tab) return null;
+  // v3.83 a desk whose member has an account of its own runs under that account: everything that resolves the tab
+  // (launch, pid file, transcript, sleep, typing) sees the project with the member's accountId. The member's skill
+  // packs ({ id: on }) go on top of the project's own setting the same way, and its own MCP tools ride along.
+  const member = tab.staffId && Array.isArray(state.staff) ? state.staff.find((m) => m.id === tab.staffId) : null;
+  const own = member?.accountId && Array.isArray(state.accounts) && state.accounts.some((a) => a.id === member.accountId) ? member.accountId : '';
+  const packs = member?.skillPacks && typeof member.skillPacks === 'object' && !Array.isArray(member.skillPacks) && Object.keys(member.skillPacks).length ? member.skillPacks : null;
+  let seen = project;
+  if (own && own !== project.accountId) seen = { ...seen, accountId: own };
+  if (packs) seen = { ...seen, skillPacks: { ...(seen.skillPacks || {}), ...packs } };
+  // v3.84 the member's own MCP tools (server ids), read by startPty (MS.withTools); never written to state
+  if (Array.isArray(member?.tools) && member.tools.length) seen = { ...seen, staffTools: member.tools };
+  return { project: seen, tab, dir: tabDir(project, tab) };
 }
 
 /**
@@ -430,6 +451,28 @@ function setProjectFiles(state, id, value) {
   }) };
 }
 
+/** v3.83 a project where several desks work at once, each in its own copy (worktree). Absent = one at a time. */
+function setParallel(state, id, value) {
+  const p = findProject(state, id);
+  const v = value === true;
+  if (!p || (p.parallel === true) === v) return state;
+  return { ...state, projects: state.projects.map((x) => {
+    if (x.id !== id) return x;
+    const { parallel: _, ...rest } = x;
+    return v ? { ...rest, parallel: true } : rest;
+  }) };
+}
+/** v3.83 a project's desks (staff tabs) → [{ n, staffId, sessionId? }]; deskOf: one member's desk there, or null. */
+const desksOf = (project) => tabsOf(project).filter((t) => t.staffId);
+const deskOf = (project, staffId) => desksOf(project).find((t) => t.staffId === staffId) || null;
+/** v3.83 the desk's conversation id, kept on the tab so the desk continues it after a restart. */
+function setDeskSession(state, projectId, n, sessionId) {
+  const p = findProject(state, projectId);
+  const t = tabsOf(p).find((x) => x.n === n);
+  if (!p || !t?.staffId || t.sessionId === sessionId) return state;
+  return { ...state, projects: state.projects.map((x) => (x.id !== projectId ? x : { ...x, tabs: tabsOf(x).map((y) => (y.n === n ? { ...y, sessionId } : y)) })) };
+}
+
 /** Whether the project lets Agent Office add its files. */
 const projectFilesOf = (project) => project?.projectFiles === true;
 
@@ -564,6 +607,8 @@ function stateFile(prev, state) {
   for (const k of ['mcpServers']) if (Array.isArray(out[k])) {
     out[k] = out[k].map(({ id, name, type, url, scope, held }) => ({ id, name, type, url, scope, ...(held ? { held } : {}) }));
   }
+  // v3.84 the person's roles: plain one-string texts, no runtime flags
+  if (Array.isArray(out.customRoles)) out.customRoles = out.customRoles.map(customRoleFile);
   return out;
 }
 
@@ -572,6 +617,7 @@ module.exports = {
   historyDir,
   MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty,
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,
+  setParallel, desksOf, deskOf, setDeskSession,
   newId, projectName, findProject, setHqDir, hqProject, isHqId,
   /** state.hq (v3.46) normalized next to the rest */
   normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq), routines: ROUT.normalizeRoutines(raw?.routines), routinesCfg: ROUT.normalizeCfg(raw?.routinesCfg) }), findByDir,

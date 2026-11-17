@@ -13,6 +13,9 @@ test('marker: only the app-typed prefix opens a task', async () => {
   expect(taskIdOf('[Agent Office: remote command from "Studio"] run the tests')).toBe(undefined)
   expect(taskIdOf(`please ${MARKED}`)).toBe(undefined)
   expect(taskIdOf('[Agent Office: remote task #../x from "S"] hi')).toBe(undefined)
+  // a task given as the first-prompt argument has lost its quotes (app promptArg), still a task
+  expect(taskIdOf('[Agent Office: remote task #edb2d4505fa1dd57 from Yasin-MacBook-Air] deploy it')).toBe('edb2d4505fa1dd57')
+  expect(taskIdOf('[Agent Office: remote task #x1 from a]b] hi')).toBe(undefined)
   const tr = new ReportTracker()
   expect(tr.prompt('just a prompt', 1)).toBe(undefined)
   expect(tr.pending).toBe(undefined)

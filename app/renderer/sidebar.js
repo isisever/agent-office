@@ -6,6 +6,9 @@ import { modLabel, platform } from './platform.js';
 import { isBossHere, projectStatus } from '../src/project-status.mjs';
 import { BOSS_MODEL_CHOICES, bossModelChoices, cap, isCustomModelId } from '../src/engine-caps.mjs';
 import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
+import { teamRows, openMemberEditor } from './staff.js';
+import { openRoleWizard } from './role-wizard.js';
+import { createMail } from './mail.js';
 
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -133,6 +136,16 @@ export function mountSidebar(el, on) {
   const managerLabel = h('span', {});
   const managerBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setManager?.(e.target.checked) });
   const managerRow = h('label', { class: 'sb-botcolor sb-langrow' }, managerLabel, managerBox);
+  // v3.83 team: the TEAM panel (staff kept in Agent Office, renderer/staff.js); off = no panel
+  let team = { teamMode: false, staff: [], presets: [] };
+  let desks = [];   // v3.83 main's desk states
+  const teamLabel = h('span', {});
+  const teamBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.team?.setMode(e.target.checked) });
+  const teamRow = h('label', { class: 'sb-botcolor sb-langrow' }, teamLabel, teamBox);
+  const teamHead = h('span', {});
+  const teamList = h('ul', { class: 'sb-list', id: 'sb-team' });
+  const addStaffBtn = h('button', { class: 'sb-add', id: 'sb-add-staff', onclick: () => editMember(null) });
+  const wizardBtn = h('button', { class: 'sb-add', id: 'sb-role-wizard', onclick: () => openWizard() });   // v3.84
   // every session also gets the other office projects' MCP servers (contract v3.9); sessions started afterwards
   const shareMcpLabel = h('span', {});
   const shareMcpBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setShareMcp?.(e.target.checked) });
@@ -141,6 +154,14 @@ export function mountSidebar(el, on) {
   const reloadMcpLabel = h('span', {});
   const reloadMcpBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setReloadMcp?.(e.target.checked) });
   const reloadMcpRow = h('label', { class: 'sb-botcolor sb-langrow' }, reloadMcpLabel, reloadMcpBox);
+  // Claude Code tabs shown as a conversation, the terminal one click away (contract v3.80, chat.js)
+  const chatViewLabel = h('span', {});
+  const chatViewBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setChatView?.(e.target.checked) });
+  const chatViewRow = h('label', { class: 'sb-botcolor sb-langrow' }, chatViewLabel, chatViewBox);
+  // the office drawn in 3D instead of 8-bit pixels (contract v3.81, office3d.js)
+  const office3dLabel = h('span', {});
+  const office3dBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setOffice3d?.(e.target.checked) });
+  const office3dRow = h('label', { class: 'sb-botcolor sb-langrow' }, office3dLabel, office3dBox);
   // a project at the usage limit moves to its backup account, and back after the reset (contract v3.17)
   const fallbackLabel = h('span', {});
   const fallbackBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setFallback?.(e.target.checked) });
@@ -159,7 +180,6 @@ export function mountSidebar(el, on) {
   const keepAwakeRow = h('div', { class: 'sb-botcolor sb-langrow' }, keepAwakeLabel, keepAwakeSelect);
   const projHead = h('span', {});
   const acctHead = h('span', {});
-  const settingsBtn = h('button', { class: 'sb-x sb-gear sb-gear-head', id: 'sb-settings', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openSettings(); } }, '⚙'); // inside <summary>: must not toggle the panel
   const addProjectBtn = h('button', { class: 'sb-add', id: 'sb-add-project', onclick: () => on.addProject() });
   // "Resume unfinished work" (v3.8): main checks every tab; the result shows under the button for a while
   const resumeAllBtn = h('button', { class: 'sb-add sb-resume-all', id: 'sb-resume-all', onclick: () => on.resumeUnfinished?.() });
@@ -174,6 +194,8 @@ export function mountSidebar(el, on) {
   const mcpNote = h('div', { class: 'sb-note', id: 'sb-mcp-note', hidden: true });
   const addMcpBtn = h('button', { class: 'sb-add', id: 'sb-add-mcp', onclick: () => openMcpForm() });
   let mcpKey = null;
+  // v3.85 the MAIL panel (renderer/mail.js): accounts and the outbox of drafts waiting for the person
+  const mail = on.mail ? createMail({ h, t, api: on.mail, openModal, closeModal }) : null;
   function panel(id, head, body, cls = '') {
     let open = true;
     try { open = localStorage.getItem(`ao.panel.${id}`) !== '0'; } catch {}
@@ -182,9 +204,11 @@ export function mountSidebar(el, on) {
     return d;
   }
   el.append(
+    panel('team', [teamHead], h('div', { class: 'sb-top' }, teamList, addStaffBtn, wizardBtn), 'sb-team-panel'),
     panel('projects', [projHead], h('div', { class: 'sb-top', id: 'sb-top' }, projList, addProjectBtn, resumeAllBtn, resumeNote)),
-    panel('accounts', [acctHead, settingsBtn], h('div', { class: 'sb-panel-body' }, acctList), 'sb-accounts'),
+    panel('accounts', [acctHead], h('div', { class: 'sb-panel-body' }, acctList), 'sb-accounts'),
     panel('mcp', [mcpHead], h('div', { class: 'sb-panel-body' }, mcpNote, mcpList, addMcpBtn), 'sb-mcp-panel'),
+    ...(mail ? [panel('mail', [mail.head], mail.body, 'sb-mail-panel')] : []),
   );
   el.querySelector('#sb-panel-mcp')?.addEventListener('toggle', () => renderMcp(true)); // re-read Claude Code's files
 
@@ -195,8 +219,6 @@ export function mountSidebar(el, on) {
     renderMcpHead();
     addMcpBtn.textContent = t('sidebar.mcpAdd');
     addMcpBtn.title = t('sidebar.mcpAddTitle');
-    settingsBtn.title = t('sidebar.settingsTitle');
-    settingsBtn.setAttribute('aria-label', t('sidebar.settings'));
     addProjectBtn.textContent = t('sidebar.addProject');
     addProjectBtn.title = t('sidebar.addProjectTitle', { mod: modLabel });
     resumeAllBtn.textContent = t('sidebar.resumeUnfinished');
@@ -210,11 +232,22 @@ export function mountSidebar(el, on) {
     resumeWorkLabel.textContent = t('sidebar.resumeWork');
     resumeWorkRow.title = t('sidebar.resumeWorkTitle');
     managerLabel.textContent = t('sidebar.manager');
+    teamLabel.textContent = t('staff.mode');
+    teamRow.title = t('staff.modeTitle');
+    teamHead.textContent = t('staff.panel');
+    addStaffBtn.textContent = t('staff.add');
+    mail?.redraw();
+    wizardBtn.textContent = t('staff.wizard.open');
+    wizardBtn.title = t('staff.wizard.openTitle');
     managerRow.title = t('sidebar.managerTitle');
     shareMcpLabel.textContent = t('sidebar.shareMcp');
     shareMcpRow.title = t('sidebar.shareMcpTitle');
     reloadMcpLabel.textContent = t('sidebar.reloadMcp');
     reloadMcpRow.title = t('sidebar.reloadMcpTitle');
+    chatViewLabel.textContent = t('sidebar.chatView');
+    chatViewRow.title = t('sidebar.chatViewTitle');
+    office3dLabel.textContent = t('sidebar.office3d');
+    office3dRow.title = t('sidebar.office3dTitle');
     fallbackLabel.textContent = t('sidebar.fallback');
     fallbackRow.title = t('sidebar.fallbackTitle');
     sleepLabel.textContent = t('sidebar.sleep');
@@ -261,6 +294,7 @@ export function mountSidebar(el, on) {
     );
   }
   renderChrome();
+  el.querySelector('#sb-panel-team').hidden = true;   // v3.83 until team mode is known on
 
   // Settings popups: the project popup collects its changes as a draft and applies them on Save (account first, it
   // may restart the tabs); Cancel / Escape / a click outside discards. The global popup applies each change at once.
@@ -439,6 +473,17 @@ export function mountSidebar(el, on) {
       onchange: (e) => queue('projectFiles', () => on.setProjectFiles?.(p.id, e.target.checked)),
     });
     return control(p, 'projectFiles', t('sidebar.projectFiles'), box);
+  }
+
+  // v3.83 team: several desks may work in this project at once, each in its own worktree (userData/work); team mode only
+  function parallelToggle(p) {
+    if (!team.teamMode || p.engine && p.engine !== 'claude') return null;
+    const box = h('input', {
+      type: 'checkbox', class: 'sb-files', checked: p.parallel === true, title: t('staff.parallelTitle'),
+      onclick: (e) => e.stopPropagation(),
+      onchange: (e) => queue('parallel', () => on.team?.setParallel(p.id, e.target.checked)),
+    });
+    return h('label', { class: 'sb-acct-wrap', title: t('staff.parallelTitle'), onclick: (e) => e.stopPropagation() }, h('span', { class: 'sb-acct-label' }, t('staff.parallel')), box);
   }
 
   // "Auto-approve permission prompts" (contract v3.71): off by default; Claude Code only. The title says what still asks.
@@ -675,13 +720,41 @@ export function mountSidebar(el, on) {
     return box;
   }
 
+  /**
+   * v3.82 The tools (MCP servers added in Agent Office) this project's sessions get: one box per server; a server for
+   * every project is ticked and fixed; one that reaches only this project can't be unticked here (remove it in the
+   * MCP panel). Save applies the changes (each server's new project list).
+   */
+  function projectToolsSection(p) {
+    const box = h('div', { class: 'sb-skills sb-tools' }, h('div', { class: 'sb-skills-head' }, t('sidebar.tools')));
+    on.mcp?.apps?.().then((r) => {
+      const list = r?.servers || [];
+      if (!list.length) { box.append(h('div', { class: 'sb-note' }, t('sidebar.toolsNone'))); return; }
+      for (const sv of list) {
+        const ids = sv.scope === 'all' ? [] : Array.isArray(sv.scope) ? sv.scope : [sv.scope];
+        const mine = sv.scope === 'all' || ids.includes(p.id);
+        const only = ids.length === 1 && ids[0] === p.id;
+        const cb = h('input', {
+          type: 'checkbox', checked: mine, disabled: sv.scope === 'all' || only,
+          onchange: (e) => {
+            const next = e.target.checked ? [...new Set([...ids, p.id])] : ids.filter((x) => x !== p.id);
+            queue(`tool:${sv.id}`, () => on.mcp?.scope?.(sv.id, next));
+          },
+        });
+        const note = sv.scope === 'all' ? t('sidebar.toolsAll') : only ? t('sidebar.toolsOnly') : ids.length > 1 ? t('sidebar.mcpScopeSome', { n: ids.length }) : '';
+        box.append(h('label', { class: 'sb-tool', title: note || sv.host || '' }, cb, h('span', { class: 'sb-tool-name' }, sv.name), h('span', { class: 'sb-tool-note' }, [sv.host, note].filter(Boolean).join(' · '))));
+      }
+    });
+    return box;
+  }
+
   /** The project's popup (contract v3.42): every per-project setting; Save applies what changed. */
   function openProjectSettings(p) {
     const map = new Map();
     badFields.clear();
     const body = [
-      accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p),
-      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p),
+      accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p), parallelToggle(p),
+      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
     ];
     const save = h('button', {
       class: 'sb-btn primary', onclick: async () => {
@@ -710,7 +783,7 @@ export function mountSidebar(el, on) {
     mcpNote.hidden = gate.ok;
     mcpNote.textContent = gate.ok ? '' : t('sidebar.na.claudeOnlyMcp');
     const where = (s) => [
-      t(`sidebar.mcpSrc.${s.source}`) + (s.source === 'app' ? ` · ${s.away ? t('sidebar.mcpAway', { folder: s.folder || '' }) : s.scope === 'all' ? t('sidebar.mcpScopeAll') : t('sidebar.mcpScopeOne')}` : ''),
+      t(`sidebar.mcpSrc.${s.source}`) + (s.source === 'app' ? ` · ${s.away ? t('sidebar.mcpAway', { folder: s.folder || '' }) : s.scope === 'all' ? t('sidebar.mcpScopeAll') : s.scope === 'projects' ? t('sidebar.mcpScopeSome', { n: s.projects || 2 }) : t('sidebar.mcpScopeOne')}` : ''),
       s.host || '',
     ].filter(Boolean).join(' · ');
     const hint = (s) => [
@@ -764,6 +837,8 @@ export function mountSidebar(el, on) {
    * encrypted there). With `edit` (v3.69, from mcp:get) the same form edits an app-added server: filled with its fields
    * but never its token; a blank token keeps the stored one, "remove the saved token" clears it.
    */
+  /** v3.84 servers the add form can fill in with one click (remote, signed in with the service's own OAuth). */
+  const MCP_PRESETS = [{ id: 'canva', label: 'Canva', name: 'canva', url: 'https://mcp.canva.com/mcp', type: 'http' }];
   function openMcpForm(edit = null) {
     const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
     // v3.69 a server in Claude Code's own files (edit.where): no token or scope; headers and env with masked values
@@ -782,9 +857,15 @@ export function mountSidebar(el, on) {
     env.value = Object.entries(edit?.env || {}).map(([k, v]) => `${k}=${v}`).join('\n');
     const headers = h('textarea', { rows: 3, placeholder: t('sidebar.mcpHeadersPh'), spellcheck: false });
     headers.value = Object.entries(edit?.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+    // v3.82 which projects it reaches: every project, or the ones ticked (one or more)
     const scopeOf = edit ? edit.scope : activeId;
-    const scope = h('select', {}, h('option', { value: 'all', selected: scopeOf === 'all' }, t('sidebar.mcpScopeAll')),
-      ...projects.map((p) => h('option', { value: p.id, selected: p.id === scopeOf }, p.name)));
+    const picked = new Set(scopeOf === 'all' ? [] : Array.isArray(scopeOf) ? scopeOf : [scopeOf]);
+    const allBox = h('input', { type: 'checkbox', checked: scopeOf === 'all', onchange: () => { for (const b of projBoxes) b.disabled = allBox.checked; } });
+    const projBoxes = projects.map((p) => h('input', { type: 'checkbox', value: p.id, checked: picked.has(p.id), disabled: scopeOf === 'all' }));
+    const scope = h('div', { class: 'sb-scope' },
+      h('label', { class: 'sb-scope-all' }, allBox, ' ', t('sidebar.mcpScopeAll')),
+      h('div', { class: 'sb-scope-list' }, ...projects.map((p, i) => h('label', {}, projBoxes[i], ' ', p.name))));
+    const scopeValue = () => (allBox.checked ? 'all' : projBoxes.filter((b) => b.checked).map((b) => b.value));
     const err = h('div', { class: 'sb-note warn', hidden: true });
     const remoteFields = [
       field(t('sidebar.mcpUrl'), url, edit?.urlHidden ? t('sidebar.mcpUrlKeptHint') : t('sidebar.mcpUrlHint')),
@@ -804,6 +885,18 @@ export function mountSidebar(el, on) {
     };
     kind.onchange = syncKind;
     syncKind();
+    // v3.84 ready-made servers: one click fills the form; the service's own sign-in (OAuth) happens in the session
+    const presetNote = h('div', { class: 'sb-note', hidden: true });
+    const presetRow = edit ? null : h('div', { class: 'sb-mcp-presets' }, h('span', { class: 'sb-field-label' }, t('sidebar.mcpPresets')),
+      ...MCP_PRESETS.map((pr) => h('button', {
+        class: 'sb-btn', onclick: (e) => {
+          e.preventDefault();
+          kind.value = 'remote'; syncKind();
+          name.value = pr.name; url.value = pr.url; type.value = pr.type; token.value = '';
+          presetNote.textContent = t(`sidebar.mcpPresetNote.${pr.id}`);
+          presetNote.hidden = false;
+        },
+      }, pr.label)));
     const parseArgs = () => args.value.split('\n').map((l) => l.trim()).filter(Boolean);
     const parseEnv = () => {
       const out = {};
@@ -831,8 +924,8 @@ export function mountSidebar(el, on) {
         save.disabled = true;
         err.hidden = true;
         const form = kind.value === 'stdio'
-          ? { name: name.value, type: 'stdio', command: command.value, args: parseArgs(), env: parseEnv(), scope: scope.value }
-          : { name: name.value, url: url.value, type: type.value, token: clearToken.checked ? '' : token.value, scope: scope.value, ...(edit ? { clearToken: clearToken.checked } : {}) };
+          ? { name: name.value, type: 'stdio', command: command.value, args: parseArgs(), env: parseEnv(), scope: scopeValue() }
+          : { name: name.value, url: url.value, type: type.value, token: clearToken.checked ? '' : token.value, scope: scopeValue(), ...(edit ? { clearToken: clearToken.checked } : {}) };
         const r = inFile
           ? await on.mcp?.updateFile(edit.projectId, edit.where, edit.name, kind.value === 'stdio' ? form : { name: name.value, url: url.value, type: type.value, headers: parseHeaders() })
           : edit ? await on.mcp?.update(edit.id, form) : await on.mcp?.add(form);
@@ -844,6 +937,7 @@ export function mountSidebar(el, on) {
       },
     }, t('sidebar.save'));
     openModal(edit ? t('sidebar.mcpEditTitle', { name: edit.name }) : t('sidebar.mcpAddTitle'), [
+      presetRow, presetNote,
       inFile ? h('div', { class: 'sb-note' }, t(edit.where === 'project' ? 'sidebar.mcpFileNoteProject' : 'sidebar.mcpFileNote', { file: t(`sidebar.mcpSrc.${edit.where === 'default-user' ? 'user' : edit.where === 'default-local' ? 'local' : edit.source}`) })) : null,
       field(t('sidebar.mcpKind'), kind),
       field(t('sidebar.mcpName'), name),
@@ -854,10 +948,36 @@ export function mountSidebar(el, on) {
     ], [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
   }
 
+  /** v3.83 the TEAM panel: shown only with team mode on; one card per member, department headers when any. */
+  function renderTeam() {
+    const panelEl = el.querySelector('#sb-panel-team');
+    if (panelEl) panelEl.hidden = !team.teamMode;
+    teamBox.checked = team.teamMode;
+    if (!team.teamMode) return;
+    teamList.replaceChildren(...teamRows({ h, t, lang: locale(), staff: team.staff, presets: team.presets, projects, accounts, labelOf, onEdit: (m) => editMember(m), desks, onDesk: (pid, sid) => on.team?.openDesk(pid, sid), onPersonal: (sid) => on.team?.openPersonal?.(sid) }));
+  }
+  const listPacks = () => Promise.resolve(on.skillPacks?.list(null)).then((r) => r?.packs || []);
+  function editMember(m, initialPreset = '') {
+    openMemberEditor({
+      h, t, lang: locale(), member: m, staff: team.staff, presets: team.presets, projects, accounts, labelOf, openModal, closeModal,
+      save: (form) => on.team?.save(form), remove: (id) => on.team?.remove(id),
+      listPacks, listTools: () => Promise.resolve(on.team?.tools?.() || []), openWizard: () => openWizard(),
+      removeRole: (id) => on.team?.removeRole(id), initialPreset, mailAccounts: mail ? mail.accounts() : [],
+    });
+  }
+  /** v3.84 the role wizard; a saved role can go straight to a new member's popup (the list is reloaded first). */
+  function openWizard() {
+    openRoleWizard({
+      h, t, lang: locale(), openModal, closeModal, listPacks,
+      ask: (req) => Promise.resolve(on.team?.wizard(req)), saveRole: (form) => Promise.resolve(on.team?.saveRole(form)),
+      addMember: (roleId) => editMember(null, roleId),
+    });
+  }
+
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, langRow, lookRow, modeRow, themeRow, botRow, skillsSection()],
+      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, langRow, lookRow, modeRow, office3dRow, chatViewRow, themeRow, botRow, skillsSection()],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 
@@ -1205,10 +1325,13 @@ export function mountSidebar(el, on) {
   onLang(() => {
     renderChrome();
     renderProjects();
+    renderTeam();
     if (!editing) renderAccounts();
   });
 
   return {
+    /** The general settings popup (v3.42); its ⚙ button sits in the title bar (app.js). */
+    openSettings,
     /** Language setting, active language and languages: { setting: 'auto' | code, lang, languages: [{ code, name }] }. */
     setLanguage(li) {
       if (!li) return;
@@ -1254,10 +1377,28 @@ export function mountSidebar(el, on) {
     },
     /** Manager mode setting (the boss delegates to agents). */
     setManager(on) { managerBox.checked = on !== false; },
+    /** v3.83 team mode, the staff and the preset roles (main's staff:list). */
+    setDesks(list) {
+      const next = Array.isArray(list) ? list : [];
+      if (JSON.stringify(next) === JSON.stringify(desks)) return;
+      desks = next;
+      renderTeam();
+    },
+    setTeam(v) {
+      team = { teamMode: v?.teamMode === true, staff: Array.isArray(v?.staff) ? v.staff : [], presets: Array.isArray(v?.presets) ? v.presets : [] };
+      renderTeam();
+    },
     /** "Share MCP servers between projects" setting (v3.9). */
     setShareMcp(on) { shareMcpBox.checked = on !== false; },
     /** "Reload sessions when MCP changes" setting (v3.11). */
     setReloadMcp(on) { reloadMcpBox.checked = on !== false; },
+    /** "Chat view" setting (v3.80; off unless set). */
+    setChatView(on) { chatViewBox.checked = on === true; },
+    /** v3.85 mail accounts ({ accounts, encryption }) and the outbox ({ drafts, pending }). */
+    setMailAccounts(v) { mail?.setAccounts(v); },
+    setMailOutbox(v) { mail?.setOutbox(v); },
+    /** "3D office" setting (v3.81; off unless set). */
+    setOffice3d(on) { office3dBox.checked = on === true; },
     /** "Backup account at the usage limit" setting (v3.17). */
     setFallback(on) { fallbackBox.checked = on !== false; },
     /** Minutes after which an idle background session sleeps (0 = off). */
@@ -1283,7 +1424,7 @@ export function mountSidebar(el, on) {
       asleep = new Set((s.status || []).filter((x) => x.isAsleep).map((x) => x.id));
       attn = new Map((s.status || []).filter((x) => x.attention).map((x) => [x.id, x.attention]));
       const pk = JSON.stringify([projects, activeId, [...status], [...asleep], [...attn], accounts.map((a) => [a.id, a.label, a.auth?.state])]);
-      if (pk !== projKey) { projKey = pk; renderProjects(); }
+      if (pk !== projKey) { projKey = pk; renderProjects(); renderTeam(); }
       const ak = JSON.stringify([accounts, agyShown(), cmdShown(), ocShown()]);
       if (ak !== acctKey && !editing) { acctKey = ak; renderAccounts(); }
     },
