@@ -278,7 +278,7 @@ test('followsProjectAccount: every tab moves with its project’s account except
 
 test('office_dispatch: a model-supplied desk (or staffName) is ignored; only the app sets them', () => {
   const OM = require('../src/office-mcp.js');
-  assert.deepEqual(OM.modelArgs('office_dispatch', { project: 'acme', task: 'x', staff: 'Ayşe', desk: 'p1:2', staffName: 'Boss' }), { project: 'acme', task: 'x', staff: 'Ayşe' });
+  assert.deepEqual(OM.modelArgs('office_dispatch', { project: 'acme', task: 'x', staff: 'Ayşe', desk: 'p1:2', staffName: 'Boss', targetName: 'Elsewhere' }), { project: 'acme', task: 'x', staff: 'Ayşe' });
   assert.deepEqual(OM.modelArgs('office_dispatch', null), {});
   assert.deepEqual(OM.modelArgs('office_dispatch', ['desk']), {});
   assert.deepEqual(OM.modelArgs('office_project', { project: 'acme', op: 'start' }), { project: 'acme', op: 'start' });
@@ -308,7 +308,8 @@ test('main.js: HQ dispatch to staff asks before it creates — workspace, desk a
   const hs = fn('hqStaffDesk');
   assert.ok(hs.indexOf('if (!open) return') > 0 && hs.indexOf('if (!open) return') < hs.indexOf('openDesk('), 'open: false returns before anything is opened');
   // the dialog names the member and the target, also for a workspace that does not exist yet
-  assert.match(hd, /confirmHqDispatch\(personal \? \{ \.\.\.args, project: personalFolderName\(personal\) \} : args, remote\)/);
+  assert.match(hd, /targetName: personalFolderName\(personal\)/);
+  assert.match(fn('confirmHqDispatch'), /T\('main\.hqAskStaff', \{ staff: args\.staffName, project: officeName\(args\.targetName \|\| args\.project\) \}\)/);
   // a held task keeps its member, so approval sends it to the desk
   assert.match(fn('holdDispatch'), /\.\.\.\(args\.staff \? \{ staff: String\(args\.staff\) \} : \{\}\)/);
   // removing a member is refused like the other writes when state.json could not be read

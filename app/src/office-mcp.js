@@ -206,7 +206,9 @@ function callApp(socketFile, token, tool, args) {
 
 // Dispatch arguments only the app sets (main.js hqDispatch, after it checked the member and opened the desk): `desk`
 // picks the tab a task is typed into and `staffName` is shown in the consent dialog, so neither is taken from a model.
-const INTERNAL_ARGS = ['desk', 'staffName'];
+// Applied by the app where a call arrives (main.js officeTool), not in the stdio script: that script is written from
+// runStdio's own source (serverScript) and is no trust boundary.
+const INTERNAL_ARGS = ['desk', 'staffName', 'targetName'];
 /** A tool call's arguments as a model may give them: an object, without the app's internal dispatch arguments. */
 function modelArgs(tool, args) {
   const a = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } : {};
@@ -232,7 +234,7 @@ function runStdio({ input = process.stdin, output = process.stdout, env = proces
     if (m.method === 'tools/list') return reply({ tools });
     if (m.method === 'tools/call') {
       const name = m.params?.name;
-      const args = modelArgs(m.params?.name, m.params?.arguments);
+      const args = m.params?.arguments && typeof m.params.arguments === 'object' ? m.params.arguments : {};
       if (!names.has(name)) return hasId && send({ id: m.id, error: { code: -32602, message: `unknown tool ${String(name).slice(0, 60)}` } });
       if (name === 'office_dispatch' && Buffer.byteLength(String(args.task ?? ''), 'utf8') > TASK_MAX) return reply({ content: [{ type: 'text', text: JSON.stringify({ status: 'rejected', reason: 'too-large' }) }], isError: true });
       const r = socketFile && token ? await callApp(socketFile, token, name, args) : { ok: false, error: 'not-configured' };

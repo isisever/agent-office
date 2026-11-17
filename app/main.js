@@ -2124,7 +2124,7 @@ async function confirmHqDispatch(args, remote) {
 
   if (!win || win.isDestroyed()) return false;
   const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
-    message: args.staffName ? T('main.hqAskStaff', { staff: args.staffName, project: officeName(args.project) }) : T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: LC.cleanLine(HQ.redact(String(args.task || '')), 300) });
+    message: args.staffName ? T('main.hqAskStaff', { staff: args.staffName, project: officeName(args.targetName || args.project) }) : T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: LC.cleanLine(HQ.redact(String(args.task || '')), 300) });
   return r.response === 0;
 }
 /** v3.47/v3.49 a routine's own project or remote run: its dispatch record names the run, so the report ends the run
@@ -2163,16 +2163,17 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   // v3.83 team: a task for a staff member goes to the member's desk in that project. Before consent only the checks
   // run (nothing is created): the member is known and may work there; the dialog names the member and the target.
   if (args.staff) {
-    const c = personal ? { staffName: personal.name } : await hqStaffDesk(args, remote, target, { open: false });
+    // a personal workspace that is not made yet: the dialog names the folder it will get (`targetName`)
+    const c = personal ? { staffName: personal.name, targetName: personalFolderName(personal) } : await hqStaffDesk(args, remote, target, { open: false });
     if (c.reason) return { status: 'rejected', reason: c.reason };
-    args = { ...args, staffName: c.staffName };
+    args = { ...args, staffName: c.staffName, ...(c.targetName ? { targetName: c.targetName } : {}) };
   }
   const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '' });   // a project routine: only its own project
   const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
   if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
   if (consent === 'app') {
-    if (!(await confirmHqDispatch(personal ? { ...args, project: personalFolderName(personal) } : args, remote))) return { status: 'rejected', reason: 'declined' };
+    if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
     // two dispatches can wait on dialogs at once: re-check the caps on the fresh board after the answer
     const late = HQ.capReason(loadHqBoard(), request);   // never an approved held task: approved skips the dialog
     if (late) return { status: 'rejected', reason: late };
