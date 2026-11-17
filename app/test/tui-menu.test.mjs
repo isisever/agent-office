@@ -2,7 +2,7 @@
 // The screens below were captured from Claude Code 2.1.286 in a pty (110 columns).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMenu, isFreeOption, menuKey } from '../src/tui-menu.mjs';
+import { parseMenu, isFreeOption, isApproval, menuKey } from '../src/tui-menu.mjs';
 
 const RULE = '─'.repeat(110);
 const DASH = '╌'.repeat(110);
@@ -102,6 +102,37 @@ ${RULE}
   assert.equal(parseMenu(screen(` 1. a
  3. b
  Esc to cancel`)), null, 'numbers must run 1…n');
+});
+
+test('parseMenu: truncated says when the text above the options is not all in the title', () => {
+  assert.equal(parseMenu(PERMISSION).truncated, false);
+  assert.equal(parseMenu(QUESTION).truncated, false);
+  const body = Array.from({ length: 12 }, (_, n) => ` line ${n + 1} of the command`);
+  const tail = [' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', ' Esc to cancel · Tab to amend'];
+  const long = parseMenu([RULE, ' Bash command', DASH, ...body, DASH, ...tail]);
+  assert.equal(long.truncated, true, 'more than 8 lines above the options');
+  assert.equal(long.title.length, 8);
+  assert.equal(long.title[7], 'Do you want to proceed?', 'the lines nearest the options are kept');
+  assert.equal(long.title[0], 'line 6 of the command');
+  // exactly 8 lines under the rule: nothing is cut
+  const exact = parseMenu([RULE, ' Bash command', ...body.slice(0, 6), ...tail]);
+  assert.equal(exact.truncated, false);
+  assert.equal(exact.title.length, 8);
+  // the start of the request has scrolled off the top of the screen (no rule above it)
+  const offTop = parseMenu([...body.slice(0, 3), DASH, ...tail]);
+  assert.equal(offTop.truncated, true);
+  assert.equal(offTop.title.length, 4);
+  assert.notEqual(menuKey(offTop), menuKey({ ...offTop, truncated: false }), 'the card is redrawn when the cut changes');
+});
+
+test('isApproval: a permission prompt, not a question or the review step', () => {
+  assert.equal(isApproval(parseMenu(PERMISSION)), true);
+  assert.equal(isApproval(parseMenu(QUESTION)), false);
+  assert.equal(isApproval(parseMenu(REVIEW)), false);
+  assert.equal(isApproval({ title: ['Would you like to proceed?'], options: [{ n: 1, label: 'Yes, and auto-accept edits' }, { n: 2, label: 'No, keep planning' }] }), true);
+  assert.equal(isApproval({ title: ['Do you want to make this edit to a.js?'], options: [{ n: 1, label: 'Yes' }, { n: 2, label: 'No' }] }), true);
+  assert.equal(isApproval({ title: ['Select model'], options: [{ n: 1, label: 'Default' }, { n: 2, label: 'Opus' }] }), false);
+  assert.equal(isApproval(null), false);
 });
 
 test('liveStatus: the spinner row while Claude Code works, nothing when idle', async () => {

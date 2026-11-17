@@ -4,7 +4,7 @@
 // Claude Code's own menus (approvals, AskUserQuestion, /model, …) are drawn only in the terminal: the chat reads the open
 // one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
 import { t } from './i18n.js';
-import { parseMenu, isFreeOption, menuKey, liveStatus } from '../src/tui-menu.mjs';
+import { parseMenu, isFreeOption, isApproval, menuKey, liveStatus } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 
@@ -163,12 +163,24 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   }
 
   // ---- the open menu as a card
+  /** A truncated approval is answered in the terminal: its buttons are off. */
+  const mustUseTerminal = (m) => Boolean(m?.truncated) && isApproval(m);
   async function press(steps) {
+    // the card is up to MENU_MS old: the keys are typed only if the menu on the live screen is still the one it shows
+    const expect = menuShown;
+    let now = null;
+    try { now = parseMenu(screen()); } catch (e) { console.error(e); }
+    if (!expect || menuKey(now) !== expect || mustUseTerminal(now)) { waitUntil = 0; menu = now; menuShown = ''; drawMenu(); return; }
     waitUntil = Date.now() + 2000;
     for (const b of card.querySelectorAll('button, input')) b.disabled = true;
     let r;
-    try { r = await api.chat.keys(ptyId, steps); } catch (e) { console.error(e); r = 'error'; }
-    if (r !== 'ok') { waitUntil = 0; menuShown = ''; note(t(`chat.why.${['not-running', 'locked'].includes(r) ? r : 'other'}`)); }
+    try { r = await api.chat.keys(ptyId, steps, expect); } catch (e) { console.error(e); r = 'error'; }
+    if (r !== 'ok') {
+      waitUntil = 0;
+      menuShown = '';
+      // 'stale' / 'busy': nothing was typed; the card is drawn again from the screen
+      if (!['stale', 'busy'].includes(r)) note(t(`chat.why.${['not-running', 'locked'].includes(r) ? r : 'other'}`));
+    }
     setTimeout(checkMenu, 300);
   }
   /** "Type something": a text box in the card; its answer is the option's number, the text, Enter. */
@@ -199,7 +211,12 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     if (menu.tabs) nav.push(h('button', { class: 'chat-nav', onclick: () => press(['\x1b[D']) }, t('chat.menuBack')));
     if (menu.multi || menu.tabs) nav.push(h('button', { class: 'chat-nav', onclick: () => press(['\x1b[C']) }, t('chat.menuNext')));
     nav.push(h('button', { class: 'chat-nav', onclick: () => press(['\x1b']) }, t('chat.menuCancel')));
-    card.replaceChildren(h('div', { class: 'chat-menu-title' }, ...titles), h('div', { class: 'chat-opts' }, ...opts), h('div', { class: 'chat-menu-nav' }, ...nav));
+    // the text above the options is cut: say so; an approval is then answered in the terminal
+    const cut = menu.truncated
+      ? h('div', { class: 'chat-menu-cut' }, h('span', {}, t('chat.menuTruncated')), h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() }, t('chat.terminal')))
+      : null;
+    if (mustUseTerminal(menu)) for (const b of [...opts, ...nav]) b.disabled = true;
+    card.replaceChildren(h('div', { class: 'chat-menu-title' }, ...titles), cut, h('div', { class: 'chat-opts' }, ...opts), h('div', { class: 'chat-menu-nav' }, ...nav));
     if (atBottomNow()) list.scrollTop = list.scrollHeight;
   }
   const atBottomNow = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40;

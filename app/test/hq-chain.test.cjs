@@ -230,3 +230,20 @@ test('cancelling a waiting stage blocks the stages after it at the next sweep', 
   api.hqChainSweep();
   assert.equal(env.sent.length, 1);   // nothing after a cancelled stage is sent
 });
+
+test('stageProject: a frozen stage is released to its project by id; a gone id is never found again by name', () => {
+  const projects = [{ id: 'p1', name: 'acme' }, { id: 'p2', name: 'beta' }];
+  assert.equal(CH.stageProject({ project: 'acme', projectId: 'p1' }, projects), 'p1');
+  assert.equal(CH.stageProject({ project: 'acme', projectId: 'p1' }, [{ id: 'p1', name: 'renamed' }]), 'p1', 'a rename does not lose it');
+  assert.equal(CH.stageProject({ project: 'acme', projectId: 'gone' }, projects), '', 'the id is gone: refused, though the name exists');
+  // a file from before has only the name it was given
+  assert.equal(CH.stageProject({ project: 'Acme ' }, projects), 'p1');
+  assert.equal(CH.stageProject({ project: 'p2' }, projects), 'p2', 'given as an id');
+  assert.equal(CH.stageProject({ project: 'acme' }, [...projects, { id: 'p3', name: 'ACME' }]), '', 'two projects answer to the name');
+  assert.equal(CH.stageProject({ project: 'nope' }, projects), '');
+  assert.equal(CH.stageProject({}, projects), '');
+  assert.equal(CH.stageProject({ projectId: 'p1' }, null), '');
+  const src = fs.readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /\.\.\.\(!s\.remote && s\.projectId \? \{ projectId: s\.projectId \} : \{\}\)/, 'stage.json stores the id');
+  assert.match(src, /const project = st\.remote \? st\.project : CH\.stageProject\(st, state\.projects\);\n  if \(!project\) \{ hqStatus\(id, 'rejected', 'unknown-project'\); return; \}/);
+});

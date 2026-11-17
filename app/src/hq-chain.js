@@ -119,4 +119,18 @@ function consentLines(stages, each = 400) {
   }).join('\n\n');
 }
 
-module.exports = { ADHOC, WAITING, BLOCKED, WAIT_MS, THEN_MAX, REPORT_MAX, stagesOf, hasCycle, afterRefused, stageState, settle, stageText, cutBytes, renameAfter, consentLines, capFor };
+/**
+ * The project a frozen local stage (stage.json) is released to → its id, or '' (the stage is refused). A stage names
+ * its project by id (`projectId`); a gone id is never looked up by name, so a later project of the same name does not
+ * get the task. A file from before has only the name it was given: used while exactly one project answers to it.
+ */
+function stageProject(st, projects) {
+  const list = Array.isArray(projects) ? projects : [];
+  if (typeof st?.projectId === 'string' && st.projectId) return list.some((p) => p.id === st.projectId) ? st.projectId : '';
+  const key = typeof st?.project === 'string' ? st.project : '';
+  const k = key.trim().toLowerCase();
+  const hits = k ? list.filter((p) => p.id === key || String(p.name).toLowerCase() === k) : [];
+  return hits.length === 1 ? hits[0].id : '';
+}
+
+module.exports = { ADHOC, WAITING, BLOCKED, WAIT_MS, THEN_MAX, REPORT_MAX, stagesOf, hasCycle, afterRefused, stageState, settle, stageText, cutBytes, renameAfter, consentLines, capFor, stageProject };

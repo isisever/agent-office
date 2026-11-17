@@ -248,3 +248,70 @@ test('v3.83 amendment: a personal workspace is its owner\'s alone; normalizeStat
   assert.deepEqual([ms[0].projects, ms[0].personal], [['site'], 'Ahmet - kişisel']);
   assert.equal(ms[1].personal, undefined);
 });
+
+test('followsProjectAccount: every tab moves with its project’s account except a desk on its member’s own account', () => {
+  const state = {
+    accounts: [{ id: 'default' }, { id: 'work' }, { id: 'spare' }],
+    projects: [{ id: 'p1', dir: '/w/p1', accountId: 'default', tabs: [{ n: 2, staffId: 's-a1b2c3' }, { n: 3, staffId: 's-bbbbbb' }, { n: 4 }] }],
+    staff: [{ ...ayse, id: 's-a1b2c3', accountId: 'work' }, { id: 's-bbbbbb', name: 'Mert', role: { preset: 'qa' }, projects: 'all' }],
+  };
+  assert.equal(P.followsProjectAccount(state, 'p1'), true, 'the main tab');
+  assert.equal(P.followsProjectAccount(state, 'p1:4'), true, 'an ordinary tab');
+  assert.equal(P.followsProjectAccount(state, 'p1:3'), true, 'a desk without an account of its own');
+  assert.equal(P.followsProjectAccount(state, 'p1:2'), false, 'a desk on its member’s account');
+  // the project moved onto the very account the desk runs on (its backup): the desk still did not move
+  const moved = { ...state, projects: [{ ...state.projects[0], accountId: 'work', homeAccount: 'default' }] };
+  assert.equal(P.resolvePty(moved, 'p1:2').project.accountId, 'work');
+  assert.equal(P.followsProjectAccount(moved, 'p1:2'), false, 'the same account by chance: still the member’s own');
+  assert.equal(P.followsProjectAccount({ ...state, accounts: [{ id: 'default' }] }, 'p1:2'), true, 'a gone account: the project’s');
+  assert.equal(P.followsProjectAccount(state, 'p1:9'), true, 'an unknown tab is nobody’s desk');
+  // main.js: the backup account and a project move read only the tabs on the project's account
+  const src = require('fs').readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const fn = (name) => src.slice(src.indexOf(`function ${name}(`), src.indexOf('\n}\n', src.indexOf(`function ${name}(`)));
+  assert.match(src, /const accountTabs = \(p\) => P\.ptyIdsOf\(p\)\.filter\(\(id\) => P\.followsProjectAccount\(state, id\)\);/);
+  for (const name of ['moveProject', 'checkLimits', 'maybeReturn']) {
+    assert.match(fn(name), /accountTabs\(p\)/, name);
+    assert.doesNotMatch(fn(name), /P\.ptyIdsOf\(p\)/, `${name}: no desk of another account`);
+  }
+  assert.doesNotMatch(fn('onLimit'), /P\.ptyIdsOf\(p\)/);
+});
+
+test('office_dispatch: a model-supplied desk (or staffName) is ignored; only the app sets them', () => {
+  const OM = require('../src/office-mcp.js');
+  assert.deepEqual(OM.modelArgs('office_dispatch', { project: 'acme', task: 'x', staff: 'Ayşe', desk: 'p1:2', staffName: 'Boss', targetName: 'Elsewhere' }), { project: 'acme', task: 'x', staff: 'Ayşe' });
+  assert.deepEqual(OM.modelArgs('office_dispatch', null), {});
+  assert.deepEqual(OM.modelArgs('office_dispatch', ['desk']), {});
+  assert.deepEqual(OM.modelArgs('office_project', { project: 'acme', op: 'start' }), { project: 'acme', op: 'start' });
+  const given = { task: 'x', desk: 'p1:2' };
+  OM.modelArgs('office_dispatch', given);
+  assert.equal(given.desk, 'p1:2', 'the caller’s object is not changed');
+  const d = OM.TOOLS.find((x) => x.name === 'office_dispatch');
+  assert.ok(!('desk' in d.inputSchema.properties) && !('staffName' in d.inputSchema.properties), 'neither is a declared argument');
+  // the app's own boundary (the socket's handler) drops them before any dispatch code runs
+  const src = require('fs').readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /function officeTool\(tab, tool, args\) \{\n  args = OM\.modelArgs\(tool, args\);/);
+});
+
+test('main.js: HQ dispatch to staff asks before it creates — workspace, desk and worktree only after consent', () => {
+  const src = require('fs').readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const fn = (name) => src.slice(src.indexOf(`function ${name}(`), src.indexOf('\n}\n', src.indexOf(`function ${name}(`)));
+  const hd = fn('hqDispatch');
+  const ask = hd.indexOf('confirmHqDispatch(');
+  const hold = hd.indexOf('return holdDispatch(');
+  assert.ok(ask > 0 && hold > 0);
+  assert.ok(hd.indexOf('ensurePersonal(') > ask && hd.indexOf('ensurePersonal(') > hold, 'the personal workspace is made after the dialog and never for a held task');
+  assert.ok(hd.indexOf('{ open: false }') > 0 && hd.indexOf('{ open: false }') < ask, 'before consent: the checks only');
+  assert.equal(hd.indexOf('openDesk('), -1);
+  const opens = [...hd.matchAll(/hqStaffDesk\(/g)].map((m) => m.index);
+  assert.equal(opens.length, 2);
+  assert.ok(opens[0] < ask && opens[1] > ask, 'the desk is opened after consent');
+  const hs = fn('hqStaffDesk');
+  assert.ok(hs.indexOf('if (!open) return') > 0 && hs.indexOf('if (!open) return') < hs.indexOf('openDesk('), 'open: false returns before anything is opened');
+  // the dialog names the member and the target, also for a workspace that does not exist yet
+  assert.match(hd, /targetName: personalFolderName\(personal\)/);
+  assert.match(fn('confirmHqDispatch'), /T\('main\.hqAskStaff', \{ staff: args\.staffName, project: officeName\(args\.targetName \|\| args\.project\) \}\)/);
+  // a held task keeps its member, so approval sends it to the desk
+  assert.match(fn('holdDispatch'), /\.\.\.\(args\.staff \? \{ staff: String\(args\.staff\) \} : \{\}\)/);
+  // removing a member is refused like the other writes when state.json could not be read
+  assert.match(src, /ipcMain\.handle\('staff:remove', \(_e, id\) => \{\n  if \(!stateWritable\) return \{ ok: false, error: 'state' \};/);
+});

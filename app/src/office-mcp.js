@@ -204,6 +204,18 @@ function callApp(socketFile, token, tool, args) {
   });
 }
 
+// Dispatch arguments only the app sets (main.js hqDispatch, after it checked the member and opened the desk): `desk`
+// picks the tab a task is typed into and `staffName` is shown in the consent dialog, so neither is taken from a model.
+// Applied by the app where a call arrives (main.js officeTool), not in the stdio script: that script is written from
+// runStdio's own source (serverScript) and is no trust boundary.
+const INTERNAL_ARGS = ['desk', 'staffName', 'targetName'];
+/** A tool call's arguments as a model may give them: an object, without the app's internal dispatch arguments. */
+function modelArgs(tool, args) {
+  const a = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } : {};
+  if (tool === 'office_dispatch') for (const k of INTERNAL_ARGS) delete a[k];
+  return a;
+}
+
 /** Serves MCP over `input`/`output` (newline-delimited JSON-RPC 2.0). Resolves when the input ends. */
 function runStdio({ input = process.stdin, output = process.stdout, env = process.env } = {}) {
   const socketFile = env.AGENT_OFFICE_SOCKET || '';
@@ -281,6 +293,6 @@ function writeServerScript(dir, { file = 'office-mcp.js', ...opts } = {}) {
   return f;
 }
 
-module.exports = { SERVER_NAME, TOOLS, HQ_TOOLS, toolsFor, TASK_MAX, SOCKET_MAX, socketPath, socketSalt, secureDir, serverConfig, createOfficeSocket, runStdio, serverScript, writeServerScript };
+module.exports = { SERVER_NAME, TOOLS, HQ_TOOLS, toolsFor, TASK_MAX, SOCKET_MAX, socketPath, socketSalt, secureDir, serverConfig, createOfficeSocket, runStdio, modelArgs, serverScript, writeServerScript };
 
 if (require.main === module) runStdio().then(() => setTimeout(() => process.exit(0), 200));

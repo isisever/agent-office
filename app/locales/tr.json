@@ -679,6 +679,7 @@
     "menuBack": "← Geri",
     "menuNext": "İleri →",
     "menuCancel": "Vazgeç (Esc)",
+    "menuTruncated": "Bu isteğin bir kısmı burada görünmüyor. Yanıtlamadan önce tamamını okumak için terminali aç.",
     "note": {
       "compact": "— konuşma özetlendi —",
       "task": "Bir arka plan görevi bitti.",
