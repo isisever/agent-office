@@ -409,3 +409,13 @@ test('main.js: mail wiring — desks of members with accounts only, guard settin
   assert.match(MAIN, /if \(!safeStorage\.isEncryptionAvailable\(\)\) return \{ ok: false, error: 'no-keychain' \}/);
   assert.doesNotMatch(MAIN.slice(MAIN.indexOf('const mailAccountRow'), MAIN.indexOf('const mailAccountRow') + 200), /load\(/);
 });
+
+test('graph: only a microsoft.com / microsoftonline.com page is opened for sign-in, never a look-alike host', () => {
+  for (const ok of ['https://microsoft.com/devicelogin', 'https://www.microsoft.com/link', 'https://login.microsoftonline.com/common/oauth2/deviceauth', 'https://LOGIN.MICROSOFT.COM/device']) assert.equal(GRAPH.isMicrosoftUrl(ok), true, ok);
+  for (const bad of ['https://evilmicrosoft.com/devicelogin', 'https://evil-microsoftonline.com/x', 'https://microsoft.com.evil.example/x', 'http://microsoft.com/devicelogin', 'https://microsoft.com', 'https://evil.example/https://microsoft.com/', 'https://user@microsoft.com/x', '', null, undefined, 7]) assert.equal(GRAPH.isMicrosoftUrl(bad), false, String(bad));
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /if \(GRAPH\.isMicrosoftUrl\(code\.verificationUri\)\) eShell\.openExternal\(code\.verificationUri\)/);
+  assert.doesNotMatch(src, /\[\\w\.-\]\*microsoft/, 'the loose pattern is gone');
+  // a rotated refresh token is never written in clear: without the keychain the stored one stays
+  assert.match(src, /if \(t\.refreshToken !== refreshToken && safeStorage\.isEncryptionAvailable\(\)\) mailSecrets\(\)\.save\(a\.id, t\.refreshToken\);/);
+});

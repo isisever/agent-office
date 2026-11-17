@@ -12,10 +12,14 @@ const FOOT_RE = /Esc to (cancel|go back|exit)|Enter to (select|confirm)/i;
 const TABS_RE = /^\s*←.*→\s*$/;              // AskUserQuestion's tab row ("←  ☐ Color  ☐ Size  ✔ Submit  →")
 const REVIEW_RE = /^Ready to submit your answers\?/;
 const FREE_RE = /^(Type something|Other)\b/i; // the option that takes typed text
+const ASK_RE = /^(Do you want|Would you like)\b/i;   // an approval's question ("Do you want to proceed?")
+const TITLE_MAX = 8;                          // title lines kept (the ones nearest the options)
 
 /**
  * The open menu at the bottom of a terminal screen (its visible lines, top to bottom) →
- * { title: string[], options: { n, label, desc, checked? }[], cursor, multi, tabs, submitRow } or null.
+ * { title: string[], truncated, options: { n, label, desc, checked? }[], cursor, multi, tabs, submitRow } or null.
+ * truncated: the text above the options is not all in `title` (more than TITLE_MAX lines, or its start has scrolled
+ * off the top of the screen, so no full-width rule is above it).
  * A menu is numbered options 1…n (n ≥ 2) followed, within a few lines, by Claude Code's key hint
  * ("Enter to select", "Esc to cancel"), or AskUserQuestion's review step; numbered lines anywhere else (an answer
  * listing steps) are not a menu.
@@ -67,22 +71,36 @@ export function parseMenu(lines) {
   // the title: the lines above the block (and indented lines above its first option), up to the full-width rule
   const title = [];
   let tabs = false;
-  for (let i = (start < 0 ? top : start) - 1; i >= 0 && title.length < 8; i--) {
+  let ruled = false;        // the full-width rule above the title is on screen
+  let truncated = false;
+  for (let i = (start < 0 ? top : start) - 1; i >= 0; i--) {
     const l = L[i];
-    if (RULE_RE.test(l)) break;
+    if (RULE_RE.test(l)) { ruled = true; break; }
     if (!l.trim() || DASH_RE.test(l)) continue;
     if (TABS_RE.test(l)) { tabs = true; continue; }
+    if (title.length >= TITLE_MAX) { truncated = true; break; }
     title.unshift(l.trim());
   }
+  if (!truncated && !ruled && title.length) truncated = true;   // the text runs off the top of the screen
   if (!hinted && !title.some((l) => REVIEW_RE.test(l))) return null;
-  return { title, options, cursor, multi: options.some((o) => 'checked' in o), tabs, submitRow };
+  return { title, truncated, options, cursor, multi: options.some((o) => 'checked' in o), tabs, submitRow };
+}
+
+/**
+ * Is this menu an approval (a permission prompt: "Do you want to proceed?" with "Yes" first)? A truncated one is
+ * answered in the terminal, where all of the request can be read.
+ */
+export function isApproval(m) {
+  if (!m || m.multi || m.tabs) return false;
+  const ask = String(m.title?.[m.title.length - 1] || '');
+  return ASK_RE.test(ask) || /^Yes\b/i.test(String(m.options?.[0]?.label || ''));
 }
 
 /** Does this option take typed text ("Type something", "Other")? */
 export const isFreeOption = (o) => FREE_RE.test(String(o?.label || '').replace(/^\[[ ✔]\]\s*/, ''));
 
 /** A stable key for a menu (its title and labels): the card is redrawn only when the menu changes. */
-export const menuKey = (m) => (m ? JSON.stringify([m.title, m.options.map((o) => [o.label, o.checked])]) : '');
+export const menuKey = (m) => (m ? JSON.stringify([m.title, m.options.map((o) => [o.label, o.checked]), Boolean(m.truncated)]) : '');
 
 // v3.80 amendment: Claude Code's live status while it works ("✻ Creating… (10s · ↓ 875 tokens · thinking)", the glyph
 // cycling), above the mode line that says "esc to interrupt" (Claude Code 2.1.286, captured in a pty, 110 columns).

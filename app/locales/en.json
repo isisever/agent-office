@@ -693,6 +693,7 @@
     "menuBack": "← Back",
     "menuNext": "Next →",
     "menuCancel": "Cancel (Esc)",
+    "menuTruncated": "Part of this request is not shown here. Open the terminal to read all of it before you answer.",
     "note": {
       "compact": "— the conversation was compacted —",
       "task": "A background task finished.",
