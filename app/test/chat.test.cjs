@@ -157,3 +157,13 @@ test('main.js: chat:send types through typePrompt; chatView is written only once
   assert.match(keys, /CHAT\.menuKeys\(steps\)/);
   assert.doesNotMatch(keys, /hqMinter|draftAfter/, 'a menu answer is no draft and no HQ request');
 });
+
+test('chat reply: the quoted message goes first as "> " lines, cut at a word end', async () => {
+  const R = await import('../src/chat-reply.mjs');
+  assert.equal(R.withReply('first line\n\nsecond', 'my answer'), '> first line\n>\n> second\n\nmy answer');
+  assert.equal(R.withReply('   ', 'plain'), 'plain');
+  const long = 'word '.repeat(300);
+  const q = R.quoteExcerpt(long);
+  assert.ok(q.length <= R.QUOTE_MAX + 1 && q.endsWith('…') && !q.includes('wor…'));
+  assert.equal(R.quoteExcerpt('a\r\nb'), 'a\nb');
+});

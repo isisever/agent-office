@@ -6,6 +6,7 @@
 import { t } from './i18n.js';
 import { parseMenu, isFreeOption, menuKey } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
+import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 
 const POLL_MS = 1000;   // while shown
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
@@ -55,7 +56,13 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   // the "/" list above the input (Claude Code's commands for this tab, chat:commands)
   const slash = h('ul', { class: 'chat-slash', role: 'listbox' });
   slash.hidden = true;
-  el.append(banner, list, empty, card, h('div', { class: 'chat-form' }, slash, input, send, term), why);
+  // the message being replied to, above the input (✕ drops it)
+  const replyText = h('span', { class: 'chat-reply-text' });
+  const replyBar = h('div', { class: 'chat-reply' }, h('span', { class: 'chat-reply-label' }), replyText,
+    h('button', { class: 'chat-reply-x', onclick: () => replyTo('') }, '✕'));
+  replyBar.hidden = true;
+  let replying = '';
+  el.append(banner, list, empty, card, replyBar, h('div', { class: 'chat-form' }, slash, input, send, term), why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -84,6 +91,26 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   texts();
 
   function clear() { list.replaceChildren(); tools.clear(); }
+  // ---- a message's own buttons (shown on hover): copy its text, reply to it
+  async function copyText(text, btn) {
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch {
+      // fallback: a hidden text box and the document's copy command
+      const box = h('textarea', { class: 'chat-copy-buf' });
+      box.value = text;
+      document.body.append(box);
+      box.select();
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
+      box.remove();
+    }
+    btn.textContent = ok ? t('chat.copied') : t('chat.copyFailed');
+    setTimeout(() => { btn.textContent = t('chat.copy'); }, 1200);
+  }
+  function message(kind, text, body) {
+    const copy = h('button', { class: 'chat-act', onclick: () => copyText(String(text), copy) }, t('chat.copy'));
+    const reply = h('button', { class: 'chat-act', onclick: () => replyTo(String(text)) }, t('chat.reply'));
+    return h('div', { class: `chat-msg ${kind}` }, body, h('div', { class: 'chat-acts' }, copy, kind === 'error' ? null : reply));
+  }
   function item(it) {
     if (it.kind === 'toolDone') {
       const line = tools.get(it.id);
@@ -93,10 +120,10 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     if (it.kind === 'user') {
       const body = textBody(it.text);
       if (it.images) body.append(h('div', { class: 'chat-images dim' }, t('chat.images', { count: it.images })));
-      return h('div', { class: 'chat-msg user' }, body);
+      return message('user', it.text, body);
     }
-    if (it.kind === 'assistant') return h('div', { class: 'chat-msg assistant' }, textBody(it.text));
-    if (it.kind === 'error') return h('div', { class: 'chat-msg error' }, textBody(it.text));
+    if (it.kind === 'assistant') return message('assistant', it.text, textBody(it.text));
+    if (it.kind === 'error') return message('error', it.text, textBody(it.text));
     if (it.kind === 'tool') {
       const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''));
       if (it.id) tools.set(it.id, line);
@@ -184,6 +211,13 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     } catch (e) { console.error(e); } finally { reading = false; }
   }
 
+  function replyTo(text) {
+    replying = text;
+    replyBar.hidden = !text;
+    replyBar.firstElementChild.textContent = t('chat.replyingTo');
+    replyText.textContent = quoteExcerpt(text, 160);
+    if (text) input.focus();
+  }
   function note(text) {
     why.textContent = text;
     why.hidden = !text;
@@ -192,10 +226,13 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     const text = input.value;
     if (!text.trim()) return;
     if (menu) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
+    // a slash command is sent as typed (a quote in front would stop it being a command)
+    const out = replying && !/^\s*\//.test(text) ? withReply(replying, text) : text;
     let r;
-    try { r = await api.chat.send(ptyId, text); } catch (e) { console.error(e); r = 'error'; }
+    try { r = await api.chat.send(ptyId, out); } catch (e) { console.error(e); r = 'error'; }
     if (r === 'ok') {
       input.value = '';
+      replyTo('');
       fitInput();
       note('');
       closeSlash();
@@ -266,6 +303,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     }
     // Enter sends, Shift+Enter is a new line; not while an input method is composing (Turkish/CJK IMEs)
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+    else if (e.key === 'Escape' && replying) { e.preventDefault(); replyTo(''); }
   });
 
   return {

@@ -702,7 +702,12 @@
       "project": "project",
       "user": "personal",
       "plugin": "plugin"
-    }
+    },
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyFailed": "Not copied",
+    "reply": "Reply",
+    "replyingTo": "Replying to:"
   },
   "main": {
     "defaultAccount": "Default",
@@ -1199,6 +1204,10 @@
     "stage": {
       "waiting": "waits for #{id} to report",
       "cancelTip": "Cancel this stage; the stages after it are blocked"
+    },
+    "view": {
+      "board": "Board",
+      "office": "Office"
     }
   },
   "routines": {

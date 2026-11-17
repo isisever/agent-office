@@ -692,7 +692,12 @@
       "project": "proje",
       "user": "kişisel",
       "plugin": "eklenti"
-    }
+    },
+    "copy": "Kopyala",
+    "copied": "Kopyalandı",
+    "copyFailed": "Kopyalanamadı",
+    "reply": "Yanıtla",
+    "replyingTo": "Yanıtlanan:"
   },
   "main": {
     "defaultAccount": "Varsayılan",
@@ -1171,6 +1176,10 @@
     "stage": {
       "waiting": "#{id} raporunu bekliyor",
       "cancelTip": "Bu aşamayı iptal et; sonraki aşamalar da engellenir"
+    },
+    "view": {
+      "board": "Pano",
+      "office": "Ofis"
     }
   },
   "routines": {

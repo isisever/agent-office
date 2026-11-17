@@ -58,6 +58,16 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   sidebar.prepend(el('div', { class: 'hq-pinned' }, row, settings, ...(api.routines ? [rtList] : [])));
   const board = el('div', { id: 'hq-board', class: 'hq-board', hidden: true });
   office?.after(board);
+  // v3.81 amendment: while HQ is selected the person picks the Board or the office (all projects' agents and desks); remembered
+  let showOffice = false;
+  try { showOffice = localStorage.getItem('hq.view') === 'office'; } catch { /* storage off */ }
+  const viewBtn = (key, on) => el('button', { class: 'hq-view-btn', 'data-view': key, onclick: () => {
+    showOffice = on;
+    try { localStorage.setItem('hq.view', on ? 'office' : 'board'); } catch { /* storage off */ }
+    render();
+  } }, t(`hq.view.${key}`));
+  const viewBar = el('div', { class: 'hq-viewbar', hidden: true }, viewBtn('board', false), viewBtn('office', true));
+  office?.before(viewBar);
   // remote rows sit right under the local rows of PROJECTS, with the local rows' look (.sb-proj)
   const remoteList = el('ul', { class: 'sb-list sb-rlist', id: 'sb-rprojects' });
   let openKey = '';                 // the remote row showing its command box
@@ -306,8 +316,10 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       : `▶ ${tasks.filter((x) => OPEN.has(x.status)).length}  ● ${tasks.filter((x) => !x.read && !OPEN.has(x.status)).length}`;
     consent.checked = Boolean(view.settings?.dispatchWithoutAsking);
     row.classList.toggle('active', selected);
-    board.hidden = !selected;
-    if (office) office.hidden = selected;
+    board.hidden = !selected || showOffice;
+    if (office) office.hidden = selected && !showOffice;
+    viewBar.hidden = !selected || !office;
+    for (const b of viewBar.children) b.classList.toggle('on', (b.getAttribute('data-view') === 'office') === showOffice);
     if (api.routines) {
       quietOn.checked = Boolean(rv.cfg?.quiet);
       if (rv.cfg?.quiet && document.activeElement !== quietFrom && document.activeElement !== quietTo) { quietFrom.value = rv.cfg.quiet.from; quietTo.value = rv.cfg.quiet.to; }
