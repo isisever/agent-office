@@ -9,6 +9,7 @@ import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
 import { teamRows, openMemberEditor } from './staff.js';
 import { openRoleWizard } from './role-wizard.js';
 import { createMail } from './mail.js';
+import { groupProjects, groupNames, cleanGroup, GROUP_MAX } from '../src/project-groups.mjs';
 
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -476,6 +477,19 @@ export function mountSidebar(el, on) {
   }
 
   // v3.83 team: several desks may work in this project at once, each in its own worktree (userData/work); team mode only
+  // v3.86 the project's group in the PROJECTS list: a name (the ones in use are offered), empty for none
+  function groupInput(p) {
+    const id = `sb-groups-${p.id}`;
+    const input = h('input', {
+      class: 'sb-input', value: p.group || '', maxLength: GROUP_MAX, placeholder: t('sidebar.groupPh'), list: id,
+      onclick: (e) => e.stopPropagation(),
+      oninput: (e) => queue('group', () => on.setGroup?.(p.id, cleanGroup(e.target.value))),
+    });
+    return h('label', { class: 'sb-acct-wrap', title: t('sidebar.groupTitle'), onclick: (e) => e.stopPropagation() },
+      h('span', { class: 'sb-acct-label' }, t('sidebar.group')), input,
+      h('datalist', { id }, ...groupNames(projects).map((g) => h('option', { value: g }))));
+  }
+
   function parallelToggle(p) {
     if (!team.teamMode || p.engine && p.engine !== 'claude') return null;
     const box = h('input', {
@@ -753,7 +767,7 @@ export function mountSidebar(el, on) {
     const map = new Map();
     badFields.clear();
     const body = [
-      accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p), parallelToggle(p),
+      groupInput(p), accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p), parallelToggle(p),
       contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
     ];
     const save = h('button', {
@@ -981,6 +995,9 @@ export function mountSidebar(el, on) {
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 
+  /** @type {Set<string>} */
+  const closedGroups = (() => { try { return new Set(JSON.parse(localStorage.getItem('ao.closedGroups') || '[]')); } catch { return new Set(); } })();
+  const saveClosedGroups = () => { try { localStorage.setItem('ao.closedGroups', JSON.stringify([...closedGroups])); } catch { /* storage off */ } };
   function renderProjects() {
     const rowOf = (p, i) => {
       const s = stats.get(p.name);
@@ -1028,8 +1045,23 @@ export function mountSidebar(el, on) {
         }, costText(briefs.get(p.id))),
       );
     };
-    projList.replaceChildren(...projects.map((p, i) => rowOf(p, i)));
-    if (!projects.length) projList.append(h('li', { class: 'sb-empty' }, t('sidebar.noProjects')));
+    // v3.86 groups under headings (closed ones kept per window); members' personal workspaces are not listed
+    const groups = groupProjects(projects);
+    const rows = [];
+    let n = 0;
+    for (const g of groups) {
+      const closed = Boolean(g.name) && closedGroups.has(g.name);
+      if (g.name) {
+        const hasActive = g.projects.some((p) => p.id === activeId);
+        rows.push(h('li', {
+          class: `sb-group-head${closed && hasActive ? ' has-active' : ''}`, 'data-group': g.name, title: t('sidebar.groupToggle'),
+          onclick: () => { if (closedGroups.has(g.name)) closedGroups.delete(g.name); else closedGroups.add(g.name); saveClosedGroups(); renderProjects(); },
+        }, h('span', { class: 'sb-group-caret' }, closed ? '▸' : '▾'), h('span', { class: 'sb-group-name' }, g.name), h('span', { class: 'sb-group-count' }, String(g.projects.length))));
+      }
+      for (const p of g.projects) { if (!closed) rows.push(rowOf(p, n)); n++; }
+    }
+    projList.replaceChildren(...rows);
+    if (!n) projList.append(h('li', { class: 'sb-empty' }, t('sidebar.noProjects')));
     renderMcp();
   }
 

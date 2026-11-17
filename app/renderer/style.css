@@ -1554,3 +1554,9 @@ select option.rt-off { color: #888; }
 .chat-md .chat-table { border-collapse: collapse; font-size: .95em; }
 .chat-md .chat-table th, .chat-md .chat-table td { border: 1px solid color-mix(in srgb, currentColor 22%, transparent); padding: 3px 8px; vertical-align: top; }
 .chat-md .chat-table th { font-weight: 700; }
+/* v3.86 project groups in the PROJECTS list */
+.sb-group-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 2px; font-size: 11px; font-weight: 700; letter-spacing: .3px; opacity: .8; cursor: pointer; user-select: none; list-style: none; }
+.sb-group-head:hover { opacity: 1; }
+.sb-group-head .sb-group-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-group-head .sb-group-count { font-weight: 400; opacity: .7; }
+.sb-group-head.has-active .sb-group-name { text-decoration: underline; }

@@ -35,6 +35,8 @@ function normalizeState(raw, { id = newId } = {}) {
     // explicit single-variant type: without it the many conditional spreads below make a union TS can't represent (TS2590)
     /** @type {{ delegates?: string[] }} */
     const delegatesField = withDelegates(p.delegates, knownDelegates);
+    /** @type {{ group?: string }} */
+    const groupField = withGroup(p.group);   // v3.86 (typed like delegatesField: TS2590)
     projects.push({
       id: typeof p.id === 'string' && p.id ? p.id : id(),
       dir: p.dir,
@@ -51,6 +53,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...(p.parallel === true ? { parallel: true } : {}),   // v3.83 several desks may change the folder at once (own copies)
       // v3.83 amendment: a staff member's personal workspace (tasks outside any project): only that member works here
       ...(typeof p.staffOwner === 'string' && /^s-[0-9a-f]{6,16}$/.test(p.staffOwner) ? { staffOwner: p.staffOwner } : {}),
+      ...groupField,   // v3.86 the PROJECTS list's group (src/project-groups.mjs draws it)
       ...withAutoApprove(p.autoApprove),
       ...withSkipPermissions(p.skipPermissions),
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
@@ -65,6 +68,20 @@ function normalizeState(raw, { id = newId } = {}) {
   }
   const activeId = projects.some((p) => p.id === r.activeId) ? r.activeId : (projects[0]?.id ?? null);
   return { projects, accounts, activeId };
+}
+
+// --- v3.86 project groups: a name the person gives, one line, ≤ 40 characters (the same rule as project-groups.mjs)
+// eslint-disable-next-line no-control-regex
+const cleanGroup = (g) => (typeof g === 'string' ? g.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40) : '');
+const withGroup = (g) => (cleanGroup(g) ? { group: cleanGroup(g) } : {});
+/** The project's group set ('' or anything not a name: no group). */
+function setGroup(state, id, group) {
+  const g = cleanGroup(group);
+  return { ...state, projects: state.projects.map((p) => {
+    if (p.id !== id) return p;
+    const { group: _old, ...rest } = p;
+    return g ? { ...rest, group: g } : rest;
+  }) };
 }
 
 // --- tabs (contract v3.0)
@@ -617,7 +634,7 @@ module.exports = {
   historyDir,
   MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty,
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,
-  setParallel, desksOf, deskOf, setDeskSession,
+  setParallel, desksOf, deskOf, setDeskSession, setGroup,
   newId, projectName, findProject, setHqDir, hqProject, isHqId,
   /** state.hq (v3.46) normalized next to the rest */
   normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq), routines: ROUT.normalizeRoutines(raw?.routines), routinesCfg: ROUT.normalizeCfg(raw?.routinesCfg) }), findByDir,

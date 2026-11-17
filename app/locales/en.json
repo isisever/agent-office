@@ -418,7 +418,11 @@
     "mcpPresets": "Ready-made:",
     "mcpPresetNote": {
       "canva": "Canva uses its own sign-in; no token needed. Save the server, then type /mcp in a desk and choose canva → Authenticate to connect your Canva account in the browser (once per Claude account)."
-    }
+    },
+    "group": "Group",
+    "groupPh": "none (e.g. Customers, ERP)",
+    "groupTitle": "The PROJECTS list shows the project under this group. Leave empty for none.",
+    "groupToggle": "Open / close the group"
   },
   "panel": {
     "types": {
@@ -945,7 +949,10 @@
     "routineNeedsApprovalRemote": "Routine {name} needs your approval to send a task to {project} on {machine}",
     "mailDraft": "{name} prepared a mail draft: it waits for your approval",
     "tabStaff": "Session with a staff member",
-    "personalFolder": "{name} - personal"
+    "personalFolder": "{name} - personal",
+    "moveToGroup": "Move to group",
+    "newGroupHint": "A new group: name it in the project's settings (⚙)",
+    "removeFromGroup": "Take out of “{group}”"
   },
   "auth": {
     "unreadable": "could not read the login status",

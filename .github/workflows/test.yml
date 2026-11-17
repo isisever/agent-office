@@ -71,6 +71,8 @@ jobs:
         run: node --test app/test/staff.test.cjs app/test/role-wizard.test.cjs
       - name: Mail (IMAP/SMTP against fake servers, Graph, guard, outbox)
         run: node --test app/test/mail.test.cjs
+      - name: Project groups
+        run: node --test app/test/project-groups.test.mjs
       - name: Effective model (what Auto runs on)
         run: node --test app/test/effective-model.test.cjs
       - name: node-pty quit-crash patch + pty guard

@@ -4607,10 +4607,29 @@ function handoffMenu(p) {
   }];
 }
 // right click on a project in the sidebar
+// v3.86 project groups: set from the project's settings or its right-click menu
+ipcMain.handle('projects:setGroup', (_e, id, group) => {
+  if (!P.findProject(state, String(id))) return { ok: false };
+  commit(P.setGroup(state, String(id), group));
+  broadcast();
+  return { ok: true };
+});
 ipcMain.handle('projects:menu', (_e, id) => {
   const p = P.findProject(state, id);
   if (!p || !win) return;
+  const groups = [...new Set(state.projects.filter((x) => !x.staffOwner && x.group).map((x) => x.group))].sort((a, b) => a.localeCompare(b, 'tr'));
+  const setGroup = (g) => { commit(P.setGroup(state, p.id, g)); broadcast(); };
   Menu.buildFromTemplate([
+    {
+      label: T('main.moveToGroup'),
+      submenu: [
+        ...groups.filter((g) => g !== p.group).map((g) => ({ label: g, click: () => setGroup(g) })),
+        ...(groups.filter((g) => g !== p.group).length ? [{ type: /** @type {const} */ ('separator') }] : []),
+        { label: T('main.newGroupHint'), enabled: false },
+        ...(p.group ? [{ label: T('main.removeFromGroup', { group: p.group }), click: () => setGroup('') }] : []),
+      ],
+    },
+    { type: 'separator' },
     { label: T('main.moveSession'), enabled: P.engineOf(p) === 'claude', click: () => exportSession(p.id) },
     ...handoffMenu(p),
     { type: 'separator' },

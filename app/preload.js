@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     list: () => ipcRenderer.invoke('projects:list'),
     add: () => ipcRenderer.invoke('projects:add'),
     remove: (id) => ipcRenderer.invoke('projects:remove', id),
+    setGroup: (id, group) => ipcRenderer.invoke('projects:setGroup', id, group),   // v3.86 the PROJECTS list's group ('' = none)
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
     setAccount: (id, accountId) => ipcRenderer.invoke('projects:setAccount', id, accountId),
     setManager: (id, value) => ipcRenderer.invoke('projects:setManager', id, value),   // true | false | null (global setting); { restarted: pty ids } (v3.10)

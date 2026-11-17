@@ -83,6 +83,16 @@ const projects = q.has('empty') ? [] : [
   { id: rid(), dir: '/Users/me/Projects/shop-api', name: 'shop-api', accountId: 'is' },
   { id: rid(), dir: '/Users/me/Projects/notlar', name: 'notlar', accountId: 'default' },
 ];
+// ?groups (v3.86): more projects, some in groups; a member's personal workspace that the list never shows
+if (q.has('groups')) {
+  projects.push(
+    { id: rid(), dir: '/Users/me/Projects/koralla-odoo', name: 'koralla-odoo', accountId: 'default', group: 'ERP' },
+    { id: rid(), dir: '/Users/me/Projects/e-gaz-odoo', name: 'e-gaz-odoo', accountId: 'default', group: 'ERP' },
+    { id: rid(), dir: '/Users/me/Projects/bayi-web', name: 'bayi-web', accountId: 'default', group: 'Müşteriler' },
+    { id: rid(), dir: '/Users/me/Documents/Agent Office/Ayşe - kişisel', name: 'Ayşe - kişisel', accountId: 'default', staffOwner: 's-a1a1a1' },
+  );
+  /** @type {any} */ (projects[1]).group = 'Müşteriler';
+}
 if (q.has('agy') && projects[1]) /** @type {any} */ (projects[1]).engine = 'agy';
 // ?cmdProject → the third project runs Command Code (v3.25; its row shows every control, contract v3.36)
 if (q.has('cmdProject') && projects[2]) /** @type {any} */ (projects[2]).engine = 'commandcode';
@@ -237,6 +247,7 @@ window.agentOffice = {
       changed();
     },
     setActive: async (id) => { activeId = id; changed(); },
+    setGroup: async (id, group) => { const p = /** @type {any} */ (projects.find((x) => x.id === id)); if (p) { if (group) p.group = group; else delete p.group; } changed(); return { ok: Boolean(p) }; },
     openFolder: async () => true,
     menu: async () => {},
     setAccount: async (id, accountId) => {
