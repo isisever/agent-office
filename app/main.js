@@ -1194,6 +1194,8 @@ const RESUME_GRACE_MS = 8000; // if --continue ends with an error within this ti
 // A tab of an Antigravity project starts `agy` instead (startAgy, contract v3.22); a Command Code project starts
 // `commandcode` (startCommandCode, contract v3.25).
 function startPty(id, { resume = false, sessionId = null, imported = false, prompt = '', forcePrompt = false } = {}) {
+  // every start of a personal desk (open, restore, wake, restart on another account): its folder is trusted in the account it runs on
+  trustPersonalDesk(id);
   killPty(id);
   const r = P.resolvePty(state, id);
   if (!r || !win || !isLoaded) return broadcast();
@@ -4039,7 +4041,7 @@ function ensurePersonal(m) {
 /**
  * A personal workspace the app made is trusted (no trust dialog the member's desk would wait behind) in the account
  * its desk really runs on: the member's own account now, else the project's (P.resolvePty), not the account the
- * workspace had when it was made. Applied each time the desk is opened, so a later account change is covered.
+ * workspace had when it was made. Applied on every start of the desk's pty (startPty), so a later account change is covered.
  */
 function trustPersonalDesk(id) {
   const r = P.resolvePty(state, id);

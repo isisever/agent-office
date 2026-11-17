@@ -237,8 +237,8 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     const cut = locked
       ? h('div', { class: 'chat-menu-cut' }, h('span', {}, t(menu.truncated ? 'chat.menuTruncated' : 'chat.permission')), h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() }, t('chat.terminal')))
       : null;
-    card.replaceChildren(h('div', { class: 'chat-menu-title' }, h('pre', { class: 'chat-dialog' }, menu.lines.join('\n'))), cut,
-      h('div', { class: 'chat-menu-nav' }, ...btns));
+    card.replaceChildren(...[h('div', { class: 'chat-menu-title' }, h('pre', { class: 'chat-dialog' }, menu.lines.join('\n'))), cut,
+      h('div', { class: 'chat-menu-nav' }, ...btns)].filter(Boolean));
   }
   // the permission banner is hidden only by a menu read in full off this screen; a dialog card never hides it
   const hidesBanner = () => Boolean(menu) && !menu.dialog;
@@ -269,7 +269,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
       ? h('div', { class: 'chat-menu-cut' }, h('span', {}, t('chat.menuTruncated')), h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() }, t('chat.terminal')))
       : null;
     if (mustUseTerminal(menu)) for (const b of [...opts, ...nav]) b.disabled = true;
-    card.replaceChildren(h('div', { class: 'chat-menu-title' }, ...titles), cut, h('div', { class: 'chat-opts' }, ...opts), h('div', { class: 'chat-menu-nav' }, ...nav));
+    card.replaceChildren(...[h('div', { class: 'chat-menu-title' }, ...titles), cut, h('div', { class: 'chat-opts' }, ...opts), h('div', { class: 'chat-menu-nav' }, ...nav)].filter(Boolean));
     if (atBottomNow()) list.scrollTop = list.scrollHeight;
   }
   const atBottomNow = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40;

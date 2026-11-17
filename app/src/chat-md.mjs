@@ -57,8 +57,8 @@ export function inline(s) {
 }
 
 const FENCE = /^\s{0,3}(```+|~~~+)\s*([\w+-]*)\s*$/;
-// linear on purpose: the marker and the rest; closing #s and spaces are cut in code (headText), never by a lazy group
-const HEAD = /^\s{0,3}(#{1,6})\s+(.*)$/;
+// linear on purpose ([\s\S]*, not .*: a line may hold U+2028, where .* stops and \s+ backtracks): the marker and the rest; closing #s and spaces are cut in code (headText), never by a lazy group
+const HEAD = /^\s{0,3}(#{1,6})\s+([\s\S]*)$/;
 const headText = (s) => {
   let e = s.length;
   while (e > 0 && /\s/.test(s[e - 1])) e--;
@@ -68,7 +68,7 @@ const headText = (s) => {
 };
 /** How deep quotes and lists nest; deeper ones stay text (a hostile message cannot overflow the stack or memory). */
 export const MAX_NEST = 4;
-const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+([\s\S]*)$/;
 const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
 const QUOTE = /^\s{0,3}>\s?(.*)$/;
 const TABLE_SEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
