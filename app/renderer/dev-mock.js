@@ -88,10 +88,10 @@ if (q.has('groups')) {
   projects.push(
     { id: rid(), dir: '/Users/me/Projects/koralla-odoo', name: 'koralla-odoo', accountId: 'default', group: 'ERP' },
     { id: rid(), dir: '/Users/me/Projects/e-gaz-odoo', name: 'e-gaz-odoo', accountId: 'default', group: 'ERP' },
-    { id: rid(), dir: '/Users/me/Projects/bayi-web', name: 'bayi-web', accountId: 'default', group: 'Müşteriler' },
-    { id: rid(), dir: '/Users/me/Documents/Agent Office/Ayşe - kişisel', name: 'Ayşe - kişisel', accountId: 'default', staffOwner: 's-a1a1a1' },
+    { id: rid(), dir: '/Users/me/Projects/dealer-web', name: 'dealer-web', accountId: 'default', group: 'Customers' },
+    { id: rid(), dir: '/Users/me/Documents/Agent Office/Alice - personal', name: 'Alice - personal', accountId: 'default', staffOwner: 's-a1a1a1' },
   );
-  /** @type {any} */ (projects[1]).group = 'Müşteriler';
+  /** @type {any} */ (projects[1]).group = 'Customers';
 }
 if (q.has('agy') && projects[1]) /** @type {any} */ (projects[1]).engine = 'agy';
 // ?cmdProject → the third project runs Command Code (v3.25; its row shows every control, contract v3.36)
@@ -189,7 +189,7 @@ const chatOf = (id) => {
       { key: `${id}-3`, at, kind: 'toolDone', id: `${id}-t1`, error: false },
       { key: `${id}-4`, at, kind: 'tool', id: `${id}-t2`, name: 'Bash', detail: 'npm test' },
       { key: `${id}-5`, at, kind: 'toolDone', id: `${id}-t2`, error: true },
-      { key: `${id}-6`, at, kind: 'assistant', text: '## Kurulum eklendi\n\nREADME\'ye **Kurulum** bölümünü ekledim, `npm test` ise *bir yerde* kalıyor:\n\n```sh\nnpm install\nnpm start\n```\n\n- **Geçen:** 12 test\n- **Kalan:** 1 test\n  - `login.test.js` zaman aşımı\n\n| Adım | Durum |\n|---|---|\n| Kurulum | ✓ |\n| Testler | ~~tamam~~ 1 hata |\n\n> Ayrıntı: [rapor](https://example.com/rapor)\n\nBakmamı ister misin?' },
+      { key: `${id}-6`, at, kind: 'assistant', text: '## Setup added\n\nI added the **Setup** section to the README; `npm test` still *hangs somewhere*:\n\n```sh\nnpm install\nnpm start\n```\n\n- **Passed:** 12 tests\n- **Left:** 1 test\n  - `login.test.js` times out\n\n| Step | State |\n|---|---|\n| Setup | ✓ |\n| Tests | ~~done~~ 1 failure |\n\n> Details: [report](https://example.com/report)\n\nShall I look into it?' },
       { key: `${id}-7`, at, kind: 'command', text: '/model sonnet' },
       { key: `${id}-8`, at, kind: 'note', note: 'compact' },
     ]);

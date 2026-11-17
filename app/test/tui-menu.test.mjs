@@ -158,3 +158,55 @@ test('openDialog: a dialog parseMenu does not read is shown as its text, never t
   assert.ok(parseMenu(ap));
   assert.ok(openDialog(ap).numbers.includes(1));
 });
+
+test('openDialog: never the draft in the prompt box, the footer under it, or ordinary output', async () => {
+  const { openDialog } = await import('../src/tui-menu.mjs');
+  // the person's own draft reads like a hint
+  assert.equal(openDialog(['answer', RULE, '> Press Enter to continue', RULE, '  ? for shortcuts']), null);
+  assert.equal(openDialog(['answer', RULE, '❯ Esc to cancel', RULE, '  ? for shortcuts']), null);
+  assert.equal(openDialog(['answer', RULE, '❯ first line', '  Enter to confirm · Esc to cancel', RULE, '  ? for shortcuts']), null);
+  assert.equal(openDialog(['answer', RULE, '❯ Press Enter to continue', RULE]), null);
+  // a draft whose lower rule is not on screen
+  assert.equal(openDialog(['answer', RULE, '❯ Press Enter to continue']), null);
+  assert.equal(openDialog(['answer', RULE, '❯ first line', '  Enter to confirm · Esc to cancel']), null);
+  // a status line under the prompt box that reads like a hint
+  assert.equal(openDialog(['answer', RULE, '❯ ', RULE, '  Press Enter to continue']), null);
+  assert.equal(openDialog(['answer', RULE, '❯ draft', RULE, '  my status', '  ↑/↓ to navigate · Esc to cancel']), null);
+  // ordinary output above the prompt box
+  assert.equal(openDialog(['Press Enter to continue', 'Esc to cancel', RULE, '❯ ', RULE, '  ? for shortcuts']), null);
+  assert.equal(openDialog([]), null);
+});
+
+test('openDialog: a cut dialog and an approval-like one are flagged; keys and the terminal-only rule', async () => {
+  const { openDialog, openOnScreen, screenKey, dialogKey, menuKey, mustUseTerminal, parseMenu } = await import('../src/tui-menu.mjs');
+  const HINT = ' ↑/↓ to navigate · Enter to confirm · Esc to exit';
+  const whole = openDialog(['answer', RULE, ' Select model', '   Sonnet', ' ❯ Opus', '', HINT]);
+  assert.deepEqual([whole.truncated, whole.approval], [false, false]);
+  assert.equal(mustUseTerminal({ dialog: true, ...whole }), false);
+  // more lines than the card keeps
+  const long = openDialog(['answer', RULE, ' Pick one', ...Array.from({ length: 20 }, (_, n) => `   item ${n}`), HINT]);
+  assert.equal(long.truncated, true);
+  assert.ok(long.lines.length <= 15);
+  assert.equal(mustUseTerminal({ dialog: true, ...long }), true);
+  // its start has scrolled off the screen (no rule above it)
+  const noRule = openDialog([' Select model', '   Sonnet', ' ❯ Opus', HINT]);
+  assert.equal(noRule.truncated, true);
+  assert.notEqual(dialogKey(noRule), dialogKey({ ...noRule, truncated: false }), 'the cut is part of the key');
+  // reads like an approval that parseMenu could not take (one numbered line): never answered from the card
+  const ask = [RULE, ' Bash command', ' rm -rf build', ' Do you want to proceed?', ' ❯ 1. Yes', '', ' Enter to confirm · Esc to cancel'];
+  assert.equal(parseMenu(ask), null);
+  const a = openOnScreen(ask);
+  assert.deepEqual([a.dialog, a.approval, a.truncated, a.numbers], [true, true, false, [1]]);
+  assert.equal(mustUseTerminal(a), true);
+  assert.equal(openDialog([RULE, ' Trust this folder?', ' ❯ 1. Yes, proceed', '', ' Enter to confirm · Esc to cancel']).approval, true);
+  // openOnScreen: the menu first, the dialog otherwise; one key for the card and for the check before typing
+  const menu = openOnScreen(PERMISSION);
+  assert.equal(menu.dialog, undefined);
+  assert.equal(screenKey(menu), menuKey(parseMenu(PERMISSION)));
+  const d = openOnScreen(['answer', RULE, ' Select model', '   Sonnet', ' ❯ Opus', '', HINT]);
+  assert.equal(screenKey(d), dialogKey(whole));
+  assert.ok(screenKey(d) && screenKey(d) !== screenKey(menu));
+  assert.equal(screenKey(openOnScreen(['answer', RULE, ' Select model', ' ❯ Sonnet', '   Opus', '', HINT])) === screenKey(d), false, 'a moved cursor is another screen');
+  assert.equal(screenKey(null), '');
+  assert.equal(openOnScreen(['answer', RULE, '> Press Enter to continue', RULE, '  ? for shortcuts']), null);
+});

@@ -4783,7 +4783,7 @@ ipcMain.handle('chat:read', (_e, id, cursor) => {
 // A chat-view menu button (an approval, a question): its keys go straight to the tab, a step every 250 ms so Claude
 // Code's menu takes each one; not through pty:write (they are no draft and mint no HQ request).
 // Main keeps no screen of a pty (its output goes to the renderer's terminal), so the renderer checks the menu on its
-// live screen right before the call and names it (`expect`, its menuKey); main refuses a call that names no menu
+// live screen right before the call and names it (`expect`: its screenKey, a menu's or a dialog's); main refuses a call that names no menu
 // ('stale') and one made while an earlier answer is still being typed into the tab ('busy').
 const MENU_STEP_MS = 250;
 const menuTyping = new Map();   // pty id → when its last answer's keys are all typed
