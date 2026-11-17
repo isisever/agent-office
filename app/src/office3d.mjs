@@ -291,16 +291,18 @@ export function project(mvp, [x, y, z], w, h) {
 }
 
 const FOV = (32 * Math.PI) / 180
-/** The camera's pitch for a canvas shape: a wide, short office view looks down more steeply to fill its height. */
-export const pitchFor = (w, h) => ((Math.min(66, Math.max(50, 50 + (w / h - 1.4) * 22))) * Math.PI) / 180
+/**
+ * The camera's pitch (its angle above the floor), the same for every canvas shape: a gentle, near-isometric look.
+ * A canvas of another shape only moves the camera nearer or farther.
+ */
+export const PITCH = (38 * Math.PI) / 180
 /**
  * The camera for a canvas of w × h pixels: above the front of the office looking down at PITCH, as far away as needed
  * for the whole office (walls included) to fit with a small margin. → { eye, target, fov, mvp }
  */
 export function cameraFor(LW, LH, w, h) {
   const target = [LW / 2, 0, LH * 0.5]
-  const pitch = pitchFor(w, h)
-  const dir = [0, Math.sin(pitch), Math.cos(pitch)]
+  const dir = [0, Math.sin(PITCH), Math.cos(PITCH)]
   /** @type {[number, number, number][]} */
   const corners = []
   for (const x of [-2, LW + 2]) for (const z of [-2, LH + 2]) for (const y of [0, WALL_H + 2]) corners.push([x, y, z])
