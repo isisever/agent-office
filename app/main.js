@@ -56,6 +56,7 @@ const LC = require('./src/link-core.js');
 const OM = require('./src/office-mcp.js');
 const HQ = require('./src/hq.js');
 const CH = require('./src/hq-chain.js');
+const DR = require('./src/desk-rules.js');
 const ROUT = require('./src/routines.js');
 const KA = require('./src/keep-awake.js');
 const PTY = require('./src/pty-attach.js');
@@ -3978,6 +3979,23 @@ function writeDeskRole(id, project, staffId) {
   } catch (e) { console.error('desk role:', e.message); return null; }
 }
 /**
+ * v3.92 a desk's worktree gets the project's untracked `.claude/settings.local.json` (src/desk-rules.js): only that
+ * file, never over one git tracks there, and kept out of the desk's commits (already ignored, or one line in the
+ * repository's shared info/exclude). Not for a member with a mail account (the mail guard decides) or a personal workspace.
+ */
+async function syncDeskRules(p, tab, m) {
+  try {
+    if (!DR.wanted({ project: p, tab, hasMail: mailIdsOf(m).length > 0 }) || !DR.needsCopy(p.dir, tab.dir)) return;
+    const tracked = await git(['-C', tab.dir, 'ls-files', '--', DR.REL]);
+    if (!tracked.ok || tracked.stdout.trim()) return;   // tracked there (git brought it), or git could not say
+    if (!(await git(['-C', tab.dir, 'check-ignore', '-q', '--', DR.REL])).ok) {
+      const common = await git(['-C', tab.dir, 'rev-parse', '--git-common-dir']);
+      if (!common.ok || !common.stdout.trim() || !DR.ensureExcluded(path.resolve(tab.dir, common.stdout.trim()))) return;   // never a file the desk could commit
+    }
+    DR.copy(p.dir, tab.dir);
+  } catch (e) { console.error('desk rules:', e.message); }
+}
+/**
  * Opens (and starts) a member's desk in a project: the existing one, or a new tab (a worktree of its own when the
  * project allows parallel work). → { ok, id } | { ok: false, error: 'unknown' | 'staff-not-allowed' | 'engine' | 'git' }
  */
@@ -3991,7 +4009,10 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
   if (have) {
     const id = P.tabPtyId(p.id, have.n);
     trustPersonalDesk(id);
-    if (start && !terms.has(id)) { if (asleep.has(id)) wake(id); else startPty(id, { resume: true }); }
+    if (start && !terms.has(id)) {
+      await syncDeskRules(p, have, m);   // v3.92 the project's local rules, when they are newer than the desk's copy
+      if (!terms.has(id)) { if (asleep.has(id)) wake(id); else startPty(id, { resume: true }); }
+    }
     return { ok: true, id };
   }
   const tab = { n: P.nextTabNumber(p), staffId: m.id };
@@ -4008,6 +4029,7 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
     let real = p.dir;
     try { real = fs.realpathSync(p.dir); } catch {}
     Object.assign(tab, { dir: P.worktreeDir(repo, wt.root, real), worktree: { root: wt.root, repo, branch: wt.branch } });
+    await syncDeskRules(p, tab, m);   // v3.92 the desk asks for what the project tab asks for, not for everything
   }
   if (!P.findProject(state, p.id)) return { ok: false, error: 'unknown' };   // removed while git ran
   commit(P.addTab(state, p.id, tab));

@@ -1725,3 +1725,16 @@ The person could always type in a member's desk (no task, no board row), but not
 - **3D info panel**: not changed; it shows bots (sessions), not members, and has no actions row.
 - **Briefs**: `hq.ts` gains one line (short remark, question or change to running work: the person talks to the member in its desk, HQ names the desk; dispatch only new work). `memberText` adds one sentence: the person may talk to the member directly at any time without a task and the member answers.
 - **Not changed**: dispatch, consent, caps, `office_task`, mail, chat rendering, settings, IPC.
+
+## Desk rules in a worktree, and Continue on a blocked stage (v3.92)
+
+### A desk's worktree gets the project's local permission rules
+
+In a parallel project a staff desk works in a git worktree under the app's userData (v3.83). The project's untracked `.claude/settings.local.json` (the person's own allow/deny rules for that project) is not in that worktree, so the desk asked for everything the project tab does not.
+
+- **What is copied**: only `<project folder>/.claude/settings.local.json`, into `<desk folder>/.claude/` (the folder is made). Never `.claude/settings.json` (tracked: git brings it) and nothing else. Logic in `src/desk-rules.js`, tested in `test/desk-rules.test.cjs`.
+- **When**: when the desk's worktree is made, and on each later start of the desk through `openDesk` (the member's Desk button, a task HQ sends to the desk) when the source is newer than the copy. A desk's own newer copy is left alone until the project's file changes again. A start that does not pass `openDesk` (a session restored at app start, a wake) copies nothing.
+- **Skipped silently** when the source is missing, not a regular file, a symlink (never followed) or over 256 KB; when the desk's `.claude` or the file there is a symlink or not a regular file (never written through); when git tracks the file in the worktree (`git ls-files`), or git cannot say.
+- **Never committed by the desk**: if git does not already ignore the file in the worktree (`git check-ignore`; the project's `.gitignore` or the person's global ignore file), one line `.claude/settings.local.json` is added once to the repository's shared `info/exclude` (the common git dir: a worktree has no exclude file of its own, so the line also holds for the project's own folder, where the file is the person's local file anyway). If that line cannot be written the file is not copied.
+- **Not for** a desk whose member has a mail account (the mail guard, v3.85, decides what that desk may do), a personal workspace (`staffOwner`), a desk in the project's own folder (it already reads the file) or HQ.
+- No change to consent, to the mail guard or to what a rule allows: the desk gets exactly the rules the person wrote for that project.
