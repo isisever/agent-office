@@ -735,3 +735,28 @@ test('v3.87 review fixes: office_task decisions (held cards, no link, the cap af
   assert.doesNotMatch(body, /applyReport/, 'done is never a full report');
   assert.match(body, /const r = await approveHeld\(id, false\); if \(r && r\.ok === false\) return \{ ok: false/);
 });
+
+test('v3.89 amendment: a report the person\'s own prompt may have shaped is marked on the row, for HQ and over the link', () => {
+  const C = require('../src/link-core.js');
+  const now = 1700000000000;
+  let b = HQ.addTask(HQ.emptyBoard(), { id: 'p1', request: 'r1', title: 'P', status: 'running' }, now);
+  b = HQ.applyReport(b, 'p1', { summary: 'the meeting is at three', personPrompted: true }, now + 5);
+  const row = b.tasks[0];
+  assert.deepEqual([row.status, row.personPrompted], ['reported', true], 'a task with no later stage is simply reported, with the note');
+  const view = HQ.boardView(b)[0];
+  assert.deepEqual([view.personPrompted, view.note], [true, HQ.PERSON_PROMPTED_NOTE]);
+  assert.match(HQ.reportMd(row, { summary: 'the meeting is at three' }), /\nNote: The person typed in that session while the task ran/);
+  const plain = HQ.applyReport(HQ.addTask(HQ.emptyBoard(), { id: 'p2', request: 'r1', title: 'P', status: 'running' }, now), 'p2', { summary: 'done' });
+  assert.equal(plain.tasks[0].personPrompted, undefined);
+  assert.deepEqual([HQ.boardView(plain)[0].personPrompted, HQ.boardView(plain)[0].note], [undefined, undefined]);
+  assert.doesNotMatch(HQ.reportMd(plain.tasks[0], { summary: 'done' }), /Note:/);
+  // the link keeps the mark only when it is exactly true (both report generations); unknown or absent is false
+  for (const v2 of [false, true]) {
+    assert.equal(C.cleanReport({ summary: 's', commits: [], personPrompted: true }, v2).personPrompted, true);
+    for (const mark of [undefined, false, 'true', 1]) assert.equal('personPrompted' in C.cleanReport({ summary: 's', commits: [], personPrompted: mark }, v2), false);
+  }
+  assert.equal(C.fitReport({ summary: 's', commits: [], personPrompted: true }, true).personPrompted, true);
+  // main.js: the report-ready row carries the mark, never report text
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /kind: 'report-ready', id, machine: officeName\(rec\.machine\), project: officeName\(rec\.project\), \.\.\.\(report\.personPrompted === true \? \{ personPrompted: true \} : \{\}\) \}/);
+});

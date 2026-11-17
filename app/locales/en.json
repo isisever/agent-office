@@ -1196,6 +1196,7 @@
     "empty": "No tasks yet. Type a request into HQ.",
     "here": "this machine",
     "noReport": "No report yet.",
+    "personPrompted": "you typed in that session while it ran: the report may answer you, not the task",
     "remote": "remote",
     "remoteTip": "Click to send a command to this boss",
     "remoteTitle": "A project on another of your machines",

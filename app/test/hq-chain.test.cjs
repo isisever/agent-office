@@ -301,3 +301,24 @@ test('v3.83 review fix: a removed member gets no workspace after the dialog; a l
   assert.equal(CH.stageProject({ personalStaff: 's-a1b2c3', projectId: 'own1' }, [{ id: 'own1', name: 'A - personal' }]), 'own1');
   assert.equal(CH.stageProject({ personalStaff: 's-a1b2c3', project: '' }, [{ id: 'own1', name: 'A - personal' }]), '', 'never by name');
 });
+
+test('v3.89 amendment: a report written after the person typed in that session never releases the stages after it', () => {
+  const HQB = require('../src/hq.js');
+  let b = board(task('a', { status: 'running' }), task('b', { status: 'waiting', after: 'a' }), task('c', { status: 'waiting', after: 'b' }));
+  b = HQB.applyReport(b, 'a', { summary: 'the meeting is at three', personPrompted: true });
+  assert.deepEqual([b.tasks[0].status, b.tasks[0].personPrompted], ['reported', true]);
+  assert.equal(CH.stageState(b.tasks[0]), 'block');
+  assert.deepEqual(CH.settle(b, 2000), { release: [], block: [{ id: 'b', status: 'blocked', reason: 'after-person-prompted' }] });
+  assert.equal(CH.afterRefused(b, 'r1', 'a'), 'after-ended', 'no new stage waits on it either');
+  b = HQB.setStatus(b, 'b', 'blocked', 'after-person-prompted');
+  assert.deepEqual(CH.settle(b, 2000), { release: [], block: [{ id: 'c', status: 'blocked', reason: 'after-blocked' }] });
+  // a partial report keeps its own reason, marked or not
+  const part = HQB.applyReport(board(task('a', { status: 'running' }), task('b', { status: 'waiting', after: 'a' })), 'a', { summary: 'half', partial: true, personPrompted: true });
+  assert.deepEqual(CH.settle(part, 2000).block, [{ id: 'b', status: 'blocked', reason: 'after-partial' }]);
+  // absent or not exactly true: a full report, the stage is released
+  for (const mark of [undefined, false, 'true', 1]) {
+    const real = HQB.applyReport(board(task('a', { status: 'running' }), task('b', { status: 'waiting', after: 'a' })), 'a', { summary: 'done', personPrompted: mark });
+    assert.equal(real.tasks[0].personPrompted, undefined);
+    assert.deepEqual(CH.settle(real, 2000), { release: [{ id: 'b', after: 'a' }], block: [] });
+  }
+});

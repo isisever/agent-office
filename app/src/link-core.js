@@ -120,7 +120,7 @@ const markedTask = (id, fromName, text) => `[Agent Office: remote task #${id} fr
 
 const REPORT_MAX = 16 * 1024;   // a report's summary (characters)
 const REPORT_COMMITS = 12;
-/** A task report as it may cross the link: { ok, partial, summary ≤16 KB, commits ≤12 { hash, subject }, at }, or null. */
+/** A task report as it may cross the link: { ok, partial, summary ≤16 KB, commits ≤12 { hash, subject }, at, personPrompted? }, or null. */
 // v3.48 cap 'report2': a larger summary (cut with a marker), more commits, PR links (https), artifact basenames and the
 // session id of the transcript (never a path). Received reports are always cleaned with the larger limits.
 const REPORT2_MAX = 40 * 1024;
@@ -135,7 +135,7 @@ function cleanReport(r, v2 = false) {
   const commits = (Array.isArray(r.commits) ? r.commits : []).slice(0, v2 ? REPORT2_COMMITS : REPORT_COMMITS)
     .filter((c) => c && typeof c.hash === 'string' && /^[0-9a-f]{4,40}$/.test(c.hash))
     .map((c) => ({ hash: c.hash, subject: cleanLine(c.subject, 120) }));
-  const out = { ok: r.ok !== false, partial: r.partial === true, summary, commits, at: isInt(r.at) ? r.at : 0, ...(truncated ? { truncated: true } : {}) };
+  const out = { ok: r.ok !== false, partial: r.partial === true, summary, commits, at: isInt(r.at) ? r.at : 0, ...(truncated ? { truncated: true } : {}), ...(r.personPrompted === true ? { personPrompted: true } : {}) };   // v3.89 amendment: absent or anything else is false
   if (!v2) return out;
   const prs = (Array.isArray(r.prs) ? r.prs : []).filter((u) => typeof u === 'string' && u.length <= 300 && /^https:\/\/[^\s"'<>\\]+$/.test(u)).slice(0, 10);
   const artifacts = (Array.isArray(r.artifacts) ? r.artifacts : []).map((a) => cleanLine(a, 120)).filter((a) => a && !/[\\/]/.test(a) && a !== '..' && a !== '.').slice(0, 20);
