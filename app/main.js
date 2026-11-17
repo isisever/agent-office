@@ -1898,6 +1898,7 @@ async function officeProject(tab, args) {
   return linkHost.projOp(dv.id, p.id, op);
 }
 function officeTool(tab, tool, args) {
+  args = OM.modelArgs(tool, args);   // a model's call never carries the app's own `desk` / `staffName` (v3.83 fix)
   if (tool === 'office_machines') return officeMachines();
   if (tool === 'office_project') return officeProject(tab, args);
   if (tool === 'office_dispatch') return tab === HQ.HQ_ID ? hqDispatch(args) : officeDispatch(tab, args);
@@ -2142,13 +2143,15 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const board = capBoard();   // an approved held task does not count against itself
   const cap = HQ.capReason(board, request);
   if (cap) return { status: 'rejected', reason: cap };
-  // v3.83 amendment: a task for a staff member outside any project goes to the member's personal workspace
+  // v3.83 amendment: a task for a staff member outside any project goes to the member's personal workspace. One
+  // that does not exist yet is made only after the person's consent (below): `personal` is the member it is for.
+  let personal = null;
   if (args.staff && !String(args.project || '').trim() && !String(args.machine || '').trim() && !args.after && !(Array.isArray(args.then) && args.then.length)) {
     const m = teamOn() ? ST.findMember(state.staff, args.staff) : null;
     if (!m) return { status: 'rejected', reason: teamOn() ? 'unknown-staff' : 'no-team' };
-    const own = ensurePersonal(m);
-    if (!own) return { status: 'rejected', reason: 'desk-failed' };
-    args = { ...args, project: own.id };
+    const have = ST.personalOf(state.projects, m.id);
+    if (have) args = { ...args, project: have.id };
+    else personal = m;
   }
   const key = HQ.parseRemoteKey(args.project);
   const machine = String(args.machine || '').trim();
@@ -2157,21 +2160,35 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   // v3.79 staged: a call with `after` or `then` takes its own path (one consent for its local stages, waiting rows)
   if (!approved && ((typeof args.after === 'string' && args.after) || (Array.isArray(args.then) && args.then.length))) return hqDispatchStages(args, request, rrun);
   const target = key ? null : byName(state.projects, args.project);
-  // v3.83 team: a task for a staff member goes to the member's desk in that project (the desk is opened, not started yet)
+  // v3.83 team: a task for a staff member goes to the member's desk in that project. Before consent only the checks
+  // run (nothing is created): the member is known and may work there; the dialog names the member and the target.
   if (args.staff) {
-    const d = await hqStaffDesk(args, remote, target);
-    if (d.reason) return { status: 'rejected', reason: d.reason };
-    args = { ...args, desk: d.desk, staffName: d.staffName };
+    const c = personal ? { staffName: personal.name } : await hqStaffDesk(args, remote, target, { open: false });
+    if (c.reason) return { status: 'rejected', reason: c.reason };
+    args = { ...args, staffName: c.staffName };
   }
   const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '' });   // a project routine: only its own project
   const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
   if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
   if (consent === 'app') {
-    if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
+    if (!(await confirmHqDispatch(personal ? { ...args, project: personalFolderName(personal) } : args, remote))) return { status: 'rejected', reason: 'declined' };
     // two dispatches can wait on dialogs at once: re-check the caps on the fresh board after the answer
     const late = HQ.capReason(loadHqBoard(), request);   // never an approved held task: approved skips the dialog
     if (late) return { status: 'rejected', reason: late };
+  }
+  // v3.83 fix: only now, with consent given (or not needed), is anything made: the member's personal workspace (its
+  // folder and project), the desk tab and, in a parallel project, the desk's worktree. Declined: nothing was created.
+  if (args.staff) {
+    if (personal) {
+      const m = personal;
+      const own = ensurePersonal(m);
+      if (!own) return { status: 'rejected', reason: 'desk-failed' };
+      args = { ...args, project: own.id };
+    }
+    const d = await hqStaffDesk(args, remote, byName(state.projects, args.project));   // checked again: the dialog was open meanwhile
+    if (d.reason) return { status: 'rejected', reason: d.reason };
+    args = { ...args, desk: d.desk, staffName: d.staffName };
   }
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   const row = (r, extra) => {
@@ -2313,7 +2330,7 @@ function hqWaitRow(s, request, after) {
   if (f) try {
     fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
     SF.writeAtomic(f, `# ${LC.cleanLine(s.title || '', 80)}\n\nProject: ${s.projectName} (${s.machineName})\nAfter: #${after}\n\n${s.task}\n`);
-    SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify({ machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(s.staff ? { staff: s.staff } : {}) }));
+    SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify({ machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}) }));
   } catch (e) { console.error('hq stage:', e.message); }
   return id;
 }
@@ -2324,11 +2341,15 @@ async function hqReleaseStage({ id, after }) {
   if (!t || t.status !== CH.WAITING) return;
   const st = readJson(HQ.taskFile(hqDir(), id, 'stage.json'));
   if (!st || typeof st.task !== 'string' || !st.task) { hqStatus(id, 'rejected', 'stage-lost'); return; }
+  // v3.79 fix: a local stage goes to the project it was approved for, by id (CH.stageProject); a project that is gone
+  // is not looked up by name again: the stage is refused
+  const project = st.remote ? st.project : CH.stageProject(st, state.projects);
+  if (!project) { hqStatus(id, 'rejected', 'unknown-project'); return; }
   const report = readJson(HQ.taskFile(hqDir(), after, 'report.json')) || {};
   const text = HQ.redact(CH.stageText(st.task, { id: after, report, file: HQ.taskFile(hqDir(), after, 'report.md') }, OM.TASK_MAX));
   saveHqBoard(HQ.setStatus(b, id, 'queued', 'released'));   // never released twice
   // approved: consent was given at creation; excludeId: the row does not count against itself (as an approved held card)
-  /** @type {any} */ const r = await hqDispatch({ machine: st.machine, project: st.project, title: st.title, request: t.request, task: text, ...(st.staff ? { staff: st.staff } : {}) }, { approved: true, excludeId: id, waitingId: id });
+  /** @type {any} */ const r = await hqDispatch({ machine: st.machine, project, title: st.title, request: t.request, task: text, ...(st.staff ? { staff: st.staff } : {}) }, { approved: true, excludeId: id, waitingId: id });
   const cur = loadHqBoard().tasks.find((x) => x.id === id);
   if (r?.status === 'rejected' && cur && !HQ.TERMINAL.has(cur.status)) hqStatus(id, 'rejected', r.reason || 'failed');
 }
@@ -2515,12 +2536,13 @@ function holdDispatch(args, request, rrun) {
   const known = pub ? linkHost?.link()?.remotes.get(pub)?.snap?.projects || peerCache()[pub]?.projects || [] : [];
   const rp = pub ? (key ? known.find((x) => x.id === key.id) : byName(known, args.project)) : null;
   const p = pub ? null : byName(state.projects, args.project);
-  const project = p ? p.name : rp ? officeName(rp.name) : LC.cleanLine(String(args.project || ''), 64);
+  // a member's personal workspace that is not made yet (v3.83 fix: only after approval): the card names the member
+  const project = p ? p.name : rp ? officeName(rp.name) : LC.cleanLine(String(args.project || args.staffName || ''), 64);
   const machineName = pub ? officeName(dv?.name || peerCache()[pub]?.name || '') : selfName();
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   saveHqBoard(HQ.addTask(loadHqBoard(), { id: heldId, request, title: args.title, task, status: 'awaiting-consent', reason: 'awaiting-consent', prompt: rrun?.name || '',
     ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), pub: pub || 'self', machineName, project, ...(p ? { projectId: p.id } : rp ? { projectId: rp.id } : {}) }));
-  rt().held[heldId] = { at: Date.now(), run: rrun?.id || '', args: { project: String(args.project || ''), machine: String(args.machine || ''), title: String(args.title || ''), task, request } };
+  rt().held[heldId] = { at: Date.now(), run: rrun?.id || '', args: { project: String(args.project || ''), machine: String(args.machine || ''), title: String(args.title || ''), task, request, ...(args.staff ? { staff: String(args.staff) } : {}) } };   // staff kept: the approved task goes to the member's desk
   if (rrun) { rrun.held = [...(rrun.held || []), heldId]; if (rrun.kind !== 'hq') rrun.status = 'awaiting-consent'; }
   saveRt();
   notify(pub ? T('main.routineNeedsApprovalRemote', { name: rrun?.name || '', project, machine: machineName }) : T('main.routineNeedsApproval', { name: rrun?.name || '', project }), LC.cleanLine(task, 160), null);
@@ -3488,6 +3510,7 @@ ipcMain.handle('staff:save', (_e, form) => {
   return { ok: true, member: r.member };
 });
 ipcMain.handle('staff:remove', (_e, id) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
   if (!(state.staff || []).some((m) => m.id === id)) return { ok: false, error: 'unknown' };
   commit({ ...state, staff: ST.removeMember(state.staff, String(id)) });
   return { ok: true };
@@ -3623,7 +3646,8 @@ async function m365Token(a) {
   const refreshToken = mailSecrets().load(a.id);
   if (!refreshToken) throw new Error('no-secret');
   const t = await GRAPH.refresh(fetch, { clientId: a.clientId, tenant: a.tenant, refreshToken });
-  if (t.refreshToken !== refreshToken) mailSecrets().save(a.id, t.refreshToken);
+  // never in clear (as mail:save): without the keychain the rotated token is not written and the stored one is kept
+  if (t.refreshToken !== refreshToken && safeStorage.isEncryptionAvailable()) mailSecrets().save(a.id, t.refreshToken);
   mailToken.set(a.id, { accessToken: t.accessToken, expiresAt: t.expiresAt });
   return t.accessToken;
 }
@@ -3804,7 +3828,7 @@ ipcMain.handle('mail:m365Start', async (_e, f) => {
       send('mail:m365', { ok: true, address });
     } catch (e) { if (!flow.cancelled) send('mail:m365', { ok: false, error: ['expired', 'declined'].includes(e?.message) ? e.message : 'token' }); } finally { if (m365Flow === flow) m365Flow = null; }
   })();
-  if (/^https:\/\/[\w.-]*microsoft(online)?\.com\//i.test(code.verificationUri)) eShell.openExternal(code.verificationUri).catch(() => {});
+  if (GRAPH.isMicrosoftUrl(code.verificationUri)) eShell.openExternal(code.verificationUri).catch(() => {});
   return { ok: true, userCode: code.userCode, verificationUri: code.verificationUri };
 });
 ipcMain.handle('mail:m365Cancel', () => { if (m365Flow) m365Flow.cancelled = true; m365Flow = null; return { ok: true }; });
@@ -3916,12 +3940,15 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
 }
 /** v3.83 amendment: a member's personal workspace (tasks outside any project): a project of its own, made on first use
  *  in Documents/Agent Office/<name> - personal, on the member's account; only that member works there (`staffOwner`). */
+function personalFolderName(m) {
+  // eslint-disable-next-line no-control-regex
+  const safe = String(m.name).replace(/[/\\:*?"<>|\u0000-\u001f]/g, '-').replace(/^\.+/, '').trim().slice(0, 60) || m.id;
+  return T('main.personalFolder', { name: safe });
+}
 function ensurePersonal(m) {
   const have = ST.personalOf(state.projects, m.id);
   if (have) return have;
-  // eslint-disable-next-line no-control-regex
-  const safe = String(m.name).replace(/[/\\:*?"<>|\u0000-\u001f]/g, '-').replace(/^\.+/, '').trim().slice(0, 60) || m.id;
-  const dir = path.join(app.getPath('documents'), 'Agent Office', T('main.personalFolder', { name: safe }));
+  const dir = path.join(app.getPath('documents'), 'Agent Office', personalFolderName(m));
   try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error('personal workspace:', e.message); return null; }
   const active = state.activeId;
   const r = P.addProject(state, dir, m.accountId ? { accountId: m.accountId } : {});
@@ -3943,13 +3970,16 @@ function deskStateOf(projectId, staffId) {
   return terms.has(id) ? (tabWorkRunning(id) ? 'busy' : 'idle') : asleep.has(id) ? 'asleep' : 'off';
 }
 /** v3.83 HQ's office_dispatch with `staff`: the member's desk in the target project → { desk, staffName } | { reason }. */
-async function hqStaffDesk(args, remote, target) {
+// open: false → the checks only ({ staffName }): nothing is created before the person's consent.
+async function hqStaffDesk(args, remote, target, { open = true } = {}) {
   if (remote) return { reason: 'staff-local-only' };   // paired devices know no staff (the link protocol is unchanged)
   if (!teamOn()) return { reason: 'no-team' };
   const m = ST.findMember(state.staff, args.staff);
   if (!m) return { reason: 'unknown-staff' };
   if (!target) return { reason: 'unknown-project' };
   if (!ST.mayWork(m, target)) return { reason: 'staff-not-allowed' };
+  if (P.engineOf(target) !== 'claude') return { reason: 'engine' };
+  if (!open) return { staffName: m.name };
   const d = await openDesk(target.id, m.id, { start: false });
   return d.ok ? { desk: d.id, staffName: m.name } : { reason: d.error === 'engine' ? 'engine' : d.error === 'git' ? 'desk-failed' : 'unknown-project' };
 }
