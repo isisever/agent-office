@@ -22,6 +22,22 @@ export function teamRows(c) {
   ]);
 }
 
+/** v3.90: the desk most recently opened from a card, per member (renderer memory only). */
+const lastDesk = new Map();
+
+/**
+ * v3.90 "Talk": which desk a click opens. The most recently used open desk of the member, else any open desk, else the
+ * only assigned project, else the personal workspace (projectId '').
+ * @returns {string} a project id, or '' for the personal workspace
+ */
+export function talkTarget(m, desks, allowedIds, ownId) {
+  const mine = (desks || []).filter((d) => d.staffId === m.id && d.state !== 'off');
+  const last = lastDesk.get(m.id);
+  const pick = mine.find((d) => d.projectId === last) || mine.find((d) => d.state === 'busy') || mine[0];
+  if (pick) return pick.projectId === ownId ? '' : pick.projectId;
+  return allowedIds.length === 1 ? allowedIds[0] : '';
+}
+
 function card(c, m) {
   const { h, t } = c;
   const role = roleOf(m, c.presets, c.lang);
@@ -38,15 +54,25 @@ function card(c, m) {
     const d = deskOf(p.id);
     return h('button', {
       class: `sb-desk ${d ? d.state : 'none'}`, title: t(`staff.desk.${d ? d.state : 'none'}`, { project: p.name }),
-      onclick: (e) => { e.stopPropagation(); c.onDesk?.(p.id, m.id); },
+      onclick: (e) => { e.stopPropagation(); lastDesk.set(m.id, p.id); c.onDesk?.(p.id, m.id); },
     }, `${d ? mark[d.state] : '+'} ${p.name}`);
   });
   if (c.onPersonal) {
     const d = own ? deskOf(own.id) : null;
     chips.unshift(h('button', {
       class: `sb-desk sb-desk-own ${d ? d.state : 'none'}`, title: t('staff.personalTitle'),
-      onclick: (e) => { e.stopPropagation(); c.onPersonal?.(m.id); },
+      onclick: (e) => { e.stopPropagation(); if (own) lastDesk.set(m.id, own.id); c.onPersonal?.(m.id); },
     }, `${d ? mark[d.state] : '+'} ${t('staff.personal')}`));
+  }
+  if (c.onPersonal && c.onDesk) {
+    chips.unshift(h('button', {
+      class: 'sb-desk sb-desk-talk', title: t('staff.talkTitle', { name: m.name }),
+      onclick: (e) => {
+        e.stopPropagation();
+        const pid = talkTarget(m, c.desks, allowed.map((p) => p.id), own?.id);
+        if (pid) { lastDesk.set(m.id, pid); c.onDesk(pid, m.id); } else { if (own) lastDesk.set(m.id, own.id); c.onPersonal(m.id); }
+      },
+    }, t('staff.talk')));
   }
   const atWork = (c.desks || []).filter((d) => d.staffId === m.id && d.state === 'busy')
     .map((d) => c.projects.find((p) => p.id === d.projectId)?.name).filter(Boolean);

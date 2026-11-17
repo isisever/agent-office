@@ -481,6 +481,7 @@ async function openDesk(projectId, staffId) {
   const [pid, n] = String(r.id).split(':');
   selectProject(pid);
   if (n) selectTab(pid, Number(n));
+  setTimeout(focusActive, 50);   // v3.90: the desk's input is ready to type in
 }
 async function addProject() {
   try {

@@ -1710,3 +1710,14 @@ Amends v3.35 ("The running side"). Until now any prompt without a task marker cl
 - **App side**: no change. While the tab works the task watch (v3.83 amendment) shows `running`; its fallback report is written only for a task with no report whose tab is idle 3 min or gone 1 min. The first report for an id still wins.
 - **HQ's brief** (`plugin/hooks/hq.ts`) gains one line: a running task cannot be changed from HQ; either the person types in that session's tab (the task stays followed and reports when that session finishes) or HQ sends a follow-up task to the same project or member, which is typed when the current turn ends. No new tool and no new `office_task` op.
 - **Not changed**: a follow-up dispatch is a new task with its own id, consent and queue rule; if it is typed while the first task is still open (waiting on its workers), the first is closed as partial as before.
+
+
+## Talk to a member directly (v3.90)
+
+The person could always type in a member's desk (no task, no board row), but nothing said so, so everything went through HQ and became a board task.
+
+- **Card** (`renderer/staff.js`): a "Talk" button first among the member card's desk chips (team mode). One click opens a desk and focuses its input; nothing is typed. Desk choice (`talkTarget`): the desk last opened from a card (renderer memory), else a busy open desk, else any open desk, else the only assigned project, else the personal workspace (the "Personal" chip's path). Same IPC (`staff:desk` / `staff:personal`); `openDesk` in `app.js` now also focuses the active input, so the chips do too.
+- **Tooltip**: `staff.talk` / `staff.talkTitle` (en, tr): talks to the member directly, opens no task on the board.
+- **3D info panel**: not changed; it shows bots (sessions), not members, and has no actions row.
+- **Briefs**: `hq.ts` gains one line (short remark, question or change to running work: the person talks to the member in its desk, HQ names the desk; dispatch only new work). `memberText` adds one sentence: the person may talk to the member directly at any time without a task and the member answers.
+- **Not changed**: dispatch, consent, caps, `office_task`, mail, chat rendering, settings, IPC.

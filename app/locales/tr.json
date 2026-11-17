@@ -671,6 +671,8 @@
     "mailHint": "Okuyup taslak hazırlayabileceği hesaplar. Mail göndermez: taslaklar MAİL panelinde onayınıza gelir. Mail okuyan masalarda her işlem (dosya, komut, internet, diğer araçlar) onayınızı bekler; \"İzinleri atla\" açık projelerde mail verilmez.",
     "mailNone": "Bağlı mail hesabı yok; MAİL panelinden ekleyin.",
     "personal": "Kişisel",
+    "talk": "Konuş",
+    "talkTitle": "{name} ile doğrudan konuş: personelin masasını ve giriş alanını açar. Panoda görev açmaz.",
     "personalTitle": "Personelin proje dışı işler için kendi çalışma alanı (ilk kullanımda Belgeler/Agent Office altında açılır)"
   },
   "chat": {
