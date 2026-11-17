@@ -984,8 +984,12 @@ window.addEventListener('keydown', (e) => {
   }
 }, true);
 
+// a click on the window's empty parts gives the keys back to the terminal (or chat); never one on something that takes
+// typing or clicks itself (a text box, a popup, the HQ board and its routine editor, a panel)
 document.addEventListener('mouseup', (e) => {
-  if (/** @type {Element} */ (e.target).closest('button, select, input, #sidebar, #login-overlay') || window.getSelection()?.toString()) return;
+  const el = /** @type {HTMLElement} */ (e.target);
+  if (el.isContentEditable || el.closest('button, select, input, textarea, label, a, [role="dialog"], .sb-modal-backdrop, #sidebar, #login-overlay, #hq-board')
+    || window.getSelection()?.toString()) return;
   focusActive();
 });
 
