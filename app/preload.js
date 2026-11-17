@@ -205,6 +205,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     report: (id) => ipcRenderer.invoke('hq:report', id),
     remoteOp: (key, op) => ipcRenderer.invoke('hq:remoteOp', key, op),
     cancel: (id) => ipcRenderer.invoke('hq:cancel', id),
+    resume: (id) => ipcRenderer.invoke('hq:resume', id),   // v3.92 Continue on a blocked stage
     onBoard: listen('hq:board'),
   },
   // v3.47 Routines: definitions only from this UI (no MCP tool, no peer); held approvals answered here

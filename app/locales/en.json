@@ -1228,7 +1228,10 @@
     },
     "stage": {
       "waiting": "waits for #{id} to report",
-      "cancelTip": "Cancel this stage; the stages after it are blocked"
+      "cancelTip": "Cancel this stage; the stages after it are blocked",
+      "blocked": "blocked: #{id} did not report in full",
+      "continue": "Continue",
+      "continueTip": "Send this stage now, with the report of the previous stage if there is one; the stages blocked behind it wait again"
     },
     "view": {
       "board": "Board",

@@ -1200,7 +1200,10 @@
     },
     "stage": {
       "waiting": "#{id} raporunu bekliyor",
-      "cancelTip": "Bu aşamayı iptal et; sonraki aşamalar da engellenir"
+      "cancelTip": "Bu aşamayı iptal et; sonraki aşamalar da engellenir",
+      "blocked": "engellendi: #{id} tam rapor vermedi",
+      "continue": "Devam et",
+      "continueTip": "Bu aşamayı şimdi gönder (varsa önceki aşamanın raporuyla); arkasında engellenen aşamalar yeniden bekler"
     },
     "view": {
       "board": "Pano",

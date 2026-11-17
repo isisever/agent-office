@@ -263,6 +263,12 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   }
   /** v3.79 a waiting stage: which task it waits for, and Cancel (the stages after it are blocked with it). */
   function stageLine(x) {
+    // v3.92 a stage blocked by how the one before it ended: Continue sends it now (the person's click is the consent);
+    // one blocked only behind another blocked stage follows that one
+    if (x.status === 'blocked' && x.after && /^after-/.test(x.reason || '') && x.reason !== 'after-blocked' && api.hq.resume) {
+      return el('div', { class: 'hq-task-wait' }, el('span', {}, t('hq.stage.blocked', { id: x.after })),
+        el('button', { class: 'hq-link', title: t('hq.stage.continueTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.resume(x.id); if (v) { view = v; render(); } } }, t('hq.stage.continue')));
+    }
     if (x.status !== 'waiting') return null;
     return el('div', { class: 'hq-task-wait' }, el('span', {}, t('hq.stage.waiting', { id: x.after || '' })),
       el('button', { class: 'hq-link', title: t('hq.stage.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));

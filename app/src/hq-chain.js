@@ -78,6 +78,44 @@ function settle(board, now = Date.now(), waitMs = WAIT_MS) {
   return { release, block };
 }
 
+/**
+ * v3.92: can the person continue this blocked stage from the Board? Only a stage that waited and was blocked by how
+ * the stage before it ended (reason `after-…`). One blocked only because the stage before it is itself blocked
+ * is not: that one is continued first, and this one waits again with it (resume).
+ */
+function resumable(board, t) {
+  if (!t || t.status !== BLOCKED || typeof t.after !== 'string' || !t.after || !/^after-/.test(t.reason || '')) return false;
+  const pre = board.tasks.find((x) => x.id === t.after);
+  return stageState(pre) === 'block' && pre?.status !== BLOCKED;
+}
+
+/**
+ * v3.92 the person's Continue on a blocked stage → { ok, board, after, again } | { ok: false, error }. The stage
+ * waits again (the caller releases it at once, as if the stage before it had reported), and so do the stages that
+ * were blocked only because of it (`after-blocked`, transitively): they go when it reports, as they would have. Each
+ * gets a fresh wait time; their request is open again. Refused past the open cap ('open-cap'): nothing changes.
+ */
+function resume(board, id, { now = Date.now(), maxOpen = 12 } = {}) {
+  const t = board.tasks.find((x) => x.id === id);
+  if (!resumable(board, t)) return { ok: false, error: 'not-resumable' };
+  const again = new Set([id]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const x of board.tasks) if (!again.has(x.id) && x.status === BLOCKED && x.reason === 'after-blocked' && again.has(x.after)) { again.add(x.id); grew = true; }
+  }
+  const open = board.tasks.filter((x) => !['reported', 'partial', 'failed', 'rejected', 'expired', 'lost', BLOCKED].includes(x.status)).length;
+  if (open + again.size > maxOpen) return { ok: false, error: 'open-cap' };
+  const tasks = board.tasks.map((x) => {
+    if (!again.has(x.id)) return x;
+    const n = { ...x, status: WAITING, at: now };
+    delete n.reason;
+    delete n.finishedAt;
+    return n;
+  });
+  const requests = (board.requests || []).map((r) => (r.id === t.request && r.done ? { ...r, done: false } : r));
+  return { ok: true, board: { ...board, tasks, requests }, after: t.after, again: [...again] };
+}
+
 /** Cuts a UTF-8 string to at most `max` bytes without splitting a character. */
 function cutBytes(s, max) {
   const b = Buffer.from(String(s), 'utf8');
@@ -139,4 +177,4 @@ function stageProject(st, projects) {
   return hits.length === 1 ? hits[0].id : '';
 }
 
-module.exports = { ADHOC, WAITING, BLOCKED, WAIT_MS, THEN_MAX, REPORT_MAX, stagesOf, hasCycle, afterRefused, stageState, settle, stageText, cutBytes, renameAfter, consentLines, capFor, stageProject };
+module.exports = { ADHOC, WAITING, BLOCKED, WAIT_MS, THEN_MAX, REPORT_MAX, stagesOf, hasCycle, afterRefused, stageState, settle, resumable, resume, stageText, cutBytes, renameAfter, consentLines, capFor, stageProject };

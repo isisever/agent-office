@@ -2402,8 +2402,9 @@ function hqWaitRow(s, request, after) {
   } catch (e) { console.error('hq stage:', e.message); }
   return id;
 }
-/** Releases a stage whose previous stage reported: its frozen text plus that report (marked data), sent the normal way. */
-async function hqReleaseStage({ id, after }) {
+/** Releases a stage whose previous stage reported: its frozen text plus that report (marked data), sent the normal way.
+ *  v3.92 `resumed`: the person continued a blocked stage; a previous stage that left no report adds nothing to its text. */
+async function hqReleaseStage({ id, after, resumed = false }) {
   const b = loadHqBoard();
   const t = b.tasks.find((x) => x.id === id);
   if (!t || t.status !== CH.WAITING) return;
@@ -2422,8 +2423,8 @@ async function hqReleaseStage({ id, after }) {
   // is not looked up by name again: the stage is refused
   const project = st.remote ? st.project : CH.stageProject(st, state.projects);
   if (!project) { hqStatus(id, 'rejected', 'unknown-project'); return; }
-  const report = readJson(HQ.taskFile(hqDir(), after, 'report.json')) || {};
-  const text = HQ.redact(CH.stageText(st.task, { id: after, report, file: HQ.taskFile(hqDir(), after, 'report.md') }, OM.TASK_MAX));
+  const report = readJson(HQ.taskFile(hqDir(), after, 'report.json'));
+  const text = HQ.redact(report || !resumed ? CH.stageText(st.task, { id: after, report: report || {}, file: HQ.taskFile(hqDir(), after, 'report.md') }, OM.TASK_MAX) : st.task);
   saveHqBoard(HQ.setStatus(b, id, 'queued', 'released'));   // never released twice
   // approved: consent was given at creation; excludeId: the row does not count against itself (as an approved held card)
   /** @type {any} */ const r = await hqDispatch({ machine: st.machine, project, title: st.title, request: t.request, task: text, ...(st.staff ? { staff: st.staff } : {}) }, { approved: true, excludeId: id, waitingId: id });
@@ -2517,6 +2518,17 @@ ipcMain.handle('hq:cancel', (_e, id) => {
   if (t && t.status === CH.WAITING) hqStatus(id, 'rejected', 'cancelled');   // v3.79 a waiting stage: the stages after it are blocked
   else if (t && t.status === 'queued' && t.machine === 'self') linkHost?.cancel(id);   // its reply sets the card (hqStatus)
   else if (t && t.status === 'queued') { linkHost?.cancelRemote(id); hqMirrorRemote(); }   // v3.48 held here, or queued there (cap task-status)
+  return hqView();
+});
+// v3.92 Continue on a blocked stage's card: the person's click releases it as if the stage before it had reported
+// (the click is the consent). Only this IPC does it: no HQ tool, no office_task op. A stage no longer blocked, a state
+// file that cannot be saved or a full board changes nothing; a gone project or member refuses the row (hqReleaseStage).
+ipcMain.handle('hq:resume', (_e, id) => {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || !stateWritable) return hqView();
+  const r = CH.resume(loadHqBoard(), id, { maxOpen: HQ.MAX_OPEN });
+  if (!r.ok) return hqView();
+  saveHqBoard(r.board);
+  hqReleaseStage({ id, after: r.after, resumed: true }).catch((e) => console.error('hq stage:', e.message));   // 'queued' before it returns: no sweep sees it waiting
   return hqView();
 });
 ipcMain.handle('hq:openFolder', () => eShell.openPath(hqDir()));

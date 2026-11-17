@@ -322,3 +322,60 @@ test('v3.89 amendment: a report written after the person typed in that session n
     assert.deepEqual(CH.settle(real, 2000), { release: [{ id: 'b', after: 'a' }], block: [] });
   }
 });
+
+test('resumable: only a stage blocked by how the one before it ended; never one behind another blocked stage', () => {
+  const b = board(
+    task('a', { status: 'partial' }), task('s2', { status: 'blocked', reason: 'after-partial', after: 'a' }),
+    task('s3', { status: 'blocked', reason: 'after-blocked', after: 's2' }),
+    task('h', { status: 'reported', closedByHq: true }), task('h2', { status: 'blocked', reason: 'after-closed-by-hq', after: 'h' }),
+    task('pp', { status: 'reported', personPrompted: true }), task('pp2', { status: 'blocked', reason: 'after-person-prompted', after: 'pp' }),
+    task('gone2', { status: 'blocked', reason: 'after-lost', after: 'gone' }),
+    task('f', { status: 'failed' }), task('f2', { status: 'blocked', reason: 'after-failed', after: 'f' }),
+    task('w', { status: 'waiting', after: 'a' }), task('x', { status: 'expired', reason: 'after-timeout', after: 'a' }),
+    task('c', { status: 'rejected', reason: 'cancelled', after: 'a' }), task('n', { status: 'blocked', reason: 'after-partial' }),
+    task('odd', { status: 'blocked', reason: 'other', after: 'a' }),
+    task('ok', { status: 'reported' }), task('ok2', { status: 'blocked', reason: 'after-partial', after: 'ok' }),
+  );
+  const can = (id) => CH.resumable(b, b.tasks.find((t) => t.id === id));
+  for (const id of ['s2', 'h2', 'pp2', 'gone2', 'f2']) assert.equal(can(id), true, id);
+  for (const id of ['s3', 'a', 'w', 'x', 'c', 'n', 'odd', 'ok2', 'nope']) assert.equal(can(id), false, id);
+});
+
+test('resume: the stage and the ones blocked only behind it wait again; the request is open again', () => {
+  const b = {
+    tasks: [
+      task('a', { status: 'partial', finishedAt: 5 }),
+      task('s2', { status: 'blocked', reason: 'after-partial', after: 'a', finishedAt: 6 }),
+      task('s3', { status: 'blocked', reason: 'after-blocked', after: 's2', finishedAt: 7 }),
+      task('s4', { status: 'blocked', reason: 'after-blocked', after: 's3', finishedAt: 8 }),
+      task('z', { status: 'blocked', reason: 'after-blocked', after: 'other', finishedAt: 9 }),
+      task('q', { request: 'r2', status: 'reported' }),
+    ],
+    requests: [{ id: 'r1', tasks: ['a', 's2', 's3', 's4', 'z'], done: true }, { id: 'r2', tasks: ['q'], done: true }],
+  };
+  const r = CH.resume(b, 's2', { now: 9000, maxOpen: 12 });
+  assert.equal(r.ok, true);
+  assert.equal(r.after, 'a');
+  assert.deepEqual(r.again, ['s2', 's3', 's4']);
+  const by = (id) => r.board.tasks.find((t) => t.id === id);
+  for (const id of ['s2', 's3', 's4']) assert.deepEqual([by(id).status, by(id).at, 'reason' in by(id), 'finishedAt' in by(id)], ['waiting', 9000, false, false], id);
+  assert.deepEqual([by('a').status, by('z').status, by('z').reason, by('q').status], ['partial', 'blocked', 'after-blocked', 'reported']);
+  assert.deepEqual(r.board.requests.map((x) => x.done), [false, true]);
+  assert.equal(b.tasks[1].status, 'blocked');   // the board given is not changed
+  // until it is released the chain would block it again (the caller releases it in the same step); once it is queued, the ones behind it wait
+  assert.deepEqual(CH.settle(r.board, 9000).block.map((x) => x.id), ['s2']);
+  const sent = HQ.setStatus(r.board, 's2', 'queued', 'released');
+  assert.deepEqual(CH.settle(sent, 9000), { release: [], block: [] });
+});
+
+test('resume: refused for a stage that is not resumable and past the open cap; nothing changes', () => {
+  const b = board(task('a', { status: 'partial' }), task('s2', { status: 'blocked', reason: 'after-partial', after: 'a' }), task('s3', { status: 'blocked', reason: 'after-blocked', after: 's2' }),
+    task('o1'), task('o2', { status: 'running' }));
+  assert.deepEqual(CH.resume(b, 's3'), { ok: false, error: 'not-resumable' });
+  assert.deepEqual(CH.resume(b, 'a'), { ok: false, error: 'not-resumable' });
+  assert.deepEqual(CH.resume(b, 'nope'), { ok: false, error: 'not-resumable' });
+  assert.deepEqual(CH.resume(b, 's2', { maxOpen: 3 }), { ok: false, error: 'open-cap' });   // 2 open + 2 waiting again
+  assert.equal(CH.resume(b, 's2', { maxOpen: 4 }).ok, true);
+  const again = CH.resume(b, 's2', { maxOpen: 4 }).board;
+  assert.deepEqual(CH.resume(again, 's2'), { ok: false, error: 'not-resumable' });   // a second click finds nothing to continue
+});
