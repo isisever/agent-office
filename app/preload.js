@@ -60,6 +60,12 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onDesks: listen('staff:desks'),                         // the same list when it changes
     setParallel: (projectId, on) => ipcRenderer.invoke('projects:setParallel', projectId, on),   // several desks at once, each in its own worktree
   },
+  // v3.82 the person's own roles (listed with the presets in staff.list) and the role wizard
+  roles: {
+    save: (form) => ipcRenderer.invoke('roles:save', form),   // { id?, name, short?, department?, description, brief, writesCode, skillPacks, tools } → { ok, role } | { ok: false, error: 'name' | 'brief' | 'name-used' | 'too-many' | 'state' }
+    remove: (id) => ipcRenderer.invoke('roles:remove', id),   // members using it keep it as their own role → { ok } | { ok: false, error: 'unknown' | 'state' }
+    wizard: (req) => ipcRenderer.invoke('roles:wizard', req), // { messages: [{ who: 'user' | 'wizard', text }], lang } → { ok, say, questions, role? } | { ok: false, error: 'busy' | 'empty' | 'no-claude' | 'timeout' | 'failed' }
+  },
   tabs: {
     add: (projectId, mode) => ipcRenderer.invoke('tabs:add', projectId, mode),   // mode: 'same' | 'worktree' | undefined (menu)
     close: (projectId, n) => ipcRenderer.invoke('tabs:close', projectId, n),    // { closed, restarted? }

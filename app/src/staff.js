@@ -15,6 +15,12 @@ const NAME_MAX = 40;
 const DEPT_MAX = 30;
 const DESC_MAX = 400;
 const BRIEF_MAX = 4000;
+// v3.82 the company's functions: a preset's department, in this order in the role picker; an own or custom role may
+// also carry a free label (≤ 30)
+const DEPARTMENTS = ['management', 'marketing', 'sales', 'operations', 'hr', 'finance', 'rnd'];
+const CUSTOM_ID_RE = /^my-[0-9a-f]{6,16}$/;       // a role from the person's library (the wizard or the popup)
+const CUSTOM_MAX = 60;
+const TOOL_ID_RE = /^[\w-]{1,64}$/;               // an app-added MCP server's id (src/mcp-servers.js)
 
 // eslint-disable-next-line no-control-regex
 const str = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max) : '');
@@ -38,8 +44,10 @@ function packMap(v) {
 const packIds = (v) => [...new Set((Array.isArray(v) ? v : []).filter((x) => typeof x === 'string' && ID_RE.test(x)))].slice(0, 12);
 
 /**
- * A preset role file → { id, name, short?, description, brief, skillPacks, writesCode }, or null when it is not one.
- * @returns {{ id: string, name: { en: string, tr: string }, short?: { en: string, tr: string }, description: { en: string, tr: string }, brief: string, skillPacks: string[], writesCode: boolean } | null}
+ * A preset role file → { id, name, short?, department?, description, brief, skillPacks, tools?, writesCode }, or null
+ * when it is not one. department: one of DEPARTMENTS (or a free label on a custom role); tools: names of MCP servers the
+ * role works best with (a suggestion: the member popup ticks the app-added servers of those names for a new member).
+ * @returns {{ id: string, name: { en: string, tr: string }, short?: { en: string, tr: string }, department?: string, description: { en: string, tr: string }, brief: string, skillPacks: string[], tools?: string[], writesCode: boolean, custom?: boolean } | null}
  */
 function normalizeRoleDef(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -49,7 +57,12 @@ function normalizeRoleDef(raw) {
   if (!name) return null;
   const description = bilingual(raw.description, DESC_MAX) || { en: '', tr: '' };
   const short = bilingual(raw.short, 8);
-  return { id, name, ...(short ? { short } : {}), description, brief: textBlock(raw.brief, BRIEF_MAX), skillPacks: packIds(raw.skillPacks), writesCode: raw.writesCode !== false };
+  const department = str(raw.department, DEPT_MAX);
+  const tools = packIds(raw.tools);
+  return {
+    id, name, ...(short ? { short } : {}), ...(department ? { department } : {}), description, brief: textBlock(raw.brief, BRIEF_MAX),
+    skillPacks: packIds(raw.skillPacks), ...(tools.length ? { tools } : {}), writesCode: raw.writesCode !== false,
+  };
 }
 
 /** The preset roles shipped in `dir` (roles/*.json), sorted by file name; unreadable or malformed files are skipped. */
@@ -88,9 +101,9 @@ function roleValue(raw, presetIds = null) {
  * One staff member, cleaned against what exists: projects and accounts that are gone are dropped (an unknown account
  * means "the project's account"). → the member, or null when it has no valid id, name or role.
  * @param {any} raw
- * @param {{ projectIds?: string[] | null, accountIds?: string[] | null, presetIds?: string[] | null }} [known]
+ * @param {{ projectIds?: string[] | null, accountIds?: string[] | null, presetIds?: string[] | null, toolIds?: string[] | null }} [known]
  */
-function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds = null } = {}) {
+function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds = null, toolIds = null } = {}) {
   if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !STAFF_ID_RE.test(raw.id)) return null;
   const name = str(raw.name, NAME_MAX);
   const role = roleValue(raw.role, presetIds);
@@ -99,10 +112,77 @@ function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds 
   const accountId = typeof raw.accountId === 'string' && raw.accountId && (!accountIds || accountIds.includes(raw.accountId)) ? raw.accountId : '';
   const projects = raw.projects === 'all' ? 'all'
     : [...new Set((Array.isArray(raw.projects) ? raw.projects : []).filter((id) => typeof id === 'string' && PROJECT_ID_RE.test(id) && (!projectIds || projectIds.includes(id))))];
+  // v3.82 the member's own MCP tools: app-added servers its desks get whatever the project's scope says
+  const tools = [...new Set((Array.isArray(raw.tools) ? raw.tools : []).filter((id) => typeof id === 'string' && TOOL_ID_RE.test(id) && (!toolIds || toolIds.includes(id))))].slice(0, 20);
   return {
     id: raw.id, name, role, ...(department ? { department } : {}), ...(accountId ? { accountId } : {}),
-    ...(Object.keys(packMap(raw.skillPacks)).length ? { skillPacks: packMap(raw.skillPacks) } : {}), projects,
+    ...(Object.keys(packMap(raw.skillPacks)).length ? { skillPacks: packMap(raw.skillPacks) } : {}), ...(tools.length ? { tools } : {}), projects,
   };
+}
+
+// ---------- the person's role library (v3.82) ----------
+// Roles the person made (the role wizard, or "save as a role" later) live in state.customRoles and are offered with
+// the presets; members point at them like at a preset ({ preset: 'my-…' }). Their name is one string (both languages).
+
+/** One custom role → a RoleDef with custom: true, or null. */
+function normalizeCustomRole(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !CUSTOM_ID_RE.test(raw.id)) return null;
+  const name = str(typeof raw.name === 'object' && raw.name ? raw.name.en || raw.name.tr : raw.name, NAME_MAX);
+  const brief = textBlock(raw.brief, BRIEF_MAX);
+  if (!name || !brief) return null;
+  const description = str(typeof raw.description === 'object' && raw.description ? raw.description.en || raw.description.tr : raw.description, DESC_MAX);
+  const short = str(typeof raw.short === 'object' && raw.short ? raw.short.en || raw.short.tr : raw.short, 8);
+  const def = normalizeRoleDef({
+    id: 'x', name, ...(short ? { short } : {}), department: raw.department, description, brief, skillPacks: raw.skillPacks, tools: raw.tools, writesCode: raw.writesCode,
+  });
+  return def && { ...def, id: raw.id, custom: true };
+}
+/** state.customRoles → the valid ones (unique ids, at most CUSTOM_MAX). */
+function normalizeCustomRoles(list) {
+  const out = [];
+  for (const raw of Array.isArray(list) ? list : []) {
+    const r = normalizeCustomRole(raw);
+    if (r && !out.some((x) => x.id === r.id) && out.length < CUSTOM_MAX) out.push(r);
+  }
+  return out;
+}
+/** What state.json keeps of a custom role (no `custom` flag, one-string texts). */
+const customRoleFile = (r) => ({
+  id: r.id, name: r.name.en, ...(r.short ? { short: r.short.en } : {}), ...(r.department ? { department: r.department } : {}),
+  description: r.description.en, brief: r.brief, skillPacks: r.skillPacks, ...(r.tools ? { tools: r.tools } : {}), writesCode: r.writesCode,
+});
+/**
+ * Adds or replaces a custom role (form.id kept when it is one of the list). → { roles, role } | { error: 'name' |
+ * 'brief' | 'name-used' | 'too-many' }. Names are unique among custom roles and presets, ignoring case.
+ */
+function saveCustomRole(roles, form, presets = [], newId = () => `my-${Math.random().toString(16).slice(2, 12).padEnd(10, '0')}`) {
+  const list = Array.isArray(roles) ? roles : [];
+  const exists = typeof form?.id === 'string' && list.some((r) => r.id === form.id);
+  let id = exists ? form.id : newId();
+  for (let i = 0; !exists && i < 20 && list.some((r) => r.id === id); i++) id = newId();
+  if (!str(form?.name, NAME_MAX)) return { error: 'name' };
+  const role = normalizeCustomRole({ ...form, id });
+  if (!role) return { error: 'brief' };
+  const key = (s) => String(s).toLocaleLowerCase('tr');
+  const taken = [...list.filter((r) => r.id !== id).map((r) => r.name.en), ...presets.flatMap((d) => [d.name.en, d.name.tr])];
+  if (taken.some((n) => key(n) === key(role.name.en))) return { error: 'name-used' };
+  if (!exists && list.length >= CUSTOM_MAX) return { error: 'too-many' };
+  return { roles: exists ? list.map((r) => (r.id === id ? role : r)) : [...list, role], role };
+}
+/**
+ * Removes a custom role; members that used it keep it as their own role (its name, description, brief and writesCode
+ * copied onto them, their own changes on top), so nobody loses a role. → { roles, staff }
+ */
+function removeCustomRole(roles, staff, id) {
+  const role = (Array.isArray(roles) ? roles : []).find((r) => r.id === id);
+  const left = (Array.isArray(roles) ? roles : []).filter((r) => r.id !== id);
+  if (!role) return { roles: left, staff: Array.isArray(staff) ? staff : [] };
+  const members = (Array.isArray(staff) ? staff : []).map((m) => {
+    if (m.role?.preset !== id) return m;
+    const { preset: _p, ...own } = m.role;
+    return { ...m, role: { name: role.name.en, description: role.description.en, brief: role.brief, ...(role.writesCode ? {} : { writesCode: false }), ...own } };
+  });
+  return { roles: left, staff: members };
 }
 
 /** state.staff → the valid members (at most STAFF_MAX, unique ids). */
@@ -217,6 +297,6 @@ function findMember(staff, key) {
 }
 
 module.exports = {
-  STAFF_MAX, packMap, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
+  STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
   dropProject, dropAccount, mayWork, memberRole, deskWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
 };

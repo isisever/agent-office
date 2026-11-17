@@ -753,6 +753,11 @@ sidebar = mountSidebar($('sidebar'), {
     remove: (id) => api.staff.remove(id).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
     openDesk: (projectId, staffId) => openDesk(projectId, staffId),
     setParallel: (projectId, on) => api.staff.setParallel(projectId, on).catch((e) => console.error(e)),
+    // v3.82 the role library and the wizard
+    saveRole: (form) => api.roles.save(form).then(async (r) => { await loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+    removeRole: (id) => api.roles.remove(id).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+    wizard: (req) => api.roles.wizard(req).catch(() => ({ ok: false, error: 'failed' })),
+    tools: () => (api.mcp?.apps ? api.mcp.apps().then((r) => r?.servers || []).catch(() => []) : Promise.resolve([])),
   },
   setFallback: (on) => api.prefs?.set({ fallback: on }).then((p) => sidebar.setFallback(p?.fallback)).catch((e) => console.error(e)),
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),

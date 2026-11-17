@@ -1,6 +1,6 @@
 // Agent Office shell: window, projects, accounts, one claude pty per project (several with tabs), and office data.
 const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, nativeTheme, safeStorage, powerMonitor, shell: eShell } = require('electron');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -25,6 +25,7 @@ const SC = require('./src/shared-config.js');
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
 const ST = require('./src/staff.js');
+const RW = require('./src/role-wizard.js');
 const MR = require('./src/mcp-reload.js');
 const SP = require('./src/skill-packs.js');
 const R = require('./src/resume.js');
@@ -1181,7 +1182,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // v3.44 servers added in Agent Office, Claude Code only: into this tab's 0600 MCP file, unless the name is taken
   // v3.46 HQ: none of these (no Default/other projects' servers, no app servers, no skill packs): its own MCP file
   // holds only the agent-office server and it runs with --strict-mcp-config (HQ.launchArgs)
-  const appMcp = project.hq ? null : MS.sessionServers(P.engineOf(project), appServers(), project.id, (sid) => tokens().load(sid));
+  const appMcp = project.hq ? null : MS.sessionServers(P.engineOf(project), MS.withTools(appServers(), project.id, project.staffTools), project.id, (sid) => tokens().load(sid));
   const prepared = project.hq ? hqMcpConfig(usageKey(id), bossMcp) : sharedConfig(account, project, cwd, usageKey(id), bossMcp, appMcp);
   const shared = project.hq ? [] : SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
@@ -3236,9 +3237,14 @@ ipcMain.handle('projects:openFolder', async (_e, id) => {
 // off the TEAM panel is hidden; the stored staff is kept. Nothing here starts a session (desks come in step 3).
 const rolesRoot = () => (app.isPackaged ? path.join(process.resourcesPath, 'roles') : path.join(__dirname, '..', 'roles'));
 let rolePresets = null;
-const presetRoles = () => rolePresets || (rolePresets = ST.loadRoles(rolesRoot()));
-const staffKnown = () => ({ projectIds: state.projects.map((p) => p.id), accountIds: state.accounts.map((a) => a.id), presetIds: presetRoles().map((d) => d.id) });
-ipcMain.handle('staff:list', () => ({ teamMode: state.teamMode === true, presets: presetRoles(), staff: state.staff || [] }));
+const builtinRoles = () => rolePresets || (rolePresets = ST.loadRoles(rolesRoot()));
+// v3.82 the presets and the person's own roles (state.customRoles: the role wizard), one list for every reader
+const presetRoles = () => [...builtinRoles(), ...(state.customRoles || [])];
+const staffKnown = () => ({
+  projectIds: state.projects.map((p) => p.id), accountIds: state.accounts.map((a) => a.id), presetIds: presetRoles().map((d) => d.id),
+  toolIds: appServers().map((s) => s.id),
+});
+ipcMain.handle('staff:list', () => ({ teamMode: state.teamMode === true, presets: presetRoles(), departments: ST.DEPARTMENTS, staff: state.staff || [] }));
 ipcMain.handle('staff:save', (_e, form) => {
   if (!stateWritable) return { ok: false, error: 'state' };
   const r = ST.saveMember(state.staff || [], form && typeof form === 'object' ? form : {}, staffKnown());
@@ -3258,6 +3264,89 @@ ipcMain.handle('staff:remove', (_e, id) => {
   if (!(state.staff || []).some((m) => m.id === id)) return { ok: false, error: 'unknown' };
   commit({ ...state, staff: ST.removeMember(state.staff, String(id)) });
   return { ok: true };
+});
+
+// --- the person's roles and the role wizard (contract v3.82, src/staff.js role library, src/role-wizard.js)
+ipcMain.handle('roles:save', (_e, form) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  const r = ST.saveCustomRole(state.customRoles || [], form && typeof form === 'object' ? form : {}, builtinRoles());
+  if (!r.roles) return { ok: false, error: r.error };
+  commit({ ...state, customRoles: r.roles });
+  return { ok: true, role: r.role };
+});
+ipcMain.handle('roles:remove', (_e, id) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  if (!(state.customRoles || []).some((r) => r.id === id)) return { ok: false, error: 'unknown' };
+  const r = ST.removeCustomRole(state.customRoles, state.staff, String(id));
+  commit({ ...state, customRoles: r.roles, ...(state.staff ? { staff: r.staff } : {}) });
+  return { ok: true };
+});
+/**
+ * One non-interactive claude run with `input` on stdin, from the login shell like the ptys (Windows: claude itself).
+ * → { err, stdout, stderr }. The output stays in main; the caller parses it.
+ */
+function runClaudeInput(account, args, input, { cwd, timeout }) {
+  return new Promise((resolve) => {
+    let child;
+    let stdout = '';
+    let stderr = '';
+    let done = false;
+    const finish = (err) => { if (done) return; done = true; clearTimeout(timer); resolve({ err, stdout, stderr }); };
+    const env = accountEnv(account);
+    try {
+      if (IS_WIN) {
+        const cmd = windowsClaude(args, env);
+        if (!cmd) return resolve({ err: Object.assign(new Error('claude not found'), { code: 127 }), stdout: '', stderr: '' });
+        child = spawn(cmd.file, cmd.args, { env, cwd, windowsVerbatimArguments: cmd.verbatim, windowsHide: true });
+      } else {
+        child = spawn(shell(), ['-l', '-i', '-c', A.claudeCommand('"$@"'), 'claude', ...args], { env, cwd });
+      }
+    } catch (err) { return resolve({ err, stdout: '', stderr: '' }); }
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} finish(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })); }, timeout);
+    child.stdout.on('data', (d) => { if (stdout.length < (4 << 20)) stdout += d; });
+    child.stderr.on('data', (d) => { if (stderr.length < (1 << 16)) stderr += d; });
+    child.on('error', (err) => finish(err));
+    child.on('close', (code) => finish(code ? Object.assign(new Error(`exit ${code}`), { code }) : null));
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+let wizardBusy = false;
+/**
+ * The wizard's next message: { messages: [{ who: 'user' | 'wizard', text }], lang } → { ok, say, questions, role? } |
+ * { ok: false, error: 'busy' | 'empty' | 'no-claude' | 'timeout' | 'failed' }. One run at a time, with the Default
+ * account, in an empty folder of its own (no project, no tools, no MCP, nothing kept).
+ */
+ipcMain.handle('roles:wizard', async (_e, req) => {
+  if (wizardBusy) return { ok: false, error: 'busy' };
+  const input = RW.transcript(req?.messages);
+  if (!input) return { ok: false, error: 'empty' };
+  wizardBusy = true;
+  try {
+    const dir = path.join(app.getPath('userData'), 'role-wizard');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const lang = req?.lang === 'tr' ? 'tr' : req?.lang === 'en' ? 'en' : uiLang();
+    const packs = skillPacks();
+    const promptFile = path.join(dir, 'system.md');
+    SF.writeAtomic(promptFile, RW.systemPrompt({
+      lang,
+      roles: presetRoles().map((d) => ({ id: d.id, name: d.name[lang === 'tr' ? 'tr' : 'en'], department: d.department, description: d.description.en })),
+      packs: packs.map((p) => ({ id: p.id, name: p.name })),
+      tools: [...new Set(appServers().filter((s) => !s.held).map((s) => s.name))],
+    }));
+    const account = A.accountOf(state, null);
+    const args = ['-p', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands',
+      '--model', 'sonnet', '--system-prompt-file', promptFile, ...(IS_WIN ? [] : ['--json-schema', JSON.stringify(RW.SCHEMA)])];
+    const { err, stdout } = await runClaudeInput(account, args, input, { cwd: dir, timeout: 180000 });
+    if (err?.code === 127) return { ok: false, error: 'no-claude' };
+    if (err?.code === 'ETIMEDOUT') return { ok: false, error: 'timeout' };
+    const r = RW.parseReply(stdout, packs.map((p) => p.id));
+    if (r.error) { console.error('role wizard: no usable reply', err ? `(${err.message})` : ''); return { ok: false, error: 'failed' }; }
+    return { ok: true, ...r };
+  } catch (e) {
+    console.error('role wizard:', e.message);
+    return { ok: false, error: 'failed' };
+  } finally { wizardBusy = false; }
 });
 
 // --- desks (contract v3.81 step 3): a staff member's tab in a project. Its own session (account, role section,
@@ -4460,6 +4549,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   const base = P.normalizeState({ ...raw, projects: mig.projects });
   state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
   // v3.81 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
+  if (Array.isArray(raw.customRoles)) state = { ...state, customRoles: ST.normalizeCustomRoles(raw.customRoles) };   // v3.82, before the staff that use them
   if (Array.isArray(raw.staff)) state = { ...state, staff: ST.normalizeStaff(raw.staff, staffKnown()) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go

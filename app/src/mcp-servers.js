@@ -279,6 +279,13 @@ function appConfigs(servers, projectId, tokenOf) {
  * The app-added servers a session of `engine` gets (v3.44, engine-caps `appMcp`): only Claude Code; for any other
  * engine nothing, and no token is read (leak rule).
  */
+/**
+ * v3.82 a desk's member may have tools of its own (member.tools: server ids): those servers reach the desk's session
+ * as if they were scoped to its project. → the list to pass on (unchanged without tools).
+ */
+const withTools = (servers, projectId, toolIds) => (Array.isArray(toolIds) && toolIds.length
+  ? servers.map((s) => (toolIds.includes(s.id) && !s.held && !inScope(s, projectId) ? { ...s, scope: projectId } : s)) : servers);
+
 const sessionServers = (engine, servers, projectId, tokenOf) => (engine === 'claude' ? appConfigs(servers, projectId, tokenOf) : {});
 
 /**
@@ -452,6 +459,7 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
 }
 
 module.exports = {
+  withTools,
   TYPES, serverName, cleanUrl, urlProblem, urlDisplaySecret, hostOf, cleanToken, typeOf, normalizeServers, validate, serversFor, addServer, removeServer, updateServer, editable,
   cleanScope, scopeIds, inScope, overlaps, setScope,
   dropProject, dirKey, holdProject, adoptHeld, serverConfig, appConfigs, sessionServers, migrateConnections, tokenStore, moveToken,

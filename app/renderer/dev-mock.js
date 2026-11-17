@@ -187,7 +187,10 @@ const chatOf = (id) => {
 let office3dSetting = q.has('office3d'); // v3.79 ?office3d: the 3D office from the start
 // v3.81 team: ?staff turns team mode on with three members; the presets are read as main reads them
 let teamSetting = q.has('staff');
-const ROLE_IDS = ['assistant', 'chatbot', 'data-analyst', 'devops', 'erp-odoo', 'product', 'qa', 'rpa'];
+const ROLE_IDS = ['accountant', 'assistant', 'chatbot', 'content-writer', 'customer-support', 'data-analyst', 'devops', 'digital-marketer', 'erp-odoo',
+  'financial-analyst', 'hr-specialist', 'operations-specialist', 'product', 'project-manager', 'qa', 'rpa', 'sales-rep', 'social-media-designer', 'software-developer'];
+/** @type {any[]} */
+const mockRoles = [];   // v3.82 the person's roles
 const rolePresets = (await Promise.all(ROLE_IDS.map((n) => fetch(`../../roles/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
 /** @type {any[]} */
 const mockStaff = [];
@@ -326,8 +329,27 @@ window.agentOffice = {
     remove: async (id) => { const i = mockMcp.findIndex((s) => s.id === id); if (i >= 0) mockMcp.splice(i, 1); return { ok: i >= 0, restarted: [] }; },
   },
 
+  // v3.82 the role library and a scripted wizard: a question first, then a role (no claude in the browser)
+  roles: {
+    save: async (f) => {
+      if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
+      const one = (s) => ({ en: String(s || ''), tr: String(s || '') });
+      const role = { id: f.id || `my-${rid().slice(0, 8).padEnd(8, '0').replace(/[^0-9a-f]/g, 'a')}`, name: one(f.name), short: one(f.short), department: f.department, description: one(f.description), brief: f.brief, skillPacks: f.skillPacks || [], tools: f.tools || [], writesCode: f.writesCode === true, custom: true };
+      const i = mockRoles.findIndex((r) => r.id === role.id);
+      if (i >= 0) mockRoles[i] = role; else mockRoles.push(role);
+      return { ok: true, role };
+    },
+    remove: async (id) => { const i = mockRoles.findIndex((r) => r.id === id); if (i >= 0) mockRoles.splice(i, 1); return { ok: i >= 0 }; },
+    wizard: async (req) => {
+      await new Promise((r) => setTimeout(r, 400));
+      const asked = (req?.messages || []).filter((m) => m.who === 'user').length;
+      if (asked < 2) return { ok: true, say: 'Anladım: bayram ve özel günlerde sosyal medya tasarımı hazırlayacak biri.', questions: ['Hangi platformlar için (Instagram, LinkedIn…)?', 'Tasarımlar Canva\'da mı hazırlansın?'] };
+      return { ok: true, say: 'Rolü hazırladım; Pazarlama departmanına koydum.', questions: [], role: { name: 'Özel Gün Tasarımcısı', short: 'ÖZELGÜN', department: 'marketing', description: 'Özel günler için Instagram ve LinkedIn tasarımları hazırlar, Canva kullanır.', brief: "You are the team's special-day designer. You check the calendar for the next day's special days and prepare posts in Canva…", writesCode: false, skillPacks: ['ui-ux-pro-max'], tools: ['canva'] } };
+    },
+  },
+
   staff: { // v3.81
-    list: async () => ({ teamMode: teamSetting, presets: rolePresets, staff: structuredClone(mockStaff) }),
+    list: async () => ({ teamMode: teamSetting, presets: [...rolePresets, ...mockRoles], staff: structuredClone(mockStaff) }),
     save: async (f) => {
       if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
       if (!f?.role?.preset && !String(f?.role?.name || '').trim()) return { ok: false, error: 'role' };

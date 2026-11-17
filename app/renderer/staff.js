@@ -1,7 +1,7 @@
 // Team: staff (contract v3.81): the TEAM panel's rows and the member popup, drawn into the sidebar (sidebar.js passes
 // its own h / openModal / closeModal). The team lives in Agent Office: nothing here touches a project folder. Main
 // keeps and checks the list (staff:list / staff:save / staff:remove, src/staff.js).
-import { roleOf, byDepartment } from '../src/staff-view.mjs';
+import { roleOf, byDepartment, deptLabel, groupRoles, DEPARTMENTS } from '../src/staff-view.mjs';
 
 const hueOf = (s) => { let x = 7; for (const c of String(s)) x = (Math.imul(x, 31) + c.charCodeAt(0)) >>> 0; return x % 360; };
 
@@ -59,8 +59,12 @@ function card(c, m) {
  * The role's settings are always on show and editable: a preset fills them in (name, description, instructions,
  * writes code, its suggested skill packs) and the member keeps only what differs from the preset, so a preset's later
  * wording still reaches it; "own role" keeps what is in the fields. listPacks() → the skill packs ([{ id, name }]).
+ * v3.82: the picker groups roles by department (the person's own roles marked ★) and ends with "Own role…" and the
+ * role wizard; a preset fills the department when it is empty or one of the functions; the member's own MCP tools
+ * (listTools() → app-added servers) reach all its desks; a role from the person's library can be removed here.
  * @param {{ h: Function, t: Function, lang: string, member: any, staff: any[], presets: any[], projects: any[], accounts: any[], labelOf: Function,
- *   openModal: Function, closeModal: Function, save: (form: any) => Promise<any>, remove: (id: string) => Promise<any>, listPacks?: () => Promise<any[]> }} c
+ *   openModal: Function, closeModal: Function, save: (form: any) => Promise<any>, remove: (id: string) => Promise<any>, listPacks?: () => Promise<any[]>,
+ *   listTools?: () => Promise<any[]>, openWizard?: () => void, removeRole?: (id: string) => Promise<any>, initialPreset?: string }} c
  */
 export function openMemberEditor(c) {
   const { h, t } = c;
@@ -69,11 +73,24 @@ export function openMemberEditor(c) {
   const own = Boolean(m && !m.role?.preset);
   const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
   const name = h('input', { class: 'sb-input', value: m?.name || '', maxLength: 40, placeholder: t('staff.namePh') });
-  const role = h('select', { class: 'sb-acct' },
-    ...c.presets.map((d) => h('option', { value: d.id, selected: m?.role?.preset === d.id }, d.name[l])),
-    h('option', { value: '', selected: own }, t('staff.ownRole')));
-  if (!m) role.value = c.presets[0]?.id || '';
+  const WIZARD = '__wizard';
+  const role = h('select', { class: 'sb-acct sb-role-pick' },
+    ...groupRoles(c.presets).map((g) => h('optgroup', { label: g.dept ? deptLabel(t, g.dept) : t('staff.noDepartment') },
+      ...g.roles.map((d) => h('option', { value: d.id, selected: m?.role?.preset === d.id }, `${d.custom ? '★ ' : ''}${d.name[l]}`)))),
+    h('option', { value: '', selected: own }, t('staff.ownRole')),
+    c.openWizard ? h('option', { value: WIZARD }, t('staff.wizard.pick')) : null);
+  if (!m) role.value = c.presets.some((d) => d.id === c.initialPreset) ? c.initialPreset : c.presets[0]?.id || '';
+  let lastRole = role.value;
   const presetOf = () => c.presets.find((d) => d.id === role.value) || null;
+  // the department: free text with the functions and the team's own labels suggested; a preset fills it when it is
+  // empty or still one of the functions' names
+  const departments = [...new Set([...DEPARTMENTS.map((d) => deptLabel(t, d)), ...c.staff.map((x) => x.department).filter(Boolean)])];
+  const dept = h('input', { class: 'sb-input', value: m?.department || '', maxLength: 30, placeholder: t('staff.departmentPh'), list: 'sb-departments' });
+  const deptList = h('datalist', { id: 'sb-departments' }, ...departments.map((d) => h('option', { value: d })));
+  const fillDept = (def) => {
+    const cur = dept.value.trim();
+    if (def?.department && (!cur || DEPARTMENTS.some((d) => deptLabel(t, d) === cur))) dept.value = deptLabel(t, def.department);
+  };
   const roleName = h('input', { class: 'sb-input', maxLength: 40, placeholder: t('staff.roleNamePh') });
   const roleDesc = h('textarea', { rows: 3, maxLength: 400, placeholder: t('staff.descriptionPh') });
   const brief = h('textarea', { rows: 10, maxLength: 4000, placeholder: t('staff.briefPh'), class: 'sb-brief' });
@@ -91,6 +108,8 @@ export function openMemberEditor(c) {
   let packList = [];
   /** The fields from a preset (its suggested packs on, the rest the project's). */
   const fill = (def) => {
+    fillDept(def);
+    if (!m) tickTools(def);
     roleName.value = def.name[l];
     roleDesc.value = def.description[l];
     brief.value = def.brief;
@@ -99,6 +118,26 @@ export function openMemberEditor(c) {
     for (const id of def.skillPacks || []) packPick.set(id, 'on');
     drawPacks(packList);
   };
+  // v3.82 the member's own MCP tools: app-added servers, ticked by id; a new member gets the role's suggested ones
+  /** @type {any[]} */
+  let toolList = [];
+  const toolPick = new Set(Array.isArray(m?.tools) ? m.tools : []);
+  const toolBox = h('div', { class: 'sb-scope-list sb-staff-tools' });
+  const toolNote = h('div', { class: 'sb-field-hint' });
+  const drawTools = () => {
+    const wanted = presetOf()?.tools || [];
+    toolBox.replaceChildren(...toolList.map((s) => h('label', {},
+      h('input', { type: 'checkbox', checked: toolPick.has(s.id), onchange: (e) => (e.target.checked ? toolPick.add(s.id) : toolPick.delete(s.id)) }),
+      ' ', s.name, s.host ? h('span', { class: 'sb-dim' }, ` · ${s.host}`) : null)));
+    const missing = wanted.filter((n) => !toolList.some((s) => s.name === n));
+    toolNote.textContent = missing.length ? t('staff.toolsMissing', { tools: missing.join(', ') }) : toolList.length ? '' : t('staff.toolsNone');
+    toolNote.hidden = !toolNote.textContent;
+  };
+  function tickTools(def) {
+    toolPick.clear();
+    for (const s of toolList) if ((def?.tools || []).includes(s.name)) toolPick.add(s.id);
+    drawTools();
+  }
   const reset = h('button', { class: 'sb-btn sb-reset-role', title: t('staff.resetRoleTitle'), onclick: (e) => { e.preventDefault(); const d = presetOf(); if (d) fill(d); } }, t('staff.resetRole'));
   const def0 = presetOf();
   if (def0) fill(def0);
@@ -110,17 +149,37 @@ export function openMemberEditor(c) {
     packPick.clear();
     for (const [id, on] of Object.entries(m.skillPacks || {})) packPick.set(id, on ? 'on' : 'off');
   }
-  const showRole = () => { reset.hidden = !presetOf(); };
-  role.addEventListener('change', () => { const d = presetOf(); if (d) fill(d); showRole(); });
+  const dropRole = h('button', {
+    class: 'sb-btn sb-warn sb-reset-role', onclick: async (e) => {
+      e.preventDefault();
+      const d = presetOf();
+      if (!d?.custom || !c.removeRole || !confirm(t('staff.roleRemoveConfirm', { name: d.name[l] }))) return;
+      const r = await c.removeRole(d.id);
+      if (r?.ok) c.closeModal();
+    },
+  }, t('staff.roleRemove'));
+  const showRole = () => { reset.hidden = !presetOf(); dropRole.hidden = !presetOf()?.custom; };
+  role.addEventListener('change', () => {
+    if (role.value === WIZARD) { role.value = lastRole; c.openWizard?.(); return; }
+    lastRole = role.value;
+    const d = presetOf();
+    if (d) fill(d);
+    showRole();
+  });
   showRole();
   c.listPacks?.().then((packs) => { packList = Array.isArray(packs) ? packs : []; drawPacks(packList); }).catch(() => {});
+  c.listTools?.().then((list) => {
+    toolList = Array.isArray(list) ? list : [];
+    if (!m) tickTools(presetOf()); else drawTools();
+  }).catch(() => {});
   const roleBox = h('div', { class: 'sb-own-role' },
     field(t('staff.roleName'), roleName),
     field(t('staff.description'), roleDesc),
     field(t('staff.brief'), brief, t('staff.briefHint')),
     h('label', { class: 'sb-botcolor sb-langrow' }, h('span', {}, t('staff.noCode')), noCode),
     field(t('staff.skillPacks'), packBox, t('staff.skillPacksHint')),
-    reset);
+    field(t('staff.tools'), h('div', {}, toolBox, toolNote), t('staff.toolsHint')),
+    h('div', { class: 'sb-role-actions' }, reset, dropRole));
   /** The role to save: a preset with only what differs from it, or the fields as an own role. */
   const roleForm = () => {
     const d = presetOf();
@@ -134,9 +193,6 @@ export function openMemberEditor(c) {
       ...(!noCode.checked === d.writesCode ? {} : { writesCode: !noCode.checked }),
     };
   };
-  const departments = [...new Set(c.staff.map((x) => x.department).filter(Boolean))];
-  const dept = h('input', { class: 'sb-input', value: m?.department || '', maxLength: 30, placeholder: t('staff.departmentPh'), list: 'sb-departments' });
-  const deptList = h('datalist', { id: 'sb-departments' }, ...departments.map((d) => h('option', { value: d })));
   const account = h('select', { class: 'sb-acct' }, h('option', { value: '' }, t('staff.projectAccount')),
     ...c.accounts.map((a) => h('option', { value: a.id, selected: m?.accountId === a.id }, c.labelOf(a))));
   const all = h('input', { type: 'checkbox', checked: m?.projects === 'all', onchange: () => { for (const b of boxes) b.disabled = all.checked; } });
@@ -152,6 +208,7 @@ export function openMemberEditor(c) {
         ...(m ? { id: m.id } : {}), name: name.value, department: dept.value, accountId: account.value,
         role: roleForm(),
         skillPacks: Object.fromEntries([...packPick].filter(([, v]) => v !== 'inherit').map(([id, v]) => [id, v === 'on'])),
+        tools: [...toolPick],
         projects: all.checked ? 'all' : boxes.filter((b) => b.checked).map((b) => b.value),
       };
       save.disabled = true;

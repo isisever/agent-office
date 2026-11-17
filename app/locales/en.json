@@ -409,6 +409,10 @@
       "caveman": "Terse replies when you ask for them (/caveman). Skills only, no hooks.",
       "taste-skill": "A strict frontend house style with a look-and-fix loop.",
       "scroll-craft": "Scroll-driven cinematic landing pages. Image and video generation needs a paid kie.ai API key."
+    },
+    "mcpPresets": "Ready-made:",
+    "mcpPresetNote": {
+      "canva": "Canva uses its own sign-in; no token needed. Save the server, then type /mcp in a desk and choose canva → Authenticate to connect your Canva account in the browser (once per Claude account)."
     }
   },
   "panel": {
@@ -612,7 +616,54 @@
     "packSuggested": "suggested",
     "resetRole": "↺ Back to the preset",
     "resetRoleTitle": "Refill the role's fields from the preset",
-    "applyNote": "Changes reach the member's desks: idle ones restart in their conversation, busy ones get them at their next start."
+    "applyNote": "Changes reach the member's desks: idle ones restart in their conversation, busy ones get them at their next start.",
+    "dept": {
+      "management": "Management",
+      "marketing": "Marketing",
+      "sales": "Sales",
+      "operations": "Operations",
+      "hr": "Human Resources",
+      "finance": "Finance",
+      "rnd": "R&D"
+    },
+    "tools": "Tools (MCP)",
+    "toolsHint": "The ticked tools reach every desk of this member (on top of the project's tools).",
+    "toolsNone": "No MCP tool added in Agent Office yet; add one in the MCP panel.",
+    "toolsMissing": "This role works best with: {tools}. Add it in the MCP panel (Canva is ready-made there).",
+    "roleRemove": "🗑 Remove the role from the library",
+    "roleRemoveConfirm": "Remove the role \"{name}\" from the library? Members using it keep its text as their own role.",
+    "wizard": {
+      "pick": "✨ New role with the wizard…",
+      "open": "✨ Role wizard",
+      "openTitle": "Describe the job you need; the wizard asks questions and creates the role and its department",
+      "title": "Role wizard",
+      "placeholder": "Describe in your own words what the member will do… (⌘↵ sends)",
+      "send": "Send",
+      "you": "You",
+      "name": "Wizard",
+      "intro": "Hi! What kind of team member do you need? Tell me what they will do, how often, with which tools (Canva, e-mail, Excel…) and what they must not do on their own. I will ask about anything missing, then create the role and its department.",
+      "thinking": "The wizard is thinking… (this can take half a minute)",
+      "kind": "How it works",
+      "writesCode": "Changes code and configuration",
+      "save": "Save the role",
+      "saveAgain": "Save the changes",
+      "saved": "\"{name}\" is saved in your role library.",
+      "changeHint": "Write what you would like changed and the wizard updates the role.",
+      "addMember": "Add a member with this role",
+      "error": {
+        "busy": "The wizard is answering another message; try again in a moment.",
+        "no-claude": "Claude Code was not found.",
+        "timeout": "The answer took too long; send it again.",
+        "failed": "The wizard could not answer (is the Default account logged in?). Try again."
+      },
+      "saveError": {
+        "name": "The role has no name.",
+        "brief": "The role has no instructions.",
+        "name-used": "A role with this name exists; ask the wizard for another name.",
+        "too-many": "The role library is full (60 at most).",
+        "failed": "The role could not be saved."
+      }
+    }
   },
   "chat": {
     "placeholder": "Message… (Enter sends, Shift+Enter: new line)",

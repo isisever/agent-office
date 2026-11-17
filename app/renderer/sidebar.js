@@ -7,6 +7,7 @@ import { isBossHere, projectStatus } from '../src/project-status.mjs';
 import { BOSS_MODEL_CHOICES, bossModelChoices, cap, isCustomModelId } from '../src/engine-caps.mjs';
 import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
 import { teamRows, openMemberEditor } from './staff.js';
+import { openRoleWizard } from './role-wizard.js';
 
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -143,6 +144,7 @@ export function mountSidebar(el, on) {
   const teamHead = h('span', {});
   const teamList = h('ul', { class: 'sb-list', id: 'sb-team' });
   const addStaffBtn = h('button', { class: 'sb-add', id: 'sb-add-staff', onclick: () => editMember(null) });
+  const wizardBtn = h('button', { class: 'sb-add', id: 'sb-role-wizard', onclick: () => openWizard() });   // v3.82
   // every session also gets the other office projects' MCP servers (contract v3.9); sessions started afterwards
   const shareMcpLabel = h('span', {});
   const shareMcpBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setShareMcp?.(e.target.checked) });
@@ -193,7 +195,7 @@ export function mountSidebar(el, on) {
     return d;
   }
   el.append(
-    panel('team', [teamHead], h('div', { class: 'sb-top' }, teamList, addStaffBtn), 'sb-team-panel'),
+    panel('team', [teamHead], h('div', { class: 'sb-top' }, teamList, addStaffBtn, wizardBtn), 'sb-team-panel'),
     panel('projects', [projHead], h('div', { class: 'sb-top', id: 'sb-top' }, projList, addProjectBtn, resumeAllBtn, resumeNote)),
     panel('accounts', [acctHead], h('div', { class: 'sb-panel-body' }, acctList), 'sb-accounts'),
     panel('mcp', [mcpHead], h('div', { class: 'sb-panel-body' }, mcpNote, mcpList, addMcpBtn), 'sb-mcp-panel'),
@@ -224,6 +226,8 @@ export function mountSidebar(el, on) {
     teamRow.title = t('staff.modeTitle');
     teamHead.textContent = t('staff.panel');
     addStaffBtn.textContent = t('staff.add');
+    wizardBtn.textContent = t('staff.wizard.open');
+    wizardBtn.title = t('staff.wizard.openTitle');
     managerRow.title = t('sidebar.managerTitle');
     shareMcpLabel.textContent = t('sidebar.shareMcp');
     shareMcpRow.title = t('sidebar.shareMcpTitle');
@@ -815,6 +819,8 @@ export function mountSidebar(el, on) {
    * encrypted there). With `edit` (v3.69, from mcp:get) the same form edits an app-added server: filled with its fields
    * but never its token; a blank token keeps the stored one, "remove the saved token" clears it.
    */
+  /** v3.82 servers the add form can fill in with one click (remote, signed in with the service's own OAuth). */
+  const MCP_PRESETS = [{ id: 'canva', label: 'Canva', name: 'canva', url: 'https://mcp.canva.com/mcp', type: 'http' }];
   function openMcpForm(edit = null) {
     const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
     // v3.69 a server in Claude Code's own files (edit.where): no token or scope; headers and env with masked values
@@ -861,6 +867,18 @@ export function mountSidebar(el, on) {
     };
     kind.onchange = syncKind;
     syncKind();
+    // v3.82 ready-made servers: one click fills the form; the service's own sign-in (OAuth) happens in the session
+    const presetNote = h('div', { class: 'sb-note', hidden: true });
+    const presetRow = edit ? null : h('div', { class: 'sb-mcp-presets' }, h('span', { class: 'sb-field-label' }, t('sidebar.mcpPresets')),
+      ...MCP_PRESETS.map((pr) => h('button', {
+        class: 'sb-btn', onclick: (e) => {
+          e.preventDefault();
+          kind.value = 'remote'; syncKind();
+          name.value = pr.name; url.value = pr.url; type.value = pr.type; token.value = '';
+          presetNote.textContent = t(`sidebar.mcpPresetNote.${pr.id}`);
+          presetNote.hidden = false;
+        },
+      }, pr.label)));
     const parseArgs = () => args.value.split('\n').map((l) => l.trim()).filter(Boolean);
     const parseEnv = () => {
       const out = {};
@@ -901,6 +919,7 @@ export function mountSidebar(el, on) {
       },
     }, t('sidebar.save'));
     openModal(edit ? t('sidebar.mcpEditTitle', { name: edit.name }) : t('sidebar.mcpAddTitle'), [
+      presetRow, presetNote,
       inFile ? h('div', { class: 'sb-note' }, t(edit.where === 'project' ? 'sidebar.mcpFileNoteProject' : 'sidebar.mcpFileNote', { file: t(`sidebar.mcpSrc.${edit.where === 'default-user' ? 'user' : edit.where === 'default-local' ? 'local' : edit.source}`) })) : null,
       field(t('sidebar.mcpKind'), kind),
       field(t('sidebar.mcpName'), name),
@@ -919,11 +938,21 @@ export function mountSidebar(el, on) {
     if (!team.teamMode) return;
     teamList.replaceChildren(...teamRows({ h, t, lang: locale(), staff: team.staff, presets: team.presets, projects, accounts, labelOf, onEdit: (m) => editMember(m), desks, onDesk: (pid, sid) => on.team?.openDesk(pid, sid) }));
   }
-  function editMember(m) {
+  const listPacks = () => Promise.resolve(on.skillPacks?.list(null)).then((r) => r?.packs || []);
+  function editMember(m, initialPreset = '') {
     openMemberEditor({
       h, t, lang: locale(), member: m, staff: team.staff, presets: team.presets, projects, accounts, labelOf, openModal, closeModal,
       save: (form) => on.team?.save(form), remove: (id) => on.team?.remove(id),
-      listPacks: () => Promise.resolve(on.skillPacks?.list(null)).then((r) => r?.packs || []),
+      listPacks, listTools: () => Promise.resolve(on.team?.tools?.() || []), openWizard: () => openWizard(),
+      removeRole: (id) => on.team?.removeRole(id), initialPreset,
+    });
+  }
+  /** v3.82 the role wizard; a saved role can go straight to a new member's popup (the list is reloaded first). */
+  function openWizard() {
+    openRoleWizard({
+      h, t, lang: locale(), openModal, closeModal, listPacks,
+      ask: (req) => Promise.resolve(on.team?.wizard(req)), saveRole: (form) => Promise.resolve(on.team?.saveRole(form)),
+      addMember: (roleId) => editMember(null, roleId),
     });
   }
 

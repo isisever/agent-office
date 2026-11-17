@@ -8,12 +8,20 @@ const ROLES = path.join(__dirname, '..', '..', 'roles');
 const known = { projectIds: ['p1', 'p2', 'p3'], accountIds: ['default', 'work'], presetIds: ['erp-odoo', 'qa', 'devops'] };
 const ayse = { id: 's-a1b2c3', name: 'Ayşe', role: { preset: 'erp-odoo' }, department: 'Geliştirme', accountId: 'work', projects: ['p1', 'p2'] };
 
-test('loadRoles: the eight shipped presets, each with a name, a brief and a short name', () => {
+test('loadRoles: the shipped presets, each with a name, a brief, a short name and one of the seven functions', () => {
   const defs = ST.loadRoles(ROLES);
-  assert.deepEqual(defs.map((d) => d.id), ['assistant', 'chatbot', 'data-analyst', 'devops', 'erp-odoo', 'product', 'qa', 'rpa']);
+  assert.deepEqual(defs.map((d) => d.id), ['accountant', 'assistant', 'chatbot', 'content-writer', 'customer-support', 'data-analyst', 'devops',
+    'digital-marketer', 'erp-odoo', 'financial-analyst', 'hr-specialist', 'operations-specialist', 'product', 'project-manager', 'qa', 'rpa',
+    'sales-rep', 'social-media-designer', 'software-developer']);
   for (const d of defs) {
     assert.ok(d.name.tr && d.name.en && d.brief.length > 200 && d.short?.tr, d.id);
+    assert.ok(ST.DEPARTMENTS.includes(d.department), `${d.id}: ${d.department}`);
+    assert.ok([...d.short.tr].length <= 7 && [...d.short.en].length <= 7, `${d.id}: the desk plate shows 7 letters`);
   }
+  for (const dept of ST.DEPARTMENTS) assert.ok(defs.some((d) => d.department === dept), `${dept} has a role`);
+  const designer = defs.find((d) => d.id === 'social-media-designer');
+  assert.deepEqual([designer.department, designer.tools, designer.writesCode], ['marketing', ['canva'], false]);
+  assert.match(designer.brief, /Canva/);
   assert.equal(defs.find((d) => d.id === 'assistant').writesCode, false);
   assert.match(defs.find((d) => d.id === 'qa').brief, /never change product code/);
   assert.match(defs.find((d) => d.id === 'devops').brief, /Never deploy to production/);
@@ -69,6 +77,54 @@ test('staff-view: roleOf merges the preset with the member’s own words; byDepa
   assert.deepEqual([own.name, own.short, own.writesCode], ['İçerik yazarı', 'İÇERİK', false]);
   const groups = V.byDepartment([{ name: 'a', department: 'Dev' }, { name: 'b' }, { name: 'c', department: 'Ops' }, { name: 'd', department: 'Dev' }]);
   assert.deepEqual(groups.map((g) => [g.head, g.members.map((m) => m.name)]), [['Dev', ['a', 'd']], ['Ops', ['c']], ['', ['b']]]);
+  // v3.82 the role picker: the functions in order, other labels after them, roles without one last
+  assert.deepEqual(V.DEPARTMENTS, ST.DEPARTMENTS, 'one list on both sides');
+  const picked = V.groupRoles([{ id: 'a', department: 'rnd' }, { id: 'b' }, { id: 'c', department: 'management' }, { id: 'd', department: 'Kendi' }, { id: 'e', department: 'rnd' }]);
+  assert.deepEqual(picked.map((g) => [g.dept, g.roles.map((r) => r.id)]), [['management', ['c']], ['rnd', ['a', 'e']], ['Kendi', ['d']], ['', ['b']]]);
+  const t = (k) => `<${k}>`;
+  assert.deepEqual([V.deptLabel(t, 'hr'), V.deptLabel(t, 'Kendi'), V.deptLabel(t, '')], ['<staff.dept.hr>', 'Kendi', '']);
+});
+
+test('role library (v3.82): custom roles saved, offered like presets, removed without leaving a member roleless', () => {
+  const defs = ST.loadRoles(ROLES);
+  const form = { name: 'Etkinlik Planlayıcı', short: 'ETKİNLİK', department: 'marketing', description: 'Plans events.', brief: 'You plan events.', writesCode: true, skillPacks: ['anthropic-skills', 'BAD id'], tools: ['canva'] };
+  const r = ST.saveCustomRole([], form, defs, () => 'my-aaaaaa');
+  assert.equal(r.role.id, 'my-aaaaaa');
+  assert.deepEqual([r.role.name, r.role.short, r.role.department, r.role.skillPacks, r.role.tools, r.role.custom], [{ en: 'Etkinlik Planlayıcı', tr: 'Etkinlik Planlayıcı' }, { en: 'ETKİNLİK', tr: 'ETKİNLİK' }, 'marketing', ['anthropic-skills'], ['canva'], true]);
+  assert.equal(ST.saveCustomRole(r.roles, { ...form }, defs, () => 'my-bbbbbb').error, 'name-used');
+  assert.equal(ST.saveCustomRole([], { ...form, name: 'qa / test uzmanı' }, defs).error, 'name-used', 'a preset’s name is taken too');
+  assert.equal(ST.saveCustomRole([], { ...form, brief: '' }, defs).error, 'brief');
+  assert.equal(ST.saveCustomRole([], { ...form, name: ' ' }, defs).error, 'name');
+  const edited = ST.saveCustomRole(r.roles, { ...form, id: 'my-aaaaaa', brief: 'New words.' }, defs);
+  assert.deepEqual([edited.roles.length, edited.role.brief], [1, 'New words.']);
+  // state.json keeps plain texts; reading them back gives the same role
+  const file = ST.customRoleFile(r.role);
+  assert.deepEqual(file, { id: 'my-aaaaaa', name: 'Etkinlik Planlayıcı', short: 'ETKİNLİK', department: 'marketing', description: 'Plans events.', brief: 'You plan events.', skillPacks: ['anthropic-skills'], tools: ['canva'], writesCode: true });
+  assert.deepEqual(ST.normalizeCustomRoles([file, file, { id: 'bad', name: 'x', brief: 'y' }]), [r.role]);
+  assert.deepEqual(P.stateFile({}, { customRoles: [r.role] }).customRoles, [file]);
+  // a member on it: valid while the role exists; removing the role copies it onto the member
+  const m = ST.normalizeMember({ ...ayse, role: { preset: 'my-aaaaaa', brief: 'Mine.' } }, { ...known, presetIds: ['my-aaaaaa'] });
+  assert.equal(ST.memberRole(m, [r.role]).name, 'Etkinlik Planlayıcı');
+  const gone = ST.removeCustomRole(r.roles, [m], 'my-aaaaaa');
+  assert.deepEqual(gone.roles, []);
+  assert.deepEqual(gone.staff[0].role, { name: 'Etkinlik Planlayıcı', description: 'Plans events.', brief: 'Mine.' });
+  assert.ok(ST.normalizeMember(gone.staff[0], known), 'still a valid member');
+});
+
+test('member tools (v3.82): known server ids kept; a desk gets them on top of its project’s scope', () => {
+  const MS = require('../src/mcp-servers.js');
+  const m = ST.normalizeMember({ ...ayse, tools: ['srv1', 'gone', 'srv1', '../x'] }, { ...known, toolIds: ['srv1', 'srv2'] });
+  assert.deepEqual(m.tools, ['srv1']);
+  assert.equal(ST.normalizeMember(ayse, known).tools, undefined, 'none: no field');
+  const servers = [{ id: 'srv1', name: 'canva', type: 'http', url: 'https://mcp.canva.com/mcp', scope: 'p9' }, { id: 'srv2', name: 'x', type: 'http', url: 'https://x', scope: 'p2' }];
+  assert.deepEqual(MS.withTools(servers, 'p1', ['srv1']).map((s) => s.scope), ['p1', 'p2']);
+  assert.equal(MS.withTools(servers, 'p1', undefined), servers);
+  assert.deepEqual(Object.keys(MS.appConfigs(MS.withTools(servers, 'p1', ['srv1']), 'p1', () => '')), ['canva']);
+  assert.deepEqual(Object.keys(MS.appConfigs(servers, 'p1', () => '')), [], 'without the member: not in p1');
+  const state = { accounts: [{ id: 'default' }], staff: [{ ...ayse, accountId: undefined, tools: ['srv1'] }], projects: [{ id: 'p1', dir: '/w/p1', accountId: 'default', tabs: [{ n: 2, staffId: 's-a1b2c3' }] }] };
+  assert.deepEqual(P.resolvePty(state, 'p1:2').project.staffTools, ['srv1']);
+  assert.equal(P.resolvePty(state, 'p1').project.staffTools, undefined);
+  assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8'), /MS\.sessionServers\(P\.engineOf\(project\), MS\.withTools\(appServers\(\), project\.id, project\.staffTools\)/);
 });
 
 // ---------- desks (step 3) and HQ (step 4) ----------

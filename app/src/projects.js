@@ -7,6 +7,7 @@ const { withSkillPacks } = require('./skill-packs.js');
 const { withDelegates, delegatesValue } = require('./delegate.js');
 const HQ = require('./hq.js');
 const ROUT = require('./routines.js');
+const { customRoleFile } = require('./staff.js');
 
 // v3.46 HQ: its folder (userData/hq) is set by main at startup; 'hq' is never in state.projects.
 let hqDir = '';
@@ -129,13 +130,15 @@ function resolvePty(state, id) {
   if (!tab) return null;
   // v3.81 a desk whose member has an account of its own runs under that account: everything that resolves the tab
   // (launch, pid file, transcript, sleep, typing) sees the project with the member's accountId. The member's skill
-  // packs ({ id: on }) go on top of the project's own setting the same way.
+  // packs ({ id: on }) go on top of the project's own setting the same way, and its own MCP tools ride along.
   const member = tab.staffId && Array.isArray(state.staff) ? state.staff.find((m) => m.id === tab.staffId) : null;
   const own = member?.accountId && Array.isArray(state.accounts) && state.accounts.some((a) => a.id === member.accountId) ? member.accountId : '';
   const packs = member?.skillPacks && typeof member.skillPacks === 'object' && !Array.isArray(member.skillPacks) && Object.keys(member.skillPacks).length ? member.skillPacks : null;
   let seen = project;
   if (own && own !== project.accountId) seen = { ...seen, accountId: own };
   if (packs) seen = { ...seen, skillPacks: { ...(seen.skillPacks || {}), ...packs } };
+  // v3.82 the member's own MCP tools (server ids), read by startPty (MS.withTools); never written to state
+  if (Array.isArray(member?.tools) && member.tools.length) seen = { ...seen, staffTools: member.tools };
   return { project: seen, tab, dir: tabDir(project, tab) };
 }
 
@@ -602,6 +605,8 @@ function stateFile(prev, state) {
   for (const k of ['mcpServers']) if (Array.isArray(out[k])) {
     out[k] = out[k].map(({ id, name, type, url, scope, held }) => ({ id, name, type, url, scope, ...(held ? { held } : {}) }));
   }
+  // v3.82 the person's roles: plain one-string texts, no runtime flags
+  if (Array.isArray(out.customRoles)) out.customRoles = out.customRoles.map(customRoleFile);
   return out;
 }
 

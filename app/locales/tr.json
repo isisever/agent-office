@@ -408,6 +408,10 @@
       "caveman": "İstediğinde kısa yanıtlar (/caveman). Yalnız beceriler, kanca yok.",
       "taste-skill": "Bak-düzelt döngüsüyle katı bir ön yüz stili.",
       "scroll-craft": "Kaydırmayla ilerleyen sinematik tanıtım sayfaları. Görsel ve video üretimi ücretli bir kie.ai API anahtarı ister."
+    },
+    "mcpPresets": "Hazır:",
+    "mcpPresetNote": {
+      "canva": "Canva kendi girişini kullanır, token gerekmez. Sunucuyu kaydedin; sonra bir masada /mcp yazıp canva → Authenticate ile tarayıcıda Canva hesabınıza bağlanın (her Claude hesabı için bir kez)."
     }
   },
   "panel": {
@@ -602,7 +606,54 @@
     "packSuggested": "önerilen",
     "resetRole": "↺ Hazır role dön",
     "resetRoleTitle": "Rolün alanlarını hazır rolün metniyle yeniden doldur",
-    "applyNote": "Değişiklikler personelin masalarına gider: boştaki masalar konuşmasını koruyarak yeniden başlar, çalışanlar bir sonraki başlangıçta alır."
+    "applyNote": "Değişiklikler personelin masalarına gider: boştaki masalar konuşmasını koruyarak yeniden başlar, çalışanlar bir sonraki başlangıçta alır.",
+    "dept": {
+      "management": "Yönetim",
+      "marketing": "Pazarlama",
+      "sales": "Satış",
+      "operations": "Operasyon",
+      "hr": "İnsan Kaynakları",
+      "finance": "Finans",
+      "rnd": "Ar-Ge"
+    },
+    "tools": "Araçlar (MCP)",
+    "toolsHint": "Seçilen araçlar bu personelin bütün masalarına gider (projenin araçlarına ek olarak).",
+    "toolsNone": "Agent Office'e eklenmiş MCP aracı yok; MCP panelinden ekleyebilirsiniz.",
+    "toolsMissing": "Bu rol şu araçlarla en iyi çalışır: {tools}. MCP panelinden ekleyebilirsiniz (Canva hazır var).",
+    "roleRemove": "🗑 Rolü kütüphaneden sil",
+    "roleRemoveConfirm": "\"{name}\" rolü kütüphaneden silinsin mi? Bu rolü kullanan personel rolün metnini kendi rolü olarak korur.",
+    "wizard": {
+      "pick": "✨ Sihirbazla yeni rol…",
+      "open": "✨ Rol sihirbazı",
+      "openTitle": "İhtiyacınız olan işi anlatın; sihirbaz sorular sorup rolü ve departmanını oluştursun",
+      "title": "Rol sihirbazı",
+      "placeholder": "Personelin ne iş yapacağını kendi cümlelerinizle anlatın… (⌘↵ gönderir)",
+      "send": "Gönder",
+      "you": "Siz",
+      "name": "Sihirbaz",
+      "intro": "Merhaba! Ekibinize nasıl bir personel lazım? Ne iş yapacağını, ne sıklıkla, hangi araçlarla (Canva, e-posta, Excel…) ve neleri kendi başına yapmaması gerektiğini anlatın. Eksik kalan yerleri sorarım, sonra rolü ve departmanını oluştururum.",
+      "thinking": "Sihirbaz düşünüyor… (yarım dakika kadar sürebilir)",
+      "kind": "Çalışma şekli",
+      "writesCode": "Kod ve yapılandırma değiştirir",
+      "save": "Rolü kaydet",
+      "saveAgain": "Değişiklikleri kaydet",
+      "saved": "\"{name}\" rol kütüphanenize kaydedildi.",
+      "changeHint": "Değiştirmek istediğiniz bir şey varsa yazın, sihirbaz rolü günceller.",
+      "addMember": "Bu rolle personel ekle",
+      "error": {
+        "busy": "Sihirbaz başka bir mesajı yanıtlıyor; biraz sonra tekrar deneyin.",
+        "no-claude": "Claude Code bulunamadı.",
+        "timeout": "Yanıt çok uzun sürdü; tekrar gönderin.",
+        "failed": "Sihirbaz yanıt veremedi (Varsayılan hesapta oturum açık mı?). Tekrar deneyin."
+      },
+      "saveError": {
+        "name": "Rolün adı yok.",
+        "brief": "Rolün talimatı yok.",
+        "name-used": "Bu adda bir rol zaten var; sihirbazdan başka bir ad isteyin.",
+        "too-many": "Rol kütüphanesi dolu (en çok 60).",
+        "failed": "Rol kaydedilemedi."
+      }
+    }
   },
   "chat": {
     "placeholder": "Mesaj… (Enter gönderir, Shift+Enter: yeni satır)",
