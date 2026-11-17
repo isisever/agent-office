@@ -34,6 +34,7 @@ const SMTP = require('./src/mail/smtp.js');
 const GRAPH = require('./src/mail/graph.js');
 const MST = require('./src/mail/store.js');
 const MMCP = require('./src/mail-mcp.js');
+const SLASH = require('./src/slash-commands.js');
 const MR = require('./src/mcp-reload.js');
 const SP = require('./src/skill-packs.js');
 const R = require('./src/resume.js');
@@ -4415,6 +4416,20 @@ function chatSession(id, r, configDir) {
   if (t) return validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId) || null;
   return validSid(asleep.get(id)?.sessionId) || null;
 }
+// v3.78 amendment: the chat input's "/" list for a Claude Code tab (src/slash-commands.js): built-ins, the project's
+// and the account's commands and skills, enabled installed plugins, the tab's skill packs and /office. Cached 30 s.
+const slashCache = new Map();   // pty id → { at, list }
+ipcMain.handle('chat:commands', (_e, id) => {
+  const r = P.resolvePty(state, String(id || ''));
+  if (!r || P.engineOf(r.project) !== 'claude') return [];
+  const hit = slashCache.get(id);
+  if (hit && Date.now() - hit.at < 30000) return hit.list;
+  const claudeDir = A.accountOf(state, r.project).configDir || path.join(app.getPath('home'), '.claude');
+  const packs = r.project.hq ? [] : SP.enabledPacks(state, r.project, skillPacks()).map((p) => ({ name: p.name, dir: path.join(packRoot(), p.id) }));
+  const list = SLASH.commandsFor({ cwd: isDir(r.dir) ? r.dir : null, claudeDir, packs, extra: [{ name: 'office', description: T('chat.officeCommand') }] });
+  slashCache.set(id, { at: Date.now(), list });
+  return list;
+});
 ipcMain.handle('chat:read', (_e, id, cursor) => {
   id = String(id);
   const r = P.resolvePty(state, id);

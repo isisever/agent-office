@@ -1501,3 +1501,14 @@ select option.rt-off { color: #888; }
 .sb-mail-cert[hidden] { display: none; }
 .sb-mail-certrow { font-size: 11px; word-break: break-all; }
 .sb-mail-fp { font-family: ui-monospace, monospace; }
+
+/* chat view "/" commands (chat.js) */
+.chat-form { position: relative; }
+.chat-slash { position: absolute; left: 0; right: 0; bottom: calc(100% + 4px); margin: 0; padding: 4px 0; list-style: none; max-height: 280px; overflow-y: auto;
+  background: var(--status-bg); border: 1px solid var(--line-strong); border-radius: var(--radius); z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+.chat-slash[hidden] { display: none; }
+.chat-slash-row { display: flex; gap: 10px; align-items: baseline; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.chat-slash-row.on, .chat-slash-row:hover { background: var(--hover, rgba(255,255,255,.06)); }
+.chat-slash-name { color: var(--accent-text); white-space: nowrap; }
+.chat-slash-desc { opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.chat-slash-src { font-size: 10px; opacity: .55; border: 1px solid var(--line); padding: 0 4px; border-radius: 3px; }

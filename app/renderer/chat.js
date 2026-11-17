@@ -5,6 +5,7 @@
 // one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
 import { t } from './i18n.js';
 import { parseMenu, isFreeOption, menuKey } from '../src/tui-menu.mjs';
+import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 
 const POLL_MS = 1000;   // while shown
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
@@ -51,7 +52,10 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   const term = h('button', { class: 'chat-term', onclick: () => onTerminal() });
   const why = h('span', { class: 'chat-why' });
   const card = h('div', { class: 'chat-menu' });
-  el.append(banner, list, empty, card, h('div', { class: 'chat-form' }, input, send, term), why);
+  // the "/" list above the input (Claude Code's commands for this tab, chat:commands)
+  const slash = h('ul', { class: 'chat-slash', role: 'listbox' });
+  slash.hidden = true;
+  el.append(banner, list, empty, card, h('div', { class: 'chat-form' }, slash, input, send, term), why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -190,12 +194,76 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     if (menu) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
     let r;
     try { r = await api.chat.send(ptyId, text); } catch (e) { console.error(e); r = 'error'; }
-    if (r === 'ok') { input.value = ''; fitInput(); note(''); setTimeout(poll, 300); return; }
+    if (r === 'ok') {
+      input.value = '';
+      fitInput();
+      note('');
+      closeSlash();
+      setTimeout(poll, 300);
+      // a command that opens a screen of its own (settings, pickers, panels) is answered in the terminal
+      const cmd = text.trim().match(/^\/([\w:.-]+)/)?.[1];
+      if (cmd && commands?.some((c) => c.name === cmd && c.ui)) setTimeout(() => onTerminal(), 400);
+      return;
+    }
     note(t(`chat.why.${['not-running', 'permission', 'draft', 'locked', 'too-long'].includes(r) ? r : 'other'}`));
   }
   const fitInput = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; };
-  input.addEventListener('input', () => { fitInput(); note(''); });
+
+  // ---- "/" commands: the list loads on the first "/" (and again after 30 s), filters as the person types
+  /** @type {{ name: string, description: string, source: string, ui?: boolean }[] | null} */
+  let commands = null;
+  let loadedAt = 0;
+  /** @type {{ name: string, description: string, source: string, ui?: boolean }[]} */
+  let shownCmds = [];
+  let pick = 0;
+  async function loadCommands() {
+    if (commands && Date.now() - loadedAt < 30000) return;
+    loadedAt = Date.now();
+    try { commands = await api.chat.commands(ptyId); } catch { commands = commands || []; }
+  }
+  function closeSlash() { slash.hidden = true; shownCmds = []; }
+  function drawSlash() {
+    slash.replaceChildren(...shownCmds.map((c, i) => h('li', {
+      class: `chat-slash-row${i === pick ? ' on' : ''}`, role: 'option',
+      onmousedown: (e) => { e.preventDefault(); pick = i; complete(); },
+    }, h('span', { class: 'chat-slash-name' }, `/${c.name}`), h('span', { class: 'chat-slash-desc' }, c.description || ''),
+    c.source !== 'builtin' ? h('span', { class: 'chat-slash-src' }, t(`chat.slash.${c.source}`)) : null)));
+    slash.hidden = !shownCmds.length;
+    slash.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+  }
+  async function updateSlash() {
+    const q = slashQuery(input.value, input.selectionStart ?? input.value.length);
+    if (q === null) { closeSlash(); return; }
+    await loadCommands();
+    const again = slashQuery(input.value, input.selectionStart ?? input.value.length);
+    if (again === null) { closeSlash(); return; }
+    shownCmds = matchCommands(commands, again, 8);
+    pick = 0;
+    drawSlash();
+  }
+  /** The chosen command into the input, with a space for its arguments. */
+  function complete() {
+    const c = shownCmds[pick];
+    if (!c) return;
+    input.value = `/${c.name} ${input.value.replace(/^\/\S*\s?/, '')}`;
+    input.setSelectionRange(c.name.length + 2, c.name.length + 2);
+    closeSlash();
+    fitInput();
+    input.focus();
+  }
+  input.addEventListener('input', () => { fitInput(); note(''); updateSlash(); });
+  input.addEventListener('blur', () => setTimeout(closeSlash, 150));
   input.addEventListener('keydown', (e) => {
+    if (!slash.hidden && shownCmds.length && !e.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); pick = (pick + (e.key === 'ArrowDown' ? 1 : -1) + shownCmds.length) % shownCmds.length; drawSlash(); return; }
+      if (e.key === 'Tab') { e.preventDefault(); complete(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); closeSlash(); return; }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        // the typed word is already the chosen command: send it; otherwise take the choice first
+        const typed = input.value.trim().slice(1);
+        if (typed !== shownCmds[pick].name) { e.preventDefault(); complete(); return; }
+      }
+    }
     // Enter sends, Shift+Enter is a new line; not while an input method is composing (Turkish/CJK IMEs)
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
   });

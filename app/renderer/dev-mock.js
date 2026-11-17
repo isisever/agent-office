@@ -523,6 +523,18 @@ window.agentOffice = {
   },
   // v3.78: the cursor is how many items were handed over
   chat: {
+    // the "/" list main builds from Claude Code's built-ins and the tab's commands, skills and plugins
+    commands: async () => [
+      { name: 'compact', description: 'Free up context by summarizing the conversation so far', source: 'builtin' },
+      { name: 'context', description: 'Visualize current context usage', source: 'builtin', ui: true },
+      { name: 'clear', description: 'Start a new session with empty context', source: 'builtin' },
+      { name: 'code-review', description: 'Review the current diff, a PR or a path for correctness bugs', source: 'builtin' },
+      { name: 'model', description: 'Set the AI model for Claude Code', source: 'builtin', ui: true },
+      { name: 'mcp', description: 'Manage MCP servers', source: 'builtin', ui: true },
+      { name: 'deploy', description: 'Deploy to staging with the checklist', source: 'project' },
+      { name: 'superpowers:brainstorming', description: 'Use when the user asks to design or plan', source: 'plugin' },
+      { name: 'office', description: 'Agent Office: ofis özeti ve istatistikler', source: 'plugin' },
+    ],
     read: async (id, cursor) => {
       if (String(id).startsWith('login:')) return { unsupported: true };
       const items = chatOf(id);

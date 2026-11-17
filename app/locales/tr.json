@@ -686,6 +686,12 @@
       "too-long": "Mesaj çok uzun.",
       "other": "Mesaj gönderilemedi.",
       "menu": "Claude bir şey soruyor: önce yukarıda yanıtlayın."
+    },
+    "officeCommand": "Agent Office: ofis özeti ve istatistikler",
+    "slash": {
+      "project": "proje",
+      "user": "kişisel",
+      "plugin": "eklenti"
     }
   },
   "main": {

@@ -696,6 +696,12 @@
       "too-long": "The message is too long.",
       "other": "The message could not be sent.",
       "menu": "Claude is asking something: answer it above first."
+    },
+    "officeCommand": "Agent Office: the office summary and stats",
+    "slash": {
+      "project": "project",
+      "user": "personal",
+      "plugin": "plugin"
     }
   },
   "main": {
