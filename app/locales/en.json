@@ -1293,7 +1293,7 @@
       "needs-approval": "needs approval on the device"
     },
     "staff": "Who does it",
-    "staffNone": "The project's own session",
+    "staffNone": "Nobody in particular (HQ or the project's own session)",
     "staffGone": "(member removed or not allowed)"
   },
   "mail": {

@@ -129,19 +129,29 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       ...remotes.map((x) => el('option', { value: `r:${x.pub}:${x.id}`, class: x.online ? 'rt-remote' : 'rt-remote rt-off' }, `${x.name} · ${x.machine}${x.online ? '' : ` (${t('routines.offline')})`}`)),
       ...(gone ? [el('option', { value: tvOf(o.target), disabled: true }, t('routines.remoteGone'))] : []));
     target.value = tvOf(o.target);
-    // v3.81 amendment: for a project, who does it: the project's own session, or a staff member allowed there (their desk)
-    const staffSel = el('select', {});
+    // v3.81 amendment: who does it: nobody in particular (HQ, or the project's own session), or a staff member (their
+    // desk). Always on show when there is staff; a member narrows the target to the projects they may work on.
+    const staff = rv.staff || [];
+    const keep0 = o.target.kind === 'project' ? o.target.staffId || '' : '';
+    const staffSel = el('select', {}, el('option', { value: '' }, t('routines.staffNone')), ...staff.map((m) => el('option', { value: m.id }, m.name)),
+      ...(keep0 && !staff.some((m) => m.id === keep0) ? [el('option', { value: keep0, disabled: true }, t('routines.staffGone'))] : []));
+    staffSel.value = keep0;
     const fStaff = field(t('routines.staff'), staffSel);
+    fStaff.hidden = !staff.length && !keep0;
+    const memberOf = () => staff.find((m) => m.id === staffSel.value) || null;
     const fillStaff = () => {
-      const pid = target.value.startsWith('p:') ? target.value.slice(2) : '';
-      const list = pid ? (rv.staff || []).filter((m) => m.projects.includes(pid)) : [];
-      const keep = staffSel.value || (o.target.kind === 'project' && o.target.projectId === pid ? o.target.staffId || '' : '');
-      const missing = keep && !list.some((m) => m.id === keep);
-      staffSel.replaceChildren(el('option', { value: '' }, t('routines.staffNone')), ...list.map((m) => el('option', { value: m.id }, m.name)),
-        ...(missing ? [el('option', { value: keep, disabled: true }, t('routines.staffGone'))] : []));
-      staffSel.value = keep;
-      fStaff.hidden = !list.length && !missing;
+      const m = memberOf();
+      for (const opt of target.options) {
+        const pid = opt.value.startsWith('p:') ? opt.value.slice(2) : '';
+        const engineOk = !pid || (rv.projects || []).find((p) => p.id === pid)?.engine === 'claude';
+        opt.disabled = !engineOk || (m ? !m.projects.includes(pid) : false) || (opt.value === tvOf(o.target) && gone);
+      }
+      if (m && !(target.value.startsWith('p:') && m.projects.includes(target.value.slice(2)))) {
+        const first = [...target.options].find((x) => !x.disabled && x.value.startsWith('p:'));
+        if (first) target.value = first.value;
+      }
     };
+    staffSel.addEventListener('change', () => syncTarget());
     const kind = el('select', {}, ...['daily', 'weekdays', 'weekly', 'hours'].map((k) => el('option', { value: k }, t(`routines.${k}`))));
     kind.value = sc.kind;
     const at = el('input', { type: 'time', value: sc.at || '09:00' });
@@ -180,7 +190,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     };
     sync();
     const ed = el('div', { class: 'rt-editor' },
-      field(t('routines.name'), name), field(t('routines.prompt'), prompt), counter, field(t('routines.target'), target), fStaff,
+      field(t('routines.name'), name), field(t('routines.prompt'), prompt), counter, fStaff, field(t('routines.target'), target),
       field(t('routines.schedule'), kind), fAt, fDay, fEvery, fWin,
       el('div', {}, t('routines.missed'), el('label', { class: 'inline' }, missedOnce, t('routines.missedOnce')), el('label', { class: 'inline' }, missedSkip, t('routines.missedSkip'))),
       field(t('routines.maxPerDay'), maxPerDay), el('label', { class: 'inline', title: t('routines.noAskHint') }, noAsk, t('routines.noAsk')), preview, note,

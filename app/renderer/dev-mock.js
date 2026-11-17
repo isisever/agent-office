@@ -898,6 +898,20 @@ if (q.has('remotes')) {
   const hok = () => Promise.resolve(structuredClone(hv));
   const cancel = (id) => { const t = hv.board.tasks.find((x) => x.id === id); if (t && t.status === 'waiting') Object.assign(t, { status: 'rejected', reason: 'cancelled' }); return hok(); };
   window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, cancel, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
+  // ?routines: the routine list and editor (v3.47), with the staff a project routine may name (v3.81 amendment)
+  if (q.has('routines')) {
+    const rv = { routines: [], cfg: { quiet: null, dailyCap: 48 }, runs: [], next: {}, problems: {}, held: [], remotes: [],
+      projects: projects.map((p) => ({ id: p.id, name: p.name, engine: 'claude' })), staff: [] };
+    const v = () => {
+      rv.staff = mockStaff.map((m) => ({ id: m.id, name: m.name, projects: m.projects === 'all' ? projects.map((p) => p.id) : m.projects }));
+      return Promise.resolve(structuredClone(rv));
+    };
+    window.agentOffice.routines = {
+      get: v, onChange: listeners().add, preview: () => Promise.resolve([Date.now() + 3600e3, Date.now() + 86400e3]),
+      save: (r) => { const id = r.id || `rt${String(rv.routines.length + 1).padStart(8, '0')}`; rv.routines = [...rv.routines.filter((x) => x.id !== id), { ...r, id }]; return Promise.resolve({ ok: true, id, view: structuredClone(rv) }); },
+      runNow: () => Promise.resolve({ view: structuredClone(rv) }), setPaused: v, remove: v, markRead: v, setCfg: v, approve: v, summary: () => Promise.resolve(''),
+    };
+  }
 }
 // ?staff: three members in two departments
 if (q.has('staff') && projects.length >= 3) mockStaff.push(

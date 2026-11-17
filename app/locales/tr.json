@@ -1265,7 +1265,7 @@
       "needs-approval": "cihazda onay bekliyor"
     },
     "staff": "Kim yapsın",
-    "staffNone": "Projenin kendi oturumu",
+    "staffNone": "Belirli biri değil (Müdür ya da projenin kendi oturumu)",
     "staffGone": "(personel silinmiş ya da yetkisi yok)"
   },
   "mail": {
