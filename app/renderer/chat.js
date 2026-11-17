@@ -4,7 +4,7 @@
 // Claude Code's own menus (approvals, AskUserQuestion, /model, …) are drawn only in the terminal: the chat reads the open
 // one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
 import { t } from './i18n.js';
-import { parseMenu, isFreeOption, isApproval, menuKey, liveStatus, openDialog } from '../src/tui-menu.mjs';
+import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
@@ -183,7 +183,12 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     const frag = document.createDocumentFragment();
     for (const it of items) {
       if ((it.kind === 'user' || it.kind === 'command') && pending.length) pending.shift()?.remove();
-      const n = item(it);
+      let n = null;
+      // one item that cannot be rendered must not drop the rest of the batch: it is shown as plain text
+      try { n = item(it); } catch (e) {
+        console.error(e);
+        try { n = typeof it?.text === 'string' ? message(it.kind === 'user' ? 'user' : 'assistant', it.text, textBody(it.text)) : null; } catch (e2) { console.error(e2); }
+      }
       if (n) frag.append(n);
     }
     if (pending.length) list.insertBefore(frag, pending[0]); else list.append(frag);
@@ -192,14 +197,15 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   }
 
   // ---- the open menu as a card
-  /** A truncated approval is answered in the terminal: its buttons are off. */
-  const mustUseTerminal = (m) => Boolean(m?.truncated) && isApproval(m);
+  // A truncated approval, a cut dialog and a dialog that reads like an approval are answered in the terminal: their
+  // buttons are off (mustUseTerminal, src/tui-menu.mjs).
   async function press(steps) {
-    // the card is up to MENU_MS old: the keys are typed only if the menu on the live screen is still the one it shows
+    // the card is up to MENU_MS old: the keys are typed only if what is open on the live screen (a menu or a dialog,
+    // read the same way as the card) is still the one it shows
     const expect = menuShown;
     let now = null;
-    try { now = parseMenu(screen()); } catch (e) { console.error(e); }
-    if (!expect || menuKey(now) !== expect || mustUseTerminal(now)) { waitUntil = 0; menu = now; menuShown = ''; drawMenu(); return; }
+    try { now = openOnScreen(screen()); } catch (e) { console.error(e); }
+    if (!expect || keyOf(now) !== expect || mustUseTerminal(now)) { waitUntil = 0; menu = now; menuShown = ''; drawMenu(); return; }
     waitUntil = Date.now() + 2000;
     for (const b of card.querySelectorAll('button, input')) b.disabled = true;
     let r;
@@ -220,20 +226,29 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     row.replaceWith(h('div', { class: 'chat-free-row' }, box, h('button', { class: 'chat-send', onclick: go }, t('chat.send'))));
     box.focus();
   }
-  // v3.80 amendment: a dialog parseMenu does not read ({ dialog, lines, numbers }) is shown as its text with the keys
-  const keyOf = (m) => (m?.dialog ? JSON.stringify(m.lines) : menuKey(m));
+  // v3.80 amendment: a dialog parseMenu does not read ({ dialog, lines, numbers, truncated, approval }) is shown as
+  // its text with the keys; a cut one or one that reads like an approval only says "answer it in the terminal"
+  const keyOf = screenKey;
   function drawDialog() {
     const keys = [...menu.numbers.map((n) => [String(n), String(n)]), ['↑', '\x1b[A'], ['↓', '\x1b[B'], ['Enter', '\r'], [t('chat.menuCancel'), '\x1b']];
-    card.replaceChildren(h('div', { class: 'chat-menu-title' }, h('pre', { class: 'chat-dialog' }, menu.lines.join('\n'))),
-      h('div', { class: 'chat-menu-nav' }, ...keys.map(([label, k]) => h('button', { class: 'chat-nav', onclick: () => press([k]) }, label))));
+    const btns = keys.map(([label, k]) => h('button', { class: 'chat-nav', onclick: () => press([k]) }, label));
+    const locked = mustUseTerminal(menu);
+    if (locked) for (const b of btns) b.disabled = true;
+    const cut = locked
+      ? h('div', { class: 'chat-menu-cut' }, h('span', {}, t(menu.truncated ? 'chat.menuTruncated' : 'chat.permission')), h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() }, t('chat.terminal')))
+      : null;
+    card.replaceChildren(h('div', { class: 'chat-menu-title' }, h('pre', { class: 'chat-dialog' }, menu.lines.join('\n'))), cut,
+      h('div', { class: 'chat-menu-nav' }, ...btns));
   }
+  // the permission banner is hidden only by a menu read in full off this screen; a dialog card never hides it
+  const hidesBanner = () => Boolean(menu) && !menu.dialog;
   function drawMenu() {
     const key = keyOf(menu);
     if (key === menuShown) return;
     menuShown = key;
     card.hidden = !menu;
     // the project's attention is any of its tabs: with nothing open here, the approval waits in another tab
-    banner.hidden = Boolean(menu) || attention !== 'permission';
+    banner.hidden = hidesBanner() || attention !== 'permission';
     if (!menu) { card.replaceChildren(); return; }
     if (menu.dialog) { drawDialog(); if (atBottomNow()) list.scrollTop = list.scrollHeight; return; }
     const titles = menu.title.map((l, n) => h('div', { class: n === menu.title.length - 1 ? 'chat-menu-q' : 'chat-menu-ctx' }, l));
@@ -262,9 +277,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     if (!shown) return;
     let m = null;
     try {
-      const lines = screen();
-      m = parseMenu(lines);
-      if (!m) { const d = openDialog(lines); if (d) m = { dialog: true, ...d }; }
+      m = openOnScreen(screen());
     } catch (e) { console.error(e); }
     if (keyOf(m) !== menuShown) waitUntil = 0;
     if (Date.now() < waitUntil) return;
@@ -407,7 +420,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
       window.clearInterval(menuTimer);
     },
     /** The project's attention ('permission' shows the banner: Claude Code waits for an answer in the terminal). */
-    setAttention(a) { attention = a; banner.hidden = Boolean(menu) || a !== 'permission'; },
+    setAttention(a) { attention = a; banner.hidden = hidesBanner() || a !== 'permission'; },
     texts() { texts(); menuShown = ''; drawMenu(); },
     focus() { input.focus(); },
     destroy() { shown = false; window.clearInterval(timer); window.clearInterval(menuTimer); el.remove(); },

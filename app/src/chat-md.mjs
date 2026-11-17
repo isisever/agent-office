@@ -1,15 +1,16 @@
 // Chat view (contract v3.80 amendment): the markdown Claude writes, read into plain data the renderer turns into DOM
 // nodes (never HTML: text stays text). Pure; the renderer imports it, tested in test/chat.test.cjs.
-// Blocks: ``` fences, # headings, - / * / + and 1. lists (one level of nesting by indent), > quotes, --- rules,
+// Blocks: ``` fences, # headings, - / * / + and 1. lists (nested by indent), > quotes, --- rules,
 // | pipe | tables |, paragraphs. Inline: `code`, **bold** / __bold__, *italic* / _italic_, ~~strike~~,
-// [text](http(s)/mailto link) and bare http(s) links. Anything else is shown as typed.
+// [text](http(s) link) and bare http(s) links. Anything else is shown as typed (a mailto link too: the app opens
+// only http(s) outside). Quotes and lists nest MAX_NEST deep; deeper marks stay text.
 
 /** @typedef {{ t: 'text', text: string } | { t: 'code', text: string } | { t: 'b' | 'i' | 's', kids: Inline[] } | { t: 'link', href: string, kids: Inline[] }} Inline */
 /** @typedef {{ t: 'p', kids: Inline[] } | { t: 'h', level: number, kids: Inline[] } | { t: 'pre', lang: string, text: string }
  *   | { t: 'ul' | 'ol', start?: number, items: { kids: Inline[], sub: Block[] }[] } | { t: 'quote', blocks: Block[] } | { t: 'hr' }
  *   | { t: 'table', head: Inline[][], rows: Inline[][][], align: string[] }} Block */
 
-const SAFE_HREF = /^(https?:\/\/|mailto:)[^\s<>"']+$/i;
+const SAFE_HREF = /^https?:\/\/[^\s<>"']+$/i;
 
 /** Inline markdown → tokens. @param {string} s @returns {Inline[]} */
 export function inline(s) {
@@ -56,15 +57,26 @@ export function inline(s) {
 }
 
 const FENCE = /^\s{0,3}(```+|~~~+)\s*([\w+-]*)\s*$/;
-const HEAD = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+// linear on purpose: the marker and the rest; closing #s and spaces are cut in code (headText), never by a lazy group
+const HEAD = /^\s{0,3}(#{1,6})\s+(.*)$/;
+const headText = (s) => {
+  let e = s.length;
+  while (e > 0 && /\s/.test(s[e - 1])) e--;
+  while (e > 0 && s[e - 1] === '#') e--;
+  while (e > 0 && /\s/.test(s[e - 1])) e--;
+  return s.slice(0, e);
+};
+/** How deep quotes and lists nest; deeper ones stay text (a hostile message cannot overflow the stack or memory). */
+export const MAX_NEST = 4;
 const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
 const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
 const QUOTE = /^\s{0,3}>\s?(.*)$/;
 const TABLE_SEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 const cells = (l) => l.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
 
-/** Markdown text → blocks. @param {string} text @returns {Block[]} */
-export function blocks(text) {
+/** Markdown text → blocks. @param {string} text @param {number} [depth] nesting so far (internal) @returns {Block[]} */
+export function blocks(text, depth = 0) {
+  const deep = depth >= MAX_NEST;   // no quote or list opens here: their lines are paragraph text
   const L = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
   /** @type {Block[]} */
   const out = [];
@@ -83,12 +95,12 @@ export function blocks(text) {
       continue;
     }
     const hd = l.match(HEAD);
-    if (hd) { out.push({ t: 'h', level: hd[1].length, kids: inline(hd[2]) }); i++; continue; }
+    if (hd) { out.push({ t: 'h', level: hd[1].length, kids: inline(headText(hd[2])) }); i++; continue; }
     if (RULE.test(l)) { out.push({ t: 'hr' }); i++; continue; }
-    if (QUOTE.test(l)) {
+    if (!deep && QUOTE.test(l)) {
       const body = [];
       while (i < L.length && QUOTE.test(L[i])) body.push(L[i++].match(QUOTE)[1]);
-      out.push({ t: 'quote', blocks: blocks(body.join('\n')) });
+      out.push({ t: 'quote', blocks: blocks(body.join('\n'), depth + 1) });
       continue;
     }
     if (l.includes('|') && i + 1 < L.length && TABLE_SEP.test(L[i + 1])) {
@@ -100,7 +112,7 @@ export function blocks(text) {
       out.push({ t: 'table', head: head.map(inline), rows, align });
       continue;
     }
-    const it = l.match(ITEM);
+    const it = deep ? null : l.match(ITEM);
     if (it) {
       const ordered = /\d/.test(it[2]);
       const base = it[1].length;
@@ -116,7 +128,7 @@ export function blocks(text) {
             const line = L[i++];
             sub.push(line.slice(Math.min(base + 2, line.search(/\S/))));
           }
-          items[items.length - 1].sub.push(...blocks(sub.join('\n')));
+          items[items.length - 1].sub.push(...blocks(sub.join('\n'), depth + 1));
           continue;
         }
         break;
@@ -126,7 +138,7 @@ export function blocks(text) {
     }
     // a paragraph: lines up to a blank line or the start of another block
     const para = [];
-    while (i < L.length && L[i].trim() && !FENCE.test(L[i]) && !HEAD.test(L[i]) && !QUOTE.test(L[i]) && !ITEM.test(L[i]) && !RULE.test(L[i])
+    while (i < L.length && L[i].trim() && !FENCE.test(L[i]) && !HEAD.test(L[i]) && (deep || (!QUOTE.test(L[i]) && !ITEM.test(L[i]))) && !RULE.test(L[i])
       && !(L[i].includes('|') && i + 1 < L.length && TABLE_SEP.test(L[i + 1]))) para.push(L[i++].trim());
     if (!para.length) { para.push(L[i++].trim()); }
     /** @type {Inline[]} */

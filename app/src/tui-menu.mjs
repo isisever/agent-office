@@ -123,19 +123,61 @@ export function liveStatus(lines) {
 // terminal".
 // a dialog's own hint, never the prompt's ("esc to interrupt", "shift+tab to cycle", "? for shortcuts")
 const HINT_RE = /\b(?:Esc|Enter|Return)\s+to\s+(?:close|continue|submit|save|skip|dismiss|apply|accept|retry|toggle)\b|[↑↓]\S*\s+to\s+(?:navigate|select|move|choose)\b/i;
-/** The open dialog at the foot of a screen → { lines: string[] (≤ 14, trimmed), numbers: number[] } or null. */
+const PROMPT_RE = /^\s*[❯>](?:\s|$)/;        // the prompt box's first line (the person's draft follows the glyph)
+const DIALOG_MAX = 14;                       // dialog lines kept above the hint
+/**
+ * The open dialog at the foot of a screen →
+ * { lines: string[] (trimmed, the hint last), numbers: number[], truncated, approval } or null.
+ * A dialog replaces the prompt box: its key hint is the bottom-most line of the screen, below a full-width rule.
+ * Never a dialog: the person's own draft in the prompt box (a hint-like text after the prompt glyph, between two
+ * rules), the footer or status line under the prompt box, and ordinary output above it.
+ * truncated: not all of the dialog is in `lines` (more than DIALOG_MAX lines, or no rule above it on screen).
+ * approval: it reads like a permission prompt ("Do you want …", "Yes" first). The chat answers neither a truncated
+ * dialog nor an approval from the card: those are answered in the terminal.
+ */
 export function openDialog(lines) {
   const L = (Array.isArray(lines) ? lines : []).map((l) => String(l ?? '').replace(/\s+$/, ''));
-  let foot = -1;
-  for (let i = L.length - 1, seen = 0; i >= 0 && seen < 3; i--) {
-    if (!L[i].trim()) continue;
-    seen++;
-    if (FOOT_RE.test(L[i]) || HINT_RE.test(L[i])) { foot = i; break; }
+  let foot = L.length - 1;
+  while (foot >= 0 && !L[foot].trim()) foot--;
+  if (foot < 0 || PROMPT_RE.test(L[foot]) || !(FOOT_RE.test(L[foot]) || HINT_RE.test(L[foot]))) return null;
+  let rule = -1;
+  for (let i = foot - 1; i >= 0; i--) if (RULE_RE.test(L[i])) { rule = i; break; }
+  const top = rule + 1;
+  // the block the hint closes starts with the prompt glyph: a draft whose box lost its lower rule, not a dialog
+  let first = top;
+  while (first < foot && !L[first].trim()) first++;
+  if (first < foot && PROMPT_RE.test(L[first])) return null;
+  // the rule above the hint is the prompt box's lower rule: the hint is the footer under the prompt box
+  if (rule > 0) {
+    let upper = -1;
+    for (let i = rule - 1; i >= 0; i--) if (RULE_RE.test(L[i])) { upper = i; break; }
+    let k = upper + 1;
+    while (k < rule && !L[k].trim()) k++;
+    if (upper >= 0 && (k === rule || PROMPT_RE.test(L[k]))) return null;
   }
-  if (foot < 0) return null;
-  let top = 0;
-  for (let i = foot - 1; i >= 0; i--) if (RULE_RE.test(L[i])) { top = i + 1; break; }
-  const body = L.slice(Math.max(top, foot - 14), foot + 1).filter((l) => l.trim() && !DASH_RE.test(l)).map((l) => l.trim());
-  const numbers = [...new Set(body.map((l) => OPTION_RE.exec(l)).filter(Boolean).map((m) => Number(m?.[1])).filter((n) => n >= 1 && n <= 9))];
-  return body.length ? { lines: body, numbers } : null;
+  const from = Math.max(top, foot - DIALOG_MAX);
+  const body = L.slice(from, foot + 1).filter((l) => l.trim() && !DASH_RE.test(l)).map((l) => l.trim());
+  const opts = body.map((l) => OPTION_RE.exec(l)).filter(Boolean);
+  const numbers = [...new Set(opts.map((m) => Number(m?.[1])).filter((n) => n >= 1 && n <= 9))];
+  const approval = body.some((l) => ASK_RE.test(l)) || /^Yes\b/i.test(String(opts[0]?.[3] || ''));
+  return { lines: body, numbers, truncated: rule < 0 || from > top, approval };
 }
+
+/** A stable key for a dialog (its text and whether it is cut), never equal to a menu's key. */
+export const dialogKey = (d) => (d ? JSON.stringify(['dialog', d.lines, Boolean(d.truncated)]) : '');
+
+/**
+ * What is open on a screen right now: the menu parseMenu reads, else another open dialog
+ * ({ dialog: true, lines, numbers, truncated, approval }), else null. The chat card and the check made right before
+ * its keys are typed both read the screen with this.
+ */
+export function openOnScreen(lines) {
+  const m = parseMenu(lines);
+  if (m) return m;
+  const d = openDialog(lines);
+  return d ? { dialog: true, ...d } : null;
+}
+/** The key of what openOnScreen returned ('' for nothing): the card types only while the screen still has this key. */
+export const screenKey = (m) => (m?.dialog ? dialogKey(m) : menuKey(m));
+/** Must this be answered in the terminal (never from the card)? A truncated approval menu; a cut or approval-like dialog. */
+export const mustUseTerminal = (m) => (m?.dialog ? Boolean(m.truncated || m.approval) : Boolean(m?.truncated) && isApproval(m));
