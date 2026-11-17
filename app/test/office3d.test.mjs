@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { demoOffice, render, resetOffice, sceneOf, setGeometry, setLanguage, setTheme, BOSS_ID } from '../src/office/core.mjs'
-import { buildStatic, buildDynamic, cameraFor, pickBot, project, staticKey, pitchFor } from '../src/office3d.mjs'
+import { buildStatic, buildDynamic, cameraFor, pickBot, project, norm, staticKey, PITCH, WALL_H } from '../src/office3d.mjs'
 
 const NOW = new Date(2026, 9, 9, 11, 0, 0).getTime()
 function sceneAt(w = 1320, h = 700) {
@@ -41,16 +41,30 @@ test('buildStatic / buildDynamic: triangles with a colour each; every bot gets a
   assert.equal(staticKey(s), staticKey({ ...s, now: s.now + 1000 }), 'time does not rebuild the static part')
 })
 
-test('cameraFor: the whole office (walls included) is on the canvas, for wide and tall canvases', () => {
-  for (const [w, h] of [[1320, 700], [2600, 700], [900, 900], [700, 1100]]) {
+const pitchOf = (cam) => Math.atan2(cam.eye[1] - cam.target[1], cam.eye[2] - cam.target[2])
+
+test('cameraFor: the pitch is 38° whatever the canvas shape', () => {
+  assert.ok(Math.abs(PITCH - (38 * Math.PI) / 180) < 1e-12)
+  const wide = sceneAt(2600, 700)
+  const tall = sceneAt(700, 1100)
+  const a = pitchOf(cameraFor(wide.LW, wide.LH, 2600, 700))
+  const b = pitchOf(cameraFor(tall.LW, tall.LH, 700, 1100))
+  assert.ok(Math.abs(a - b) < 1e-9, `wide ${a} / tall ${b}`)
+  assert.ok(Math.abs(a - PITCH) < 1e-9)
+})
+
+test('cameraFor: the floor’s corners and the wall tops are on the canvas, between the near and far planes', () => {
+  for (const [w, h] of [[1600, 500], [1200, 800], [600, 900], [1320, 700], [2600, 700], [900, 900], [700, 1100]]) {
     const s = sceneAt(w, h)
     const cam = cameraFor(s.LW, s.LH, w, h)
-    for (const x of [0, s.LW]) for (const z of [0, s.LH]) for (const y of [0, 30]) {
+    const view = norm(cam.target.map((t, i) => t - cam.eye[i]))
+    for (const x of [0, s.LW]) for (const z of [0, s.LH]) for (const y of [0, WALL_H + 1.5]) {
       const p = project(cam.mvp, [x, y, z], w, h)
       assert.ok(p && p[0] >= 0 && p[0] <= w && p[1] >= 0 && p[1] <= h, `${w}x${h}: corner ${[x, y, z]} → ${p}`)
+      const depth = [x, y, z].reduce((sum, c, i) => sum + (c - cam.eye[i]) * view[i], 0)
+      assert.ok(depth > 10 && depth < 4000, `${w}x${h}: corner ${[x, y, z]} at depth ${depth}`)
     }
   }
-  assert.ok(pitchFor(2600, 700) > pitchFor(900, 900), 'a wide view looks down more steeply')
 })
 
 test('pickBot: a bot’s projected body picks it; empty floor picks nothing', () => {
