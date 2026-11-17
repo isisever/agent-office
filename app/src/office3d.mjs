@@ -292,8 +292,8 @@ export function project(mvp, [x, y, z], w, h) {
 
 const FOV = (32 * Math.PI) / 180
 /** The camera's pitch for a canvas shape: a wide, short office view looks down more steeply to fill its height. */
-// 40°–48° above the floor by the canvas's shape (was 50°–66°: too steep, the user asked for a lower view)
-export const pitchFor = (w, h) => ((Math.min(48, Math.max(40, 40 + (w / h - 1.4) * 12))) * Math.PI) / 180
+// 32°–36° above the floor by the canvas's shape (50°–66° at first, then 40°–48°: both too steep for the user)
+export const pitchFor = (w, h) => ((Math.min(36, Math.max(32, 32 + (w / h - 1.4) * 4))) * Math.PI) / 180
 /**
  * The camera for a canvas of w × h pixels: above the front of the office looking down at PITCH, as far away as needed
  * for the whole office (walls included) to fit with a small margin. → { eye, target, fov, mvp }
