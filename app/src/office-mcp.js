@@ -73,6 +73,11 @@ const HQ_TOOLS = [
     inputSchema: { type: 'object', properties: { request: { type: 'string' }, status: { type: 'string' } }, additionalProperties: false },
   },
   {
+    name: 'office_task',
+    description: 'HQ (v3.87): change one task on the board when the person asks. op: cancel (a queued or waiting task is taken out, a task held for consent is declined; one already typed into a tab stops being followed, its session is not stopped), done (an open task the person says is finished; note says how), remove (deletes an ended task\'s row), retitle (title). Approving a task held for consent is the person\'s alone, on the Board: never possible here. Returns { ok, status? } or { ok: false, reason: unknown-task | still-open | already-ended | not-started | person-only | bad-op }.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, op: { type: 'string', enum: ['cancel', 'done', 'remove', 'retitle'] }, note: { type: 'string' }, title: { type: 'string' } }, required: ['id', 'op'], additionalProperties: false },
+  },
+  {
     name: 'office_summary',
     description: 'HQ: saves the consolidated summary of a finished request (requests/<id>.md in the HQ folder, at most 16 KB).',
     inputSchema: { type: 'object', properties: { request: { type: 'string' }, text: { type: 'string' } }, required: ['request', 'text'], additionalProperties: false },

@@ -1663,3 +1663,19 @@ projects:setGroup(id, group) → { ok }      // '' clears it; the list redraws (
 - **Personal workspaces** (`staffOwner`, v3.83 amendment) are never in the list (nor in ⌘1-9, nor the first project chosen when the active one goes): they open only from the member's "Personal" chip. The tab bar and the office still show them while open.
 - **Setting a group**: the project's settings popup has "Group" first (a text box offering the names in use, saved with Save), and the project's right-click menu has "Move to group" (the other groups in use, "Take out of …"; a new name is typed in the settings, Electron has no prompt). Strings `sidebar.group*`, `main.moveToGroup`, `main.newGroupHint`, `main.removeFromGroup`. Dev mock: `?groups`.
 
+## HQ changes its board: `office_task` (v3.87)
+
+HQ could read the board but not change it, so a task the person had finished by hand stayed "delivered" forever and HQ had to answer "I can't". HQ now gets one more tool (HQ only: the socket refuses it from a project boss; auto-allowed in HQ's launch like its other office tools):
+
+```ts
+office_task({ id, op: 'cancel' | 'done' | 'remove' | 'retitle', note?, title? })
+  → { ok: true, status? | removed: true } | { ok: false, reason: 'unknown-task' | 'still-open' | 'already-ended' | 'not-started' | 'person-only' | 'bad-op' }
+```
+
+- **cancel**: a waiting stage → `rejected: cancelled` (the stages after it block, v3.79); a task held for consent → **declined** (as the Board's Decline); a queued task → taken out of its queue (local) or cancelled on its device (remote), as the Board's Cancel; a task already typed into a tab (`delivered`, `running`, `needs-approval`) → `rejected: cancelled` and no longer followed (its dispatch record is closed, the task watch drops it); **its session's turn is not stopped**.
+- **done**: an open typed task the person says is finished → `reported` with the summary `[Closed by HQ on the person's word] <note>`; a routine's run ends with it. HQ gets no inbox row for its own change.
+- **remove**: an ended task's row leaves the board (and its request, when no task of it is left) and its dispatch record; an open task must be cancelled first.
+- **retitle**: the task's title (one line, ≤ 80).
+- **Never**: approving a task held for consent (`approve` / `allow` → `person-only`). That stays the person's Allow on the Board, so HQ can never send work the person did not agree to.
+- `src/hq.js` `taskOpPlan`, `removeTask`, `retitleTask`, `TASK_OPS`; `main.js hqTaskOp`. HQ's brief (`plugin/hooks/hq.ts`) names the tool and the approval rule.
+
