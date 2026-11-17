@@ -1108,7 +1108,7 @@ OpenCode's CLI dropped `providers`, and `opencode console login` keeps its login
 ## Settings popups, wider sidebar, taller terminal (v3.42)
 - **Sidebar** is 300 px wide (`--sidebar-w`). **Terminal** may grow to 80% of the right-hand area (`#terminal` `max-height`, `app.js` divider); the office keeps at least 120 px.
 - **Project row** shows name, status icons, ⚙ and ×, then the usage/login/engine/stats line. All per-project controls (account, manager, boss model, agent model, project files, context cap, savings, backup) moved into the ⚙ popup (`openProjectSettings` in `renderer/sidebar.js`). Changes are a draft: **Save** applies them (account first, as it may restart tabs), Cancel / Escape / a click outside discards. "New account…" closes the popup and opens the Add account menu as before.
-- **ACCOUNTS** section keeps only the account list; the general rows (resume, manager mode, MCP, fallback, sleep, language, theme, bot color) moved into the ⚙ popup in its heading (`openSettings`). Those apply at once; the popup has a Close button.
+- **ACCOUNTS** section keeps only the account list; the general rows (resume, manager mode, MCP, fallback, sleep, language, theme, bot color) moved into the ⚙ popup (`openSettings`). Those apply at once; the popup has a Close button. The ⚙ button sits at the right end of the title bar (`#settings`, wired in app.js); it was in the ACCOUNTS heading before.
 - Strings: `sidebar.projectSettings(Title)`, `settings(Title)`, `save`, `cancel`, `close`.
 
 ## Plain terminal tab (v3.42)

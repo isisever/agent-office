@@ -171,7 +171,6 @@ export function mountSidebar(el, on) {
   const sleepRow = h('div', { class: 'sb-botcolor sb-langrow' }, sleepLabel, sleepSelect);
   const projHead = h('span', {});
   const acctHead = h('span', {});
-  const settingsBtn = h('button', { class: 'sb-x sb-gear sb-gear-head', id: 'sb-settings', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openSettings(); } }, '⚙'); // inside <summary>: must not toggle the panel
   const addProjectBtn = h('button', { class: 'sb-add', id: 'sb-add-project', onclick: () => on.addProject() });
   // "Resume unfinished work" (v3.8): main checks every tab; the result shows under the button for a while
   const resumeAllBtn = h('button', { class: 'sb-add sb-resume-all', id: 'sb-resume-all', onclick: () => on.resumeUnfinished?.() });
@@ -196,7 +195,7 @@ export function mountSidebar(el, on) {
   el.append(
     panel('team', [teamHead], h('div', { class: 'sb-top' }, teamList, addStaffBtn), 'sb-team-panel'),
     panel('projects', [projHead], h('div', { class: 'sb-top', id: 'sb-top' }, projList, addProjectBtn, resumeAllBtn, resumeNote)),
-    panel('accounts', [acctHead, settingsBtn], h('div', { class: 'sb-panel-body' }, acctList), 'sb-accounts'),
+    panel('accounts', [acctHead], h('div', { class: 'sb-panel-body' }, acctList), 'sb-accounts'),
     panel('mcp', [mcpHead], h('div', { class: 'sb-panel-body' }, mcpNote, mcpList, addMcpBtn), 'sb-mcp-panel'),
   );
   el.querySelector('#sb-panel-mcp')?.addEventListener('toggle', () => renderMcp(true)); // re-read Claude Code's files
@@ -208,8 +207,6 @@ export function mountSidebar(el, on) {
     renderMcpHead();
     addMcpBtn.textContent = t('sidebar.mcpAdd');
     addMcpBtn.title = t('sidebar.mcpAddTitle');
-    settingsBtn.title = t('sidebar.settingsTitle');
-    settingsBtn.setAttribute('aria-label', t('sidebar.settings'));
     addProjectBtn.textContent = t('sidebar.addProject');
     addProjectBtn.title = t('sidebar.addProjectTitle', { mod: modLabel });
     resumeAllBtn.textContent = t('sidebar.resumeUnfinished');
@@ -1285,6 +1282,8 @@ export function mountSidebar(el, on) {
   });
 
   return {
+    /** The general settings popup (v3.42); its ⚙ button sits in the title bar (app.js). */
+    openSettings,
     /** Language setting, active language and languages: { setting: 'auto' | code, lang, languages: [{ code, name }] }. */
     setLanguage(li) {
       if (!li) return;

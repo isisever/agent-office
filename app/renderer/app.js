@@ -833,6 +833,7 @@ function setCollapsed(c) {
   store.set('sidebarCollapsed', c ? '1' : '0');
   requestAnimationFrame(() => panes.get(activePty())?.term.fit());
 }
+$('settings').addEventListener('click', () => sidebar?.openSettings());
 $('toggle-sidebar').addEventListener('click', () => {
   setCollapsed(!document.body.classList.contains('sidebar-collapsed'));
   focusActive();
@@ -892,6 +893,8 @@ function applyStaticText() {
   $('empty-add').title = t('app.emptyAddTitle', { mod: modLabel });
   $('empty-note').textContent = t('app.emptyNote');
   $('toggle-sidebar').title = document.body.classList.contains('sidebar-collapsed') ? t('app.showSidebar') : t('app.hideSidebar');
+  $('settings').title = t('sidebar.settingsTitle');
+  $('settings').setAttribute('aria-label', t('sidebar.settings'));
   for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.hint-close'))) b.title = t('app.close');
   setTitleProject();
   setStats(lastStats);
