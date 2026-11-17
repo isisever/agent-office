@@ -9,8 +9,8 @@ export function roleOf(member, defs, lang = 'en') {
     name: member?.role?.name || def?.name?.[l] || '',
     description: member?.role?.description || def?.description?.[l] || '',
     brief: member?.role?.brief || def?.brief || '',
-    writesCode: member?.role?.writesCode === false ? false : def ? def.writesCode : true,
-    skillPacks: Array.isArray(member?.skillPacks) ? member.skillPacks : def?.skillPacks || [],
+    writesCode: typeof member?.role?.writesCode === 'boolean' ? member.role.writesCode : def ? def.writesCode : true,
+    skillPacks: def?.skillPacks || [],
     short: [...String(def?.short?.[l] || (member?.role?.name || def?.name?.[l] || '').split(/[\s(/-]+/).filter(Boolean)[0] || '').toLocaleUpperCase(l)].slice(0, 7).join(''),
   };
 }

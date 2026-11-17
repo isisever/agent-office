@@ -558,9 +558,9 @@
     "ownRole": "Kendi rolüm…",
     "roleName": "Rol adı",
     "roleNamePh": "İçerik yazarı, …",
-    "brief": "Ne yapar (talimat)",
+    "brief": "Talimat (prompt)",
     "briefPh": "You are the team's content writer. …",
-    "briefHint": "Personelin oturumlarına verilir; model için İngilizce en iyisidir.",
+    "briefHint": "Personelin masalarındaki oturumlara verilir. Model için İngilizce en iyisidir.",
     "department": "Departman",
     "departmentPh": "Geliştirme, Operasyon, … (isteğe bağlı)",
     "departmentHint": "Aynı departmandaki personel birlikte listelenir.",
@@ -593,7 +593,16 @@
       "failed": "Masa açılamadı."
     },
     "parallel": "Aynı anda birden çok personel",
-    "parallelTitle": "Personel bu projede aynı anda çalışır, her biri kendi kopyasında (Agent Office'in veri klasöründe tutulan bir git worktree; proje klasörüne hiçbir şey yazılmaz). Kapalı: aynı anda tek masa çalışır, Müdür'ün sıradaki işi bekler. Bağımlılıklar (node_modules vb.) her kopyada ayrı kurulur."
+    "parallelTitle": "Personel bu projede aynı anda çalışır, her biri kendi kopyasında (Agent Office'in veri klasöründe tutulan bir git worktree; proje klasörüne hiçbir şey yazılmaz). Kapalı: aynı anda tek masa çalışır, Müdür'ün sıradaki işi bekler. Bağımlılıklar (node_modules vb.) her kopyada ayrı kurulur.",
+    "description": "Açıklama",
+    "descriptionPh": "Tek satır: bu rol ne yapar",
+    "skillPacks": "Beceri paketleri",
+    "skillPacksHint": "Her masada projenin ayarının üstüne uygulanır.",
+    "packProject": "Projenin ayarı",
+    "packSuggested": "önerilen",
+    "resetRole": "↺ Hazır role dön",
+    "resetRoleTitle": "Rolün alanlarını hazır rolün metniyle yeniden doldur",
+    "applyNote": "Değişiklikler personelin masalarına gider: boştaki masalar konuşmasını koruyarak yeniden başlar, çalışanlar bir sonraki başlangıçta alır."
   },
   "chat": {
     "placeholder": "Mesaj… (Enter gönderir, Shift+Enter: yeni satır)",

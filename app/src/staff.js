@@ -28,6 +28,13 @@ function bilingual(v, max) {
   const tr = str(v.tr, max);
   return en || tr ? { en: en || tr, tr: tr || en } : null;
 }
+/** A member's skill packs on top of its desk's project ({ [pack id]: on }); an old list means "on". */
+function packMap(v) {
+  const out = {};
+  if (Array.isArray(v)) for (const id of packIds(v)) out[id] = true;
+  else if (v && typeof v === 'object') for (const [k, on] of Object.entries(v)) if (ID_RE.test(k) && typeof on === 'boolean' && Object.keys(out).length < 30) out[k] = on;
+  return out;
+}
 const packIds = (v) => [...new Set((Array.isArray(v) ? v : []).filter((x) => typeof x === 'string' && ID_RE.test(x)))].slice(0, 12);
 
 /**
@@ -60,8 +67,9 @@ function loadRoles(dir, fsImpl = fs) {
 }
 
 /**
- * A member's role: a preset id (its name, description and brief may be overridden) or an own role (a name, and a
- * brief or a description). → the cleaned role, or null.
+ * A member's role: a preset id (its name, description, brief and writesCode may be overridden; the member popup
+ * shows the preset's values and keeps only what differs) or an own role (a name, and a brief or a description).
+ * → the cleaned role, or null.
  */
 function roleValue(raw, presetIds = null) {
   if (!raw || typeof raw !== 'object') return null;
@@ -72,7 +80,7 @@ function roleValue(raw, presetIds = null) {
   if (!preset && !name) return null;
   return {
     ...(preset ? { preset } : {}), ...(name ? { name } : {}), ...(description ? { description } : {}), ...(brief ? { brief } : {}),
-    ...(raw.writesCode === false ? { writesCode: false } : {}),
+    ...(typeof raw.writesCode === 'boolean' && (preset || raw.writesCode === false) ? { writesCode: raw.writesCode } : {}),
   };
 }
 
@@ -93,7 +101,7 @@ function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds 
     : [...new Set((Array.isArray(raw.projects) ? raw.projects : []).filter((id) => typeof id === 'string' && PROJECT_ID_RE.test(id) && (!projectIds || projectIds.includes(id))))];
   return {
     id: raw.id, name, role, ...(department ? { department } : {}), ...(accountId ? { accountId } : {}),
-    ...(Array.isArray(raw.skillPacks) ? { skillPacks: packIds(raw.skillPacks) } : {}), projects,
+    ...(Object.keys(packMap(raw.skillPacks)).length ? { skillPacks: packMap(raw.skillPacks) } : {}), projects,
   };
 }
 
@@ -151,8 +159,8 @@ function memberRole(member, defs) {
     name: member?.role?.name || def?.name?.en || '',
     description: member?.role?.description || def?.description?.en || '',
     brief: member?.role?.brief || def?.brief || '',
-    writesCode: member?.role?.writesCode === false ? false : def ? def.writesCode : true,
-    skillPacks: Array.isArray(member?.skillPacks) ? member.skillPacks : def?.skillPacks || [],
+    writesCode: typeof member?.role?.writesCode === 'boolean' ? member.role.writesCode : def ? def.writesCode : true,
+    skillPacks: def?.skillPacks || [],   // the preset's suggestion; what a desk gets is member.skillPacks on its project's
   };
 }
 
@@ -209,6 +217,6 @@ function findMember(staff, key) {
 }
 
 module.exports = {
-  STAFF_MAX, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
+  STAFF_MAX, packMap, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
   dropProject, dropAccount, mayWork, memberRole, deskWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
 };

@@ -568,9 +568,9 @@
     "ownRole": "Own role…",
     "roleName": "Role name",
     "roleNamePh": "Content writer, …",
-    "brief": "What the member does (instructions)",
+    "brief": "Instructions (prompt)",
     "briefPh": "You are the team's content writer. …",
-    "briefHint": "Given to the member's sessions; English works best for the model.",
+    "briefHint": "Given to the member's desk sessions. English works best for the model.",
     "department": "Department",
     "departmentPh": "Development, Operations, … (optional)",
     "departmentHint": "Members with the same department are listed together.",
@@ -603,7 +603,16 @@
       "failed": "The desk could not be opened."
     },
     "parallel": "Several team members at once",
-    "parallelTitle": "Team members work in this project at the same time, each in its own copy (a git worktree kept in Agent Office's data folder, never in the project folder). Off: one desk at work at a time; HQ's next task waits. Dependencies (node_modules, …) are installed per copy."
+    "parallelTitle": "Team members work in this project at the same time, each in its own copy (a git worktree kept in Agent Office's data folder, never in the project folder). Off: one desk at work at a time; HQ's next task waits. Dependencies (node_modules, …) are installed per copy.",
+    "description": "Description",
+    "descriptionPh": "One line: what this role does",
+    "skillPacks": "Skill packs",
+    "skillPacksHint": "On top of each desk's project setting.",
+    "packProject": "Project's setting",
+    "packSuggested": "suggested",
+    "resetRole": "↺ Back to the preset",
+    "resetRoleTitle": "Refill the role's fields from the preset",
+    "applyNote": "Changes reach the member's desks: idle ones restart in their conversation, busy ones get them at their next start."
   },
   "chat": {
     "placeholder": "Message… (Enter sends, Shift+Enter: new line)",

@@ -3244,6 +3244,14 @@ ipcMain.handle('staff:save', (_e, form) => {
   const r = ST.saveMember(state.staff || [], form && typeof form === 'object' ? form : {}, staffKnown());
   if (!r.staff) return { ok: false, error: r.error };
   commit({ ...state, staff: r.staff });
+  // the member's role or packs may have changed: its idle desks restart in their conversation (new role file and
+  // packs at start); busy ones get them at their next start
+  for (const p of state.projects) for (const t of P.desksOf(p)) {
+    if (t.staffId !== r.member.id) continue;
+    const pid = `${p.id}:${t.n}`;
+    const sid = terms.has(pid) ? idleSession(pid) : '';
+    if (sid) startPty(pid, { sessionId: sid, resume: true });
+  }
   return { ok: true, member: r.member };
 });
 ipcMain.handle('staff:remove', (_e, id) => {

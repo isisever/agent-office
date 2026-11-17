@@ -1436,6 +1436,11 @@ select option.rt-off { color: #888; }
 .sb-staff-where { grid-column: 2 / -1; font-size: 10px; opacity: .6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sb-staff-empty { list-style: none; margin: 6px 8px; padding: 8px 10px; font-size: 11px; line-height: 1.4; opacity: .75; border: 1px dashed var(--border); border-radius: var(--radius); }
 .sb-own-role[hidden] { display: none; }
+.sb-own-role { display: flex; flex-direction: column; }
+.sb-own-role textarea.sb-brief { min-height: 170px; font-size: 11px; line-height: 1.4; }
+.sb-staff-packs .sb-langrow { padding: 2px 0; }
+.sb-reset-role { align-self: flex-start; margin-top: 4px; }
+.sb-reset-role[hidden] { display: none; }
 .sb-own-role textarea { font: inherit; font-size: 12px; background: transparent; color: var(--status-text); border: 1px solid var(--line); padding: 4px 6px; resize: vertical; }
 .sb-scope { display: flex; flex-direction: column; gap: 4px; }
 .sb-scope-list { display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow-y: auto; padding-left: 18px; }

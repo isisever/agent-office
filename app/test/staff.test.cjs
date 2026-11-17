@@ -23,7 +23,7 @@ test('loadRoles: the eight shipped presets, each with a name, a brief and a shor
 test('normalizeMember: a preset or an own role; gone projects and accounts dropped; bad ones refused', () => {
   assert.deepEqual(ST.normalizeMember(ayse, known), ayse);
   const m = ST.normalizeMember({ ...ayse, accountId: 'gone', projects: ['p1', 'zz', 'p1'], department: '  ', skillPacks: ['superpowers', 'BAD id'] }, known);
-  assert.deepEqual([m.accountId, m.projects, m.department, m.skillPacks], [undefined, ['p1'], undefined, ['superpowers']]);
+  assert.deepEqual([m.accountId, m.projects, m.department, m.skillPacks], [undefined, ['p1'], undefined, { superpowers: true }], 'an old list means on');
   assert.equal(ST.normalizeMember({ ...ayse, projects: 'all' }, known).projects, 'all');
   const own = ST.normalizeMember({ id: 's-ffffff', name: 'Selin', role: { name: 'İçerik yazarı', brief: 'Writes blog posts.\nNo code.', writesCode: false }, projects: [] }, known);
   assert.deepEqual(own.role, { name: 'İçerik yazarı', brief: 'Writes blog posts.\nNo code.', writesCode: false });
@@ -90,6 +90,25 @@ test('desks: a staff tab keeps staffId and sessionId; resolvePty gives a desk it
   const next = P.setDeskSession(state, 'p1', 2, 'sess-9');
   assert.equal(P.deskOf(next.projects[0], 's-a1b2c3').sessionId, 'sess-9');
   assert.equal(P.setDeskSession(next, 'p1', 2, 'sess-9'), next, 'unchanged: same state');
+});
+
+test('a member’s role settings: a preset’s fields overridden (writes code both ways), packs on top of the desk’s project', () => {
+  const defs = ST.loadRoles(ROLES);
+  const pm = ST.normalizeMember({ ...ayse, role: { preset: 'assistant', brief: 'Own words.', writesCode: true } }, { ...known, presetIds: null });
+  assert.deepEqual(pm.role, { preset: 'assistant', brief: 'Own words.', writesCode: true });
+  assert.equal(defs.find((d) => d.id === 'assistant').writesCode, false, 'the preset does not write code');
+  assert.deepEqual([ST.memberRole(pm, defs).writesCode, ST.memberRole(pm, defs).brief], [true, 'Own words.']);
+  const qa = ST.normalizeMember({ ...ayse, role: { preset: 'qa', writesCode: false } }, known);
+  assert.equal(ST.memberRole(qa, defs).writesCode, false);
+  assert.equal(ST.normalizeMember({ ...ayse, role: { name: 'Yazar', writesCode: true } }, known).role.writesCode, undefined, 'an own role writes code unless told not to');
+  assert.deepEqual(ST.packMap({ superpowers: false, 'BAD id': true, x: 'on' }), { superpowers: false });
+  const state = {
+    accounts: [{ id: 'default' }], staff: [{ ...ayse, accountId: undefined, skillPacks: { superpowers: true, caveman: false } }],
+    projects: [{ id: 'p1', dir: '/w/p1', accountId: 'default', skillPacks: { caveman: true, other: true }, tabs: [{ n: 2, staffId: 's-a1b2c3' }] }],
+  };
+  assert.deepEqual(P.resolvePty(state, 'p1:2').project.skillPacks, { caveman: false, other: true, superpowers: true });
+  assert.deepEqual(P.resolvePty(state, 'p1').project.skillPacks, { caveman: true, other: true }, 'the main tab: the project’s');
+  assert.deepEqual(state.projects[0].skillPacks, { caveman: true, other: true }, 'the project is not changed');
 });
 
 test('parallel: a project flag, never written when off; a desk worktree lives in userData', () => {

@@ -923,6 +923,7 @@ export function mountSidebar(el, on) {
     openMemberEditor({
       h, t, lang: locale(), member: m, staff: team.staff, presets: team.presets, projects, accounts, labelOf, openModal, closeModal,
       save: (form) => on.team?.save(form), remove: (id) => on.team?.remove(id),
+      listPacks: () => Promise.resolve(on.skillPacks?.list(null)).then((r) => r?.packs || []),
     });
   }
 

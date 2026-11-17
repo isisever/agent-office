@@ -56,35 +56,84 @@ function card(c, m) {
 
 /**
  * The member popup: add (member null) or edit. Saving goes through main (names unique, projects and accounts checked).
+ * The role's settings are always on show and editable: a preset fills them in (name, description, instructions,
+ * writes code, its suggested skill packs) and the member keeps only what differs from the preset, so a preset's later
+ * wording still reaches it; "own role" keeps what is in the fields. listPacks() → the skill packs ([{ id, name }]).
  * @param {{ h: Function, t: Function, lang: string, member: any, staff: any[], presets: any[], projects: any[], accounts: any[], labelOf: Function,
- *   openModal: Function, closeModal: Function, save: (form: any) => Promise<any>, remove: (id: string) => Promise<any> }} c
+ *   openModal: Function, closeModal: Function, save: (form: any) => Promise<any>, remove: (id: string) => Promise<any>, listPacks?: () => Promise<any[]> }} c
  */
 export function openMemberEditor(c) {
   const { h, t } = c;
   const m = c.member;
+  const l = c.lang === 'tr' ? 'tr' : 'en';
   const own = Boolean(m && !m.role?.preset);
   const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
   const name = h('input', { class: 'sb-input', value: m?.name || '', maxLength: 40, placeholder: t('staff.namePh') });
   const role = h('select', { class: 'sb-acct' },
-    ...c.presets.map((d) => h('option', { value: d.id, selected: m?.role?.preset === d.id }, d.name[c.lang === 'tr' ? 'tr' : 'en'])),
+    ...c.presets.map((d) => h('option', { value: d.id, selected: m?.role?.preset === d.id }, d.name[l])),
     h('option', { value: '', selected: own }, t('staff.ownRole')));
   if (!m) role.value = c.presets[0]?.id || '';
-  const desc = h('div', { class: 'sb-note' });
-  const ownName = h('input', { class: 'sb-input', value: m?.role?.name || '', maxLength: 40, placeholder: t('staff.roleNamePh') });
-  const ownBrief = h('textarea', { rows: 5, placeholder: t('staff.briefPh') });
-  ownBrief.value = m?.role?.brief || '';
-  const noCode = h('input', { type: 'checkbox', checked: m?.role?.writesCode === false });
-  const ownBox = h('div', { class: 'sb-own-role' },
-    field(t('staff.roleName'), ownName), field(t('staff.brief'), ownBrief, t('staff.briefHint')),
-    h('label', { class: 'sb-botcolor sb-langrow' }, h('span', {}, t('staff.noCode')), noCode));
-  const showRole = () => {
-    const def = c.presets.find((d) => d.id === role.value);
-    desc.textContent = def ? def.description[c.lang === 'tr' ? 'tr' : 'en'] : '';
-    desc.hidden = !def;
-    ownBox.hidden = Boolean(def);
+  const presetOf = () => c.presets.find((d) => d.id === role.value) || null;
+  const roleName = h('input', { class: 'sb-input', maxLength: 40, placeholder: t('staff.roleNamePh') });
+  const roleDesc = h('textarea', { rows: 3, maxLength: 400, placeholder: t('staff.descriptionPh') });
+  const brief = h('textarea', { rows: 10, maxLength: 4000, placeholder: t('staff.briefPh'), class: 'sb-brief' });
+  const noCode = h('input', { type: 'checkbox' });
+  /** pack id → 'inherit' | 'on' | 'off'; the selects are drawn when the list arrives */
+  const packPick = new Map();
+  const packBox = h('div', { class: 'sb-staff-packs' });
+  const drawPacks = (packs) => packBox.replaceChildren(...packs.map((pk) => {
+    const suggested = (presetOf()?.skillPacks || []).includes(pk.id);
+    const sel = h('select', { class: 'sb-acct sb-mode', onchange: (e) => packPick.set(pk.id, e.target.value) },
+      ...[['inherit', t('staff.packProject')], ['on', t('sidebar.skillPackOn')], ['off', t('sidebar.skillPackOff')]]
+        .map(([v, label]) => h('option', { value: v, selected: (packPick.get(pk.id) || 'inherit') === v }, label)));
+    return h('div', { class: 'sb-botcolor sb-langrow' }, h('span', {}, suggested ? `${pk.name} (${t('staff.packSuggested')})` : pk.name), sel);
+  }));
+  let packList = [];
+  /** The fields from a preset (its suggested packs on, the rest the project's). */
+  const fill = (def) => {
+    roleName.value = def.name[l];
+    roleDesc.value = def.description[l];
+    brief.value = def.brief;
+    noCode.checked = !def.writesCode;
+    packPick.clear();
+    for (const id of def.skillPacks || []) packPick.set(id, 'on');
+    drawPacks(packList);
   };
-  role.addEventListener('change', showRole);
+  const reset = h('button', { class: 'sb-btn sb-reset-role', title: t('staff.resetRoleTitle'), onclick: (e) => { e.preventDefault(); const d = presetOf(); if (d) fill(d); } }, t('staff.resetRole'));
+  const def0 = presetOf();
+  if (def0) fill(def0);
+  if (m) {
+    if (m.role?.name) roleName.value = m.role.name;
+    if (m.role?.description) roleDesc.value = m.role.description;
+    if (m.role?.brief) brief.value = m.role.brief;
+    if (typeof m.role?.writesCode === 'boolean') noCode.checked = !m.role.writesCode;
+    packPick.clear();
+    for (const [id, on] of Object.entries(m.skillPacks || {})) packPick.set(id, on ? 'on' : 'off');
+  }
+  const showRole = () => { reset.hidden = !presetOf(); };
+  role.addEventListener('change', () => { const d = presetOf(); if (d) fill(d); showRole(); });
   showRole();
+  c.listPacks?.().then((packs) => { packList = Array.isArray(packs) ? packs : []; drawPacks(packList); }).catch(() => {});
+  const roleBox = h('div', { class: 'sb-own-role' },
+    field(t('staff.roleName'), roleName),
+    field(t('staff.description'), roleDesc),
+    field(t('staff.brief'), brief, t('staff.briefHint')),
+    h('label', { class: 'sb-botcolor sb-langrow' }, h('span', {}, t('staff.noCode')), noCode),
+    field(t('staff.skillPacks'), packBox, t('staff.skillPacksHint')),
+    reset);
+  /** The role to save: a preset with only what differs from it, or the fields as an own role. */
+  const roleForm = () => {
+    const d = presetOf();
+    const same = (a, b) => String(a || '').replace(/\r\n?/g, '\n').trim() === String(b || '').replace(/\r\n?/g, '\n').trim();
+    if (!d) return { name: roleName.value, description: roleDesc.value, brief: brief.value, ...(noCode.checked ? { writesCode: false } : {}) };
+    return {
+      preset: d.id,
+      ...(same(roleName.value, d.name[l]) ? {} : { name: roleName.value }),
+      ...(same(roleDesc.value, d.description[l]) ? {} : { description: roleDesc.value }),
+      ...(same(brief.value, d.brief) ? {} : { brief: brief.value }),
+      ...(!noCode.checked === d.writesCode ? {} : { writesCode: !noCode.checked }),
+    };
+  };
   const departments = [...new Set(c.staff.map((x) => x.department).filter(Boolean))];
   const dept = h('input', { class: 'sb-input', value: m?.department || '', maxLength: 30, placeholder: t('staff.departmentPh'), list: 'sb-departments' });
   const deptList = h('datalist', { id: 'sb-departments' }, ...departments.map((d) => h('option', { value: d })));
@@ -101,7 +150,8 @@ export function openMemberEditor(c) {
     class: 'sb-btn primary', onclick: async () => {
       const form = {
         ...(m ? { id: m.id } : {}), name: name.value, department: dept.value, accountId: account.value,
-        role: role.value ? { preset: role.value } : { name: ownName.value, brief: ownBrief.value, ...(noCode.checked ? { writesCode: false } : {}) },
+        role: roleForm(),
+        skillPacks: Object.fromEntries([...packPick].filter(([, v]) => v !== 'inherit').map(([id, v]) => [id, v === 'on'])),
         projects: all.checked ? 'all' : boxes.filter((b) => b.checked).map((b) => b.value),
       };
       save.disabled = true;
@@ -121,10 +171,11 @@ export function openMemberEditor(c) {
   }, t('staff.remove')) : null;
   c.openModal(m ? t('staff.editTitle', { name: m.name }) : t('staff.addTitle'), [
     field(t('staff.name'), name),
-    field(t('staff.role'), role), desc, ownBox,
+    field(t('staff.role'), role), roleBox,
     field(t('staff.department'), dept, t('staff.departmentHint')), deptList,
     field(t('staff.account'), account, t('staff.accountHint')),
     field(t('staff.projects'), scope, t('staff.projectsHint')),
+    h('div', { class: 'sb-field-hint' }, t('staff.applyNote')),
     err,
   ], [remove, h('button', { class: 'sb-btn', onclick: () => c.closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
   requestAnimationFrame(() => name.focus());

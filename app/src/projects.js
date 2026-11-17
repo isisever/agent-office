@@ -128,10 +128,15 @@ function resolvePty(state, id) {
   const tab = tabsOf(project).find((t) => t.n === r.n);
   if (!tab) return null;
   // v3.81 a desk whose member has an account of its own runs under that account: everything that resolves the tab
-  // (launch, pid file, transcript, sleep, typing) sees the project with the member's accountId
+  // (launch, pid file, transcript, sleep, typing) sees the project with the member's accountId. The member's skill
+  // packs ({ id: on }) go on top of the project's own setting the same way.
   const member = tab.staffId && Array.isArray(state.staff) ? state.staff.find((m) => m.id === tab.staffId) : null;
   const own = member?.accountId && Array.isArray(state.accounts) && state.accounts.some((a) => a.id === member.accountId) ? member.accountId : '';
-  return { project: own && own !== project.accountId ? { ...project, accountId: own } : project, tab, dir: tabDir(project, tab) };
+  const packs = member?.skillPacks && typeof member.skillPacks === 'object' && !Array.isArray(member.skillPacks) && Object.keys(member.skillPacks).length ? member.skillPacks : null;
+  let seen = project;
+  if (own && own !== project.accountId) seen = { ...seen, accountId: own };
+  if (packs) seen = { ...seen, skillPacks: { ...(seen.skillPacks || {}), ...packs } };
+  return { project: seen, tab, dir: tabDir(project, tab) };
 }
 
 /**
