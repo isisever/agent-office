@@ -760,3 +760,124 @@ test('v3.89 amendment: a report the person\'s own prompt may have shaped is mark
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(src, /kind: 'report-ready', id, machine: officeName\(rec\.machine\), project: officeName\(rec\.project\), \.\.\.\(report\.personPrompted === true \? \{ personPrompted: true \} : \{\}\) \}/);
 });
+
+// --- v3.91 HQ's initiative: follow-up tasks of a typed request without the dialog (setting `initiative`, default off)
+const initiativeCase = () => {
+  const clock = { t: 1000 };
+  const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
+  const id = m.mint();
+  const board = HQ.addTask(HQ.emptyBoard(), { id: 't1', request: id, title: 'first', pub: 'self', project: 'web', status: 'reported' }, clock.t);
+  m.clear();   // a report came in: the typed id is no longer live
+  const ask = (over = {}) => HQ.initiativeFor({ initiative: true, remote: false, request: id, minter: m, board, now: clock.t, ...over });
+  return { clock, m, id, board, ask };
+};
+
+test('initiative setting: default off, kept only as a boolean', () => {
+  assert.equal('initiative' in HQ.normalizeHq({}), false);
+  assert.equal('initiative' in HQ.normalizeHq({ initiative: 'yes' }), false);
+  assert.equal('initiative' in HQ.normalizeHq({ initiative: true, ...{ initiative: false } }), false);
+  assert.equal(HQ.normalizeHq({ initiative: true }).initiative, true);
+  assert.equal(HQ.MAX_INITIATIVE, 4);
+  assert.equal(HQ.INITIATIVE_MS, 2 * 3600 * 1000);
+  assert.equal(HQ.MAX_PER_REQUEST, 8);
+  assert.equal(HQ.MAX_OPEN, 12);
+});
+
+test('initiative: a local follow-up of a typed request with a task on the board needs no consent; consentFor is untouched', () => {
+  const { m, id, ask } = initiativeCase();
+  assert.equal(HQ.consentFor({ setting: true, remote: false, request: id, minter: m }), 'app');   // today's answer stands
+  assert.equal(m.isLive(id), false);
+  assert.equal(ask(), true);
+  assert.equal(ask({ initiative: false }), false);   // setting off
+  assert.equal(ask({ initiative: undefined }), false);
+  assert.equal(ask({ remote: true }), false);        // never a linked machine
+});
+
+test('initiative: only an id the person typed (never a routine, adhoc, a foreign or an empty id)', () => {
+  const { clock, m, board, ask } = initiativeCase();
+  clock.t += 5;   // another id than the typed one
+  const rid = m.mint({ origin: 'routine', run: 'run1' });
+  assert.equal(m.typedAt(rid), 0);
+  const withRoutine = HQ.addTask(board, { id: 't2', request: rid, title: 'r', pub: 'self', project: 'web' }, clock.t);
+  assert.equal(ask({ request: rid, board: withRoutine }), false);
+  const withAdhoc = HQ.addTask(board, { id: 't3', request: HQ.ADHOC, title: 'a', pub: 'self', project: 'web' }, clock.t);
+  assert.equal(ask({ request: HQ.ADHOC, board: withAdhoc }), false);
+  const withForged = HQ.addTask(board, { id: 't4', request: 'rforged', title: 'f', pub: 'self', project: 'web' }, clock.t);
+  assert.equal(ask({ request: 'rforged', board: withForged }), false);
+  assert.equal(ask({ request: '' }), false);
+  assert.equal(ask({ minter: null }), false);
+});
+
+test('initiative: the request is younger than 2 hours', () => {
+  const { clock, m, id, ask } = initiativeCase();
+  assert.equal(m.typedAt(id), 1000);
+  clock.t = 1000 + HQ.INITIATIVE_MS - 1;
+  assert.equal(ask(), true);
+  assert.equal(HQ.resolveRequest(m, id, { initiative: true, now: clock.t }), id);   // usable past the 30 min TTL
+  assert.equal(HQ.resolveRequest(m, id, { now: clock.t }), HQ.ADHOC);               // setting off: as before
+  assert.equal(HQ.resolveRequest(m, id), HQ.ADHOC);
+  clock.t = 1000 + HQ.INITIATIVE_MS;
+  assert.equal(ask(), false);
+  assert.equal(HQ.resolveRequest(m, id, { initiative: true, now: clock.t }), HQ.ADHOC);
+});
+
+test('initiative: the request still has a task on the board', () => {
+  const { id, board, ask } = initiativeCase();
+  assert.equal(ask({ board: HQ.emptyBoard() }), false);   // nothing was sent for it yet: the first task asks
+  const gone = HQ.removeTask(board, 't1');                // every row removed: not the same piece of work any more
+  assert.equal(gone.tasks.some((t) => t.request === id), false);
+  assert.equal(ask({ board: gone }), false);
+});
+
+test('initiative: the per-request cap (removed rows count) and the open cap', () => {
+  const { clock, id, board, ask } = initiativeCase();
+  let full = board;
+  for (let i = 0; i < 6; i++) full = HQ.addTask(full, { id: `f${i}`, request: id, title: 'x', pub: 'self', project: 'web', status: 'reported' }, clock.t);
+  assert.equal(ask({ board: full }), true);    // 7 of 8
+  assert.equal(ask({ board: full, n: 2 }), false);
+  const removed = HQ.removeTask(full, 'f0');   // 6 rows + 1 removed = 7
+  assert.equal(ask({ board: removed }), true);
+  const capped = HQ.addTask(removed, { id: 'f9', request: id, title: 'x', pub: 'self', project: 'web', status: 'reported' }, clock.t);   // 7 rows + 1 removed
+  assert.equal(HQ.capReason(capped, id), 'request-cap');
+  assert.equal(ask({ board: capped }), false);
+  let open = board;
+  for (let i = 0; i < 11; i++) open = HQ.addTask(open, { id: `o${i}`, request: `other${i}`, title: 'x', pub: 'self', project: 'web', status: 'running' }, clock.t);
+  assert.equal(ask({ board: open }), true);    // 11 open
+  assert.equal(ask({ board: open, n: 2 }), false);
+  open = HQ.addTask(open, { id: 'o11', request: 'other11', title: 'x', pub: 'self', project: 'web', status: 'running' }, clock.t);
+  assert.equal(HQ.capReason(open, id), 'open-cap');
+  assert.equal(ask({ board: open }), false);
+});
+
+test('initiative: at most 4 tasks per request are sent this way, a removed one still counts; rows carry byInitiative', () => {
+  const { clock, id, board, ask } = initiativeCase();
+  assert.equal(board.tasks[0].byInitiative, undefined);
+  assert.equal(HQ.boardView(board)[0].byInitiative, undefined);
+  let b = board;
+  for (let i = 0; i < HQ.MAX_INITIATIVE; i++) {
+    assert.equal(ask({ board: b }), true, `follow-up ${i + 1}`);
+    b = HQ.addTask(b, { id: `i${i}`, request: id, title: 'x', pub: 'self', project: 'web', status: 'reported', byInitiative: true }, clock.t);
+  }
+  assert.equal(b.requests.find((r) => r.id === id).initiative, 4);
+  assert.equal(b.tasks.find((t) => t.id === 'i0').byInitiative, true);
+  assert.equal(HQ.boardView(b).find((t) => t.id === 'i0').byInitiative, true);
+  assert.equal(ask({ board: b }), false);   // the fifth asks
+  assert.equal(ask({ board: HQ.removeTask(b, 'i0') }), false);   // removing one does not give it back
+  const three = HQ.addTask(HQ.addTask(HQ.addTask(board, { id: 'a', request: id, byInitiative: true }, clock.t), { id: 'b', request: id, byInitiative: true }, clock.t), { id: 'c', request: id, byInitiative: true }, clock.t);
+  assert.equal(ask({ board: three, n: 1 }), true);
+  assert.equal(ask({ board: three, n: 2 }), false);   // a `then` chain counts every local stage
+  assert.equal(ask({ board, n: 0 }), false);
+});
+
+test('initiative wiring: beside consentFor in both dispatch paths, remote stages still ask, the minter is not weakened', () => {
+  const d = fnBody('hqDispatch');
+  assert.match(d, /consent === 'app' && !personal && HQ\.initiativeFor\(\{ initiative: state\.hq\?\.initiative === true, remote, request/);
+  assert.match(d, /if \(consent === 'app' && !byInitiative\) \{/);
+  assert.match(d, /consent === 'held' \|\| HQ\.holdsOffId/);   // a routine's hold comes first, unchanged
+  assert.match(d, /byInitiative && !remote \? \{ byInitiative: true \}/);
+  const s = fnBody('hqDispatchStages');
+  assert.match(s, /HQ\.initiativeFor\(\{ initiative: state\.hq\?\.initiative === true, remote: false, request, minter: hqMinter, board: loadHqBoard\(\), n: local\.length \}\)/);
+  assert.match(s, /for \(const s of stages\.filter\(\(x\) => x\.remote\)\) if \(!\(await confirmHqDispatch\(s, true\)\)\) return no\('declined'/);
+  assert.match(fnBody('inboxRow'), /hqMinter\.clear\(\)/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'hq.js'), 'utf8'), /isLive\(id\) \{ return Boolean\(current\) && current\.id === id && now\(\) - current\.at <= MINT_MS; \}/);
+});

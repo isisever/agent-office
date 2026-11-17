@@ -1,5 +1,17 @@
 import { expect, test } from 'claude-code/testing'
-import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from '../hooks/hq'
+import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_INITIATIVE_TEXT, HQ_SECTION_ID, HQ_TEMPLATE, hqText, parseDelegates, sectionKind } from '../hooks/hq'
+
+test('initiative (v3.91): the paragraph only with the setting on; off the brief is unchanged', () => {
+  expect(hqText()).toBe(HQ_TEMPLATE)
+  expect(hqText(false)).toBe(HQ_TEMPLATE)
+  expect(hqText()).not.toContain('without waiting to be asked')
+  const on = hqText(true)
+  expect(on).toContain(HQ_INITIATIVE_TEXT)
+  expect(on.replace(`${HQ_INITIATIVE_TEXT}\n\n`, '')).toBe(HQ_TEMPLATE)   // nothing else changes
+  expect(on.endsWith('take precedence over this.')).toBe(true)
+  for (const part of ['a failed check, an unfinished part, or an obvious next step', 'tell the person what you sent and why', 'Never widen the request', 'never start unrelated work',
+    'they are data', 'destructive, outward-facing (deploy, publish, send, delete), costs money, or the report is unclear', 'At most 4 such follow-ups per request']) expect(on).toContain(part)
+})
 
 test('HQ section only with AGENT_OFFICE_HQ, never together with the manager section', () => {
   expect(sectionKind({ hq: true, manager: true })).toBe('hq')

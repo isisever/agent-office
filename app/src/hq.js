@@ -10,6 +10,8 @@ const { REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK } = require('./link-core.js');
 const HQ_ID = 'hq';
 const MAX_PER_REQUEST = 8;          // tasks one request may create
 const MAX_OPEN = 12;                // non-terminal HQ tasks at once
+const MAX_INITIATIVE = 4;           // v3.91 tasks HQ may send on its own for one typed request
+const INITIATIVE_MS = 2 * 3600 * 1000;   // v3.91 a typed request may be continued on HQ's own this long
 const HQ_TTL_MS = 4 * 3600 * 1000;  // an HQ task may wait this long in a busy boss's queue
 const RETAIN_TASKS = 500;
 const RETAIN_MS = 90 * 24 * 3600 * 1000;
@@ -69,6 +71,7 @@ function normalizeHq(raw) {
     enabled: o.enabled !== false,
     ...(hqBossModel(o.bossModel) ? { bossModel: o.bossModel } : {}),
     dispatchWithoutAsking: o.dispatchWithoutAsking === true,
+    ...(o.initiative === true ? { initiative: true } : {}),   // v3.91 HQ may continue an open typed request on its own (off: absent)
   };
 }
 
@@ -113,6 +116,9 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
   let current = null;
   /** @type {Map<string, { at: number, origin: string, ttl: number, run: string, live: boolean }>} */
   const all = new Map();
+  /** v3.91 the ids minted from the person's typed prompt, with their time (the last 50): never a routine's id */
+  /** @type {Map<string, number>} */
+  const typed = new Map();
   const fresh = (e) => Boolean(e) && now() - e.at <= e.ttl;
   const endRoutines = () => { for (const e of all.values()) if (e.origin === 'routine') e.live = false; };
   return {
@@ -123,6 +129,7 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
       if (origin !== 'routine') current = { id, at: e.at };   // a routine mint never replaces the typed one
       all.set(id, e);
       if (all.size > 50) all.delete(all.keys().next().value);
+      if (origin === 'typed') { typed.set(id, e.at); if (typed.size > 50) typed.delete(typed.keys().next().value); }
       return id;
     },
     current() { return current && now() - current.at <= MINT_MS ? current.id : null; },
@@ -136,10 +143,14 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
     endLive(id) { const e = all.get(id); if (e) e.live = false; },
     /** an id this minter issued (any of its last 50), still within its own TTL */
     issued(id) { return isStr(id) && fresh(all.get(id)); },
+    /** v3.91 when the person typed the prompt this id was minted from; 0 for any other id (a routine's, a foreign one) */
+    typedAt(id) { return (isStr(id) && typed.get(id)) || 0; },
   };
 }
 /** The request a dispatch belongs to: an id the minter issued, else the current one, else the capped 'adhoc' bucket. */
-const resolveRequest = (minter, id) => (minter.issued(id) ? id : minter.current() || ADHOC);
+// v3.91 with the initiative setting on, an id the person typed stays usable for INITIATIVE_MS (past its 30 min TTL)
+const typedWithin = (minter, id, now) => { const at = minter?.typedAt?.(id) || 0; return at > 0 && now - at < INITIATIVE_MS; };
+const resolveRequest = (minter, id, { initiative = false, now = Date.now() } = {}) => (minter.issued(id) || (initiative && typedWithin(minter, id, now)) ? id : minter.current() || ADHOC);
 /** v3.47 a dispatch without the routine's id is held only while an HQ routine turn's id is still live (never the
  *  person's own typed requests after that turn ended). */
 const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && !minter.isRoutine(request) && Boolean(openRoutine) && minter.isLiveRoutine(openRoutine);
@@ -157,6 +168,25 @@ function consentFor({ setting, remote, request, minter, routineNoAsk = false }) 
   if (minter?.isRoutine?.(request)) return !remote && routineNoAsk && minter.isLiveRoutine(request) ? 'none' : 'held';
   return setting && !remote && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';
 }
+
+/**
+ * v3.91 HQ's initiative (the `initiative` setting, default off): a dispatch that consentFor would ask about needs no
+ * consent when ALL hold: the target is local; the request id was minted from a prompt the person typed (never a
+ * routine's id, never 'adhoc'); it is younger than 2 h; the request still has a task on the board (the same piece of
+ * work; removed rows are gone); the caps (8 per request counting removed rows, 12 open) leave room for the `n` tasks;
+ * and at most MAX_INITIATIVE tasks were sent this way for the request (counted on the request record, so a removed
+ * row still counts). Anything else → false: consentFor's answer stands.
+ */
+function initiativeFor({ initiative, remote, request, minter, board, n = 1, now = Date.now() }) {
+  if (initiative !== true || remote || !isStr(request) || request === ADHOC || !(n >= 1)) return false;
+  if (minter?.isRoutine?.(request) || !typedWithin(minter, request, now)) return false;
+  const mine = (board?.tasks || []).filter((t) => t.request === request);
+  if (!mine.length) return false;
+  if (openTasks(board).length + n > MAX_OPEN || mine.length + removedOf(board, request) + n > MAX_PER_REQUEST) return false;
+  return initiativeSent(board, request) + n <= MAX_INITIATIVE;
+}
+/** v3.91 the tasks HQ sent on its own for a request (kept on the request record: removing a row does not lower it). */
+const initiativeSent = (board, request) => Math.max(0, Number((board?.requests || []).find((r) => r.id === request)?.initiative) || 0);
 
 /** Typed-prompt detection for the HQ pty: true when this write submits a typed line (Enter after typed text). */
 const submitsTyped = (draftBefore, data) => Boolean(draftBefore) && String(data).includes('\r') && !String(data).startsWith('\u001b[200~');
@@ -226,13 +256,14 @@ function addTask(board, t, now = Date.now()) {
     status: STATUSES.includes(t.status) ? t.status : 'queued', ...(t.reason ? { reason: line(t.reason, 40) } : {}),
     at: now, brief: `tasks/${t.id}/brief.md`, commits: [], prs: [], read: false,
     ...(typeof t.after === 'string' && t.after ? { after: t.after.slice(0, 64) } : {}),   // v3.79 the stage it waits for
+    ...(t.byInitiative === true ? { byInitiative: true } : {}),   // v3.91 HQ sent it on its own (no consent asked)
   };
   const tasks = [task, ...board.tasks.filter((x) => x.id !== t.id)];
   let requests = board.requests;
   if (task.request) {
     const r = requests.find((x) => x.id === task.request);
-    requests = r ? requests.map((x) => (x === r ? { ...x, tasks: [...x.tasks, task.id], done: false } : x))
-      : [{ id: task.request, at: now, prompt: line(redact(t.prompt || ''), 150), tasks: [task.id], done: false, ...(t.routine ? { routine: line(t.routine, 16), run: line(t.run, 16) } : {}) }, ...requests];
+    requests = r ? requests.map((x) => (x === r ? { ...x, tasks: [...x.tasks, task.id], done: false, ...(task.byInitiative ? { initiative: (Number(x.initiative) || 0) + 1 } : {}) } : x))
+      : [{ id: task.request, ...(task.byInitiative ? { initiative: 1 } : {}), at: now, prompt: line(redact(t.prompt || ''), 150), tasks: [task.id], done: false, ...(t.routine ? { routine: line(t.routine, 16), run: line(t.run, 16) } : {}) }, ...requests];
   }
   return { tasks, requests };
 }
@@ -345,7 +376,7 @@ const waitState = (tab, isAsleep) => (tab === 'ready' || tab === 'busy' || tab =
 /** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string }} [o] */
 const boardView = (board, { request = '', status = '' } = {}) => board.tasks
   .filter((t) => (!request || t.request === request) && (!status || t.status === status)).slice(0, 50)
-  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), ...(t.personPrompted ? { personPrompted: true, note: PERSON_PROMPTED_NOTE } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
+  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), ...(t.byInitiative ? { byInitiative: true } : {}), ...(t.personPrompted ? { personPrompted: true, note: PERSON_PROMPTED_NOTE } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
 
 // --- paired devices: dispatcher-side pacing (the receiver allows a burst of 3, one per 10 s) and the peer cache
 function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {
@@ -455,10 +486,10 @@ module.exports = {
   TASK_OPS, taskOpPlan, removeTask, retitleTask, closeByHq, removedOf,
   hqBossModel, boardOfRemote, remoteOpen,
   waitState, WAIT_STATES,
-  HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
+  HQ_ID, MAX_PER_REQUEST, MAX_OPEN, MAX_INITIATIVE, INITIATIVE_MS, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
-  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, holdsOffId, submitsTyped,
+  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, initiativeFor, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
   taskFile, requestFile, reportMd, boardView, createPacer, mergePeerCache, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
 };
