@@ -52,7 +52,7 @@ test('launch args: strict MCP (agent-office only), --tools Read allowlist, no us
   assert.deepEqual(a, [
     '--setting-sources', 'project', '--strict-mcp-config', '--mcp-config', '/m/hq.json', '--permission-mode', 'default', '--tools', 'Read',
     '--disallowedTools', 'Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Glob,Grep,Task,Agent,Skill,mcp__agent-office__office_project',
-    '--allowedTools', 'Read(//ud/hq/**),mcp__agent-office__office_machines,mcp__agent-office__office_reports,mcp__agent-office__office_board,mcp__agent-office__office_summary,mcp__agent-office__office_dispatch',
+    '--allowedTools', 'Read(//ud/hq/**),mcp__agent-office__office_machines,mcp__agent-office__office_reports,mcp__agent-office__office_board,mcp__agent-office__office_summary,mcp__agent-office__office_dispatch,mcp__agent-office__office_task',   // office_task: v3.87
   ]);
   assert.ok(!HQ.launchArgs({ dir: '/ud/hq' }).includes('--mcp-config'));
   // the MCP file holds only agent-office, 0600
@@ -311,9 +311,9 @@ function rpc(env, msgs) {
     for (const m of msgs) p.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...m })}\n`);
   });
 }
-test('office MCP: the HQ tab lists 6 tools, a project boss 4; HQ-only tools refused for other tabs', async () => {
+test('office MCP: the HQ tab lists 7 tools (v3.87 office_task), a project boss 4; HQ-only tools refused for other tabs', async () => {
   const [hq] = await rpc({ AGENT_OFFICE_HQ: '1' }, [{ id: 1, method: 'tools/list' }]);
-  assert.deepEqual(hq.result.tools.map((t) => t.name).sort(), ['office_board', 'office_dispatch', 'office_machines', 'office_project', 'office_reports', 'office_summary']);
+  assert.deepEqual(hq.result.tools.map((t) => t.name).sort(), ['office_board', 'office_dispatch', 'office_machines', 'office_project', 'office_reports', 'office_summary', 'office_task']);
   const [boss, call] = await rpc({}, [{ id: 1, method: 'tools/list' }, { id: 2, method: 'tools/call', params: { name: 'office_board', arguments: {} } }]);
   assert.equal(boss.result.tools.length, 4);
   assert.ok(call.error);
@@ -654,4 +654,84 @@ test('v3.83 amendment: lastAnswer reads the newest assistant text of a transcrip
     + line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Sunucuya giremedim.' }] } }));
   assert.equal(CHAT.lastAnswer(f), 'Sunucuya giremedim.');
   assert.equal(CHAT.lastAnswer(path.join(path.dirname(f), 'none.jsonl')), '');
+});
+
+test('v3.87 office_task: what each op does; approving a held task is the person\'s alone', () => {
+  const t = (status, machine = 'self') => ({ id: 'x', status, machine });
+  const plan = (task, op) => HQ.taskOpPlan(task, op);
+  assert.deepEqual(plan(t('awaiting-consent'), 'approve'), { error: 'person-only' });
+  assert.deepEqual(plan(t('awaiting-consent'), 'allow'), { error: 'person-only' });
+  assert.deepEqual(plan(t('awaiting-consent'), 'cancel'), { do: 'decline' });
+  assert.deepEqual(plan(t('waiting'), 'cancel'), { do: 'cancel-waiting' });
+  assert.deepEqual(plan(t('queued'), 'cancel'), { do: 'cancel-queued' });
+  assert.deepEqual(plan(t('queued', 'abc'), 'cancel'), { do: 'cancel-remote' });
+  assert.deepEqual(plan(t('delivered'), 'cancel'), { do: 'close-open' });
+  assert.deepEqual(plan(t('running'), 'done'), { do: 'done' });
+  assert.deepEqual(plan(t('queued'), 'done'), { error: 'not-started' });
+  assert.deepEqual(plan(t('running'), 'remove'), { error: 'still-open' });
+  assert.deepEqual(plan(t('reported'), 'remove'), { do: 'remove' });
+  assert.deepEqual(plan(t('reported'), 'cancel'), { error: 'already-ended' });
+  assert.deepEqual(plan(null, 'cancel'), { error: 'unknown-task' });
+  assert.deepEqual(plan(t('running'), 'delete-all'), { error: 'bad-op' });
+  const board = { tasks: [{ id: 'a', request: 'r1', status: 'reported', title: 'A' }, { id: 'b', request: 'r2', status: 'reported', title: 'B' }], requests: [{ id: 'r1' }, { id: 'r2' }] };
+  const nb = HQ.removeTask(board, 'a');
+  assert.deepEqual([nb.tasks.map((x) => x.id), nb.requests.map((x) => [x.id, x.removed || 0])], [['b'], [['r1', 1], ['r2', 0]]], 'the request stays and counts the removed row');
+  assert.equal(HQ.retitleTask(board, 'b', '  New\ntitle ').tasks[1].title, 'New title');
+  assert.equal(HQ.retitleTask(board, 'b', '   ').tasks[1].title, 'B', 'an empty title changes nothing');
+  assert.ok(HQ.HQ_OFFICE_TOOLS.includes('office_task'));
+  const OM2 = require('../src/office-mcp.js');
+  assert.ok(OM2.toolsFor('hq').some((x) => x.name === 'office_task'));
+  assert.ok(!OM2.toolsFor('p1').some((x) => x.name === 'office_task'), 'a project boss never gets it');
+});
+
+test('v3.87 review fixes: office_task decisions (held cards, no link, the cap after remove, closed by HQ)', () => {
+  const t = (status, machine = 'self') => ({ id: 'x', status, machine });
+  // a card the person is about to Allow is never relabelled; other open and ended tasks can be
+  assert.deepEqual(HQ.taskOpPlan(t('awaiting-consent'), 'retitle'), { error: 'held' });
+  for (const s of ['queued', 'waiting', 'running', 'reported']) assert.deepEqual(HQ.taskOpPlan(t(s), 'retitle'), { do: 'retitle' }, s);
+  // a held card of the person's own project routine is not HQ's to decline
+  assert.deepEqual(HQ.taskOpPlan(t('awaiting-consent'), 'cancel', { ownHeld: false }), { error: 'person-only' });
+  assert.deepEqual(HQ.taskOpPlan(t('awaiting-consent'), 'cancel', { ownHeld: true }), { do: 'decline' });
+  // no link host: nothing can be taken out of a queue, so never ok
+  assert.deepEqual(HQ.taskOpPlan(t('queued'), 'cancel', { link: false }), { error: 'no-link' });
+  assert.deepEqual(HQ.taskOpPlan(t('queued', 'abc'), 'cancel', { link: false }), { error: 'no-link' });
+  assert.deepEqual(HQ.taskOpPlan(t('running'), 'cancel', { link: false }), { do: 'close-open' }, 'closing a typed task needs no link');
+  assert.deepEqual(HQ.taskOpPlan(t('waiting'), 'cancel', { link: false }), { do: 'cancel-waiting' });
+  // remove never gets a request under its cap
+  const CH = require('../src/hq-chain.js');
+  const now = 1_000_000;
+  let b = HQ.emptyBoard();
+  for (let i = 0; i < HQ.MAX_PER_REQUEST; i++) b = HQ.addTask(b, { id: `t${i}`, request: 'r1', title: 'x', status: 'reported' }, now);
+  assert.equal(HQ.capReason(b, 'r1'), 'request-cap');
+  b = HQ.removeTask(HQ.removeTask(b, 't0'), 't1');
+  assert.equal(b.tasks.length, HQ.MAX_PER_REQUEST - 2);
+  assert.equal(HQ.removedOf(b, 'r1'), 2);
+  assert.equal(HQ.capReason(b, 'r1'), 'request-cap', 'dispatch → remove → dispatch stays capped');
+  assert.equal(CH.capFor(b, 'r1', 1), 'request-cap', 'the staged path counts removed rows too');
+  assert.equal(HQ.capReason(b, 'r2'), null);
+  for (let i = 2; i < HQ.MAX_PER_REQUEST; i++) b = HQ.removeTask(b, `t${i}`);
+  assert.deepEqual([b.tasks.length, b.requests.map((r) => [r.id, r.tasks.length, r.removed])], [0, [['r1', 0, HQ.MAX_PER_REQUEST]]]);
+  assert.equal(HQ.capReason(b, 'r1'), 'request-cap', 'an emptied request is still full');
+  assert.equal(HQ.prune(b, now + 1000).board.requests.length, 1, 'kept while its id can still be used');
+  assert.equal(HQ.prune(b, now + HQ.ROUTINE_MINT_MS + 1).board.requests.length, 0);
+  assert.deepEqual(HQ.finishRequests(b).done, [], 'an emptied request never finishes again');
+  // the adhoc bucket counts open tasks only and goes with its last task
+  let a = HQ.addTask(HQ.emptyBoard(), { id: 'x1', request: HQ.ADHOC, title: 'x', status: 'reported' }, now);
+  a = HQ.removeTask(a, 'x1');
+  assert.deepEqual([a.requests.length, HQ.removedOf(a, HQ.ADHOC)], [0, 0]);
+  // done: closed by HQ, marked, no report file named unless written, no PRs from HQ's note, never twice
+  let c = HQ.addTask(HQ.emptyBoard(), { id: 'd1', request: 'r1', title: 'D', status: 'running' }, now);
+  const closed = HQ.closeByHq(c, 'd1', {}, now + 5).tasks[0];
+  assert.deepEqual([closed.status, closed.closedByHq, closed.finishedAt, closed.report, closed.prs], ['reported', true, now + 5, undefined, []]);
+  assert.equal(HQ.closeByHq(c, 'd1', { report: true }).tasks[0].report, 'tasks/d1/report.md');
+  assert.equal(HQ.boardView(HQ.closeByHq(c, 'd1'))[0].closedByHq, true, 'HQ sees it on office_board');
+  c = HQ.applyReport(c, 'd1', { summary: 'real' });
+  assert.equal(HQ.closeByHq(c, 'd1').tasks[0].closedByHq, undefined, 'a task that really reported is left alone');
+  // main.js hqTaskOp: the decision comes from taskOpPlan with what main knows; done goes through closeByHq
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = src.slice(src.indexOf('function hqTaskOp('), src.indexOf('\n}\n', src.indexOf('function hqTaskOp(')));
+  assert.match(body, /HQ\.taskOpPlan\(task, op, \{ link: Boolean\(linkHost\), ownHeld: !heldRun \|\| heldRun\.kind === 'hq' \}\)/);
+  assert.match(body, /HQ\.closeByHq\(loadHqBoard\(\), id, \{ report: wrote \}\)/);
+  assert.doesNotMatch(body, /applyReport/, 'done is never a full report');
+  assert.match(body, /const r = await approveHeld\(id, false\); if \(r && r\.ok === false\) return \{ ok: false/);
 });

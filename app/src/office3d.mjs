@@ -295,7 +295,7 @@ const FOV = (32 * Math.PI) / 180
  * The camera's pitch (its angle above the floor), the same for every canvas shape: a gentle, near-isometric look.
  * A canvas of another shape only moves the camera nearer or farther.
  */
-export const PITCH = (38 * Math.PI) / 180
+export const PITCH = (34 * Math.PI) / 180   // 38° at first: the user asked for a lower view twice
 /**
  * The camera for a canvas of w × h pixels: above the front of the office looking down at PITCH, as far away as needed
  * for the whole office (walls included) to fit with a small margin. → { eye, target, fov, mvp }

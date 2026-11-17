@@ -239,6 +239,43 @@ function mergeClaudeJson(fromFile, toFile, dirs) {
   return true;
 }
 
+/**
+ * v3.83 fix: may the app trust this folder without the person seeing Claude Code's trust dialog? Only a real directory
+ * (never a symlink) that the app created in this very call (`created`), or that is empty. A folder that was already
+ * there with content (its own .claude/settings.json hooks, .mcp.json) is used, but never trusted by the app.
+ */
+function appMadeFolder(dir, created) {
+  const st = lstat(dir);
+  if (!st || st.isSymbolicLink() || !st.isDirectory()) return false;
+  if (created) return true;
+  try { return fs.readdirSync(dir).length === 0; } catch { return false; }
+}
+
+/**
+ * v3.83 amendment: marks a folder the app made itself (a staff member's personal workspace) as trusted in an account's
+ * .claude.json, so the member's session starts without Claude Code's trust dialog (no session file is written while
+ * that dialog is up, so the app could never hand it a task). Only that folder's own entry (and its real path) gets
+ * hasTrustDialogAccepted; nothing else is touched; an unreadable file is left alone. A symlink (or anything that is
+ * not a real directory) is never trusted: its real path would be somebody else's folder. → whether the file was written
+ */
+function trustFolder(configDir, home, dir) {
+  const st = lstat(dir);
+  if (!st || st.isSymbolicLink() || !st.isDirectory()) return false;
+  const file = claudeJson(configDir, home);
+  const exists = Boolean(lstat(file));
+  const config = exists ? readJson(file) : {};
+  if (exists && !isObj(config)) return false;
+  const projects = isObj(config.projects) ? { ...config.projects } : {};
+  let changed = false;
+  for (const d of projectPaths([dir])) {
+    if (trustedIn(projects, d)) continue;
+    projects[d] = { ...(isObj(projects[d]) ? projects[d] : {}), [TRUST_KEY]: true };
+    changed = true;
+  }
+  if (changed) writeJson(file, { ...config, projects });
+  return changed;
+}
+
 // ---- the bypass mode warning (contract v3.76)
 
 const BYPASS_KEY = 'skipDangerousModePermissionPrompt';      // user settings.json; what Claude Code 2.1.325 writes
@@ -390,5 +427,5 @@ function restartAfterMove({ sessionId = null, continues = false, busy = false } 
 
 module.exports = {
   restartAfterMove, claudeRoot, claudeJson, projectPaths, mergeJsonl, mergeFile, mergeTree, mergeEntry, mergeProjectEntries, mergeClaudeJson,
-  historyLines, mergeHistory, trustedIn, bypassAccepted, carryBypassAcceptance, moveProjectData,
+  historyLines, mergeHistory, trustedIn, trustFolder, appMadeFolder, bypassAccepted, carryBypassAcceptance, moveProjectData,
 };

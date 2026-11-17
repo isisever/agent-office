@@ -417,7 +417,11 @@
     "mcpPresets": "Hazır:",
     "mcpPresetNote": {
       "canva": "Canva kendi girişini kullanır, token gerekmez. Sunucuyu kaydedin; sonra bir masada /mcp yazıp canva → Authenticate ile tarayıcıda Canva hesabınıza bağlanın (her Claude hesabı için bir kez)."
-    }
+    },
+    "group": "Grup",
+    "groupPh": "yok (ör. Müşteriler, ERP)",
+    "groupTitle": "PROJELER listesinde proje bu grubun altında görünür. Boş bırakırsanız grupsuz kalır.",
+    "groupToggle": "Grubu aç / kapat"
   },
   "panel": {
     "types": {
@@ -672,7 +676,7 @@
     "terminalTitle": "Terminali göster (onaylar, menüler, tuşlar)",
     "chat": "Sohbet",
     "chatTitle": "Bu sekmeyi sohbet olarak göster",
-    "permission": "Claude bir onay bekliyor: terminalde yanıtlayın.",
+    "permission": "Bu projede bir sekme onay bekliyor (bu sekme değil): o sekmeyi açın.",
     "empty": "Henüz konuşma yok: ilk mesajı aşağıya yazın.",
     "images": "{count} görsel",
     "freePlaceholder": "Yanıtınız…",
@@ -927,7 +931,10 @@
     "routineNeedsApprovalRemote": "{name} rutini {machine} üzerindeki {project} projesine görev göndermek için onayınızı bekliyor",
     "mailDraft": "{name} bir mail taslağı hazırladı: onayınızı bekliyor",
     "tabStaff": "Personel ile oturum",
-    "personalFolder": "{name} - kişisel"
+    "personalFolder": "{name} - kişisel",
+    "moveToGroup": "Gruba taşı",
+    "newGroupHint": "Yeni grup: adını projenin ayarlarında (⚙) yazın",
+    "removeFromGroup": "“{group}” grubundan çıkar"
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",

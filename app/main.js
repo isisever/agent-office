@@ -1194,6 +1194,8 @@ const RESUME_GRACE_MS = 8000; // if --continue ends with an error within this ti
 // A tab of an Antigravity project starts `agy` instead (startAgy, contract v3.22); a Command Code project starts
 // `commandcode` (startCommandCode, contract v3.25).
 function startPty(id, { resume = false, sessionId = null, imported = false, prompt = '', forcePrompt = false } = {}) {
+  // every start of a personal desk (open, restore, wake, restart on another account): its folder is trusted in the account it runs on
+  trustPersonalDesk(id);
   killPty(id);
   const r = P.resolvePty(state, id);
   if (!r || !win || !isLoaded) return broadcast();
@@ -1902,11 +1904,53 @@ function officeTool(tab, tool, args) {
   if (tool === 'office_machines') return officeMachines();
   if (tool === 'office_project') return officeProject(tab, args);
   if (tool === 'office_dispatch') return tab === HQ.HQ_ID ? hqDispatch(args) : officeDispatch(tab, args);
-  if (tool === 'office_board' || tool === 'office_summary') {   // v3.46 HQ only (the socket refuses them from other tabs too)
+  if (tool === 'office_board' || tool === 'office_summary' || tool === 'office_task') {   // v3.46 HQ only (the socket refuses them from other tabs too)
     if (tab !== HQ.HQ_ID) return { error: 'unknown-tool' };
-    return tool === 'office_board' ? hqBoardTool(args) : hqSummary(args);
+    return tool === 'office_board' ? hqBoardTool(args) : tool === 'office_task' ? hqTaskOp(args) : hqSummary(args);
   }
   return officeReports(args);
+}
+/**
+ * v3.87 office_task: HQ changes one board task on the person's word (src/hq.js taskOpPlan). Approving a held task is
+ * never done here (the person's Allow on the Board); a typed task's session is never stopped, only no longer followed.
+ */
+async function hqTaskOp(args) {
+  const id = typeof args?.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(args.id) ? args.id : '';
+  const op = String(args?.op || '');
+  const task = id ? loadHqBoard().tasks.find((t) => t.id === id) : null;
+  // a held card's origin: the routine run it belongs to (none: HQ's own dispatch). A project routine's card is the person's.
+  const heldRun = task?.status === 'awaiting-consent' ? rt().runs.find((r) => r.id === rt().held[id]?.run) : null;
+  const plan = HQ.taskOpPlan(task, op, { link: Boolean(linkHost), ownHeld: !heldRun || heldRun.kind === 'hq' });
+  if (plan.error) return { ok: false, reason: plan.error };
+  const note = HQ.redact(typeof args?.note === 'string' ? args.note : '').slice(0, 2000);
+  const stopFollowing = (report) => { const rec = loadDispatches().get(id); if (rec) { rec.report = rec.report || report || { ok: false, partial: true, summary: note || 'closed by HQ', commits: [], at: Date.now() }; saveDispatches(); } watchMem.delete(id); };
+  switch (plan.do) {
+    case 'cancel-waiting': hqStatus(id, 'rejected', 'cancelled'); break;
+    case 'decline': { const r = await approveHeld(id, false); if (r && r.ok === false) return { ok: false, reason: r.reason || 'not-held' }; break; }
+    case 'cancel-queued': linkHost?.cancel(id); break;
+    case 'cancel-remote': linkHost?.cancelRemote(id); hqMirrorRemote(); break;
+    case 'close-open': stopFollowing(); hqStatus(id, 'rejected', 'cancelled'); break;
+    case 'done': {
+      // closed on the person's word, not by the session's report: the row is marked closedByHq, so the stages waiting
+      // on it are blocked, never released (src/hq-chain.js); the same report is in the dispatch record and tasks/<id>/
+      const report = { ok: true, partial: false, closedByHq: true, summary: `[Closed by HQ on the person's word] ${note}`.trim(), commits: [], at: Date.now() };
+      stopFollowing(report);
+      let wrote = false;
+      try {
+        const f = HQ.taskFile(hqDir(), id, 'report.json');
+        if (f) { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); SF.writeAtomic(f, JSON.stringify(report)); SF.writeAtomic(HQ.taskFile(hqDir(), id, 'report.md'), HQ.reportMd({ ...task, status: 'reported' }, report)); wrote = true; }
+      } catch (e) { console.error('hq report:', e.message); }
+      const { board, done } = HQ.finishRequests(HQ.closeByHq(loadHqBoard(), id, { report: wrote }));
+      saveHqBoard(board);
+      routinesOnDone(done);
+      break;
+    }
+    case 'remove': saveHqBoard(HQ.removeTask(loadHqBoard(), id)); { const d = loadDispatches(); if (d.delete(id)) saveDispatches(); } break;
+    case 'retitle': saveHqBoard(HQ.retitleTask(loadHqBoard(), id, typeof args?.title === 'string' ? args.title : '')); break;
+    default: return { ok: false, reason: 'bad-op' };
+  }
+  const now = loadHqBoard().tasks.find((t) => t.id === id);
+  return { ok: true, ...(now ? { status: now.status } : { removed: true }) };
 }
 /** A report of a task this office dispatched: kept for office_reports; the boss gets only a fixed "report ready" row. */
 function onOfficeReport({ id, pub, report }) {
@@ -2182,7 +2226,9 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   // folder and project), the desk tab and, in a parallel project, the desk's worktree. Declined: nothing was created.
   if (args.staff) {
     if (personal) {
-      const m = personal;
+      // the dialog was open meanwhile: a member removed (or the team turned off) since then gets no workspace
+      const m = teamOn() ? memberById(personal.id) : null;
+      if (!m) return { status: 'rejected', reason: 'unknown-staff' };
       const own = ensurePersonal(m);
       if (!own) return { status: 'rejected', reason: 'desk-failed' };
       args = { ...args, project: own.id };
@@ -2265,7 +2311,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
 async function confirmHqStages(stages) {
   if (!win || win.isDestroyed()) return false;
   const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
-    message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.project)}` : officeName(s.project), machine: '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}` });
+    message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.projectName || s.project)}` : officeName(s.project), machine: '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}` });
   return r.response === 0;
 }
 async function hqDispatchStages(args, request, rrun) {
@@ -2284,6 +2330,15 @@ async function hqDispatchStages(args, request, rrun) {
     s.key = HQ.parseRemoteKey(s.project);
     s.remote = Boolean(s.key) || !isHere(s.machine.trim());
     if (!s.remote) {
+      // v3.83 amendment: a stage for a member without a project is the member's work outside any project: their
+      // personal workspace, made only after the person's consent below (the dialog names its folder)
+      if (s.staff && !String(s.project || '').trim()) {
+        const m = teamOn() ? ST.findMember(state.staff, s.staff) : null;
+        if (!m) return no(teamOn() ? 'unknown-staff' : 'no-team', { stage: s.n });
+        const have = ST.personalOf(state.projects, m.id);
+        if (have) s.project = have.id;
+        else { Object.assign(s, { staff: m.name, personalFor: m, pub: 'self', machineName: selfName(), projectName: personalFolderName(m), projectId: '' }); continue; }
+      }
       const p = byName(state.projects, s.project);
       if (!p) return no('unknown-project', { stage: s.n });
       // v3.83 a stage for a staff member: checked now (team on, known member, allowed on the project), its desk at release
@@ -2308,10 +2363,21 @@ async function hqDispatchStages(args, request, rrun) {
     && !(await confirmHqStages(local))) return no('declined');
   for (const s of stages.filter((x) => x.remote)) if (!(await confirmHqDispatch(s, true))) return no('declined', { stage: s.n });
   if (caps()) return no(caps());   // dialogs can overlap: the caps again on the fresh board
+  // consent given. The dialogs were open meanwhile: every member a personal stage is for must still be there and the
+  // team on, else nothing is created. A workspace is made only when its stage goes: now for the first stage, at
+  // release (hqReleaseStage, stage.json `personalStaff`) for a waiting one.
+  for (const s of stages.filter((x) => x.personalFor)) if (!teamOn() || !memberById(s.personalFor.id)) return no('unknown-staff', { stage: s.n });
   const ids = [];
   let prev = after;
   for (const s of stages) {
     if (!prev) {   // the first stage without `after` goes now, the normal way
+      if (s.personalFor) {
+        const m = teamOn() ? memberById(s.personalFor.id) : null;
+        const own = m ? ensurePersonal(m) : null;
+        if (!own) return no(m ? 'desk-failed' : 'unknown-staff', { stage: s.n });
+        Object.assign(s, { project: own.id, projectId: own.id, projectName: own.name });
+        delete s.personalFor;
+      }
       /** @type {any} */ const r = await hqDispatch({ machine: s.machine, project: s.project, title: s.title, request, task: s.task, ...(s.staff ? { staff: s.staff } : {}) }, { approved: true });   // consent was just given
       if (!r.id || r.status === 'rejected') return { ...r, request };   // nothing after it is created
       ids.push(r.id); prev = r.id; continue;
@@ -2331,7 +2397,7 @@ function hqWaitRow(s, request, after) {
   if (f) try {
     fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
     SF.writeAtomic(f, `# ${LC.cleanLine(s.title || '', 80)}\n\nProject: ${s.projectName} (${s.machineName})\nAfter: #${after}\n\n${s.task}\n`);
-    SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify({ machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}) }));
+    SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify({ machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}), ...(s.personalFor ? { personalStaff: s.personalFor.id } : {}) }));
   } catch (e) { console.error('hq stage:', e.message); }
   return id;
 }
@@ -2342,6 +2408,15 @@ async function hqReleaseStage({ id, after }) {
   if (!t || t.status !== CH.WAITING) return;
   const st = readJson(HQ.taskFile(hqDir(), id, 'stage.json'));
   if (!st || typeof st.task !== 'string' || !st.task) { hqStatus(id, 'rejected', 'stage-lost'); return; }
+  // v3.83 fix: a stage for a member's personal workspace that did not exist at consent: made only now, and only while
+  // the member is still there and the team on
+  if (!st.remote && typeof st.personalStaff === 'string' && st.personalStaff) {
+    const m = teamOn() ? memberById(st.personalStaff) : null;
+    if (!m) { hqStatus(id, 'rejected', 'unknown-staff'); return; }
+    const own = ensurePersonal(m);
+    if (!own) { hqStatus(id, 'rejected', 'desk-failed'); return; }
+    st.projectId = own.id;
+  }
   // v3.79 fix: a local stage goes to the project it was approved for, by id (CH.stageProject); a project that is gone
   // is not looked up by name again: the stage is refused
   const project = st.remote ? st.project : CH.stageProject(st, state.projects);
@@ -3915,6 +3990,7 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
   const have = P.deskOf(p, m.id);
   if (have) {
     const id = P.tabPtyId(p.id, have.n);
+    trustPersonalDesk(id);
     if (start && !terms.has(id)) { if (asleep.has(id)) wake(id); else startPty(id, { resume: true }); }
     return { ok: true, id };
   }
@@ -3936,6 +4012,7 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
   if (!P.findProject(state, p.id)) return { ok: false, error: 'unknown' };   // removed while git ran
   commit(P.addTab(state, p.id, tab));
   const id = P.tabPtyId(p.id, tab.n);
+  trustPersonalDesk(id);
   if (start) startPty(id);
   return { ok: true, id };
 }
@@ -3950,11 +4027,26 @@ function ensurePersonal(m) {
   const have = ST.personalOf(state.projects, m.id);
   if (have) return have;
   const dir = path.join(app.getPath('documents'), 'Agent Office', personalFolderName(m));
-  try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error('personal workspace:', e.message); return null; }
+  let made;
+  try { made = fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error('personal workspace:', e.message); return null; }
+  // v3.83 fix: only a folder the app created just now (mkdirSync names what it created), or a real, empty directory,
+  // is marked as the app's own (`appMade`) and trusted later; an existing folder with content or a symlink is used as
+  // before, but the person sees Claude Code's trust dialog for it
+  const appMade = PD.appMadeFolder(dir, Boolean(made));
   const active = state.activeId;
   const r = P.addProject(state, dir, m.accountId ? { accountId: m.accountId } : {});
-  commit({ ...r.state, activeId: active ?? r.state.activeId, projects: r.state.projects.map((p) => (p.id === r.project.id ? { ...p, staffOwner: m.id } : p)) });
+  commit({ ...r.state, activeId: active ?? r.state.activeId, projects: r.state.projects.map((p) => (p.id === r.project.id ? { ...p, staffOwner: m.id, ...(appMade ? { appMade: true } : {}) } : p)) });
   return ST.personalOf(state.projects, m.id);
+}
+/**
+ * A personal workspace the app made is trusted (no trust dialog the member's desk would wait behind) in the account
+ * its desk really runs on: the member's own account now, else the project's (P.resolvePty), not the account the
+ * workspace had when it was made. Applied on every start of the desk's pty (startPty), so a later account change is covered.
+ */
+function trustPersonalDesk(id) {
+  const r = P.resolvePty(state, id);
+  if (!r?.tab?.staffId || !r.project.staffOwner || r.project.appMade !== true || r.dir !== r.project.dir) return;
+  try { PD.trustFolder(A.accountOf(state, r.project).configDir, app.getPath('home'), r.dir); } catch (e) { console.error('personal trust:', e.message); }
 }
 ipcMain.handle('staff:personal', async (_e, staffId) => {
   const m = teamOn() ? memberById(String(staffId || '')) : null;
@@ -4645,10 +4737,29 @@ function handoffMenu(p) {
   }];
 }
 // right click on a project in the sidebar
+// v3.86 project groups: set from the project's settings or its right-click menu
+ipcMain.handle('projects:setGroup', (_e, id, group) => {
+  if (!P.findProject(state, String(id))) return { ok: false };
+  commit(P.setGroup(state, String(id), group));
+  broadcast();
+  return { ok: true };
+});
 ipcMain.handle('projects:menu', (_e, id) => {
   const p = P.findProject(state, id);
   if (!p || !win) return;
+  const groups = [...new Set(state.projects.filter((x) => !x.staffOwner && x.group).map((x) => x.group))].sort((a, b) => a.localeCompare(b, 'tr'));
+  const setGroup = (g) => { commit(P.setGroup(state, p.id, g)); broadcast(); };
   Menu.buildFromTemplate([
+    {
+      label: T('main.moveToGroup'),
+      submenu: [
+        ...groups.filter((g) => g !== p.group).map((g) => ({ label: g, click: () => setGroup(g) })),
+        ...(groups.filter((g) => g !== p.group).length ? [{ type: /** @type {const} */ ('separator') }] : []),
+        { label: T('main.newGroupHint'), enabled: false },
+        ...(p.group ? [{ label: T('main.removeFromGroup', { group: p.group }), click: () => setGroup('') }] : []),
+      ],
+    },
+    { type: 'separator' },
     { label: T('main.moveSession'), enabled: P.engineOf(p) === 'claude', click: () => exportSession(p.id) },
     ...handoffMenu(p),
     { type: 'separator' },
@@ -4710,7 +4821,7 @@ ipcMain.handle('chat:read', (_e, id, cursor) => {
 // A chat-view menu button (an approval, a question): its keys go straight to the tab, a step every 250 ms so Claude
 // Code's menu takes each one; not through pty:write (they are no draft and mint no HQ request).
 // Main keeps no screen of a pty (its output goes to the renderer's terminal), so the renderer checks the menu on its
-// live screen right before the call and names it (`expect`, its menuKey); main refuses a call that names no menu
+// live screen right before the call and names it (`expect`: its screenKey, a menu's or a dialog's); main refuses a call that names no menu
 // ('stale') and one made while an earlier answer is still being typed into the tab ('busy').
 const MENU_STEP_MS = 250;
 const menuTyping = new Map();   // pty id → when its last answer's keys are all typed

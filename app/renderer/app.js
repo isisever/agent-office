@@ -2,6 +2,7 @@
 import { mountTerminal, pasteIntoFocused } from './terminal.js';
 import { mountChat } from './chat.js';
 import { mountSidebar } from './sidebar.js';
+import { shownOrder } from '../src/project-groups.mjs';
 import { mountHq } from './hq-board.js';
 import { mountLogin } from './login.js';
 import { mountDevices, mergeRemote } from './devices.js';
@@ -418,7 +419,7 @@ function applyOffice3d(p) {
 let sidebar = null;
 
 function render() {
-  if (!projects.some((p) => p.id === activeId)) activeId = projects[0]?.id ?? null;
+  if (!projects.some((p) => p.id === activeId)) activeId = shownOrder(projects)[0]?.id ?? projects[0]?.id ?? null;
   syncPanes();
   showActive();
   sidebar?.setState({ projects, activeId: hqSelected ? HQ_ROW.id : activeId, status, accounts });
@@ -703,6 +704,7 @@ sidebar = mountSidebar($('sidebar'), {
   removeProject,
   openFolder: (p) => api.projects.openFolder?.(p.id).catch((e) => console.error(e)),
   projectMenu: (p) => api.projects.menu?.(p.id).catch((e) => console.error(e)),
+  setGroup: (id, group) => api.projects.setGroup?.(id, group).catch((e) => console.error(e)),   // v3.86
   setAccount,
   setProjectManager,
   setBossModel,
@@ -979,13 +981,17 @@ window.addEventListener('keydown', (e) => {
   if (key === 't') { e.preventDefault(); e.stopPropagation(); addTab(activeId); return; }
   if (key === 'o') { e.preventDefault(); e.stopPropagation(); addProject(); return; }
   if (/^[1-9]$/.test(key)) {
-    const p = projects[Number(key) - 1];
+    const p = shownOrder(projects)[Number(key) - 1];   // v3.86 the list's order (groups, no personal workspaces)
     if (p) { e.preventDefault(); e.stopPropagation(); selectProject(p.id); }
   }
 }, true);
 
+// a click on the window's empty parts gives the keys back to the terminal (or chat); never one on something that takes
+// typing or clicks itself (a text box, a popup, the HQ board and its routine editor, a panel)
 document.addEventListener('mouseup', (e) => {
-  if (/** @type {Element} */ (e.target).closest('button, select, input, #sidebar, #login-overlay') || window.getSelection()?.toString()) return;
+  const el = /** @type {HTMLElement} */ (e.target);
+  if (el.isContentEditable || el.closest('button, select, input, textarea, label, a, [role="dialog"], .sb-modal-backdrop, #sidebar, #login-overlay, #hq-board')
+    || window.getSelection()?.toString()) return;
   focusActive();
 });
 

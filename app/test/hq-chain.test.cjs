@@ -231,6 +231,20 @@ test('cancelling a waiting stage blocks the stages after it at the next sweep', 
   assert.equal(env.sent.length, 1);   // nothing after a cancelled stage is sent
 });
 
+test('v3.83 amendment: a stage for a staff member may leave out the project (the member\'s personal workspace)', () => {
+  const CH2 = require('../src/hq-chain.js');
+  const r = CH2.stagesOf({ staff: 'Natasha', task: 'collect', then: [{ staff: 'Tipsiz', task: 'backlog' }, { task: 'no one' }] });
+  assert.deepEqual([r.first.project, r.first.staff], ['', 'Natasha']);
+  assert.deepEqual(r.then.map((x) => [x.project, x.staff]), [['', 'Tipsiz']], 'a stage with neither project nor staff is dropped');
+  // the workspace is made only after the person's consent (as for a single dispatch), and the dialog names its folder
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const fn = MAIN.slice(MAIN.indexOf('async function hqDispatchStages('), MAIN.indexOf('\n}\n', MAIN.indexOf('async function hqDispatchStages(')));
+  const ask = fn.indexOf('confirmHqStages(');
+  assert.ok(fn.indexOf('personalFor: m') > 0 && fn.indexOf('personalFor: m') < ask, 'before consent: only noted');
+  assert.ok(fn.indexOf('ensurePersonal(') > ask, 'made after consent');
+  assert.match(MAIN, /officeName\(s\.projectName \|\| s\.project\)/);
+});
+
 test('stageProject: a frozen stage is released to its project by id; a gone id is never found again by name', () => {
   const projects = [{ id: 'p1', name: 'acme' }, { id: 'p2', name: 'beta' }];
   assert.equal(CH.stageProject({ project: 'acme', projectId: 'p1' }, projects), 'p1');
@@ -246,4 +260,44 @@ test('stageProject: a frozen stage is released to its project by id; a gone id i
   const src = fs.readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(src, /\.\.\.\(!s\.remote && s\.projectId \? \{ projectId: s\.projectId \} : \{\}\)/, 'stage.json stores the id');
   assert.match(src, /const project = st\.remote \? st\.project : CH\.stageProject\(st, state\.projects\);\n {2}if \(!project\) \{ hqStatus\(id, 'rejected', 'unknown-project'\); return; \}/);
+});
+
+test('v3.87 review fix: a stage HQ closed on the person\'s word (office_task done) never releases the stages after it', () => {
+  const HQB = require('../src/hq.js');
+  let b = board(task('a', { status: 'running' }), task('b', { status: 'waiting', after: 'a' }), task('c', { status: 'waiting', after: 'b' }));
+  assert.deepEqual(CH.settle(b, 2000), { release: [], block: [] });
+  b = HQB.closeByHq(b, 'a');
+  assert.equal(b.tasks[0].status, 'reported');
+  assert.equal(CH.stageState(b.tasks[0]), 'block');
+  assert.deepEqual(CH.settle(b, 2000), { release: [], block: [{ id: 'b', status: 'blocked', reason: 'after-closed-by-hq' }] });
+  assert.equal(CH.afterRefused(b, 'r1', 'a'), 'after-ended', 'no new stage waits on it either');
+  // the block cascades like any other: stage 3 never starts
+  b = HQB.setStatus(b, 'b', 'blocked', 'after-closed-by-hq');
+  assert.deepEqual(CH.settle(b, 2000), { release: [], block: [{ id: 'c', status: 'blocked', reason: 'after-blocked' }] });
+  // the session's own full report still releases
+  const real = HQB.applyReport(board(task('a', { status: 'running' }), task('b', { status: 'waiting', after: 'a' })), 'a', { summary: 'done' });
+  assert.deepEqual(CH.settle(real, 2000), { release: [{ id: 'b', after: 'a' }], block: [] });
+  // capFor: rows removed from the request still count
+  const capped = { tasks: [task('x', { status: 'reported' })], requests: [{ id: 'r1', tasks: ['x'], removed: 6 }] };
+  assert.equal(CH.capFor(capped, 'r1', 1), null);
+  assert.equal(CH.capFor(capped, 'r1', 2), 'request-cap');
+});
+
+test('v3.83 review fix: a removed member gets no workspace after the dialog; a later stage\'s workspace is made at release', () => {
+  const src = fs.readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8');
+  const fn = (name) => src.slice(src.indexOf(`function ${name}(`), src.indexOf('\n}\n', src.indexOf(`function ${name}(`)));
+  const hd = fn('hqDispatch');
+  const again = hd.indexOf("const m = teamOn() ? memberById(personal.id) : null;\n      if (!m) return { status: 'rejected', reason: 'unknown-staff' };");
+  assert.ok(again > hd.indexOf('confirmHqDispatch(') && again < hd.indexOf('ensurePersonal('), 'single path: checked again after the dialog, before anything is made');
+  const st = fn('hqDispatchStages');
+  const check = st.indexOf("if (!teamOn() || !memberById(s.personalFor.id)) return no('unknown-staff', { stage: s.n });");
+  assert.ok(check > st.indexOf('confirmHqStages(') && check > st.lastIndexOf('confirmHqDispatch(') && check < st.indexOf('ensurePersonal('), 'staged path: the same');
+  assert.ok(st.indexOf('ensurePersonal(') > st.indexOf('if (!prev) {'), 'only the stage that goes now gets its workspace');
+  assert.match(fn('hqWaitRow'), /\.\.\.\(s\.personalFor \? \{ personalStaff: s\.personalFor\.id \} : \{\}\)/);
+  const rel = fn('hqReleaseStage');
+  assert.match(rel, /const m = teamOn\(\) \? memberById\(st\.personalStaff\) : null;\n {4}if \(!m\) \{ hqStatus\(id, 'rejected', 'unknown-staff'\); return; \}\n {4}const own = ensurePersonal\(m\);/);
+  assert.ok(rel.indexOf('ensurePersonal(m)') < rel.indexOf("HQ.setStatus(b, id, 'queued', 'released')"));
+  // a stage with only a member id in stage.json resolves to the workspace made at release
+  assert.equal(CH.stageProject({ personalStaff: 's-a1b2c3', projectId: 'own1' }, [{ id: 'own1', name: 'A - personal' }]), 'own1');
+  assert.equal(CH.stageProject({ personalStaff: 's-a1b2c3', project: '' }, [{ id: 'own1', name: 'A - personal' }]), '', 'never by name');
 });

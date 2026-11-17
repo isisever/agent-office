@@ -132,12 +132,12 @@ test('sendRefused: nothing is typed over an approval menu, a draft, a handoff or
   assert.equal(C.sendRefused({ ...ok, draft: true }), 'draft');
 });
 
-test('menuKeys: only option numbers, Esc, the tab arrows, Enter and one line of text', () => {
+test('menuKeys: only option numbers, Esc, the arrows (v3.80 amendment: ↑ ↓ for a dialog without numbers), Enter and one line of text', () => {
   assert.deepEqual(C.menuKeys(['2']), ['2']);
   assert.deepEqual(C.menuKeys(['3', { text: ' Yeşil\nve\x1b[2Jmavi ' }, '\r']), ['3', 'Yeşil ve [2Jmavi', '\r']);
   assert.deepEqual(C.menuKeys(['\x1b[C', '1']), ['\x1b[C', '1']);
   assert.deepEqual(C.menuKeys(['\x1b']), ['\x1b']);
-  for (const bad of [[], ['0'], ['10'], ['a'], ['\x03'], ['\x1b[A'], [{ text: '   ' }], [{ text: 'x'.repeat(2001) }], [1], null, 'x', Array(9).fill('1')]) {
+  for (const bad of [[], ['0'], ['10'], ['a'], ['\x03'], ['\x1b[H'], ['\x1b[3~'], [{ text: '   ' }], [{ text: 'x'.repeat(2001) }], [1], null, 'x', Array(9).fill('1')]) {
     assert.equal(C.menuKeys(bad), null, JSON.stringify(bad));
   }
 });
@@ -161,8 +161,16 @@ test('main.js: chat:send types through typePrompt; chatView is written only once
   // the renderer checks the menu on the live screen (not the scrolled view) right before it sends the keys
   const chat = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat.js'), 'utf8');
   const press = chat.slice(chat.indexOf('async function press('), chat.indexOf('async function press(') + 900);
-  assert.match(press, /menuKey\(now\) !== expect/);
-  assert.ok(press.indexOf('menuKey(now) !== expect') < press.indexOf('api.chat.keys(ptyId, steps, expect)'), 'checked before the keys are sent');
+  // a menu or a dialog: the re-read is the same reader the card was drawn with, and a terminal-only one types nothing
+  assert.match(press, /now = openOnScreen\(screen\(\)\)/);
+  assert.match(press, /keyOf\(now\) !== expect \|\| mustUseTerminal\(now\)/);
+  assert.ok(press.indexOf('keyOf(now) !== expect') < press.indexOf('api.chat.keys(ptyId, steps, expect)'), 'checked before the keys are sent');
+  assert.match(chat, /const keyOf = screenKey;/);
+  assert.match(chat.slice(chat.indexOf('function checkMenu('), chat.indexOf('function checkMenu(') + 300), /m = openOnScreen\(screen\(\)\)/, 'the card reads the screen the same way');
+  // one item that throws while it is rendered does not drop the rest of the batch
+  const app = chat.slice(chat.indexOf('function append('), chat.indexOf('function append(') + 900);
+  assert.match(app, /try \{ n = item\(it\); \} catch/);
+  assert.match(app, /textBody\(it\.text\)/);
   const term = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'terminal.js'), 'utf8');
   const scr = term.slice(term.indexOf('    screen() {'), term.indexOf('    screen() {') + 300);
   assert.match(scr, /b\.baseY \+ i/);
@@ -177,4 +185,68 @@ test('chat reply: the quoted message goes first as "> " lines, cut at a word end
   const q = R.quoteExcerpt(long);
   assert.ok(q.length <= R.QUOTE_MAX + 1 && q.endsWith('…') && !q.includes('wor…'));
   assert.equal(R.quoteExcerpt('a\r\nb'), 'a\nb');
+});
+
+test('chat markdown: blocks and inline marks as data, never HTML', async () => {
+  const M = await import('../src/chat-md.mjs');
+  const flat = (k) => k.map((x) => (x.t === 'text' || x.t === 'code' ? `${x.t === 'code' ? '`' : ''}${x.text}` : `<${x.t}${x.href ? ` ${x.href}` : ''}>${flat(x.kids)}</${x.t}>`)).join('');
+  assert.equal(flat(M.inline('**aa** and *bb* and __cc__ ~~dd~~ `x*y*` snake_case_name')), '<b>aa</b> and <i>bb</i> and <b>cc</b> <s>dd</s> `x*y* snake_case_name');
+  assert.equal(flat(M.inline('see [docs](https://ex.com/a) or https://ex.com/b.')), 'see <link https://ex.com/a>docs</link> or <link https://ex.com/b>https://ex.com/b</link>.');
+  assert.equal(flat(M.inline('[x](javascript:alert(1)) <b>raw</b> 2 * 3 * 4')), '[x](javascript:alert(1)) <b>raw</b> 2 * 3 * 4', 'unsafe links and HTML stay text; spaced stars are no italic');
+  const b = M.blocks('# Title\n\nText **bold**\nnext line\n\n- one\n- two\n  - nested\n1. first\n2. second\n\n> quoted\n\n---\n\n```js\nconst a = 1;\n```\n\n| A | B |\n|---|--:|\n| 1 | **2** |');
+  assert.deepEqual(b.map((x) => x.t), ['h', 'p', 'ul', 'ol', 'quote', 'hr', 'pre', 'table']);
+  assert.equal(b[0].level, 1);
+  assert.equal(flat(b[1].kids), 'Text <b>bold</b>\nnext line');
+  assert.equal(b[2].items.length, 2);
+  assert.equal(b[2].items[1].sub[0].t, 'ul');
+  assert.deepEqual([b[3].start, b[3].items.length], [1, 2]);
+  assert.equal(b[6].lang, 'js');
+  assert.equal(b[6].text, 'const a = 1;');
+  assert.deepEqual([b[7].head.length, b[7].rows.length, b[7].align], [2, 1, ['left', 'right']]);
+  assert.equal(flat(b[7].rows[0][1]), '<b>2</b>');
+  assert.deepEqual(M.blocks('```\nunclosed\n# not a head').map((x) => x.t), ['pre'], 'an open fence runs to the end');
+});
+
+test('chat markdown: a heading with a long run of spaces parses in linear time', async () => {
+  const M = await import('../src/chat-md.mjs');
+  const flat = (k) => k.map((x) => x.text ?? '').join('');
+  const t0 = performance.now();
+  const b = M.blocks(`# a${' '.repeat(4000)}b\n## Title${' '.repeat(3000)}.\ntext${' '.repeat(4000)}# x\n# ${' '.repeat(4000)}`);
+  const ms = performance.now() - t0;
+  assert.ok(ms < 100, `took ${ms} ms`);
+  assert.deepEqual(b.slice(0, 2).map((x) => [x.t, x.level]), [['h', 1], ['h', 2]]);
+  assert.equal(flat(b[0].kids).length, 4002);
+  // closing #s and spaces are still cut
+  assert.equal(flat(M.blocks('## Title ##  ')[0].kids), 'Title');
+  assert.equal(flat(M.blocks('# a#')[0].kids), 'a');
+  assert.equal(flat(M.blocks('#   ')[0].kids), '');
+  assert.equal(M.blocks('#tag')[0].t, 'p');
+});
+
+test('chat markdown: quotes and lists nest MAX_NEST deep, deeper marks stay text', async () => {
+  const M = await import('../src/chat-md.mjs');
+  const depthOf = (bs) => bs.reduce((d, b) => Math.max(d, b.t === 'quote' ? 1 + depthOf(b.blocks) : b.t === 'ul' || b.t === 'ol' ? 1 + Math.max(0, ...b.items.map((it) => depthOf(it.sub))) : 0), 0);
+  const t0 = performance.now();
+  const q = M.blocks(`${'>'.repeat(5000)} deep`);
+  assert.equal(depthOf(q), M.MAX_NEST);
+  let in4 = q;
+  for (let n = 0; n < M.MAX_NEST; n++) in4 = in4[0].blocks;
+  assert.equal(in4[0].t, 'p');
+  assert.ok(in4[0].kids[0].text.startsWith('>>>'), 'the rest of the marks are text');
+  const stairs = Array.from({ length: 3000 }, (_, n) => `${'  '.repeat(n)}- item ${n}`).join('\n');
+  const l = M.blocks(stairs);
+  assert.equal(depthOf(l), M.MAX_NEST);
+  const mixed = M.blocks(Array.from({ length: 2000 }, (_, n) => `${'> '.repeat(n % 50)}- x`).join('\n'));
+  assert.ok(depthOf(mixed) <= M.MAX_NEST);
+  assert.ok(performance.now() - t0 < 2000, 'bounded work');
+  // ordinary nesting is unchanged
+  const ok = M.blocks('- a\n  - b\n    - c\n\n> q\n> > qq');
+  assert.equal(ok[0].items[0].sub[0].items[0].sub[0].t, 'ul');
+  assert.equal(ok[1].blocks[1].t, 'quote');
+});
+
+test('chat markdown: a mailto link stays text (the app opens only http(s) outside)', async () => {
+  const M = await import('../src/chat-md.mjs');
+  assert.deepEqual(M.inline('[mail](mailto:a@b.co)'), [{ t: 'text', text: '[mail](mailto:a@b.co)' }]);
+  assert.equal(M.inline('[x](https://ex.com)')[0].t, 'link');
 });

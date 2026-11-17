@@ -137,7 +137,7 @@ function sendRefused({ text, running, locked, draft, permission }) {
 
 // Keys a chat-view menu button may type into the tab (src/tui-menu.mjs reads the menu): an option's number, Esc, the
 // arrows that move between AskUserQuestion's tabs, Enter, and the text of a "Type something" answer.
-const MENU_KEYS = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '\x1b', '\x1b[C', '\x1b[D', '\r']);
+const MENU_KEYS = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', '\x1b', '\x1b[A', '\x1b[B', '\x1b[C', '\x1b[D', '\r']);   // ↑ ↓: a dialog without numbers
 const MENU_TEXT_MAX = 2000;
 /** The steps of a menu answer → the strings to write, one by one; null when any step is not allowed. */
 function menuKeys(steps) {

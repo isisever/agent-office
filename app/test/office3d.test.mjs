@@ -44,7 +44,7 @@ test('buildStatic / buildDynamic: triangles with a colour each; every bot gets a
 const pitchOf = (cam) => Math.atan2(cam.eye[1] - cam.target[1], cam.eye[2] - cam.target[2])
 
 test('cameraFor: the pitch is 38° whatever the canvas shape', () => {
-  assert.ok(Math.abs(PITCH - (38 * Math.PI) / 180) < 1e-12)
+  assert.ok(Math.abs(PITCH - (34 * Math.PI) / 180) < 1e-12)
   const wide = sceneAt(2600, 700)
   const tall = sceneAt(700, 1100)
   const a = pitchOf(cameraFor(wide.LW, wide.LH, 2600, 700))

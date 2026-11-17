@@ -5,7 +5,8 @@
 // approved when HQ dispatches it; its text is frozen then (tasks/<id>/stage.json). When the stage before it reports
 // (status 'reported'), the app sends it through the normal dispatch path with only the previous report appended,
 // bounded and marked as data. Anything else ending the previous stage (partial, failed, rejected, expired, lost,
-// blocked) blocks it; nothing is ever sent without the consent given when it was created.
+// blocked) blocks it, and so does a task HQ itself closed on the person's word (office_task done, closedByHq: the
+// session never reported); nothing is ever sent without the consent given when it was created.
 const ADHOC = 'adhoc';
 const WAITING = 'waiting';
 const BLOCKED = 'blocked';
@@ -17,7 +18,7 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** The stages of one office_dispatch call: [first, ...then], each { project, machine, title, task }; malformed `then` entries are dropped. */
 function stagesOf(args) {
   const one = (o) => ({ project: String(o?.project || ''), machine: String(o?.machine || ''), title: String(o?.title || ''), task: typeof o?.task === 'string' ? o.task : '', ...(typeof o?.staff === 'string' && o.staff.trim() ? { staff: o.staff.trim() } : {}) });   // v3.83 a stage may name a staff member
-  const then = (Array.isArray(args?.then) ? args.then : []).filter((o) => o && typeof o === 'object' && o.project && typeof o.task === 'string' && o.task);
+  const then = (Array.isArray(args?.then) ? args.then : []).filter((o) => o && typeof o === 'object' && (o.project || (typeof o.staff === 'string' && o.staff.trim())) && typeof o.task === 'string' && o.task);   // v3.83 amendment: a member's stage may have no project (their personal workspace)
   return { first: one(args), then: then.map(one), tooMany: then.length > THEN_MAX };
 }
 
@@ -52,7 +53,7 @@ function afterRefused(board, request, after, selfId = '') {
 /** The previous stage's state for the one waiting on it: 'wait' (still open), 'go' (fully reported) or 'block'. */
 function stageState(pre) {
   if (!pre) return 'block';
-  if (pre.status === 'reported') return 'go';
+  if (pre.status === 'reported') return pre.closedByHq ? 'block' : 'go';   // v3.87 fix: closed by HQ is not a full report
   return ['partial', 'failed', 'rejected', 'expired', 'lost', BLOCKED].includes(pre.status) ? 'block' : 'wait';
 }
 
@@ -68,7 +69,7 @@ function settle(board, now = Date.now(), waitMs = WAIT_MS) {
     const pre = board.tasks.find((x) => x.id === t.after);
     const st = stageState(pre);
     if (st === 'go') release.push({ id: t.id, after: t.after });
-    else if (st === 'block') block.push({ id: t.id, status: BLOCKED, reason: pre ? `after-${pre.status}` : 'after-lost' });
+    else if (st === 'block') block.push({ id: t.id, status: BLOCKED, reason: !pre ? 'after-lost' : pre.closedByHq ? 'after-closed-by-hq' : `after-${pre.status}` });
     else if (now - t.at > waitMs) block.push({ id: t.id, status: 'expired', reason: 'after-timeout' });
   }
   return { release, block };
@@ -103,7 +104,9 @@ function stageText(task, { id, report, file }, max) {
 /** Caps for a call creating `n` tasks at once (8 per request, 12 open: the same caps as one dispatch). → reason or null. */
 function capFor(board, request, n, { maxOpen = 12, maxPerRequest = 8, isOpen = (t) => !['reported', 'partial', 'failed', 'rejected', 'expired', 'lost', BLOCKED].includes(t.status) } = {}) {
   if (board.tasks.filter(isOpen).length + n > maxOpen) return 'open-cap';
-  if (board.tasks.filter((t) => t.request === request).length + n > maxPerRequest) return 'request-cap';
+  // rows HQ removed (office_task remove) still count: the request record keeps their number
+  const removed = Math.max(0, Number((board.requests || []).find((r) => r.id === request)?.removed) || 0);
+  if (board.tasks.filter((t) => t.request === request).length + removed + n > maxPerRequest) return 'request-cap';
   return null;
 }
 
