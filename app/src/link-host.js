@@ -17,6 +17,7 @@ const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/st
 const REVIVE_STALE_MS = 10 * 60 * 1000;  // a budget untouched this long starts over
 const REVIVE_GAP_MS = 60 * 1000;          // ... and not more than once a minute
 const PUMP_MS = 1500;
+const STARTING_MS = 20 * 1000;              // v3.81 amendment: a tab 'starting' this long gets HQ's task as its first prompt
 const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks between gone-sightings = a new gone spell
 
 /**
@@ -331,6 +332,21 @@ function setupLink(d) {
     pump();
   }
   const reviveBudget = new Map();   // project -> { n tries, at last try, since first seen gone }
+  const startingSince = new Map();  // project -> when the queue first saw its tab 'starting' (this spell)
+  /** Hands one queued entry to the tab through `put(text, opts)` (typing, or main starting the tab with it as its first
+   *  prompt) → true when it went in ('delivered' sent). Reports (v3.35): the plugin reports on the marked task
+   *  (hooks/reports.ts); a device's expectation is saved BEFORE (a crash between the two never types it twice on resync). */
+  function deliver(c, project, put) {
+    if (c.report) {
+      const remote = c.device.pub !== SELF;
+      if (remote) link?.expectReport(c.id, c.device.pub, project);
+      let ok; try { ok = put(C.markedTask(c.id, c.device.name, c.text), { taskId: c.id }) === true; } catch { ok = false; }
+      if (!ok) { if (remote) link?.dropReport(c.id); return false; }
+      if (!remote) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); }
+    } else if (put(C.markedCommand(c.device.name, c.text), {}) !== true) return false;
+    c.reply('delivered');
+    return true;
+  }
   function pump() {
     const now = Date.now();
     for (const [project, q] of queue) {
@@ -362,29 +378,39 @@ function setupLink(d) {
               if (now - b.at < REVIVE_GAP_MS) break;   // give the last try its minute
               q.shift(); c.reply('rejected', 'not-running'); continue;
             }
-            if (now - (b.n ? b.at : b.since) < REVIVE_GAP_MS) break;
+            // a desk is gone on purpose (HQ opens it without starting it): no minute's wait for its first start
+            const isDesk = !b.n && String(project).includes(':') && Boolean(d.desk?.(project));
+            if (!isDesk && now - (b.n ? b.at : b.since) < REVIVE_GAP_MS) break;
             b.n += 1; b.at = now;
+            // v3.81 amendment: started with the task as its first prompt (a fresh session takes no typing, see 'starting')
+            if (d.startWith) {
+              let ok; try { ok = deliver(c, project, (text) => d.startWith(project, text)); } catch { ok = false; }
+              if (ok) { q.shift(); reviveBudget.delete(project); break; }
+            }
             let r; try { r = d.manage('start', project); } catch { r = { ok: false }; }
             if (r && typeof r.then !== 'function' && r.ok === false) { q.shift(); c.reply('rejected', r.reason === 'locked' ? 'locked' : 'not-running'); continue; }
             break;
           }
           q.shift(); c.reply('rejected', 'not-running'); continue;
         }
-        if (s === 'ready') reviveBudget.delete(project);
+        if (s === 'ready') { reviveBudget.delete(project); startingSince.delete(project); }
+        if (s !== 'starting') startingSince.delete(project);
+        // v3.81 amendment: a tab of this machine's own that stays 'starting' (a fresh session never takes typed text
+        // before its first prompt) is restarted by main with the HQ task as that first prompt; main refuses when the
+        // tab had a prompt, the person is typing in it, or it was already started that way (then it keeps waiting)
+        if (s === 'starting' && c.revive && d.startWith) {
+          if (!startingSince.has(project)) startingSince.set(project, now);
+          if (now - startingSince.get(project) >= STARTING_MS) {
+            let ok; try { ok = deliver(c, project, (text) => d.startWith(project, text)); } catch { ok = false; }
+            startingSince.delete(project);
+            if (ok) { q.shift(); break; }
+          }
+        }
         // 'busy' and 'starting' (no session id or no first prompt yet: the trust dialog may be up, v3.31) wait
         if (s !== 'ready') break;
         q.shift();
         // type() → false: not typed (the project got handoff-locked meanwhile): refused, never 'delivered'
-        if (c.report) {
-          // v3.35: the plugin reports on the marked task (hooks/reports.ts); its report is owed to the dispatcher
-          // the expectation is saved BEFORE typing (a crash between the two never types the task a second time on resync)
-          const remote = c.device.pub !== SELF;
-          if (remote) link?.expectReport(c.id, c.device.pub, project);
-          let ok; try { ok = d.type(project, C.markedTask(c.id, c.device.name, c.text), { taskId: c.id }) !== false; } catch { ok = false; }
-          if (!ok) { if (remote) link?.dropReport(c.id); c.reply('rejected', 'locked'); break; }
-          if (!remote) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); }
-        } else if (d.type(project, C.markedCommand(c.device.name, c.text)) === false) { c.reply('rejected', 'not-running'); break; }   // v1-safe reason
-        c.reply('delivered');
+        if (!deliver(c, project, (text, opts) => d.type(project, text, opts) !== false)) c.reply('rejected', c.report ? 'locked' : 'not-running');   // v1-safe reason
         break;                                     // one per project per tick: the tab is busy after a prompt
       }
       if (!q.length) queue.delete(project);

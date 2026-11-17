@@ -1681,7 +1681,7 @@ function typePrompt(id, text, { taskId = '' } = {}) {
   const t = terms.get(id);
   if (!t || handoffLocked(id)) return false;
   if (taskId) {
-    const p = P.findProject(state, id);
+    const p = P.resolvePty(state, id)?.project;   // a desk too (v3.81)
     const sid = p ? validSid(readJson(Z.claudePidFile(A.accountOf(state, p).configDir, app.getPath('home'), t.pid))?.sessionId) : null;
     const dir = path.join(app.getPath('home'), '.claude', 'agent-office', 'tasks');
     if (sid) try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, `${sid}.json`), JSON.stringify({ id: taskId, at: Date.now() }), { mode: 0o600 }); } catch (e) { console.error('task id:', e.message); }
@@ -1698,6 +1698,27 @@ function typePrompt(id, text, { taskId = '' } = {}) {
 }
 // --- device link (v3.28, src/link-host.js): remote commands go to the project's main tab, only when it is idle
 let linkHost = null;
+// v3.81 amendment: tabs started with a queued task as their first prompt (the pty object), so one is never restarted twice
+const startedWith = new Map();
+/** The queue's way into a tab that takes no typing: starts it (gone) or restarts it (running, but never had a prompt and
+ *  the person is not typing in it) with `text` as its first prompt. Claude Code tabs of a project or desk only, never
+ *  HQ; → false when refused (the queue keeps waiting). */
+function startWithPrompt(id, text) {
+  const r = P.resolvePty(state, id);
+  if (!r || r.project.hq || r.tab?.shell || P.engineOf(r.project) !== 'claude' || handoffLocks.has(r.project.id) || !win || !isLoaded) return false;
+  const t = terms.get(id);
+  if (t) {
+    if (startedWith.get(id) === t || tabStateOf(id) !== 'starting' || activity.get(id)?.draft) return false;
+    const sid = validSid(readJson(Z.claudePidFile(A.accountOf(state, r.project).configDir, app.getPath('home'), t.pid))?.sessionId);
+    if (sid && sessionPrompted(sid, A.accountOf(state, r.project).configDir)) return false;
+  }
+  startPty(id, { resume: r.tab ? true : state.resume !== false, prompt: text, forcePrompt: true });
+  const now = terms.get(id);
+  if (!now) return false;
+  startedWith.set(id, now);
+  broadcast();
+  return true;
+}
 
 // --- v3.35 one boss (src/office-mcp.js): office_machines / office_dispatch / office_reports for the boss tab
 let officeSock = null;
@@ -2692,6 +2713,7 @@ function startLink() {
     },
     tabState: linkTabState,
     asleep: (id) => asleep.has(id), attentionOf: (id) => attention.get(id) || '',   // v3.48 task-status for a device's task
+    startWith: startWithPrompt,   // v3.81 amendment: a tab that takes no typing yet gets the task as its first prompt
     type: typePrompt,
     answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices
     loginOf: (projectId) => { const p = P.resolvePty(state, String(projectId))?.project; const s = p && !p.hq ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },   // v3.81 a desk: its member's account

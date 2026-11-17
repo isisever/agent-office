@@ -405,6 +405,41 @@ test('v3.81: HQ\'s task for a staff member reaches the member\'s desk tab; a pai
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'link-host.js'), 'utf8'), /\(device\.pub === SELF \? d\.desk\?\.\(project\) \|\| null : null\)/);
 });
 
+test('v3.81 amendment: a gone desk starts at once with HQ\'s task as its first prompt; a tab stuck starting gets it after 20 s', (t) => {
+  const real = Date.now; let clock = real(); Date.now = () => clock;
+  t.after(() => { Date.now = real; });
+  const tab = { 'p1:2': 'gone', p1: 'starting' };
+  const started = []; let refuse = false;
+  const { host, typed } = waitHost(t, {
+    tabState: (id) => tab[id] || 'gone',
+    desk: (id) => (id === 'p1:2' ? { id: 'p1:2', name: 'pii · Ahmet', engine: 'claude' } : null),
+    manage: () => { throw new Error('not used when startWith takes it'); },
+    startWith: (id, text) => { if (refuse) return false; started.push([id, text]); tab[id] = 'starting'; return true; },
+  });
+  const seen = [];
+  host.dispatchLocal('p1:2', 'deploy the SaaS', 'HQ', (id, s) => seen.push(s), { ttl: 3600000, revive: true });
+  host.pump();
+  assert.equal(started.length, 1, 'no minute of waiting for a desk');
+  assert.equal(started[0][0], 'p1:2');
+  assert.match(started[0][1], /deploy the SaaS/);
+  assert.deepEqual(seen, ['queued', 'delivered']);
+  // a running boss tab that never had a prompt: waits, then is restarted with the task (once main agrees)
+  const seen2 = [];
+  host.dispatchLocal('p1', 'scan', 'HQ', (id, s) => seen2.push(s), { ttl: 3600000, revive: true });
+  refuse = true;
+  for (let e = 0; e < 30000; e += 1500) { clock += 1500; host.pump(); }
+  assert.deepEqual(seen2, ['queued'], 'main refused: still waiting');
+  refuse = false;
+  for (let e = 0; e < 21000; e += 1500) { clock += 1500; host.pump(); }
+  assert.deepEqual(started.at(-1)[0], 'p1');
+  assert.deepEqual(seen2, ['queued', 'delivered']);
+  assert.equal(typed.length, 0, 'nothing typed into a tab that takes no typing');
+  // a device's command never restarts a tab (revive is this machine's own)
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /startWith: startWithPrompt/);
+  assert.match(MAIN, /if \(startedWith\.get\(id\) === t \|\| tabStateOf\(id\) !== 'starting' \|\| activity\.get\(id\)\?\.draft\) return false;/);
+});
+
 test('v3.46 amendment: waitState names why a task waits', () => {
   assert.deepEqual(['ready', 'busy', 'starting'].map((s) => HQ.waitState(s, false)), ['ready', 'busy', 'starting']);
   assert.equal(HQ.waitState('gone', true), 'asleep');
