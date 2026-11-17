@@ -23,6 +23,9 @@ test('routines (v3.47): the HQ section explains [routine <request>] prompts, OK:
   expect(hqText()).toContain('OK:')
   expect(hqText()).toContain('ATTENTION:')
   expect(hqText()).toContain('awaiting-consent')
+  // v3.89: no amend tool; the two ways to change a running task
+  expect(hqText()).toContain('A running task cannot be changed from here')
+  expect(hqText()).toContain('the task stays followed')
   expect(sectionKind({ hq: false, manager: true })).toBe('manager')   // the routine line never reaches a manager-only session
 })
 

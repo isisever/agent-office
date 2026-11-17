@@ -1596,10 +1596,13 @@ export const register: Register = on => {
     if (e.origin?.kind !== 'task-notification') {
       verifyPrompt()
       isBriefReminded = false
-      // one boss (v3.35): a dispatched task opens (marker, or the id the app recorded before typing); any other
-      // prompt closes one still open as partial
+      // one boss (v3.35): a dispatched task opens (marker, or the id the app recorded before typing); a task with
+      // another id closes one still open as partial. The person's own prompt keeps it open and followed (v3.89), so
+      // the 2 h limit, counted from the task's start, is checked here too
       if (isInApp && !isNested) {
         const typed = await typedTaskId(hostOf($), rootDir, sessionId, Date.now()).catch(() => undefined)
+        const late = reports.expired(Date.now())
+        if (late && rootDir) await writeReport(hostOf($), rootDir, sessionCwd, late, Date.now(), true, isWindows)
         const closed = reports.prompt(e.text, Date.now(), typed)
         if (closed && rootDir) await writeReport(hostOf($), rootDir, sessionCwd, closed, Date.now(), true, isWindows)
       }

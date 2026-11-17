@@ -2,8 +2,10 @@
 // `[Agent Office: remote task #<id> from "<machine>"] <text>`; this module notes the id at prompt.submit and, on a
 // main turn.complete with no worker of this session still running, writes <data dir>/reports/<id>.json (the answer,
 // redacted and cut to 40 KB (v3.48; the app cuts it further, with a marker, for an older dispatcher), PR links found in it, and the commits made since the task arrived). The app sends it to the dispatcher and
-// deletes the file. A new marked task, or an unmarked prompt of the person, closes a still open one as partial; so
-// does a wait of more than TASK_MAX_MS. Before typing, the app also writes <data dir>/tasks/<session>.json { id, at }
+// deletes the file. A new marked task (another id) closes a still open one as partial; so does a wait of more than
+// TASK_MAX_MS, measured from the task's start. A prompt the person types into the tab themselves (no marker), or the
+// same task typed again, keeps the task open and followed (v3.89): it still reports at the next main turn end with no
+// worker running, and no prompt restarts the TASK_MAX_MS clock. Before typing, the app also writes <data dir>/tasks/<session>.json { id, at }
 // (typedTaskId), so the task is known even if the engine hands the hook a prompt without the marker (a collapsed paste). On the dispatcher's side the boss gets only
 // a fixed "report ready" row (readyText); the report itself is read through the office_reports tool.
 import { clip, commitsSince, placeOfDir, redact } from './journal'
@@ -14,7 +16,7 @@ export const REPORT_COMMITS = 30
 const PR_RE = /https:\/\/(?:github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+|gitlab\.com\/[\w./-]+\/-\/merge_requests\/\d+)/g
 export const REPORTS_DIR = 'reports'
 export const TASKS_DIR = 'tasks'
-export const TASK_MAX_MS = 2 * 3600 * 1000 // an open task is reported as partial after this long
+export const TASK_MAX_MS = 2 * 3600 * 1000 // an open task is reported as partial this long after it started
 const TYPED_FRESH_MS = 10 * 60 * 1000
 const ID = /^[A-Za-z0-9_.:-]{1,64}$/
 // the sender's name is quoted when typed; a task given as Claude Code's first-prompt argument loses its quotes (the
@@ -35,13 +37,15 @@ export class ReportTracker {
 
   /**
    * A prompt of the person or the app arrived (not an engine notification): a marked one (or one the app recorded as
-   * typed, `typedId`) opens a task; any other closes the open task. → the previous task when it was still open
-   * (the caller reports it as partial, with the answers so far).
+   * typed, `typedId`) opens a task. → the previous task when it was still open under another id (the caller reports
+   * it as partial, with the answers so far). The person's own prompt (no id) and the open task's own id change
+   * nothing (v3.89): the task stays open, with its start time and its answers so far.
    */
   prompt(text: string, now: number, typedId?: string): PendingTask | undefined {
     const id = taskIdOf(text) ?? (typedId && ID.test(typedId) ? typedId : undefined)
     const before = this.pending
-    this.pending = id ? { id, sinceMs: now, answer: '' } : undefined
+    if (!id || before?.id === id) return undefined
+    this.pending = { id, sinceMs: now, answer: '' }
     return before
   }
 
