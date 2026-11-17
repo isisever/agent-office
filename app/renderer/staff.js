@@ -74,7 +74,8 @@ function card(c, m) {
  * @param {{ h: Function, t: Function, lang: string, member: any, staff: any[], presets: any[], projects: any[], accounts: any[], labelOf: Function,
  *   openModal: Function, closeModal: Function, save: (form: any) => Promise<any>, remove: (id: string) => Promise<any>, listPacks?: () => Promise<any[]>,
  *   listTools?: () => Promise<any[]>, openWizard?: () => void, removeRole?: (id: string) => Promise<any>, initialPreset?: string,
- *   mailAccounts?: { id: string, label: string, address: string }[] }} c
+ *   mailAccounts?: { id: string, label: string, address: string }[],
+ *   personal?: any, hasBadFields?: Function, reload?: Function, bindSave?: Function }} c
  */
 export function openMemberEditor(c) {
   const { h, t } = c;
