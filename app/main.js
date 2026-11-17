@@ -4051,7 +4051,7 @@ async function gitTop(dir) {
 
 // "+" menu: a new Claude Code tab in the same folder, a new worktree (git repos only), or a plain terminal (contract
 // v3.42) in the folder of any project or one picked from disk. → 'same' | 'worktree' | { shell: dir } | null (cancelled)
-function pickTabMode({ git: inRepo = false } = {}) {
+function pickTabMode({ git: inRepo = false, staff = [] } = {}) {
   return new Promise((resolve) => {
     let done = false;
     let folderPicking = false;
@@ -4059,6 +4059,11 @@ function pickTabMode({ git: inRepo = false } = {}) {
     /** @type {Electron.MenuItemConstructorOptions[]} */
     const items = [{ label: T('main.tabSame'), click: () => finish('same') }];
     if (inRepo) items.push({ label: T('main.tabWorktree'), click: () => finish('worktree') });
+    // v3.81 amendment: a session with a staff member = the member's desk in this project (opened, or shown when open)
+    if (staff.length) items.push({ type: 'separator' }, {
+      label: T('main.tabStaff'),
+      submenu: staff.map((m) => ({ label: m.name, sublabel: m.role, click: () => finish({ staff: m.id }) })),
+    });
     items.push({ type: 'separator' }, {
       label: T('main.tabShell'),
       submenu: [
@@ -4120,8 +4125,16 @@ ipcMain.handle('tabs:add', async (_e, projectId, mode) => {
   const p = P.findProject(state, projectId);
   if (!p || !win) return null;
   let m = mode === 'same' || mode === 'worktree' ? mode : null;
-  if (!m) m = await pickTabMode({ git: Boolean(await gitTop(p.dir)) }); // always asks since v3.42: the menu has the terminal entry
+  // the staff who may work here (team mode, Claude Code projects): their desks are in the menu too
+  const staff = teamOn() && P.engineOf(p) === 'claude' ? (state.staff || []).filter((x) => ST.mayWork(x, p.id))
+    .map((x) => ({ id: x.id, name: x.name, role: ST.memberRole(x, presetRoles()).name || '' })) : [];
+  if (!m) m = await pickTabMode({ git: Boolean(await gitTop(p.dir)), staff }); // always asks since v3.42: the menu has the terminal entry
   if (m === 'worktree') return addWorktreeTab(p);
+  if (m && typeof m === 'object' && m.staff) {
+    const d = await openDesk(p.id, String(m.staff));
+    const n = d.ok ? Number(String(d.id).split(':')[1]) : 0;
+    return n ? { n } : null;
+  }
   const now = P.findProject(state, projectId);
   if (m && typeof m === 'object' && m.shell && now) return openTab(now.id, { n: P.nextTabNumber(now), dir: m.shell, shell: true });
   if (m === 'same' && now) return openTab(now.id, { n: P.nextTabNumber(now) });

@@ -917,7 +917,8 @@
     "routineFailed": "{name} rutini başarısız ({reason})",
     "routineNeedsApproval": "{name} rutini {project} projesine görev göndermek için onayınızı bekliyor",
     "routineNeedsApprovalRemote": "{name} rutini {machine} üzerindeki {project} projesine görev göndermek için onayınızı bekliyor",
-    "mailDraft": "{name} bir mail taslağı hazırladı: onayınızı bekliyor"
+    "mailDraft": "{name} bir mail taslağı hazırladı: onayınızı bekliyor",
+    "tabStaff": "Personel ile oturum"
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",

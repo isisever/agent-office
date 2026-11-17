@@ -936,7 +936,8 @@
     "routineFailed": "Routine {name} failed ({reason})",
     "routineNeedsApproval": "Routine {name} needs your approval to send a task to {project}",
     "routineNeedsApprovalRemote": "Routine {name} needs your approval to send a task to {project} on {machine}",
-    "mailDraft": "{name} prepared a mail draft: it waits for your approval"
+    "mailDraft": "{name} prepared a mail draft: it waits for your approval",
+    "tabStaff": "Session with a staff member"
   },
   "auth": {
     "unreadable": "could not read the login status",
