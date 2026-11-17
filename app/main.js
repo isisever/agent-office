@@ -2143,7 +2143,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const cap = HQ.capReason(board, request);
   if (cap) return { status: 'rejected', reason: cap };
   // v3.83 amendment: a task for a staff member outside any project goes to the member's personal workspace
-  if (args.staff && !String(args.project || '').trim() && !String(args.machine || '').trim() && !args.after && !(Array.isArray(args.then) && args.then.length)) {
+  if (args.staff && !String(args.project || '').trim() && !String(args.machine || '').trim()) {   // also a staged request's first stage
     const m = teamOn() ? ST.findMember(state.staff, args.staff) : null;
     if (!m) return { status: 'rejected', reason: teamOn() ? 'unknown-staff' : 'no-team' };
     const own = ensurePersonal(m);
@@ -2266,6 +2266,12 @@ async function hqDispatchStages(args, request, rrun) {
     s.key = HQ.parseRemoteKey(s.project);
     s.remote = Boolean(s.key) || !isHere(s.machine.trim());
     if (!s.remote) {
+      // v3.83 amendment: a stage for a member without a project is the member's work outside any project
+      if (s.staff && !String(s.project || '').trim()) {
+        const m = teamOn() ? ST.findMember(state.staff, s.staff) : null;
+        const own = m ? ensurePersonal(m) : null;
+        if (own) s.project = own.id;
+      }
       const p = byName(state.projects, s.project);
       if (!p) return no('unknown-project', { stage: s.n });
       // v3.83 a stage for a staff member: checked now (team on, known member, allowed on the project), its desk at release
@@ -3911,7 +3917,7 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
  *  in Documents/Agent Office/<name> - personal, on the member's account; only that member works there (`staffOwner`). */
 function ensurePersonal(m) {
   const have = ST.personalOf(state.projects, m.id);
-  if (have) return have;
+  if (have) { trustPersonal(have); return have; }
   // eslint-disable-next-line no-control-regex
   const safe = String(m.name).replace(/[/\\:*?"<>|\u0000-\u001f]/g, '-').replace(/^\.+/, '').trim().slice(0, 60) || m.id;
   const dir = path.join(app.getPath('documents'), 'Agent Office', T('main.personalFolder', { name: safe }));
@@ -3919,7 +3925,13 @@ function ensurePersonal(m) {
   const active = state.activeId;
   const r = P.addProject(state, dir, m.accountId ? { accountId: m.accountId } : {});
   commit({ ...r.state, activeId: active ?? r.state.activeId, projects: r.state.projects.map((p) => (p.id === r.project.id ? { ...p, staffOwner: m.id } : p)) });
-  return ST.personalOf(state.projects, m.id);
+  const own = ST.personalOf(state.projects, m.id);
+  if (own) trustPersonal(own);
+  return own;
+}
+/** The workspace folder trusted in its account (the app made it): no trust dialog the member's desk would wait behind. */
+function trustPersonal(p) {
+  try { PD.trustFolder(A.accountOf(state, p).configDir, app.getPath('home'), p.dir); } catch (e) { console.error('personal trust:', e.message); }
 }
 ipcMain.handle('staff:personal', async (_e, staffId) => {
   const m = teamOn() ? memberById(String(staffId || '')) : null;

@@ -230,3 +230,13 @@ test('cancelling a waiting stage blocks the stages after it at the next sweep', 
   api.hqChainSweep();
   assert.equal(env.sent.length, 1);   // nothing after a cancelled stage is sent
 });
+
+test('v3.83 amendment: a stage for a staff member may leave out the project (the member\'s personal workspace)', () => {
+  const CH2 = require('../src/hq-chain.js');
+  const r = CH2.stagesOf({ staff: 'Natasha', task: 'collect', then: [{ staff: 'Tipsiz', task: 'backlog' }, { task: 'no one' }] });
+  assert.deepEqual([r.first.project, r.first.staff], ['', 'Natasha']);
+  assert.deepEqual(r.then.map((x) => [x.project, x.staff]), [['', 'Tipsiz']], 'a stage with neither project nor staff is dropped');
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /if \(s\.staff && !String\(s\.project \|\| ''\)\.trim\(\)\) \{\s+const m = teamOn\(\) \? ST\.findMember\(state\.staff, s\.staff\) : null;\s+const own = m \? ensurePersonal\(m\) : null;/);
+  assert.match(MAIN, /if \(args\.staff && !String\(args\.project \|\| ''\)\.trim\(\) && !String\(args\.machine \|\| ''\)\.trim\(\)\) \{/);
+});
