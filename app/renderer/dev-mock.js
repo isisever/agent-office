@@ -912,7 +912,7 @@ if (q.has('remotes')) {
   }
   const hok = () => Promise.resolve(structuredClone(hv));
   const cancel = (id) => { const t = hv.board.tasks.find((x) => x.id === id); if (t && t.status === 'waiting') Object.assign(t, { status: 'rejected', reason: 'cancelled' }); return hok(); };
-  window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, cancel, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
+  window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, cancel, resume: hok, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
   // ?routines: the routine list and editor (v3.47), with the staff a project routine may name (v3.83 amendment)
   if (q.has('routines')) {
     const rv = { routines: [], cfg: { quiet: null, dailyCap: 48 }, runs: [], next: {}, problems: {}, held: [], remotes: [],

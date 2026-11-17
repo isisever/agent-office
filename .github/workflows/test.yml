@@ -68,7 +68,7 @@ jobs:
       - name: MCP tools for several projects
         run: node --test app/test/mcp-scope.test.cjs
       - name: Team (staff, desks, departments, role wizard)
-        run: node --test app/test/staff.test.cjs app/test/role-wizard.test.cjs
+        run: node --test app/test/staff.test.cjs app/test/role-wizard.test.cjs app/test/desk-rules.test.cjs
       - name: Mail (IMAP/SMTP against fake servers, Graph, guard, outbox)
         run: node --test app/test/mail.test.cjs
       - name: Project groups

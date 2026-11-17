@@ -261,8 +261,30 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       el('span', {}, [t(`hq.wait.${w.state}`, { project: w.project, machine: w.machine || '' }), w.len > 1 ? t('hq.wait.pos', { n: w.pos, len: w.len }) : '', t('hq.wait.expires', { min })].filter(Boolean).join(' · ')),
       w.cancel === false ? null : el('button', { class: 'hq-link', title: t('hq.wait.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
   }
+  const RESUME_MS = 7 * 24 * 3600 * 1000;
+  const REFUSED = { 'not-resumable': 'notResumable', 'too-old': 'tooOld', 'open-cap': 'openCap', 'read-only': 'readOnly' };
+  /** @type {{ id: string, reason: string } | null} v3.92 the last refused Continue click: shown on that card */
+  let resumeNote = null;
   /** v3.79 a waiting stage: which task it waits for, and Cancel (the stages after it are blocked with it). */
   function stageLine(x) {
+    // v3.92 a stage blocked by how the one before it ended: Continue sends it now (the person's click is the consent);
+    // one blocked only behind another stage follows that one, and one blocked more than 7 days ago has no button
+    // (RESUME_MS in src/hq-chain.js). A refused click says why on the card.
+    if (x.status === 'blocked' && x.after && /^after-/.test(x.reason || '') && x.reason !== 'after-blocked' && api.hq.resume) {
+      const fresh = Date.now() - (x.finishedAt || x.at || 0) <= RESUME_MS;
+      const why = resumeNote && resumeNote.id === x.id ? resumeNote.reason : '';
+      const click = async (e) => {
+        e.stopPropagation();
+        const v = await api.hq.resume(x.id);
+        if (!v) return;
+        resumeNote = v.refused ? { id: x.id, reason: v.refused } : null;
+        view = v;
+        render();
+      };
+      return el('div', { class: 'hq-task-wait' }, el('span', {}, t('hq.stage.blocked', { id: x.after })),
+        fresh ? el('button', { class: 'hq-link', title: t('hq.stage.continueTip'), onclick: click }, t('hq.stage.continue')) : null,
+        why ? el('span', { class: 'hq-stage-refused' }, t(`hq.stage.refused.${REFUSED[why] || 'notResumable'}`)) : null);
+    }
     if (x.status !== 'waiting') return null;
     return el('div', { class: 'hq-task-wait' }, el('span', {}, t('hq.stage.waiting', { id: x.after || '' })),
       el('button', { class: 'hq-link', title: t('hq.stage.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
