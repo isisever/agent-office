@@ -170,11 +170,13 @@ function loadBoard(raw) {
   return { tasks, requests };
 }
 const openTasks = (board) => board.tasks.filter(OPEN);
+/** v3.87 fix: the tasks of a real request whose rows were removed (office_task remove): they still count toward its cap. */
+const removedOf = (board, request) => (request && request !== ADHOC ? Math.max(0, Number((board.requests || []).find((r) => r.id === request)?.removed) || 0) : 0);
 /** Caps before a dispatch: 8 per request, 12 open. → reason or null. */
 function capReason(board, request) {
   if (openTasks(board).length >= MAX_OPEN) return 'open-cap';
-  // the adhoc bucket counts its open tasks only (it never ends); a real request counts all of its tasks
-  if (request && board.tasks.filter((t) => t.request === request && (request !== ADHOC || OPEN(t))).length >= MAX_PER_REQUEST) return 'request-cap';
+  // the adhoc bucket counts its open tasks only (it never ends); a real request counts every task it ever got, removed rows too
+  if (request && board.tasks.filter((t) => t.request === request && (request !== ADHOC || OPEN(t))).length + removedOf(board, request) >= MAX_PER_REQUEST) return 'request-cap';
   return null;
 }
 /** A paced (held) remote task got its real id when it was sent: the row, its request and its brief path follow. */
@@ -266,6 +268,16 @@ function applyReport(board, id, report, now = Date.now()) {
     ...(report?.transcriptRef ? { transcript: line(report.transcriptRef, 64) } : {}), ...(report?.truncated ? { truncated: true } : {}),
   })) };
 }
+/**
+ * v3.87 fix: a task HQ closed on the person's word (office_task done). The row reads 'reported' but carries
+ * closedByHq: it is never a full report for the stages waiting on it (src/hq-chain.js blocks them), no PR links are
+ * read from HQ's note, and the row names a report file only when one was written (`report`).
+ */
+function closeByHq(board, id, { report = false } = {}, now = Date.now()) {
+  return { ...board, tasks: board.tasks.map((t) => (t.id !== id || TERMINAL.has(t.status) ? t : {
+    ...t, status: 'reported', closedByHq: true, finishedAt: now, read: false, ...(report ? { report: `tasks/${id}/report.md` } : {}),
+  })) };
+}
 /** Request ids whose tasks are all terminal and not yet marked done → the board with them marked, and the list. */
 function finishRequests(board) {
   const done = [];
@@ -303,7 +315,8 @@ function prune(board, now = Date.now()) {
   const keep = board.tasks.filter((t) => OPEN(t) || now - (t.finishedAt || t.at) <= RETAIN_MS).slice(0, RETAIN_TASKS);
   const ids = new Set(keep.map((t) => t.id));
   const removed = board.tasks.filter((t) => !ids.has(t.id)).map((t) => t.id);
-  const requests = board.requests.map((r) => ({ ...r, tasks: r.tasks.filter((id) => ids.has(id)) })).filter((r) => r.tasks.length);
+  // a request whose rows were all removed stays while its id can still be used (its removed count holds the cap)
+  const requests = board.requests.map((r) => ({ ...r, tasks: r.tasks.filter((id) => ids.has(id)) })).filter((r) => r.tasks.length || (r.removed > 0 && now - (r.at || 0) <= ROUTINE_MINT_MS));
   return { board: { tasks: keep, requests }, removed };
 }
 const safeId = (id) => /^[A-Za-z0-9_-]{1,64}$/.test(String(id));
@@ -330,7 +343,7 @@ const waitState = (tab, isAsleep) => (tab === 'ready' || tab === 'busy' || tab =
 /** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string }} [o] */
 const boardView = (board, { request = '', status = '' } = {}) => board.tasks
   .filter((t) => (!request || t.request === request) && (!status || t.status === status)).slice(0, 50)
-  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
+  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
 
 // --- paired devices: dispatcher-side pacing (the receiver allows a burst of 3, one per 10 s) and the peer cache
 function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {
@@ -391,40 +404,52 @@ You may edit this file: Agent Office writes it only when it is missing.
 `;
 
 // --- v3.87 HQ's office_task: HQ changes its own board on the person's word (cancel, done, remove, retitle). Approving
-// a task held for consent stays the person's (the Board's Allow); HQ may only decline one.
+// a task held for consent stays the person's (the Board's Allow); HQ may only decline one it dispatched itself, and
+// never relabel one. A task closed by `done` never releases the stages waiting on it (closeByHq).
 const TASK_OPS = ['cancel', 'done', 'remove', 'retitle'];
 /**
  * What an op does to a board task → { do } or { error }. do: cancel-waiting (a stage: the ones after it block),
  * decline (held for consent), cancel-queued / cancel-remote (still in a queue), close-open (typed already: the board
  * stops following it, the session's turn is not stopped), done, remove (an ended task's row), retitle.
+ * ctx (what the caller knows, defaults: nothing stands in the way): `link` false → there is no link host, so nothing
+ * could be taken out of a queue ('no-link', never a false ok); `ownHeld` false → the held card came from the person's
+ * own project routine, not from an HQ dispatch: declining it is the person's ('person-only').
+ * A card held for consent is never retitled ('held'): the person reads its title next to Allow.
+ * @param {any} task @param {string} op @param {{ link?: boolean, ownHeld?: boolean }} [ctx]
  */
-function taskOpPlan(task, op) {
+function taskOpPlan(task, op, { link = true, ownHeld = true } = {}) {
   if (op === 'approve' || op === 'allow') return { error: 'person-only' };
   if (!TASK_OPS.includes(op)) return { error: 'bad-op' };
   if (!task) return { error: 'unknown-task' };
   const s = task.status;
-  if (op === 'retitle') return { do: 'retitle' };
+  if (op === 'retitle') return s === 'awaiting-consent' ? { error: 'held' } : { do: 'retitle' };
   if (op === 'remove') return TERMINAL.has(s) ? { do: 'remove' } : { error: 'still-open' };
   if (TERMINAL.has(s)) return { error: 'already-ended' };
   if (op === 'done') return ['delivered', 'running', 'needs-approval'].includes(s) ? { do: 'done' } : { error: 'not-started' };
   if (s === 'waiting') return { do: 'cancel-waiting' };
-  if (s === 'awaiting-consent') return { do: 'decline' };
-  if (s === 'queued') return { do: task.machine === 'self' ? 'cancel-queued' : 'cancel-remote' };
+  if (s === 'awaiting-consent') return ownHeld ? { do: 'decline' } : { error: 'person-only' };
+  if (s === 'queued') return link ? { do: task.machine === 'self' ? 'cancel-queued' : 'cancel-remote' } : { error: 'no-link' };
   return { do: 'close-open' };
 }
-/** The board without a task's row (its request goes when no task of it is left). */
+/**
+ * The board without a task's row. Its real request stays and counts the removed row (`removed`), so dispatch → remove
+ * → dispatch never gets under the per-request cap (capReason, hq-chain capFor); the adhoc bucket, which counts open
+ * tasks only, goes when no task of it is left.
+ */
 function removeTask(board, id) {
   const t = board.tasks.find((x) => x.id === id);
   if (!t) return board;
   const tasks = board.tasks.filter((x) => x.id !== id);
-  const requests = (board.requests || []).filter((r) => r.id !== t.request || tasks.some((x) => x.request === t.request));
+  const requests = (board.requests || [])
+    .map((r) => (r.id !== t.request || r.id === ADHOC ? r : { ...r, tasks: (Array.isArray(r.tasks) ? r.tasks : []).filter((x) => x !== id), removed: (Number(r.removed) || 0) + 1 }))
+    .filter((r) => r.id !== ADHOC || r.id !== t.request || tasks.some((x) => x.request === ADHOC));
   return { ...board, tasks, requests };
 }
 /** A task's title changed (one line, as long as any title). */
 const retitleTask = (board, id, title) => ({ ...board, tasks: board.tasks.map((t) => (t.id === id && line(title, TITLE_MAX) ? { ...t, title: line(title, TITLE_MAX) } : t)) });
 
 module.exports = {
-  TASK_OPS, taskOpPlan, removeTask, retitleTask,
+  TASK_OPS, taskOpPlan, removeTask, retitleTask, closeByHq, removedOf,
   hqBossModel, boardOfRemote, remoteOpen,
   waitState, WAIT_STATES,
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
