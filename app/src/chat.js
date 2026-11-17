@@ -156,4 +156,11 @@ function menuKeys(steps) {
   return out;
 }
 
-module.exports = { TAIL, STEP_MAX, TEXT_MAX, chatItems, readChat, toolDetail, toolName, sendRefused, menuKeys };
+/** The last assistant text of a transcript file (its tail), or '' (v3.81 amendment: a task's fallback report). */
+function lastAnswer(file, fsm = fs) {
+  const items = readChat(file, null, fsm).items;
+  for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === 'assistant' && String(items[i].text || '').trim()) return items[i].text;
+  return '';
+}
+
+module.exports = { TAIL, STEP_MAX, TEXT_MAX, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };

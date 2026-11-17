@@ -612,3 +612,46 @@ test('v3.81 amendment: a task started as the first-prompt argument keeps a marke
   assert.equal(MARKER.exec(typed)?.[1], 'edb2d4505fa1dd57');
   assert.equal(MARKER.exec(R.promptArg(typed))?.[1], 'edb2d4505fa1dd57', 'quotes and line breaks dropped, the id still read');
 });
+
+test('v3.81 amendment task watch: live board status, and a task whose session never reports ends with a partial report', () => {
+  const TW = require('../src/task-watch.js');
+  let r = TW.watchStep({ status: 'queued', live: 'idle', now: 0 });
+  assert.deepEqual(r, { mem: {} }, 'not delivered yet: nothing to watch');
+  r = TW.watchStep({ status: 'delivered', live: 'busy', now: 1000 });
+  assert.equal(r.status, 'running');
+  r = TW.watchStep({ status: 'running', live: 'permission', now: 2000, mem: r.mem });
+  assert.equal(r.status, 'needs-approval');
+  r = TW.watchStep({ status: 'needs-approval', live: 'idle', now: 3000, mem: r.mem });
+  assert.deepEqual([r.status, r.end], ['delivered', undefined]);
+  r = TW.watchStep({ status: 'delivered', live: 'idle', now: 3000 + TW.IDLE_MS - 1, mem: r.mem });
+  assert.equal(r.end, undefined, 'not yet');
+  const busyAgain = TW.watchStep({ status: 'delivered', live: 'busy', now: 3000 + TW.IDLE_MS - 1, mem: r.mem });
+  assert.equal(busyAgain.mem.idleSince, undefined, 'work again: the idle clock starts over');
+  r = TW.watchStep({ status: 'delivered', live: 'idle', now: 3000 + TW.IDLE_MS, mem: r.mem });
+  assert.equal(r.end, 'idle');
+  let g = TW.watchStep({ status: 'running', live: 'gone', now: 0, mem: { since: 0 } });
+  g = TW.watchStep({ status: 'running', live: 'gone', now: TW.GONE_MS, mem: g.mem });
+  assert.equal(g.end, 'gone');
+  assert.equal(TW.watchStep({ status: 'reported', live: 'gone', now: 9e9, mem: g.mem }).end, undefined);
+  const rep = TW.fallbackReport({ why: 'idle', answer: 'Sunucuya giremedim.', now: 5 });
+  assert.deepEqual([rep.ok, rep.partial, rep.at, rep.commits], [false, true, 5, []]);
+  assert.match(rep.summary, /^\[Agent Office\] .*went idle[\s\S]*Sunucuya giremedim\.$/);
+  assert.match(TW.fallbackReport({ why: 'gone', answer: '', now: 1 }).summary, /stopped[\s\S]*no answer/);
+  // the queue takes the report like the plugin's own: same file, same scan
+  const C = require('../src/link-core.js');
+  assert.equal(C.cleanReport(rep, true).partial, true);
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /rec = \{ machine: selfName\(\), project: officeName\(p\.name\), pub: 'self', into \};/);
+  assert.ok(MAIN.includes("if (fs.existsSync(f)) continue;   // the plugin's own report is on its way"));
+});
+
+test('v3.81 amendment: lastAnswer reads the newest assistant text of a transcript', () => {
+  const CHAT = require('../src/chat.js');
+  const f = path.join(tmp('ao-last-'), 's.jsonl');
+  const line = (o) => `${JSON.stringify({ timestamp: '2026-11-17T10:00:00.000Z', uuid: String(Math.random()), ...o })}\n`;
+  fs.writeFileSync(f, line({ type: 'user', message: { role: 'user', content: 'deploy' } })
+    + line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'first' }] } })
+    + line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Sunucuya giremedim.' }] } }));
+  assert.equal(CHAT.lastAnswer(f), 'Sunucuya giremedim.');
+  assert.equal(CHAT.lastAnswer(path.join(path.dirname(f), 'none.jsonl')), '');
+});

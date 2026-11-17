@@ -21,6 +21,7 @@ const Z = require('./src/sleep.js');
 const TR = require('./src/transfer.js');
 const TIO = require('./src/transfer-io.js');
 const CHAT = require('./src/chat.js');
+const TW = require('./src/task-watch.js');
 const SC = require('./src/shared-config.js');
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
@@ -1799,7 +1800,7 @@ function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {
       if (reason) x.reason = reason; else delete x.reason;
       saveDispatches();
     }, { ttl, revive });
-    rec = { machine: selfName(), project: officeName(p.name), pub: 'self' };
+    rec = { machine: selfName(), project: officeName(p.name), pub: 'self', into };   // into: the tab it goes to (task watch)
   } else {
     const dv = byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
     if (!dv) return { status: 'rejected', reason: 'unknown-machine' };
@@ -1814,11 +1815,15 @@ function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {
   return { id: r.id, status: r.status, ...(r.reason ? { reason: r.reason } : {}) };
 }
 function officeReports(args) {
+  const board = loadHqBoard();
   const out = l => l.map((x) => {
     const o = x.pub !== 'self' ? linkHost?.remoteTask(x.id) || linkHost?.link()?.outgoing.find((y) => y.id === x.id) : null;
-    const status = x.report ? 'reported' : o?.status || x.status;
-    const reason = x.report ? '' : o ? o.reason : x.reason;
-    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), at: x.at, ...(x.report ? { report: x.report } : {}) };
+    // v3.81 amendment: a local task's live status is the board's (the task watch: running, needs-approval), and its tab
+    const live = x.pub === 'self' && !x.report ? board.tasks.find((t) => t.id === x.id) : null;
+    const status = x.report ? (x.report.partial ? 'partial' : 'reported') : o?.status || live?.status || x.status;
+    const reason = x.report ? '' : o ? o.reason : live?.reason || x.reason;
+    const member = live?.staff ? `${x.project} · ${live.staff}` : '';
+    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), ...(member ? { tab: member } : {}), at: x.at, ...(x.report ? { report: x.report } : {}) };
   });
   const all = [...loadDispatches().values()].sort((x, y) => y.at - x.at);
   const list = args.id ? all.filter((x) => x.id === args.id) : all.slice(0, 10);
@@ -1870,6 +1875,58 @@ function onOfficeReport({ id, pub, report }) {
   inboxRow(sid, rec.tab, { kind: 'report-ready', id, machine: officeName(rec.machine), project: officeName(rec.project) });
   for (const r of done) inboxRow(sid, rec.tab, { kind: 'request-done', request: r.id, n: r.n });
 }
+// --- v3.81 amendment task watch (src/task-watch.js): this machine's own dispatched tasks, followed in their tab every
+// 5 s: the Board shows running / needs-approval, and a task whose session never reports (idle 3 min, or its tab gone
+// 1 min) ends with a partial report of the session's last answer, written where the plugin writes reports (the
+// queue's report scan takes it like any other), so HQ is always told.
+const watchMem = new Map();   // task id → watchStep's memory
+/** A tab's state for the watch: gone | permission (a prompt or dialog open) | busy (a turn, agents, a shell) | idle. */
+function tabLive(id) {
+  const r = P.resolvePty(state, id);
+  const t = terms.get(id);
+  if (!r || !t) return 'gone';
+  const claude = readJson(Z.claudePidFile(A.accountOf(state, r.project).configDir, app.getPath('home'), t.pid));
+  if (claude?.status === 'waiting') return 'permission';
+  const sid = validSid(claude?.sessionId);
+  return R.isTurnBusy({ claude, office: sid ? office()?.readSession(sid) : undefined }) ? 'busy' : 'idle';
+}
+/** The last answer in a tab's conversation (running: its session; else a desk's kept one or the tab's last). */
+function tabLastAnswer(id) {
+  const r = P.resolvePty(state, id);
+  if (!r) return '';
+  const { configDir } = A.accountOf(state, r.project);
+  const t = terms.get(id);
+  const sid = (t && validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId)) || validSid(r.tab?.sessionId) || validSid(lastSid.get(id));
+  const f = sid ? TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file : null;
+  try { return f ? CHAT.lastAnswer(f) : ''; } catch { return ''; }
+}
+function watchTasks() {
+  if (!state || !isLoaded) return;
+  const now = Date.now();
+  const board = loadHqBoard();
+  const seen = new Set();
+  for (const rec of loadDispatches().values()) {
+    if (rec.pub !== 'self' || rec.report || !rec.into || !rec.id) continue;
+    const task = board.tasks.find((x) => x.id === rec.id);
+    const status = task ? task.status : rec.status;
+    seen.add(rec.id);
+    const r = TW.watchStep({ status, live: tabLive(rec.into), now, mem: watchMem.get(rec.id) });
+    watchMem.set(rec.id, r.mem);
+    if (task && r.status && r.status !== task.status) hqStatus(rec.id, r.status);
+    if (!r.end) continue;
+    const dir = path.join(app.getPath('home'), '.claude', 'agent-office', 'reports');
+    const f = path.join(dir, `${rec.id}.json`);
+    if (fs.existsSync(f)) continue;   // the plugin's own report is on its way
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      SF.writeAtomic(f, JSON.stringify(TW.fallbackReport({ why: r.end, answer: tabLastAnswer(rec.into), now })));
+      watchMem.delete(rec.id);
+      linkHost?.scanReports?.();
+    } catch (e) { console.error('task watch:', e.message); }
+  }
+  for (const id of [...watchMem.keys()]) if (!seen.has(id)) watchMem.delete(id);
+}
+setInterval(() => { try { watchTasks(); } catch (e) { console.error('task watch:', e.message); } }, 5000).unref?.();
 /** The session of the dispatching boss tab (HQ resolves through resolvePty; a gone HQ pty: its last session). */
 function bossSid(tab) {
   const t = terms.get(tab);
