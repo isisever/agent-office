@@ -707,7 +707,8 @@
     "copied": "Copied",
     "copyFailed": "Not copied",
     "reply": "Reply",
-    "replyingTo": "Replying to:"
+    "replyingTo": "Replying to:",
+    "working": "Working…"
   },
   "main": {
     "defaultAccount": "Default",

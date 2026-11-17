@@ -1530,3 +1530,8 @@ select option.rt-off { color: #888; }
 .chat-reply-label { opacity: .7; flex: 0 0 auto; }
 .chat-reply-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-reply-x { font: inherit; background: transparent; border: 0; color: inherit; cursor: pointer; opacity: .7; }
+/* chat: a message sent from here until the transcript has it; Claude Code's live status row */
+.chat-msg.pending { opacity: .6; }
+.chat-live { flex: 0 0 auto; font-size: 11px; padding: 2px 6px; opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: chat-live-pulse 1.6s ease-in-out infinite; }
+.chat-live[hidden] { display: none; }
+@keyframes chat-live-pulse { 50% { opacity: .45; } }

@@ -697,7 +697,8 @@
     "copied": "Kopyalandı",
     "copyFailed": "Kopyalanamadı",
     "reply": "Yanıtla",
-    "replyingTo": "Yanıtlanan:"
+    "replyingTo": "Yanıtlanan:",
+    "working": "Çalışıyor…"
   },
   "main": {
     "defaultAccount": "Varsayılan",

@@ -4,11 +4,11 @@
 // Claude Code's own menus (approvals, AskUserQuestion, /model, …) are drawn only in the terminal: the chat reads the open
 // one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
 import { t } from './i18n.js';
-import { parseMenu, isFreeOption, menuKey } from '../src/tui-menu.mjs';
+import { parseMenu, isFreeOption, menuKey, liveStatus } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 
-const POLL_MS = 1000;   // while shown
+const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
 const MENU_MS = 400;    // the terminal screen is checked for an open menu this often while shown
 
@@ -62,7 +62,11 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     h('button', { class: 'chat-reply-x', onclick: () => replyTo('') }, '✕'));
   replyBar.hidden = true;
   let replying = '';
-  el.append(banner, list, empty, card, replyBar, h('div', { class: 'chat-form' }, slash, input, send, term), why);
+  // what Claude Code is doing right now (its spinner row off the terminal screen): the transcript gets a message only
+  // once it is complete, so this is the live part
+  const live = h('div', { class: 'chat-live' });
+  live.hidden = true;
+  el.append(banner, list, empty, live, card, replyBar, h('div', { class: 'chat-form' }, slash, input, send, term), why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -90,7 +94,18 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   }
   texts();
 
-  function clear() { list.replaceChildren(); tools.clear(); }
+  function clear() { list.replaceChildren(); tools.clear(); pending.length = 0; }
+  // messages sent from here, shown at once until the transcript has them (then the transcript's copy replaces them)
+  /** @type {HTMLElement[]} */
+  const pending = [];
+  function echo(text) {
+    const n = h('div', { class: 'chat-msg user pending' }, textBody(text));
+    pending.push(n);
+    list.append(n);
+    empty.hidden = true;
+    list.scrollTop = list.scrollHeight;
+    setTimeout(() => { const i = pending.indexOf(n); if (i >= 0) { pending.splice(i, 1); n.remove(); } }, 120000);
+  }
   // ---- a message's own buttons (shown on hover): copy its text, reply to it
   async function copyText(text, btn) {
     let ok = false;
@@ -137,8 +152,12 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     if (!items.length) return;
     const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
     const frag = document.createDocumentFragment();
-    for (const it of items) { const n = item(it); if (n) frag.append(n); }
-    list.append(frag);
+    for (const it of items) {
+      if ((it.kind === 'user' || it.kind === 'command') && pending.length) pending.shift()?.remove();
+      const n = item(it);
+      if (n) frag.append(n);
+    }
+    if (pending.length) list.insertBefore(frag, pending[0]); else list.append(frag);
     while (list.childElementCount > KEEP) list.firstElementChild.remove();
     if (atBottom) list.scrollTop = list.scrollHeight;
   }
@@ -192,6 +211,11 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     if (Date.now() < waitUntil) return;
     menu = m;
     drawMenu();
+    let s = { busy: false, text: '' };
+    try { s = liveStatus(screen()); } catch (e) { console.error(e); }
+    live.hidden = !s.busy || Boolean(menu);
+    const txt = s.text || t('chat.working');
+    if (live.textContent !== txt) live.textContent = txt;
   }
 
   async function poll() {
@@ -231,12 +255,13 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     let r;
     try { r = await api.chat.send(ptyId, out); } catch (e) { console.error(e); r = 'error'; }
     if (r === 'ok') {
+      echo(out);
       input.value = '';
       replyTo('');
       fitInput();
       note('');
       closeSlash();
-      setTimeout(poll, 300);
+      setTimeout(poll, 150);
       // a command that opens a screen of its own (settings, pickers, panels) is answered in the terminal
       const cmd = text.trim().match(/^\/([\w:.-]+)/)?.[1];
       if (cmd && commands?.some((c) => c.name === cmd && c.ui)) setTimeout(() => onTerminal(), 400);

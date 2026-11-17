@@ -103,3 +103,13 @@ ${RULE}
  3. b
  Esc to cancel`)), null, 'numbers must run 1…n');
 });
+
+test('liveStatus: the spinner row while Claude Code works, nothing when idle', async () => {
+  const { liveStatus } = await import('../src/tui-menu.mjs');
+  const working = ['⏺ Here is a poem', '', '✻ Creating… (10s · ↓ 875 tokens · thinking)', '', RULE, '❯ ', RULE, '  ⏸ manual mode on · esc to interrupt'];
+  assert.deepEqual(liveStatus(working), { busy: true, text: 'Creating… (10s · ↓ 875 tokens · thinking)' });
+  assert.deepEqual(liveStatus(['· Channeling…', '  esc to interrupt']), { busy: true, text: 'Channeling…' });
+  assert.deepEqual(liveStatus(['✻ Worked for 12s', RULE, '❯ ', RULE, '  ? for shortcuts']), { busy: false, text: '' });
+  assert.deepEqual(liveStatus(['· a bullet in an answer…', 'esc to interrupt']).busy, true);
+  assert.deepEqual(liveStatus([]), { busy: false, text: '' });
+});

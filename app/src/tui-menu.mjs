@@ -83,3 +83,18 @@ export const isFreeOption = (o) => FREE_RE.test(String(o?.label || '').replace(/
 
 /** A stable key for a menu (its title and labels): the card is redrawn only when the menu changes. */
 export const menuKey = (m) => (m ? JSON.stringify([m.title, m.options.map((o) => [o.label, o.checked])]) : '');
+
+// v3.78 amendment: Claude Code's live status while it works ("✻ Creating… (10s · ↓ 875 tokens · thinking)", the glyph
+// cycling), above the mode line that says "esc to interrupt" (Claude Code 2.1.286, captured in a pty, 110 columns).
+const SPIN_RE = /^\s*[·✢✳✶✻✽✦*]\s+(\S[^…\n]{0,60}….*?)\s*$/;
+const BUSY_RE = /\besc to interrupt\b/i;
+/** The terminal screen's working line → { busy, text } (text '' when the spinner row is not on screen). */
+export function liveStatus(lines) {
+  const ls = (lines || []).map((l) => String(l ?? ''));
+  if (!ls.some((l) => BUSY_RE.test(l))) return { busy: false, text: '' };
+  for (let i = ls.length - 1; i >= 0; i--) {
+    const m = ls[i].match(SPIN_RE);
+    if (m) return { busy: true, text: m[1].slice(0, 120) };
+  }
+  return { busy: true, text: '' };
+}
