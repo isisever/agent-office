@@ -336,3 +336,59 @@ test('main.js: HQ dispatch to staff asks before it creates — workspace, desk a
   // removing a member is refused like the other writes when state.json could not be read
   assert.match(src, /ipcMain\.handle\('staff:remove', \(_e, id\) => \{\n {2}if \(!stateWritable\) return \{ ok: false, error: 'state' \};/);
 });
+
+test('v3.83 review fix: only a folder the app made (or a real, empty one) is trusted, in the account the desk runs on', () => {
+  const fs = require('fs');
+  const PD = require('../src/project-data.js');
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ao-trust2-'));
+  const cfg = path.join(dir, 'cfg');
+  fs.mkdirSync(cfg);
+  const fresh = path.join(dir, 'ws', 'Ada - personal');
+  const made = fs.mkdirSync(fresh, { recursive: true });
+  assert.ok(made, 'mkdirSync names what it created');
+  assert.equal(PD.appMadeFolder(fresh, Boolean(made)), true, 'created in this call');
+  const again = fs.mkdirSync(fresh, { recursive: true });
+  assert.equal(again, undefined);
+  assert.equal(PD.appMadeFolder(fresh, Boolean(again)), true, 'already there, but a real and empty directory');
+  const full = path.join(dir, 'full');
+  fs.mkdirSync(full);
+  fs.writeFileSync(path.join(full, '.mcp.json'), '{}');
+  assert.equal(PD.appMadeFolder(full, false), false, 'a folder with content is never the app\'s own');
+  assert.equal(PD.appMadeFolder(path.join(dir, 'missing'), true), false);
+  assert.equal(PD.appMadeFolder(path.join(full, '.mcp.json'), true), false, 'a file');
+  let linked = true;
+  const link = path.join(dir, 'link');
+  const emptyLink = path.join(dir, 'empty-link');
+  try { fs.symlinkSync(full, link, 'dir'); fs.symlinkSync(fresh, emptyLink, 'dir'); } catch { linked = false; }   // no symlink right (Windows)
+  if (linked) {
+    assert.equal(PD.appMadeFolder(link, false), false, 'a symlink');
+    assert.equal(PD.appMadeFolder(link, true), false);
+    assert.equal(PD.appMadeFolder(emptyLink, false), false, 'a symlink to an empty folder too');
+    assert.equal(PD.trustFolder(cfg, dir, link), false, 'trustFolder refuses a symlink: its real path is another folder');
+    assert.equal(fs.existsSync(path.join(cfg, '.claude.json')), false, 'nothing was written');
+  }
+  assert.equal(PD.trustFolder(cfg, dir, path.join(dir, 'missing')), false);
+  assert.equal(PD.trustFolder(cfg, dir, fresh), true);
+  const j = JSON.parse(fs.readFileSync(path.join(cfg, '.claude.json'), 'utf8'));
+  assert.equal(j.projects[fresh].hasTrustDialogAccepted, true);
+  assert.ok(!Object.keys(j.projects).some((k) => k === full || k === fs.realpathSync(full)), 'no other folder');
+  fs.rmSync(dir, { recursive: true, force: true });
+  // the mark survives a restart, and only as true
+  const ws = { id: 'p9', dir: '/w/ada', name: 'Ada - personal', accountId: 'default', staffOwner: 's-a1b2c3', appMade: true, tabs: [{ n: 2, staffId: 's-a1b2c3' }] };
+  const state = P.normalizeState({ projects: [ws, { id: 'p8', dir: '/w/x', name: 'x', accountId: 'default', appMade: 'yes' }], accounts: [{ id: 'work', name: 'Work', configDir: '/cfg/work' }], staff: [] });
+  assert.deepEqual(state.projects.map((p) => p.appMade), [true, undefined]);
+  // the desk runs on the member's current account, whatever account the workspace was made on
+  const seen = P.resolvePty({ ...state, staff: [{ id: 's-a1b2c3', name: 'Ada', accountId: 'work' }] }, 'p9:2');
+  assert.deepEqual([seen.project.accountId, seen.project.appMade, seen.dir], ['work', true, '/w/ada']);
+  assert.equal(P.resolvePty({ ...state, staff: [{ id: 's-a1b2c3', name: 'Ada' }] }, 'p9:2').project.accountId, 'default', 'no account of their own: the project\'s');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const fn = (name) => src.slice(src.indexOf(`function ${name}(`), src.indexOf('\n}\n', src.indexOf(`function ${name}(`)));
+  assert.match(fn('ensurePersonal'), /const appMade = PD\.appMadeFolder\(dir, Boolean\(made\)\);/);
+  assert.doesNotMatch(fn('ensurePersonal'), /trustFolder|realpath/, 'creating a workspace trusts nothing by itself');
+  const tp = fn('trustPersonalDesk');
+  assert.match(tp, /const r = P\.resolvePty\(state, id\);\n {2}if \(!r\?\.tab\?\.staffId \|\| !r\.project\.staffOwner \|\| r\.project\.appMade !== true \|\| r\.dir !== r\.project\.dir\) return;/);
+  assert.match(tp, /PD\.trustFolder\(A\.accountOf\(state, r\.project\)\.configDir, app\.getPath\('home'\), r\.dir\)/);
+  const od = fn('openDesk');
+  assert.equal(od.split('trustPersonalDesk(id);').length, 3, 'an existing desk and a new one');
+  assert.ok(od.lastIndexOf('trustPersonalDesk(id);') < od.lastIndexOf('startPty(id)'), 'before the session starts');
+});

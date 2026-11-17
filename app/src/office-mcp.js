@@ -74,7 +74,7 @@ const HQ_TOOLS = [
   },
   {
     name: 'office_task',
-    description: 'HQ (v3.87): change one task on the board when the person asks. op: cancel (a queued or waiting task is taken out, a task held for consent is declined; one already typed into a tab stops being followed, its session is not stopped), done (an open task the person says is finished; note says how), remove (deletes an ended task\'s row), retitle (title). Approving a task held for consent is the person\'s alone, on the Board: never possible here. Returns { ok, status? } or { ok: false, reason: unknown-task | still-open | already-ended | not-started | person-only | bad-op }.',
+    description: 'HQ (v3.87): change one task on the board when the person asks. op: cancel (a queued or waiting task is taken out, a task held for consent is declined; one already typed into a tab stops being followed, its session is not stopped), done (an open task the person says is finished; note says how. It is not a report: stages waiting on that task are blocked, never started), remove (deletes an ended task\'s row; it still counts toward its request\'s 8 tasks), retitle (title; never a task held for consent). Approving a task held for consent is the person\'s alone, on the Board: never possible here; a held task of the person\'s own project routine cannot be declined here either. Returns { ok, status? } or { ok: false, reason: unknown-task | still-open | already-ended | not-started | person-only | held | no-link | bad-op }.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, op: { type: 'string', enum: ['cancel', 'done', 'remove', 'retitle'] }, note: { type: 'string' }, title: { type: 'string' } }, required: ['id', 'op'], additionalProperties: false },
   },
   {

@@ -53,6 +53,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...(p.parallel === true ? { parallel: true } : {}),   // v3.83 several desks may change the folder at once (own copies)
       // v3.83 amendment: a staff member's personal workspace (tasks outside any project): only that member works here
       ...(typeof p.staffOwner === 'string' && /^s-[0-9a-f]{6,16}$/.test(p.staffOwner) ? { staffOwner: p.staffOwner } : {}),
+      ...(p.appMade === true ? { appMade: true } : {}),   // v3.83 fix: a personal workspace whose folder the app itself created (only that one is trusted)
       ...groupField,   // v3.86 the PROJECTS list's group (src/project-groups.mjs draws it)
       ...withAutoApprove(p.autoApprove),
       ...withSkipPermissions(p.skipPermissions),
