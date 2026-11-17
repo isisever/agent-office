@@ -74,16 +74,14 @@ export function openRoleWizard(c) {
     messages.push({ who: 'user', text });
     log.append(bubble('user', text));
     input.value = '';
-    send.disabled = true;
-    input.disabled = true;
+    send.disabled = true;   // the box stays open: a click focuses it and the next message can be typed meanwhile
     status.textContent = t('staff.wizard.thinking');
     scroll();
     const r = await c.ask({ messages, lang: c.lang });
     send.disabled = false;
-    input.disabled = false;
     if (!r?.ok) {
       messages.pop();          // not answered: the person can send it again
-      input.value = text;
+      if (!input.value.trim()) input.value = text;
       log.lastChild?.remove();
       status.textContent = t(`staff.wizard.error.${['busy', 'no-claude', 'timeout'].includes(r?.error) ? r.error : 'failed'}`);
       input.focus();
@@ -96,7 +94,7 @@ export function openRoleWizard(c) {
     log.append(bubble('wizard', r.say, r.questions || []));
     if (r.role) { draft = r.role; drawCard(); }
     scroll();
-    input.focus();
+    if (document.activeElement === document.body || !document.activeElement) input.focus();
   }
 
   c.openModal(t('staff.wizard.title'), [

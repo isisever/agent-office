@@ -61,7 +61,19 @@ const activeProject = () => (hqSelected ? HQ_ROW : projects.find((p) => p.id ===
 const activePty = () => { const p = activeProject(); return p ? tabPtyId(p.id, tabOf(p)) : null; };
 // While the login overlay is open, focus stays on its terminal.
 // v3.80: a tab shown as a chat takes the focus in its input box (the hidden terminal must not get keys)
-const focusActive = () => { if (login?.isOpen()) return login.focus(); const p = panes.get(activePty()); return (p?.chatOn ? p.chat : p?.term)?.focus(); };
+// Never while a popup is open or the person is typing in a box outside the terminals (a popup's text box, the HQ board,
+// a panel): a live update, a tab change or a late animation frame took the role wizard's input away mid-typing.
+const typingElsewhere = () => {
+  if (document.querySelector('.sb-modal-backdrop')) return true;
+  const el = /** @type {HTMLElement | null} */ (document.activeElement);
+  return Boolean(el && (el.isContentEditable || el.matches('input, textarea, select')) && !el.closest('.pane'));
+};
+const focusActive = () => {
+  if (login?.isOpen()) return login.focus();
+  if (typingElsewhere()) return;
+  const p = panes.get(activePty());
+  return (p?.chatOn ? p.chat : p?.term)?.focus();
+};
 let login = null; // login overlay (login.js)
 
 // ---- Theme ----
@@ -251,7 +263,7 @@ function syncChat() {
     // Claude Code draws its menus) is read the way the pty draws it
     p.el.classList.toggle('under-chat', want);
     if (want) { p.chat.setAttention(attn(id)); p.chat.show(); if (!was) requestAnimationFrame(() => p.term.fit()); } else p.chat?.hide();
-    if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
+    if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); if (!typingElsewhere()) p.term.focus(); });
   }
   const canSwitch = chatView && chatCapable(visible) && chatOff.has(visible);
   if (canSwitch && !chatSwitch) {
@@ -289,7 +301,7 @@ function showActive() {
   if (shownId === visible) return;
   shownId = visible;
   const p = panes.get(visible);
-  if (p) requestAnimationFrame(() => { p.term.fit(); (p.chatOn ? p.chat : p.term).focus(); });
+  if (p) requestAnimationFrame(() => { p.term.fit(); if (!typingElsewhere()) (p.chatOn ? p.chat : p.term).focus(); });
 }
 
 // The tab strip shows only when the project has more than one tab; a single terminal looks as before
