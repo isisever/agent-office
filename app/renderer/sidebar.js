@@ -151,6 +151,12 @@ export function mountSidebar(el, on) {
   const sleepLabel = h('span', {});
   const sleepSelect = h('select', { class: 'sb-acct sb-lang sb-sleep', onchange: (e) => on.setSleep?.(Number(e.target.value)) });
   const sleepRow = h('div', { class: 'sb-botcolor sb-langrow' }, sleepLabel, sleepSelect);
+  // keep computer awake (v3.78): Off | While agents work | Always; main's src/keep-awake.js has the rules
+  const KEEP_AWAKE_CHOICES = ['off', 'working', 'always'];
+  let keepAwake = 'working';
+  const keepAwakeLabel = h('span', {});
+  const keepAwakeSelect = h('select', { class: 'sb-acct sb-lang', id: 'sb-keepawake', onchange: (e) => on.setKeepAwake?.(e.target.value) });
+  const keepAwakeRow = h('div', { class: 'sb-botcolor sb-langrow' }, keepAwakeLabel, keepAwakeSelect);
   const projHead = h('span', {});
   const acctHead = h('span', {});
   const settingsBtn = h('button', { class: 'sb-x sb-gear sb-gear-head', id: 'sb-settings', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openSettings(); } }, '⚙'); // inside <summary>: must not toggle the panel
@@ -214,6 +220,9 @@ export function mountSidebar(el, on) {
     sleepLabel.textContent = t('sidebar.sleep');
     sleepRow.title = t('sidebar.sleepTitle');
     renderSleep();
+    keepAwakeLabel.textContent = t('sidebar.keepAwake');
+    keepAwakeRow.title = t('sidebar.keepAwakeTitle');
+    renderKeepAwake();
     langSelect.title = t('sidebar.languageTitle');
     themeLabel.textContent = t('sidebar.theme');
     renderAppearance();
@@ -240,6 +249,10 @@ export function mountSidebar(el, on) {
   function renderSleep() {
     sleepSelect.replaceChildren(...SLEEP_CHOICES.map((n) =>
       h('option', { value: String(n), selected: n === sleepMinutes }, n ? t('sidebar.sleepAfter', { n }) : t('sidebar.sleepOff'))));
+  }
+  function renderKeepAwake() {
+    const labels = { off: t('sidebar.keepAwakeOff'), working: t('sidebar.keepAwakeWorking'), always: t('sidebar.keepAwakeAlways') };
+    keepAwakeSelect.replaceChildren(...KEEP_AWAKE_CHOICES.map((v) => h('option', { value: v, selected: v === keepAwake }, labels[v])));
   }
   function renderLanguages() {
     langSelect.replaceChildren(
@@ -844,7 +857,7 @@ export function mountSidebar(el, on) {
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, lookRow, modeRow, themeRow, botRow, skillsSection()],
+      [resumeRow, resumeWorkRow, managerRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, langRow, lookRow, modeRow, themeRow, botRow, skillsSection()],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 
@@ -1252,6 +1265,12 @@ export function mountSidebar(el, on) {
       if (!SLEEP_CHOICES.includes(minutes)) return;
       sleepMinutes = minutes;
       renderSleep();
+    },
+    /** "Keep computer awake" setting (v3.78): 'off' | 'working' | 'always'. */
+    setKeepAwake(value) {
+      if (!KEEP_AWAKE_CHOICES.includes(value)) return;
+      keepAwake = value;
+      renderKeepAwake();
     },
     /** Bot color shown in the picker. */
     setBotColor(hex) { botInput.value = hex || '#3fb6a8'; },

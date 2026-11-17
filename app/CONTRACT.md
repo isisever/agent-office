@@ -1477,3 +1477,25 @@ isCompactionLimitText(text: string): boolean
 - **No backup can take over.** As v3.17: no backup set → the mark only, Claude Code's message stands; `notLoggedIn` / `allLimited` / `soon` / `loop` → the `stuck` notice once, and the sighting is looked at again every 1.5 s until a backup is free, the person goes on in the tab, or 5 h have passed. Nothing is typed into the tab when its own account resets and no model is changed.
 - **Should a version write the entry.** An `isApiErrorMessage` entry whose text holds the phrase is a limit for `limitFromTranscript` too (reset time unknown).
 - **Not done.** A prompt the person typed that was refused before it reached the transcript is not replayed: the tab is told to continue unfinished work. A firm mark holds for the full 5 h even if the limit resets sooner. Words redrawn within 5 s after a turn ends, or within 10 s after an Enter that wrote no answer (`/model`, an empty Enter), with no entry written after them, are not told apart from a failure. A carry-on refused later than 10 s after the start with no turn seen running is not seen.
+
+## Keep computer awake (v3.78)
+
+The computer went to sleep on its own while agents were still working, and the work stopped with it. The app now holds a sleep block while there is work, the counterpart of Claude desktop's *Keep computer awake while Claude works*. App `src/keep-awake.js` (`normalizeKeepAwake`, `nextIdleAt`, `shouldHold`), `main.js` `syncKeepAwake` / `stopKeepAwake` / `routineRunsBusy` (glue only: the decision is in `keep-awake.js`).
+
+```ts
+state.keepAwake: 'off' | 'working' | 'always'   // global, in state.json; unknown or missing = 'working'
+prefs.get(): { …, keepAwake }                    // prefs.set({ keepAwake }) applies at once
+KEEP_AWAKE_CHOICES = ['off', 'working', 'always'], GRACE_MS = 30000
+normalizeKeepAwake(v): 'off' | 'working' | 'always'
+nextIdleAt(o: { lastIdleAt?, wasBusy?, busy?, now }): number   // `now` when the busy count falls to zero, else lastIdleAt
+shouldHold(o: { pref, busy?, lastIdleAt?, now }): boolean
+```
+
+- **The setting.** One row in the global settings popup, *Keep computer awake*, after *Sleep idle sessions*: **Off**, **While agents work** (the default), **Always**. Its tooltip: *Stops the computer from going to sleep on its own. The display can still turn off, and closing the lid still sleeps a laptop.* It is one setting for the whole app; there is no per-project switch. A value that is not one of the three is ignored by `prefs.set` and read from `state.json` as `working`.
+- **The block.** Electron's `powerSaveBlocker.start('prevent-app-suspension')`, one at a time, on macOS, Windows and Linux. Never `prevent-display-sleep`: the display turns off as the system says. No child process (`caffeinate`, `systemd-inhibit`) and nothing that keeps a laptop awake with its lid closed.
+- **While agents work.** The block is held while the busy count is above zero, and for 30 s (`GRACE_MS`) after it falls to zero, so two turns close together do not release and take it again; at exactly 30 s it is released. The count is taken in `checkTurns` (every 1.5 s): the running Claude Code tabs that are mid-turn (`isTurnBusy`, the signal of the interrupted-work marks: Claude Code's pid file `status`, else the office file), HQ's among them, plus the routine runs (v3.47) whose status is `typed` or `running`. A routine run that waits for its turn (`waiting`) or for consent (`awaiting-consent`) keeps nothing awake. Tabs of the other engines (Antigravity, Command Code, OpenCode) keep no Claude Code pid file and are not counted. A tab that only waits for the person (an approval prompt, unsent text) counts as long as its turn is running.
+- **Always.** Held from the first poll after the app starts until it quits.
+- **Off.** Never held; choosing it releases a held block at once. Changing the setting in either direction is applied in the same call, not at the next poll.
+- **Quitting.** The block is released on `will-quit` and on `quit`, and nothing takes it again after that. A process that ends without them loses the block with it: the system drops a blocker when its process is gone.
+- **Limits.** The app must be running: the block does not wake a sleeping computer, and a routine due while the computer sleeps still follows its missed-slot policy (v3.47). The system can still sleep on a closed lid, a low battery or the person's own Sleep command.
+- **Tests.** `app/test/keep-awake.test.cjs` (`node --test`): each value, zero and some busy sessions, the grace period's boundary, the busy → idle stamp, an unknown or missing value read as `working`.
