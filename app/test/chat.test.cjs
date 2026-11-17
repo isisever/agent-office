@@ -156,6 +156,17 @@ test('main.js: chat:send types through typePrompt; chatView is written only once
   const keys = src.slice(src.indexOf("ipcMain.handle('chat:keys'"), src.indexOf("ipcMain.handle('chat:keys'") + 900);
   assert.match(keys, /CHAT\.menuKeys\(steps\)/);
   assert.doesNotMatch(keys, /hqMinter|draftAfter/, 'a menu answer is no draft and no HQ request');
+  assert.match(keys, /typeof expect !== 'string' \|\| !expect\) return 'stale'/, 'a call that names no menu types nothing');
+  assert.match(keys, /menuTyping\.get\(id\)[^\n]*return 'busy'/, 'one answer at a time');
+  // the renderer checks the menu on the live screen (not the scrolled view) right before it sends the keys
+  const chat = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat.js'), 'utf8');
+  const press = chat.slice(chat.indexOf('async function press('), chat.indexOf('async function press(') + 900);
+  assert.match(press, /menuKey\(now\) !== expect/);
+  assert.ok(press.indexOf('menuKey(now) !== expect') < press.indexOf('api.chat.keys(ptyId, steps, expect)'), 'checked before the keys are sent');
+  const term = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'terminal.js'), 'utf8');
+  const scr = term.slice(term.indexOf('    screen() {'), term.indexOf('    screen() {') + 300);
+  assert.match(scr, /b\.baseY \+ i/);
+  assert.doesNotMatch(scr, /viewportY/);
 });
 
 test('chat reply: the quoted message goes first as "> " lines, cut at a word end', async () => {
