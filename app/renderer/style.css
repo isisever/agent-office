@@ -1493,6 +1493,14 @@ select option.rt-off { color: #888; }
 .sb-port { flex: 0 0 80px !important; }
 .sb-mail-review textarea.sb-mail-body { min-height: 220px; font-size: 12px; }
 .sb-mail-warnings { margin: 4px 0; padding-left: 4px; list-style: none; color: var(--amber); font-size: 12px; }
+/* v3.93 an organizing plan: steps with boxes, moves grouped by destination */
+.sb-mail-plan .sb-plan-section { margin: 8px 0; }
+.sb-plan-step { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; padding: 2px 0; cursor: pointer; }
+.sb-plan-step input { margin-top: 2px; flex: none; }
+.sb-plan-mail { padding-left: 18px; }
+.sb-plan-mail > span { overflow-wrap: anywhere; }
+.sb-plan-group > summary { font-size: 12px; cursor: pointer; padding: 3px 0; }
+.sb-plan-note { white-space: pre-wrap; font-size: 12px; padding: 6px 8px; border-left: 2px solid var(--line); margin: 6px 0; }
 .sb-mail-from { font-size: 12px; opacity: .85; }
 .sb-staff-mail .sb-dim { opacity: .55; }
 .sb-mail-advanced { margin: 4px 0; }

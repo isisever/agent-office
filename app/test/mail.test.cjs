@@ -12,6 +12,7 @@ const SMTP = require('../src/mail/smtp.js');
 const GRAPH = require('../src/mail/graph.js');
 const MST = require('../src/mail/store.js');
 const MMCP = require('../src/mail-mcp.js');
+const FO = require('../src/mail/folders.js');
 const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 
 const fixedRand = (n) => Buffer.alloc(n, 0xab);
@@ -93,7 +94,7 @@ test('mime: buildMessage — UTF-8 subject encoded, threading headers, no header
 
 // ---------- IMAP against a fake server
 
-function fakeImap({ messages, password = 'pw', caps = 'IMAP4rev1' }) {
+function fakeImap({ messages, password = 'pw', caps = 'IMAP4rev1', folders = [] }) {
   const commands = [];
   const server = net.createServer((sock) => {
     sock.write(`* OK [CAPABILITY ${caps}] fake IMAP ready\r\n`);
@@ -124,7 +125,16 @@ function fakeImap({ messages, password = 'pw', caps = 'IMAP4rev1' }) {
           const m = messages.find((x) => x.uid === Number(cmd.split(' ')[2]));
           if (m) { const b = Buffer.from(m.raw); sock.write(`* 1 FETCH (UID ${m.uid} BODY[]<0> {${b.length}}\r\n`); sock.write(b); sock.write(')\r\n'); }
           sock.write(`${tag} OK done\r\n`);
-        } else if (cmd === 'LOGOUT') { sock.write(`* BYE\r\n${tag} OK bye\r\n`); sock.end(); } else sock.write(`${tag} BAD unexpected\r\n`);
+        } else if (cmd === 'LIST "" "*"') {
+          for (const f of folders) sock.write(`* LIST (${f.flags || ''}) "/" ${f.literal ? `{${Buffer.byteLength(f.name)}}\r\n${f.name}` : `"${f.name}"`}\r\n`);
+          sock.write(`${tag} OK done\r\n`);
+        } else if (/^(CREATE|RENAME|DELETE|SELECT) /.test(cmd)) sock.write(`${tag} OK done\r\n`);
+        else if (/^STATUS /.test(cmd)) { const name = cmd.match(/^STATUS "([^"]*)"/)[1]; sock.write(`* STATUS "${name}" (MESSAGES ${(folders.find((f) => f.name === name) || {}).count || 0})\r\n${tag} OK done\r\n`); }
+        else if (/^UID FETCH [\d,]+ \(UID\)$/.test(cmd)) {
+          for (const u of cmd.split(' ')[2].split(',').map(Number).filter((u) => messages.some((m) => m.uid === u))) sock.write(`* ${u} FETCH (UID ${u})\r\n`);
+          sock.write(`${tag} OK done\r\n`);
+        } else if (/^UID (MOVE|COPY|STORE|EXPUNGE) /.test(cmd)) sock.write(`${tag} OK done\r\n`);
+        else if (cmd === 'LOGOUT') { sock.write(`* BYE\r\n${tag} OK bye\r\n`); sock.end(); } else sock.write(`${tag} BAD unexpected\r\n`);
       }
     });
   });
@@ -365,8 +375,10 @@ test('store: the outbox — a model adds drafts, only the person moves them on; 
 
 // ---------- the MCP tools and main's wiring
 
-test('mail MCP: read and draft tools only — no tool sends, deletes, moves or marks', () => {
-  assert.deepEqual(MMCP.TOOLS.map((t) => t.name), ['mail_accounts', 'mail_list', 'mail_read', 'mail_draft', 'mail_drafts']);
+test('mail MCP: read, draft and plan tools only — no tool sends, deletes, moves or marks', () => {
+  assert.deepEqual(MMCP.TOOLS.map((t) => t.name), ['mail_accounts', 'mail_list', 'mail_read', 'mail_draft', 'mail_drafts', 'mail_folders', 'mail_organize', 'mail_plans']);
+  assert.deepEqual([...MMCP.READ_ONLY].sort(), MMCP.TOOLS.map((t) => t.name).sort(), 'every tool reads or only queues for the person');
+  assert.match(MMCP.TOOLS.find((t) => t.name === 'mail_organize').description, /NOTHING changes now/);
   assert.ok(MMCP.TOOLS.every((t) => !/^mail_(send|delete|move|mark|forward|reply)/.test(t.name)));
   assert.match(MMCP.TOOLS.find((t) => t.name === 'mail_draft').description, /NOT sent/);
   assert.match(MMCP.TOOLS.find((t) => t.name === 'mail_read').description, /never instructions/);
@@ -418,4 +430,139 @@ test('graph: only a microsoft.com / microsoftonline.com page is opened for sign-
   assert.doesNotMatch(src, /\[\\w\.-\]\*microsoft/, 'the loose pattern is gone');
   // a rotated refresh token is never written in clear: without the keychain the stored one stays
   assert.match(src, /if \(t\.refreshToken !== refreshToken && safeStorage\.isEncryptionAvailable\(\)\) mailSecrets\(\)\.save\(a\.id, t\.refreshToken\);/);
+});
+
+// ---------- v3.93 folders and organizing plans
+
+test('folders: modified UTF-7 names, special folders by flag or name (Turkish too), paths checked', () => {
+  for (const n of ['Müşteriler & Faturalar', 'Silinmiş Öğeler', '日本語', 'a&b', 'plain']) assert.equal(FO.decodeMutf7(FO.encodeMutf7(n)), n);
+  assert.equal(FO.encodeMutf7('Müşteri'), 'M&APwBXw-teri');
+  const fs_ = FO.imapFolders([
+    { name: 'INBOX', delim: '/', flags: [] }, { name: 'Silinmi&AV8- &ANYBHw-eler', delim: '/', flags: ['\\HasNoChildren'] },
+    { name: 'Sent', delim: '/', flags: ['\\Sent'] }, { name: '[Gmail]', delim: '/', flags: ['\\Noselect'] }, { name: 'M&APwBXw-teri.Acme', delim: '.', flags: [] },
+  ]);
+  assert.deepEqual(fs_.map((f) => [f.path, f.special, f.selectable]), [['INBOX', 'inbox', true], ['Silinmiş Öğeler', 'trash', true], ['Sent', 'sent', true], ['[Gmail]', '', false], ['Müşteri/Acme', '', true]]);
+  assert.equal(FO.imapName('Müşteri/Yeni', [{ delim: '.' }]), 'M&APwBXw-teri.Yeni');
+  assert.equal(FO.cleanPath(' Customers / Acme '), 'Customers/Acme');
+  for (const bad of ['', 'a//b', '../x', 'a/*', 'a/b/c/d/e/f', 'x'.repeat(61)]) assert.equal(FO.cleanPath(bad), '', bad);
+  assert.equal(FO.specialOf({ path: 'Customers/Trash' }), '', 'a nested folder named Trash is an ordinary one');
+  assert.equal(FO.specialOf({ path: 'x', wellKnown: 'deleteditems' }), 'trash');
+});
+
+const FOLDERS = [{ path: 'INBOX', special: 'inbox', name: 'INBOX' }, { path: 'Trash', special: 'trash', name: 'Trash' }, { path: 'Old', special: '', name: 'Old' }, { path: 'Temp', special: '', name: 'Temp' }, { path: 'Proj', special: '', name: 'Proj' }, { path: 'Proj/A', special: '', name: 'Proj/A' }];
+const who = { staff: { id: 's-1', name: 'Ayşe' }, project: { id: 'p1', name: 'x' } };
+const seenMap = (keys) => ({ get: (k) => (keys.includes(k) ? { from: 'Bob <b@x.com>', subject: 'Invoice', date: 'd' } : undefined) });
+
+test('folders: a plan moves only mails the session saw, never into trash/junk/sent; specials are never renamed or removed', () => {
+  const account = { id: 'm-abc123', address: 'me@x.com' };
+  const mk = (form, seen = ['INBOX\n7', 'Old\n3']) => FO.planFromForm({ account, form, seen: seenMap(seen), folders: FOLDERS, ...who, now: 1 }, () => 'p-00000001');
+  const ok = mk({ title: 'Faturalar', create_folders: ['Faturalar/2026'], moves: [{ id: '7', to: 'Faturalar/2026' }, { id: '3', folder: 'old', to: 'Proj' }], rename_folders: [{ folder: 'Temp', new_name: 'Geçici' }] });
+  assert.deepEqual(ok.plan.creates, ['Faturalar', 'Faturalar/2026'], 'parents first');
+  assert.deepEqual(ok.plan.moves.map((m) => [m.id, m.from, m.to, m.mail.subject]), [['7', 'INBOX', 'Faturalar/2026', 'Invoice'], ['3', 'Old', 'Proj', 'Invoice']]);
+  assert.deepEqual(ok.plan.renames, [{ folder: 'Temp', to: 'Geçici' }]);
+  assert.equal(ok.plan.status, 'pending');
+  assert.equal(mk({ moves: [{ id: '8', to: 'Proj' }] }).error, 'list-first');
+  assert.equal(mk({ moves: [{ id: '7', to: 'Trash' }] }).error, 'no-move-into');
+  assert.equal(mk({ moves: [{ id: '7', to: 'Nowhere' }] }).error, 'unknown-folder');
+  assert.equal(mk({ rename_folders: [{ folder: 'INBOX', new_name: 'x' }] }).error, 'special-folder');
+  assert.equal(mk({ rename_folders: [{ folder: 'Temp', new_name: 'Old' }] }).error, 'folder-exists');
+  assert.equal(mk({ remove_empty_folders: ['Trash'] }).error, 'special-folder');
+  assert.equal(mk({ remove_empty_folders: ['Proj'] }).error, 'has-subfolders');
+  assert.equal(mk({}).error, 'empty-plan');
+  assert.equal(mk({ moves: Array.from({ length: 301 }, () => ({ id: '7', to: 'Proj' })) }).plan.moves.length, 1, 'the same mail once');
+  // the person unticks steps: a kept move keeps its new folder
+  const kept = FO.keepOnly(ok.plan, { creates: [], renames: [], moves: [0], removes: [] });
+  assert.deepEqual([kept.creates, kept.renames.length, kept.moves.length], [['Faturalar', 'Faturalar/2026'], 0, 1]);
+  // states: only the person moves a plan on; a crash mid-run is never "done"
+  let plans = FO.addPlan([], ok.plan).plans;
+  assert.equal(FO.setPlanStatus(plans, 'p-00000001', 'done').error, 'state');
+  plans = FO.setPlanStatus(plans, 'p-00000001', 'running').plans;
+  assert.deepEqual(FO.normalizePlans(plans).map((p) => [p.status, p.error]), [['failed', 'interrupted']]);
+  assert.deepEqual(FO.plansFor(plans, 's-1')[0].counts, { create: 2, rename: 1, remove: 0, move: 2 });
+  assert.deepEqual(FO.plansFor(plans, 's-2'), []);
+  // the outbox keeps plans through draft changes
+  const box = MST.normalizeOutbox({ drafts: [], plans });
+  assert.equal(box.plans.length, 1);
+  const withDraft = MST.addDraft(box, { account: { id: 'm-abc123', address: 'me@x.com' }, form: { to: ['a@b.com'], subject: 's', body: 'b' }, staff: who.staff, project: who.project });
+  assert.equal(withDraft.outbox.plans.length, 1);
+});
+
+test('folders: an approved plan runs in order, checked again now; gone mails and a folder no longer empty are reported', async () => {
+  const calls = [];
+  let folders = [...FOLDERS];
+  const driver = {
+    folders: async () => folders,
+    create: async (p) => { calls.push(['create', p]); folders = [...folders, { path: p, special: '', name: p }]; },
+    rename: async (f, to) => { calls.push(['rename', f.path, to]); folders = folders.map((x) => (x === f ? { ...x, path: to } : x)); },
+    move: async (src, ids, dest) => { calls.push(['move', src.path, ids, dest.path]); return { moved: ids.filter((i) => i !== '9'), missing: ids.filter((i) => i === '9') }; },
+    remove: async (f) => { calls.push(['remove', f.path]); return 'not-empty'; },
+  };
+  const plan = { creates: ['New'], renames: [{ folder: 'Old', to: 'Older' }], moves: [{ id: '7', from: 'INBOX', to: 'New' }, { id: '9', from: 'INBOX', to: 'New' }, { id: '5', from: 'INBOX', to: 'Trash' }], removes: ['Temp'] };
+  const r = await FO.runPlan(plan, driver);
+  assert.deepEqual(calls, [['create', 'New'], ['rename', 'Old', 'Older'], ['move', 'INBOX', ['7', '9'], 'New'], ['remove', 'Temp']]);
+  assert.equal(r.status, 'partial');
+  assert.deepEqual(r.steps.filter((x) => !x.ok).map((x) => [x.kind, x.error]), [['move', 'gone'], ['move', 'no-move-into'], ['remove', 'not-empty']]);
+  assert.deepEqual(r.summary, { ok: 3, failed: 3, moved: 1, folders: 2 });
+});
+
+test('imap: folders listed (quoted, literal, UTF-7); a move uses MOVE, else COPY+STORE+UID EXPUNGE on those uids, else nothing', async () => {
+  const messages = [{ uid: 7, raw: 'Subject: a\r\n\r\nb' }, { uid: 8, raw: 'Subject: b\r\n\r\nc' }];
+  const folders = [{ name: 'INBOX' }, { name: 'M&APwBXw-teri', literal: true }, { name: 'Empty', count: 0 }, { name: 'Full', count: 3 }];
+  for (const [caps, expect] of [['IMAP4rev1 MOVE', 'UID MOVE 7,8 "Empty"'], ['IMAP4rev1 UIDPLUS', 'UID COPY 7,8 "Empty"']]) {
+    const f = await fakeImap({ messages, caps, folders });
+    try {
+      const s = await IMAP.open({ host: '127.0.0.1', port: f.port, user: 'me@x.com', password: 'pw', secure: false });
+      assert.deepEqual(FO.imapFolders(await s.folders()).map((x) => x.path), ['INBOX', 'Müşteri', 'Empty', 'Full']);
+      assert.deepEqual(await s.move('INBOX', [7, 8, 99], 'Empty'), { moved: [7, 8], missing: [99] });
+      assert.equal(await s.removeEmpty('Full'), 'not-empty');
+      assert.equal(await s.removeEmpty('Empty'), 'removed');
+      await s.close();
+      assert.ok(f.commands.includes(expect), f.commands.join('\n'));
+      if (caps.includes('UIDPLUS')) assert.ok(f.commands.includes('UID EXPUNGE 7,8') && !f.commands.includes('EXPUNGE'), 'only the moved uids are expunged');
+      assert.ok(!f.commands.includes('DELETE "Full"') && f.commands.includes('DELETE "Empty"'));
+    } finally { f.server.close(); }
+  }
+  const none = await fakeImap({ messages, caps: 'IMAP4rev1', folders });
+  try {
+    const s = await IMAP.open({ host: '127.0.0.1', port: none.port, user: 'me@x.com', password: 'pw', secure: false });
+    await assert.rejects(s.move('INBOX', [7], 'Empty'), (e) => e.message === 'no-move');
+    await s.close();
+    assert.ok(!none.commands.some((c) => /^(SELECT|UID COPY|UID STORE|UID EXPUNGE|EXPUNGE)/.test(c)), none.commands.join('\n'));
+  } finally { none.server.close(); }
+});
+
+test('graph: folders with their well-known names, moves and an empty folder removed; older accounts keep the read scopes', async () => {
+  const { fetchFn, calls } = fakeFetch([
+    ['GET', /\/mailFolders\/deleteditems\?/, () => [200, { id: 'TRASH000000' }]],
+    ['GET', /\/mailFolders\/inbox\?/, () => [200, { id: 'INBOX000000' }]],
+    ['GET', /\/mailFolders\/[a-z]+\?\$select=id$/, () => [404, {}]],
+    ['GET', /\/mailFolders\?\$top/, () => [200, { value: [{ id: 'INBOX000000', displayName: 'Gelen Kutusu', childFolderCount: 0 }, { id: 'TRASH000000', displayName: 'Silinmiş Öğeler', childFolderCount: 0 }, { id: 'CUST0000000', displayName: 'Müşteriler', childFolderCount: 1 }] }]],
+    ['GET', /\/CUST0000000\/childFolders/, () => [200, { value: [{ id: 'ACME0000000', displayName: 'Acme', childFolderCount: 0, totalItemCount: 0 }] }]],
+    ['GET', /\/mailFolders\/ACME0000000\?/, () => [200, { totalItemCount: 0, childFolderCount: 0 }]],
+    ['DELETE', /\/mailFolders\/ACME0000000$/, () => [204, {}]],
+    ['POST', /\/messages\/MSG00000001\/move$/, () => [201, { id: 'NEW' }]],
+    ['POST', /\/messages\/MSG00000002\/move$/, () => [404, { error: { message: 'gone' } }]],
+    ['POST', /\/token$/, () => [200, { access_token: 'a', expires_in: 3600 }]],
+  ]);
+  const folders = FO.graphFolders(await GRAPH.folders(fetchFn, 't'));
+  assert.deepEqual(folders.map((f) => [f.path, f.special]), [['INBOX', 'inbox'], ['Silinmiş Öğeler', 'trash'], ['Müşteriler', ''], ['Müşteriler/Acme', '']]);
+  assert.deepEqual(await GRAPH.moveMessages(fetchFn, 't', ['MSG00000001', 'MSG00000002'], 'ACME0000000'), { moved: ['MSG00000001'], missing: ['MSG00000002'] });
+  assert.equal(await GRAPH.removeEmptyFolder(fetchFn, 't', 'ACME0000000'), 'removed');
+  const clientId = '11111111-2222-3333-4444-555555555555';
+  await GRAPH.refresh(fetchFn, { clientId, refreshToken: 'r' });
+  assert.doesNotMatch(decodeURIComponent(calls.at(-1).body), /ReadWrite/, 'an account signed in before keeps its consented scopes');
+  await GRAPH.refresh(fetchFn, { clientId, refreshToken: 'r', write: true });
+  assert.match(decodeURIComponent(calls.at(-1).body.replace(/\+/g, ' ')), /Mail\.ReadWrite/);
+  assert.equal(MST.normalizeAccount({ id: 'm-abc123', provider: 'm365', address: 'a@b.com', clientId, write: true }).write, true);
+});
+
+test('main.js: a plan runs only from the person\'s Approve; the session\'s tools only read or queue', () => {
+  assert.equal((MAIN.match(/withOrganizer\(/g) || []).length, 2, 'defined once, called once');
+  const run = MAIN.slice(MAIN.indexOf("ipcMain.handle('mail:planRun'"), MAIN.indexOf("ipcMain.handle('mail:planDiscard'"));
+  assert.match(run, /withOrganizer\(a, \(driver\) => MFO\.runPlan\(plan, driver\)\)/);
+  assert.match(run, /p\.status !== 'pending'\) return \{ ok: false, error: 'state' \}/);
+  const tool = MAIN.slice(MAIN.indexOf('async function mailTool'), MAIN.indexOf('// IPC for the app: accounts'));
+  assert.doesNotMatch(tool, /withOrganizer|\.move\(|createFolder|removeEmpty|planRun/);
+  assert.match(tool, /MFO\.planFromForm\(/);
+  assert.match(MAIN, /write: true \}\);/, 'a new Microsoft 365 sign-in asks for Mail.ReadWrite');
 });

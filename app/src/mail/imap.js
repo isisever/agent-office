@@ -1,10 +1,11 @@
 // Mail (contract v3.85): a minimal IMAP4rev1 client, read only, no dependencies; tested in test/mail.test.cjs against
 // a fake server. TLS on connect (993), the certificate checked by net.js (system trust or the account's pinned one).
 // The mailbox is opened with EXAMINE (read only: no flag, no move, no expunge can happen) and bodies are fetched with
-// BODY.PEEK, so reading never marks a mail as seen. Login follows the server's CAPABILITY: XOAUTH2 with an OAuth
-// token; else AUTHENTICATE PLAIN when offered (any characters in the password; Exchange and Gmail offer it over TLS);
-// else LOGIN, unless the server says LOGINDISABLED (Exchange Online: OAuth only → `login-disabled`). The password
-// never leaves main.
+// BODY.PEEK, so reading never marks a mail as seen (v3.93: folders are created, renamed, emptied-and-removed and mails
+// moved only for an organizing plan the person approved; see src/mail/folders.js). Login follows the server's
+// CAPABILITY: XOAUTH2 with an OAuth token; else AUTHENTICATE PLAIN when offered (any characters in the password;
+// Exchange and Gmail offer it over TLS); else LOGIN, unless the server says LOGINDISABLED (Exchange Online: OAuth
+// only → `login-disabled`). The password never leaves main.
 'use strict';
 const N = require('./net.js');
 
@@ -16,8 +17,20 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const quote = (s) => `"${String(s).replace(/[\\"]/g, (c) => `\\${c}`)}"`;
 /** dd-Mon-yyyy for SEARCH SINCE. */
 const imapDate = (d) => `${d.getDate()}-${MONTHS[d.getMonth()]}-${d.getFullYear()}`;
-/** A mailbox name we accept (no quoting games): letters, digits, space, / . _ - [ ]. */
-const safeMailbox = (s) => /^[\w ./[\]-]{1,100}$/u.test(String(s)) && !/[\r\n"\\]/.test(String(s));
+/** A mailbox name we accept, in its IMAP form (modified UTF-7 is ASCII): printable, no quote, backslash or wildcard. */
+const safeMailbox = (s) => /^[\x20-\x7e]{1,300}$/.test(String(s)) && !/["\\*%]/.test(String(s));
+/** One `* LIST (flags) "delim" name` line → { name (IMAP form), delim, flags } or null; the name may be a literal. */
+function listLine(r) {
+  const m = r.text.match(/^\* LIST \(([^)]*)\) (NIL|"(?:[^"\\]|\\.)*") (.*)$/i);
+  if (!m) return null;
+  const delim = m[2].toUpperCase() === 'NIL' ? '' : m[2].slice(1, -1).replace(/\\(.)/g, '$1');
+  let name = m[3].trim();
+  // eslint-disable-next-line no-control-regex
+  const lit = name.match(/^(?:\{\d+\})?\u0000(\d+)\u0000$/);
+  if (lit) name = (r.literals[Number(lit[1])] || Buffer.alloc(0)).toString('utf8');
+  else if (name.startsWith('"')) name = name.slice(1, -1).replace(/\\(.)/g, '$1');
+  return { name, delim, flags: m[1].split(/\s+/).filter(Boolean) };
+}
 /** CAPABILITY words, upper case, from a greeting's [CAPABILITY …] or a * CAPABILITY line. */
 const capsOf = (text) => {
   const m = String(text).match(/\bCAPABILITY ([^\]\r\n]*)/i);
@@ -145,10 +158,10 @@ async function open(o) {
     async list({ mailbox = 'INBOX', sinceDays = 3, limit = 15, unseenOnly = false, now = new Date() } = {}) {
       if (!safeMailbox(mailbox)) throw N.mailError('mailbox');
       await command(`EXAMINE ${quote(mailbox)}`).catch((e) => { throw N.mailError('mailbox', e.detail); });
-      const since = new Date(now.getTime() - Math.max(1, Math.min(30, sinceDays)) * 86400000);
+      const since = new Date(now.getTime() - Math.max(1, Math.min(365, sinceDays)) * 86400000);
       const found = await command(`UID SEARCH SINCE ${imapDate(since)}${unseenOnly ? ' UNSEEN' : ''}`);
       const uids = found.flatMap((r) => (/^\* SEARCH\b/i.test(r.text) ? r.text.replace(/^\* SEARCH/i, '').trim().split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number) : []));
-      const pick = uids.sort((a, b) => b - a).slice(0, Math.max(1, Math.min(50, limit)));
+      const pick = uids.sort((a, b) => b - a).slice(0, Math.max(1, Math.min(100, limit)));
       if (!pick.length) return [];
       const rows = await command(`UID FETCH ${pick.join(',')} (UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID CONTENT-TYPE)])`);
       return rows.filter((r) => /^\* \d+ FETCH\b/i.test(r.text)).map((r) => ({
@@ -166,6 +179,57 @@ async function open(o) {
       const r = rows.find((x) => /^\* \d+ FETCH\b/i.test(x.text) && Number((x.text.match(/\bUID (\d+)/i) || [])[1]) === uid);
       return r?.literals[0] || null;
     },
+    // ---- v3.93 folders: listing is read only; the rest runs only for a plan the person approved (main: mail:planRun)
+    /** Every folder: [{ name (IMAP form), delim, flags }]. */
+    async folders() {
+      const rows = await command('LIST "" "*"');
+      return rows.map(listLine).filter(Boolean);
+    },
+    /** CREATE a folder (its IMAP name). */
+    async create(name) {
+      if (!safeMailbox(name)) throw N.mailError('mailbox');
+      await command(`CREATE ${quote(name)}`).catch((e) => { throw N.mailError('mailbox', e.detail); });
+    },
+    /** RENAME a folder (IMAP names). */
+    async rename(from, to) {
+      if (!safeMailbox(from) || !safeMailbox(to)) throw N.mailError('mailbox');
+      await command(`RENAME ${quote(from)} ${quote(to)}`).catch((e) => { throw N.mailError('mailbox', e.detail); });
+    },
+    /** DELETE a folder only when STATUS says it holds no message. → 'removed' | 'not-empty' */
+    async removeEmpty(name) {
+      if (!safeMailbox(name)) throw N.mailError('mailbox');
+      const st = await command(`STATUS ${quote(name)} (MESSAGES)`).catch((e) => { throw N.mailError('mailbox', e.detail); });
+      const n = st.map((r) => r.text.match(/\(.*\bMESSAGES (\d+)/i)).find(Boolean);
+      if (!n || Number(n[1]) !== 0) return 'not-empty';
+      await command(`DELETE ${quote(name)}`).catch((e) => { throw N.mailError('mailbox', e.detail); });
+      return 'removed';
+    },
+    /**
+     * Moves mails (uids) from one folder to another. → { moved: uids, missing: uids }. UID MOVE when the server has
+     * MOVE; else UID COPY, then \Deleted and UID EXPUNGE on exactly those uids (UIDPLUS); a server with neither is
+     * refused (`no-move`): a plain EXPUNGE would also remove mails someone else marked deleted.
+     */
+    async move(from, uids, to) {
+      if (!safeMailbox(from) || !safeMailbox(to)) throw N.mailError('mailbox');
+      const want = [...new Set(uids)].filter((u) => Number.isInteger(u) && u > 0);
+      if (!want.length) return { moved: [], missing: [] };
+      const canMove = caps.includes('MOVE');
+      if (!canMove && !caps.includes('UIDPLUS')) throw N.mailError('no-move');
+      await command(`SELECT ${quote(from)}`).catch((e) => { throw N.mailError('mailbox', e.detail); });
+      const found = await command(`UID FETCH ${want.join(',')} (UID)`);
+      const here = new Set(found.map((r) => Number((r.text.match(/^\* \d+ FETCH \(.*\bUID (\d+)/i) || [])[1])).filter((u) => u > 0));
+      const moved = want.filter((u) => here.has(u));
+      for (let i = 0; i < moved.length; i += 100) {
+        const set = moved.slice(i, i + 100).join(',');
+        if (canMove) await command(`UID MOVE ${set} ${quote(to)}`).catch((e) => { throw N.mailError('refused', e.detail); });
+        else {
+          await command(`UID COPY ${set} ${quote(to)}`).catch((e) => { throw N.mailError('refused', e.detail); });
+          await command(`UID STORE ${set} +FLAGS.SILENT (\\Deleted)`);
+          await command(`UID EXPUNGE ${set}`);
+        }
+      }
+      return { moved, missing: want.filter((u) => !here.has(u)) };
+    },
     async close() {
       try { await Promise.race([command('LOGOUT'), new Promise((res) => setTimeout(res, 2000))]); } catch { /* closing */ }
       clearTimeout(timer);
@@ -176,4 +240,4 @@ async function open(o) {
   return session;
 }
 
-module.exports = { open, responseReader, quote, imapDate, safeMailbox, capsOf, MAX_FETCH_BYTES };
+module.exports = { open, responseReader, quote, imapDate, safeMailbox, capsOf, listLine, MAX_FETCH_BYTES };

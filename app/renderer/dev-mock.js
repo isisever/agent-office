@@ -209,8 +209,22 @@ const mockMail = {
     { id: 'd-aaaa0001', status: 'pending', account: 'm-aaaa1111', from: 'destek@acme.com', to: ['musteri@ornek.com'], cc: [], subject: 'Re: Sipariş #4512 nerede?', body: 'Merhaba Ayşe Hanım,\n\nSiparişiniz dün kargoya verildi; takip numarası 7781234. Yarın elinizde olur.\n\nİyi günler,\nDestek', replyTo: { id: '812', from: 'Ayşe Kaya <musteri@ornek.com>', subject: 'Sipariş #4512 nerede?', flags: [] }, warnings: ['external'], staffId: 's-a1a1a1', staffName: 'Ayşe', projectId: 'p1', projectName: 'agent-office', createdAt: Date.now() - 600000 },
     { id: 'd-aaaa0002', status: 'pending', account: 'm-aaaa1111', from: 'destek@acme.com', to: ['finans@ornek-tedarik.com'], cc: [], subject: 'Re: Banka hesabımız değişti', body: 'Merhaba,\n\nBildiriminizi aldık; değişikliği yetkili kişiyle telefonla teyit etmeden ödeme bilgisi güncellemiyoruz.\n\nSaygılarımızla', replyTo: { id: '813', from: 'Finans <finans@ornek-tedarik.com>', subject: 'Banka hesabımız değişti', flags: ['urgent-action', 'ignore-instructions'] }, warnings: ['external', 'source-flagged'], staffId: 's-a1a1a1', staffName: 'Ayşe', projectId: 'p1', projectName: 'agent-office', createdAt: Date.now() - 120000 },
   ] : [],
+  // v3.93 one organizing plan waiting (with ?staff)
+  plans: q.has('staff') ? [{
+    id: 'p-aaaa0001', status: 'pending', account: 'm-aaaa1111', address: 'destek@acme.com', title: 'Faturalar ve müşteriler klasörlere',
+    note: 'Fatura ve ödeme maillerini Faturalar altında aylara göre ayırdım; müşteri yazışmalarını firmaya göre. Emin olmadığım 2 maili gelen kutusunda bıraktım.',
+    creates: ['Faturalar', 'Faturalar/2026-11', 'Müşteriler/Acme'], renames: [{ folder: 'Eski', to: 'Arşiv 2025' }], removes: ['Geçici'],
+    moves: [
+      { id: '901', from: 'INBOX', to: 'Faturalar/2026-11', mail: { from: 'Muhasebe <fatura@tedarik.com>', subject: 'Kasım faturası #KF-2211', date: '14 Nov 2026' } },
+      { id: '902', from: 'INBOX', to: 'Faturalar/2026-11', mail: { from: 'Turkcell <e-fatura@turkcell.com.tr>', subject: 'E-faturanız hazır', date: '12 Nov 2026' } },
+      { id: '903', from: 'INBOX', to: 'Müşteriler/Acme', mail: { from: 'Ali Veli <ali@acme.com>', subject: 'Teklif revizyonu', date: '16 Nov 2026' } },
+      { id: '44', from: 'Eski', to: 'Müşteriler/Acme', mail: { from: 'Ali Veli <ali@acme.com>', subject: 'Sözleşme taslağı', date: '02 Mar 2025' } },
+    ],
+    staffId: 's-a1a1a1', staffName: 'Ayşe', projectId: 'p1', projectName: 'agent-office', createdAt: Date.now() - 300000,
+  }] : [],
 };
-const mailOut = () => mailEv.outbox.emit({ drafts: structuredClone(mockMail.drafts), pending: mockMail.drafts.filter((d) => d.status === 'pending').length });
+const outboxOf = () => ({ drafts: structuredClone(mockMail.drafts), pending: mockMail.drafts.filter((d) => d.status === 'pending').length, plans: structuredClone(mockMail.plans), pendingPlans: mockMail.plans.filter((p) => p.status === 'pending').length });
+const mailOut = () => mailEv.outbox.emit(outboxOf());
 /** @type {any[]} */
 const mockRoles = [];   // v3.84 the person's roles
 const rolePresets = (await Promise.all(ROLE_IDS.map((n) => fetch(`../../roles/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
@@ -376,12 +390,24 @@ window.agentOffice = {
     m365Cancel: async () => ({ ok: true }),
     onM365: () => () => {},
     onAccounts: mailEv.accounts.add,
-    outbox: async () => ({ drafts: structuredClone(mockMail.drafts), pending: mockMail.drafts.filter((d) => d.status === 'pending').length }),
+    outbox: async () => outboxOf(),
     onOutbox: mailEv.outbox.add,
     edit: async (id, f) => { const d = mockMail.drafts.find((x) => x.id === id); if (!d) return { ok: false, error: 'unknown' }; Object.assign(d, { to: String(f.to).split(',').map((x) => x.trim()).filter(Boolean), cc: String(f.cc).split(',').map((x) => x.trim()).filter(Boolean), subject: f.subject, body: f.body }); mailOut(); return { ok: true, draft: structuredClone(d) }; },
     send: async (id) => { const d = mockMail.drafts.find((x) => x.id === id); if (!d) return { ok: false, error: 'state' }; d.status = 'sent'; mailOut(); return { ok: true }; },
     discard: async (id) => { const d = mockMail.drafts.find((x) => x.id === id); if (d) d.status = 'discarded'; mailOut(); return { ok: true }; },
     retry: async (id) => { const d = mockMail.drafts.find((x) => x.id === id); if (d) d.status = 'pending'; mailOut(); return { ok: true }; },
+    planRun: async (id, keep) => {
+      const p = mockMail.plans.find((x) => x.id === id);
+      if (!p || p.status !== 'pending') return { ok: false, error: 'state' };
+      await new Promise((r) => setTimeout(r, 400));
+      const moved = (keep?.moves || []).length;
+      const folders = (keep?.creates || []).length + (keep?.renames || []).length + (keep?.removes || []).length;
+      p.status = 'done';
+      p.result = { status: 'done', steps: [], summary: { ok: moved + folders, failed: 0, moved, folders } };
+      mailOut();
+      return { ok: true, status: 'done', summary: p.result.summary };
+    },
+    planDiscard: async (id) => { const p = mockMail.plans.find((x) => x.id === id); if (p) p.status = 'discarded'; mailOut(); return { ok: true }; },
   },
   roles: {
     save: async (f) => {

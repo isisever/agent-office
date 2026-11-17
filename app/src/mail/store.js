@@ -4,6 +4,7 @@
 'use strict';
 const crypto = require('crypto');
 const G = require('./guard.js');
+const FO = require('./folders.js');
 
 const PROVIDERS = ['gmail', 'm365', 'exchange', 'imap'];
 // a certificate the person trusted for a server (its SHA-256 fingerprint as Node prints it)
@@ -40,7 +41,8 @@ function normalizeAccount(raw) {
     const clientId = str(raw.clientId, 40);
     const tenant = str(raw.tenant, 100) || 'common';
     if (!/^[0-9a-f-]{36}$/i.test(clientId)) return null;
-    return { id: raw.id, label, provider: 'm365', address, clientId, tenant };
+    // write: signed in with Mail.ReadWrite (v3.93, organizing plans); older accounts sign in again for that
+    return { id: raw.id, label, provider: 'm365', address, clientId, tenant, ...(raw.write === true ? { write: true } : {}) };
   }
   // Exchange (on premises): one server for both, IMAP 993 and the client submission port 587 with STARTTLS
   const exchange = raw.provider === 'exchange';
@@ -89,11 +91,11 @@ function accountFor(accounts, ids, key) {
 
 // ---------- the outbox
 
-const emptyOutbox = () => ({ drafts: [] });
+const emptyOutbox = () => ({ drafts: [], plans: [] });
 function normalizeOutbox(raw) {
   const drafts = (Array.isArray(raw?.drafts) ? raw.drafts : []).filter((d) => d && DRAFT_ID_RE.test(String(d.id)) && ['pending', 'sent', 'discarded', 'failed', 'sending'].includes(d.status));
   // a send cut short by a crash is not known to have gone: it comes back as failed, for the person to check
-  return { drafts: drafts.map((d) => (d.status === 'sending' ? { ...d, status: 'failed', error: 'interrupted' } : d)).slice(0, KEEP) };
+  return { drafts: drafts.map((d) => (d.status === 'sending' ? { ...d, status: 'failed', error: 'interrupted' } : d)).slice(0, KEEP), plans: FO.normalizePlans(raw?.plans) };
 }
 const pendingOf = (outbox) => outbox.drafts.filter((d) => d.status === 'pending');
 
@@ -112,7 +114,7 @@ function addDraft(outbox, o, newId = () => `d-${crypto.randomBytes(5).toString('
     warnings: G.draftWarnings(c.draft, account.address, source),
     staffId: staff.id, staffName: staff.name, projectId: project.id, projectName: project.name, createdAt: now,
   };
-  return { outbox: { drafts: [draft, ...outbox.drafts].slice(0, KEEP) }, draft };
+  return { outbox: { ...outbox, drafts: [draft, ...outbox.drafts].slice(0, KEEP) }, draft };
 }
 
 /** The person's edit of a pending draft (recipients, subject, body), checked again. → { outbox, draft } | { error } */
@@ -122,7 +124,7 @@ function editDraft(outbox, id, form) {
   const c = G.checkDraft(form);
   if (c.error) return { error: c.error };
   const next = { ...d, ...c.draft, warnings: G.draftWarnings(c.draft, d.from, d.replyTo ? { from: d.replyTo.from, flags: d.replyTo.flags } : null), edited: true };
-  return { outbox: { drafts: outbox.drafts.map((x) => (x.id === id ? next : x)) }, draft: next };
+  return { outbox: { ...outbox, drafts: outbox.drafts.map((x) => (x.id === id ? next : x)) }, draft: next };
 }
 
 /** Moves a draft on: pending → sending → sent | failed; pending | failed → discarded; failed → pending (retry). */
@@ -131,7 +133,7 @@ function setStatus(outbox, id, status, extra = {}) {
   const ok = d && ({ sending: ['pending'], sent: ['sending'], failed: ['sending'], discarded: ['pending', 'failed'], pending: ['failed'] }[status] || []).includes(d.status);
   if (!ok) return { error: 'state' };
   const next = { ...d, status, ...extra };
-  return { outbox: { drafts: outbox.drafts.map((x) => (x.id === id ? next : x)) }, draft: next };
+  return { outbox: { ...outbox, drafts: outbox.drafts.map((x) => (x.id === id ? next : x)) }, draft: next };
 }
 
 /** What a session may see of its own drafts: no body of another member's draft, nothing of the outbox otherwise. */

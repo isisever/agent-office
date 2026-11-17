@@ -1,10 +1,12 @@
 // Mail (contract v3.85): the MAIL panel's rows and its popups, drawn into the sidebar (sidebar.js passes h / t /
 // openModal / closeModal). Accounts: Gmail (app password), Microsoft 365 / Outlook (device code sign-in with the
 // person's app registration) and Exchange or any IMAP/SMTP server. The outbox: drafts staff members made, each
-// opened here, read whole, edited if needed and sent only by the person's Send (and a confirmation). Passwords go to
-// main and never come back; nothing here can read one.
+// opened here, read whole, edited if needed and sent only by the person's Send (and a confirmation). Organizing plans
+// (v3.93): folders and moves a member proposed, reviewed step by step and run only by the person's Approve. Passwords
+// go to main and never come back; nothing here can read one.
 
 const PROVIDERS = ['gmail', 'exchange', 'm365', 'imap'];
+const STEP_ERRORS = ['unknown-folder', 'special-folder', 'folder-exists', 'has-subfolders', 'no-move-into', 'gone', 'not-empty', 'mailbox', 'refused', 'failed'];
 
 /**
  * @param {{ h: Function, t: Function, api: any, openModal: Function, closeModal: Function }} c
@@ -14,19 +16,23 @@ export function createMail(c) {
   let accounts = [];
   let encryption = true;
   let drafts = [];
+  let plans = [];
   const head = h('span', {});
   const list = h('ul', { class: 'sb-list', id: 'sb-mail' });
   const outboxHead = h('div', { class: 'sb-role-head sb-mail-outbox-head' });
   const outboxList = h('ul', { class: 'sb-list', id: 'sb-mail-outbox' });
+  const plansHead = h('div', { class: 'sb-role-head sb-mail-outbox-head' });
+  const plansList = h('ul', { class: 'sb-list', id: 'sb-mail-plans' });
   const note = h('div', { class: 'sb-note warn', hidden: true });
   const addBtn = h('button', { class: 'sb-add', id: 'sb-add-mail', onclick: () => accountForm(null) });
-  const body = h('div', { class: 'sb-panel-body' }, note, list, addBtn, outboxHead, outboxList);
+  const body = h('div', { class: 'sb-panel-body' }, note, list, addBtn, outboxHead, outboxList, plansHead, plansList);
   const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
   const when = (ms) => (ms ? new Date(ms).toLocaleString(undefined, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
   function draw() {
     const pending = drafts.filter((d) => d.status === 'pending').length;
-    head.textContent = pending ? `${t('mail.title')} (${pending})` : t('mail.title');
+    const waiting = pending + plans.filter((p) => p.status === 'pending').length;
+    head.textContent = waiting ? `${t('mail.title')} (${waiting})` : t('mail.title');
     addBtn.textContent = t('mail.add');
     note.textContent = encryption ? '' : t('mail.noKeychain');
     note.hidden = encryption;
@@ -47,6 +53,15 @@ export function createMail(c) {
       h('span', { class: 'sb-name' }, d.subject),
       d.warnings?.length ? h('span', { class: 'sb-icons sb-draft-warn', title: d.warnings.map((w) => t(`mail.warn.${w}`)).join('\n') }, '⚠') : null,
       h('div', { class: 'sb-staff-where' }, `→ ${d.to.join(', ')} · ${d.staffName} · ${when(d.createdAt)}`))));
+    // v3.93 plans: waiting ones, and the last few that ran (their result)
+    const shownPlans = plans.filter((p) => p.status === 'pending' || p.status === 'running' || (['done', 'partial', 'failed'].includes(p.status) && Date.now() - (p.ranAt || p.decidedAt || 0) < 86400000)).slice(0, 20);
+    const planWaiting = plans.filter((p) => p.status === 'pending').length;
+    plansHead.textContent = t('mail.plans', { n: planWaiting });
+    plansHead.hidden = !shownPlans.length;
+    plansList.replaceChildren(...shownPlans.map((p) => h('li', { class: `sb-proj sb-draft ${p.status === 'pending' ? 'pending' : p.status === 'done' ? 'sent' : 'failed'}`, onclick: () => reviewPlan(p) },
+      h('span', { class: 'sb-dot', title: t(`mail.planStatus.${p.status}`) }),
+      h('span', { class: 'sb-name' }, p.title || t('mail.planMoves', { n: p.moves.length })),
+      h('div', { class: 'sb-staff-where' }, `${t(`mail.planStatus.${p.status}`)} · ${p.staffName} · ${when(p.createdAt)}`))));
   }
 
   async function test(a, btn) {
@@ -245,10 +260,79 @@ export function createMail(c) {
     ], 'sb-modal-form sb-mail-review');
   }
 
+  /**
+   * v3.93 an organizing plan, step by step: new folders, renames, mails grouped by the folder they go to (sender and
+   * subject), empty folders removed. Every step has a box; Approve runs the ticked ones (main checks each again).
+   */
+  function reviewPlan(p) {
+    const pending = p.status === 'pending';
+    const acct = accounts.find((a) => a.id === p.account);
+    /** @type {Record<string, HTMLInputElement[]>} */
+    const boxes = { creates: [], renames: [], moves: [], removes: [] };
+    const box = (kind) => { const b = h('input', { type: 'checkbox', checked: true, disabled: !pending }); boxes[kind].push(b); return b; };
+    const row = (kind, text, sub) => h('label', { class: 'sb-plan-step' }, box(kind), h('span', {}, text, sub ? h('span', { class: 'sb-field-hint' }, ` ${sub}`) : null));
+    const section = (title, items) => (items.length ? h('div', { class: 'sb-plan-section' }, h('div', { class: 'sb-role-head' }, title), ...items) : null);
+    // moves by destination, each group with a box that ticks its mails
+    const groups = new Map();
+    p.moves.forEach((m, i) => { if (!groups.has(m.to)) groups.set(m.to, []); groups.get(m.to).push({ m, i }); });
+    const moveBoxes = new Array(p.moves.length);
+    const moveGroups = [...groups.entries()].map(([to, list]) => {
+      const all = h('input', { type: 'checkbox', checked: true, disabled: !pending });
+      const rows = list.map(({ m, i }) => {
+        const b = h('input', { type: 'checkbox', checked: true, disabled: !pending });
+        moveBoxes[i] = b;
+        b.addEventListener('change', () => { all.checked = rows.every((r) => r.b.checked); });
+        return { b, el: h('label', { class: 'sb-plan-step sb-plan-mail' }, b, h('span', {}, `${m.mail.from} — ${m.mail.subject || '…'}`, h('span', { class: 'sb-field-hint' }, ` ${m.mail.date}${m.from !== 'INBOX' ? ` · ${t('mail.planFrom', { folder: m.from })}` : ''}`))) };
+      });
+      all.addEventListener('change', () => { for (const r of rows) r.b.checked = all.checked; });
+      return h('details', { class: 'sb-plan-group', open: groups.size <= 3 },
+        h('summary', {}, all, ` ${t('mail.planTo', { folder: to, n: list.length })}`), ...rows.map((r) => r.el));
+    });
+    boxes.moves = moveBoxes;
+    const err = h('div', { class: 'sb-note warn', hidden: true });
+    const result = p.result ? h('div', { class: 'sb-note' }, t('mail.planResult', p.result.summary),
+      p.result.steps.some((x) => !x.ok) ? h('div', { class: 'sb-field-hint' }, t('mail.planFailedSteps')) : null,
+      p.result.steps.some((x) => !x.ok) ? h('ul', { class: 'sb-mail-warnings' }, ...p.result.steps.filter((x) => !x.ok).slice(0, 30).map((x) => h('li', {},
+        `${x.kind === 'move' ? `${x.from} → ${x.to}` : x.to ? `${x.folder} → ${x.to}` : x.folder}: ${STEP_ERRORS.includes(x.error) ? t(`mail.stepError.${x.error}`) : failureText({ error: x.error })}`))) : null) : null;
+    const kept = (kind) => boxes[kind].map((b, i) => (b.checked ? i : -1)).filter((i) => i >= 0);
+    const runBtn = h('button', {
+      class: 'sb-btn primary', onclick: async () => {
+        const keep = { creates: kept('creates'), renames: kept('renames'), moves: kept('moves'), removes: kept('removes') };
+        const folders = keep.creates.length + keep.renames.length + keep.removes.length;
+        if (!folders && !keep.moves.length) { err.textContent = t('mail.planNone'); err.hidden = false; return; }
+        if (!confirm(t('mail.planConfirm', { moves: keep.moves.length, folders, account: acct ? acct.label : p.address }))) return;
+        runBtn.disabled = true;
+        runBtn.textContent = t('mail.planRunning');
+        const r = await api.planRun(p.id, keep).catch(() => ({ ok: false, error: 'failed' }));
+        if (r?.ok && r.status === 'done') { c.closeModal(); return; }
+        runBtn.textContent = t('mail.planRun');
+        err.textContent = r?.ok ? t('mail.planResult', r.summary) : failureText(r);
+        err.hidden = false;
+      },
+    }, t('mail.planRun'));
+    const discard = h('button', { class: 'sb-btn sb-warn', onclick: async () => { if (!confirm(t('mail.planDiscardConfirm'))) return; const r = await api.planDiscard(p.id).catch(() => null); if (r?.ok) c.closeModal(); } }, t('mail.planDiscard'));
+    c.openModal(p.title || t('mail.planTitle'), [
+      h('div', { class: 'sb-note' }, t('mail.planIntro', { name: p.staffName, project: p.projectName, when: when(p.createdAt) })),
+      h('div', { class: 'sb-field-hint' }, t('mail.planAccount', { account: acct ? `${acct.label} <${p.address}>` : p.address })),
+      acct?.provider === 'm365' && !acct.write ? h('div', { class: 'sb-note warn' }, t('mail.planReauth')) : null,
+      p.note ? h('div', { class: 'sb-plan-note' }, p.note) : null,
+      section(t('mail.planCreate'), p.creates.map((f) => row('creates', f))),
+      section(t('mail.planRename'), p.renames.map((r) => row('renames', `${r.folder} → ${r.to}`))),
+      section(t('mail.planMovesHead', { n: p.moves.length }), moveGroups),
+      section(t('mail.planRemove'), p.removes.map((f) => row('removes', f))),
+      p.error ? h('div', { class: 'sb-note warn' }, failureText({ error: p.error, detail: p.detail })) : null,
+      result, err,
+    ], [
+      pending ? discard : null,
+      h('button', { class: 'sb-btn', onclick: () => c.closeModal() }, t('sidebar.close')),
+      pending ? runBtn : null,
+    ], 'sb-modal-form sb-mail-review sb-mail-plan');
+  }
+
   return {
     head, body,
     setAccounts(v) { accounts = Array.isArray(v?.accounts) ? v.accounts : []; encryption = v?.encryption !== false; draw(); },
-    setOutbox(v) { drafts = Array.isArray(v?.drafts) ? v.drafts : []; draw(); },
+    setOutbox(v) { drafts = Array.isArray(v?.drafts) ? v.drafts : []; plans = Array.isArray(v?.plans) ? v.plans : []; draw(); },
     /** For the member popup: [{ id, label, address }]. */
     accounts: () => accounts.map((a) => ({ id: a.id, label: a.label, address: a.address })),
     redraw: draw,

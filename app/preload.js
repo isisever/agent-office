@@ -72,12 +72,14 @@ contextBridge.exposeInMainWorld('agentOffice', {
     m365Cancel: () => ipcRenderer.invoke('mail:m365Cancel'),
     onM365: listen('mail:m365'),                                     // the sign-in's end: { ok, address } | { ok: false, error }
     onAccounts: listen('mail:accounts'),
-    outbox: () => ipcRenderer.invoke('mail:outbox'),                 // → { drafts, pending }
+    outbox: () => ipcRenderer.invoke('mail:outbox'),                 // → { drafts, pending, plans, pendingPlans }
     onOutbox: listen('mail:outbox'),
     edit: (id, form) => ipcRenderer.invoke('mail:edit', id, form),   // the person's changes to a pending draft
     send: (id) => ipcRenderer.invoke('mail:send', id),               // the one way a mail leaves → { ok } | { ok: false, error }
     discard: (id) => ipcRenderer.invoke('mail:discard', id),
     retry: (id) => ipcRenderer.invoke('mail:retry', id),
+    planRun: (id, keep) => ipcRenderer.invoke('mail:planRun', id, keep),  // v3.93 the person's Approve: { creates?, renames?, moves?, removes? } kept indexes
+    planDiscard: (id) => ipcRenderer.invoke('mail:planDiscard', id),
   },
   // v3.84 the person's own roles (listed with the presets in staff.list) and the role wizard
   roles: {
