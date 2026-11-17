@@ -19,3 +19,17 @@ export function withReply(quoted, text) {
   if (!q) return String(text);
   return `${q.split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n')}\n\n${String(text)}`;
 }
+
+const flat = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().replace(/…$/, '');
+/**
+ * Does a message in the transcript match one the chat sent and shows until then? Whitespace aside (the terminal may
+ * fold lines); a long one compared on its start (the transcript's command line is cut).
+ * @param {string} a @param {string} b
+ */
+export function sameMessage(a, b) {
+  const x = flat(a);
+  const y = flat(b);
+  if (!x || !y) return false;
+  const n = Math.min(x.length, y.length, 190);
+  return x === y || (n >= 20 && x.slice(0, n) === y.slice(0, n));
+}

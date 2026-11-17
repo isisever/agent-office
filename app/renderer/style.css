@@ -563,6 +563,8 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
 .chat-empty[hidden] { display: none; }
 .chat-msg { max-width: 88%; padding: 6px 10px; border-radius: 8px; line-height: 1.45; overflow-wrap: anywhere; }
 .chat-msg.user { align-self: flex-end; color: var(--on-accent); background: var(--accent); }
+.chat-msg.user.queued { outline: 1px dashed var(--accent); outline-offset: 2px; }
+.chat-queued { font-size: 11px; margin-top: 4px; }
 .chat-msg.assistant { align-self: flex-start; background: var(--raised); border: 1px solid var(--border); }
 .chat-msg.error { align-self: flex-start; color: var(--danger); border: 1px solid var(--danger); }
 .chat-p { white-space: pre-wrap; }

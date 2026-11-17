@@ -687,6 +687,7 @@
   },
   "chat": {
     "placeholder": "Message… (Enter sends, Shift+Enter: new line)",
+    "queued": "Queued: Claude takes it when it can",
     "send": "Send",
     "terminal": "Terminal",
     "terminalTitle": "Show the terminal (approvals, menus, keys)",

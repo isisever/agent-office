@@ -250,3 +250,24 @@ test('chat markdown: a mailto link stays text (the app opens only http(s) outsid
   assert.deepEqual(M.inline('[mail](mailto:a@b.co)'), [{ t: 'text', text: '[mail](mailto:a@b.co)' }]);
   assert.equal(M.inline('[x](https://ex.com)')[0].t, 'link');
 });
+
+test('chatItems: a message typed while the boss worked (queued, taken in mid-turn) is shown from its attachment', () => {
+  const text = user('first')
+    + line({ type: 'queue-operation', operation: 'enqueue', content: 've evet odoo development yapılsın' })
+    + assistant([{ type: 'text', text: 'working' }])
+    + line({ type: 'queue-operation', operation: 'remove', content: 've evet odoo development yapılsın', reason: 'absorbed_mid_turn' })
+    + line({ type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', prompt: 've evet odoo development yapılsın', commandMode: 'prompt', origin: { kind: 'human' } } })
+    + line({ type: 'attachment', uuid: 'q2', attachment: { type: 'queued_command', prompt: '<task-notification>\n<task-id>x</task-id>' } })
+    + line({ type: 'attachment', uuid: 'q3', attachment: { type: 'date', date: 'x' } });
+  const items = C.chatItems(text);
+  assert.deepEqual(items.map((i) => [i.kind, i.text ?? i.note, i.queued]), [['user', 'first', undefined], ['assistant', 'working', undefined], ['user', 've evet odoo development yapılsın', true], ['note', 'task', undefined]]);
+});
+
+test('chat echo: a sent message is matched by its text, not by order (whitespace aside, a long one by its start)', async () => {
+  const R = await import('../src/chat-reply.mjs');
+  assert.ok(R.sameMessage('odoo development  yapılsın\nbetonstar', 'odoo development yapılsın betonstar'));
+  assert.ok(!R.sameMessage('ve evet odoo development yapılsın', 'odoo development yapılsın. betonstar projesi seçilecek'));
+  const long = 'x'.repeat(50) + ' and more words '.repeat(30);
+  assert.ok(R.sameMessage(long, `${long.slice(0, 199)}…`), 'the transcript cut a command line');
+  assert.ok(!R.sameMessage('', ''));
+});

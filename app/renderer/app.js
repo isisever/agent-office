@@ -997,27 +997,41 @@ document.addEventListener('mouseup', (e) => {
   focusActive();
 });
 
-// Draggable splitter: terminal height.
+// Draggable splitter: terminal height. A drag ends on the button's release, a cancelled pointer, the capture lost
+// (released outside the window), a move with no button down, or the window losing focus: a release that never
+// arrived left the splitter following the mouse for good.
 {
   const div = $('divider');
   const saved = Number(store.get('termHeight'));
   if (saved) root.style.setProperty('--term-h', saved + 'px');
+  let end = null;
   div.addEventListener('pointerdown', (e) => {
-    div.setPointerCapture(e.pointerId);
+    if (e.button !== 0) return;
+    end?.();
+    try { div.setPointerCapture(e.pointerId); } catch { /* the pointer is gone */ }
     document.body.classList.add('dragging');
+    let height = 0;
     const move = (ev) => {
+      if (ev.buttons === 0) { stop(); return; }
       const max = window.innerHeight * 0.8;
-      const h = Math.round(Math.min(max, Math.max(120, window.innerHeight - ev.clientY - 8)));
-      root.style.setProperty('--term-h', h + 'px');
-      store.set('termHeight', h);
+      height = Math.round(Math.min(max, Math.max(120, window.innerHeight - ev.clientY - 8)));
+      root.style.setProperty('--term-h', height + 'px');
     };
-    const up = () => {
+    const stop = () => {
+      if (end !== stop) return;
+      end = null;
       div.removeEventListener('pointermove', move);
+      for (const [el, ev] of ENDS) el.removeEventListener(ev, stop);
+      try { if (div.hasPointerCapture(e.pointerId)) div.releasePointerCapture(e.pointerId); } catch { /* released */ }
       document.body.classList.remove('dragging');
+      if (height) store.set('termHeight', height);
       focusActive();
     };
+    /** @type {[EventTarget, string][]} */
+    const ENDS = [[div, 'pointerup'], [div, 'pointercancel'], [div, 'lostpointercapture'], [window, 'pointerup'], [window, 'blur']];
+    end = stop;
     div.addEventListener('pointermove', move);
-    div.addEventListener('pointerup', up, { once: true });
+    for (const [el, ev] of ENDS) el.addEventListener(ev, stop);
   });
 }
 

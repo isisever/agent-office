@@ -677,6 +677,7 @@
   },
   "chat": {
     "placeholder": "Mesaj… (Enter gönderir, Shift+Enter: yeni satır)",
+    "queued": "Sırada: Claude uygun anda alacak",
     "send": "Gönder",
     "terminal": "Terminal",
     "terminalTitle": "Terminali göster (onaylar, menüler, tuşlar)",

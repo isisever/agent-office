@@ -6,7 +6,7 @@
 import { t } from './i18n.js';
 import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
-import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
+import { withReply, quoteExcerpt, sameMessage } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
 
 const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
@@ -123,17 +123,34 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   }
   texts();
 
-  function clear() { list.replaceChildren(); tools.clear(); pending.length = 0; }
-  // messages sent from here, shown at once until the transcript has them (then the transcript's copy replaces them)
-  /** @type {HTMLElement[]} */
+  function clear() { list.replaceChildren(); tools.clear(); for (const p of pending) p.n.remove(); pending.length = 0; }
+  // Messages sent from here, shown at once until the transcript has that same message (its copy replaces it), as the
+  // terminal shows a typed line. One sent while the boss works is queued by Claude Code, as in the terminal ("Queued"),
+  // and comes when the turn takes it in. A message never matched goes once the boss has been idle for a while.
+  /** @type {{ n: HTMLElement, text: string }[]} */
   const pending = [];
-  function echo(text) {
-    const n = h('div', { class: 'chat-msg user pending' }, mdBody(text));
-    pending.push(n);
+  let busyNow = false;
+  function echo(text, queued) {
+    const n = h('div', { class: `chat-msg user pending${queued ? ' queued' : ''}` }, mdBody(text), queued ? h('div', { class: 'chat-queued dim' }, t('chat.queued')) : null);
+    const p = { n, text };
+    pending.push(p);
     list.append(n);
     empty.hidden = true;
     list.scrollTop = list.scrollHeight;
-    setTimeout(() => { const i = pending.indexOf(n); if (i >= 0) { pending.splice(i, 1); n.remove(); } }, 120000);
+    const expire = () => {
+      if (!pending.includes(p)) return;
+      if (busyNow) { setTimeout(expire, 60000); return; }   // still working: a queued message may come later
+      pending.splice(pending.indexOf(p), 1);
+      n.remove();
+    };
+    setTimeout(expire, 120000);
+  }
+  /** The transcript has a message: the echo that shows the same text goes (not simply the oldest one). */
+  function settle(text) {
+    const i = pending.findIndex((p) => sameMessage(p.text, text));
+    if (i < 0) return;
+    pending[i].n.remove();
+    pending.splice(i, 1);
   }
   // ---- a message's own buttons (shown on hover): copy its text, reply to it
   async function copyText(text, btn) {
@@ -182,7 +199,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
     const frag = document.createDocumentFragment();
     for (const it of items) {
-      if ((it.kind === 'user' || it.kind === 'command') && pending.length) pending.shift()?.remove();
+      if ((it.kind === 'user' || it.kind === 'command') && pending.length) settle(it.text);
       let n = null;
       // one item that cannot be rendered must not drop the rest of the batch: it is shown as plain text
       try { n = item(it); } catch (e) {
@@ -191,7 +208,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
       }
       if (n) frag.append(n);
     }
-    if (pending.length) list.insertBefore(frag, pending[0]); else list.append(frag);
+    if (pending.length) list.insertBefore(frag, pending[0].n); else list.append(frag);
     while (list.childElementCount > KEEP) list.firstElementChild.remove();
     if (atBottom) list.scrollTop = list.scrollHeight;
   }
@@ -285,6 +302,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     drawMenu();
     let s = { busy: false, text: '' };
     try { s = liveStatus(screen()); } catch (e) { console.error(e); }
+    busyNow = s.busy;
     live.hidden = !s.busy || Boolean(menu);
     const txt = s.text || t('chat.working');
     if (live.textContent !== txt) live.textContent = txt;
@@ -327,7 +345,9 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     let r;
     try { r = await api.chat.send(ptyId, out); } catch (e) { console.error(e); r = 'error'; }
     if (r === 'ok') {
-      echo(out);
+      let busy = busyNow;
+      try { busy = liveStatus(screen()).busy; } catch { /* the last reading */ }
+      echo(out, busy);
       input.value = '';
       replyTo('');
       fitInput();

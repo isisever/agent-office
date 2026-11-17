@@ -50,7 +50,7 @@ function userText(s, base) {
 
 /**
  * Transcript lines (JSONL text, whole lines) → chat items, in order:
- *   { kind: 'user', text, images? } | { kind: 'assistant', text } | { kind: 'error', text }
+ *   { kind: 'user', text, images?, queued? } | { kind: 'assistant', text } | { kind: 'error', text }
  *   | { kind: 'tool', id, name, detail } | { kind: 'toolDone', id, error } | { kind: 'command', text }
  *   | { kind: 'note', note: 'compact' | 'task' | 'interrupted' | 'message' }
  * each with key (unique per line and block) and at (ms, 0 when unknown). A bad line is skipped.
@@ -81,6 +81,11 @@ function chatItems(text) {
         if (it && it.kind === 'user' && images) it.images = images;
         if (it) out.push(it);
       }
+    } else if (j.type === 'attachment' && j.attachment?.type === 'queued_command' && typeof j.attachment.prompt === 'string') {
+      // a message typed while the boss was busy: Claude Code queues it and, when the turn takes it in mid-way, writes it
+      // only as this attachment (no "user" line); one taken at the turn's end comes as a "user" line instead
+      const it = userText(j.attachment.prompt, { key, at });
+      if (it) out.push(it.kind === 'user' ? { ...it, queued: true } : it);
     } else if (j.type === 'assistant' && Array.isArray(content)) {
       content.forEach((b, n) => {
         const k = `${key}:${n}`;
