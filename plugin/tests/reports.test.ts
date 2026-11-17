@@ -25,6 +25,7 @@ test('marker: only the app-typed prefix opens a task', async () => {
   const closed = tr.prompt('[Agent Office: remote task #ffff000011112222 from "Studio"] next', 9)
   expect(closed?.id).toBe('a1b2c3d4e5f60718')
   expect(tr.pending?.id).toBe('ffff000011112222')
+  expect(tr.pending?.sinceMs).toBe(9)
 })
 
 test('waits for workers: no report while agents of the session still run', async () => {
@@ -73,16 +74,59 @@ test('report-ready wrapper: a fixed notice, names cleaned, any other row ignored
   expect(readyText({ at: 1, kind: 'report', id: 'a1', text: 'the report' }, wrap)).toBe(undefined)
 })
 
-test('an unmarked prompt of the person closes the open task as partial, with the answers so far', async () => {
+test('the person\'s own prompt keeps the open task: it reports at the next turn end with no worker running (v3.89)', async () => {
   const tr = new ReportTracker()
   tr.prompt(MARKED, 1)
   expect(tr.complete('Half done; waiting on one agent.', 1)).toBe(undefined)
-  const closed = tr.prompt('stop that and look at the login page', 5)
-  expect(closed?.id).toBe('a1b2c3d4e5f60718')
-  expect(closed?.answer).toBe('Half done; waiting on one agent.')
+  expect(tr.prompt('split this among subagents', 5)).toBe(undefined)
+  expect(tr.pending?.id).toBe('a1b2c3d4e5f60718')
+  expect(tr.pending?.sinceMs).toBe(1)
+  expect(tr.pending?.answer).toBe('Half done; waiting on one agent.')
+  // the follow-up's turn: still waiting on its agents, then the real final answer
+  expect(tr.complete('Split into three agents.', 3)).toBe(undefined)
+  const task = tr.complete('All three finished; tests pass.', 0)
+  expect(task?.id).toBe('a1b2c3d4e5f60718')
+  expect(task?.answer).toBe('All three finished; tests pass.')
+  expect(reportOf(task!, [], 6).partial).toBe(false)
   expect(tr.pending).toBe(undefined)
-  expect(reportOf(closed!, [], 6, true).partial).toBe(true)
   expect(tr.prompt('another plain prompt', 7)).toBe(undefined)
+  expect(tr.pending).toBe(undefined)
+})
+
+test('the same task typed again does not close or restart it; another id closes it as partial (v3.89)', async () => {
+  const tr = new ReportTracker()
+  tr.prompt(MARKED, 1)
+  tr.complete('Half done.', 1)
+  expect(tr.prompt(MARKED, 5)).toBe(undefined)
+  expect(tr.prompt('[Pasted text #1 +40 lines]', 6, 'a1b2c3d4e5f60718')).toBe(undefined)
+  expect(tr.pending?.sinceMs).toBe(1)
+  expect(tr.pending?.answer).toBe('Half done.')
+  // a prompt of the person with a stale typed id of another task is that other task
+  const closed = tr.prompt('[Pasted text #2 +3 lines]', 8, 'ffff000011112222')
+  expect(closed?.id).toBe('a1b2c3d4e5f60718')
+  expect(closed?.answer).toBe('Half done.')
+  expect(reportOf(closed!, [], 9, true).partial).toBe(true)
+  expect(tr.pending?.id).toBe('ffff000011112222')
+})
+
+test('max wait counts from the task\'s start: the person\'s prompts do not hold a task open past 2 h (v3.89)', async () => {
+  const tr = new ReportTracker()
+  tr.prompt(MARKED, 1000)
+  tr.complete('Started agents.', 2)
+  // a prompt every 20 minutes, the same task typed again in between, agents never done
+  for (let at = 1000 + 20 * 60 * 1000; at <= 1000 + TASK_MAX_MS; at += 20 * 60 * 1000) {
+    expect(tr.expired(at)).toBe(undefined)
+    expect(tr.prompt('and also the login page', at)).toBe(undefined)
+    expect(tr.prompt(MARKED, at + 1)).toBe(undefined)
+    expect(tr.complete('', 2)).toBe(undefined)
+  }
+  expect(tr.pending?.sinceMs).toBe(1000)
+  const late = tr.expired(1001 + TASK_MAX_MS)
+  expect(late?.id).toBe('a1b2c3d4e5f60718')
+  expect(late?.answer).toBe('Started agents.')
+  expect(tr.pending).toBe(undefined)
+  expect(tr.prompt('one more', 2000 + TASK_MAX_MS)).toBe(undefined)
+  expect(tr.pending).toBe(undefined)
 })
 
 test('max wait: a task open longer than 2 h is reported as partial', async () => {
