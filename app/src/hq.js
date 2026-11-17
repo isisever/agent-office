@@ -244,10 +244,10 @@ function capReason(board, request) {
 function renameTask(board, from, to, patch = {}) {
   if (!board.tasks.some((t) => t.id === from)) return board;
   // v3.91 an approved held card: the row written when it was sent (id `to`) is dropped for the card's row, which keeps
-  // what that row knew: the consent, the member (name + id) and the project it went to when the card named none
+  // what that row knew: the consent, the member (name + id) and the project it actually went to (the sent row's id wins over the card's)
   const sent = board.tasks.find((t) => t.id === to && t.id !== from);
   const keep = (t) => (sent ? { ...(sent.consented === true && t.byInitiative !== true ? { consented: true } : {}),
-    ...(sent.staff ? { staff: sent.staff, ...(sent.staffId ? { staffId: sent.staffId } : {}) } : {}), ...(sent.projectId && !t.projectId ? { projectId: sent.projectId } : {}) } : {});
+    ...(sent.staff ? { staff: sent.staff, ...(sent.staffId ? { staffId: sent.staffId } : {}) } : {}), ...(sent.projectId ? { projectId: sent.projectId } : {}) } : {});
   return {
     // v3.79 a stage that waited on the old id now waits on the new one
     tasks: board.tasks.filter((t) => t.id !== to).map((t) => (t.id === from ? { ...t, ...keep(t), ...patch, id: to, brief: `tasks/${to}/brief.md` } : t.after === from ? { ...t, after: to } : t)),
