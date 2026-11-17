@@ -392,3 +392,71 @@ test('v3.83 review fix: only a folder the app made (or a real, empty one) is tru
   assert.equal(od.split('trustPersonalDesk(id);').length, 3, 'an existing desk and a new one');
   assert.ok(od.lastIndexOf('trustPersonalDesk(id);') < od.lastIndexOf('startPty(id)'), 'before the session starts');
 });
+
+// ---------- v3.88 the personal workspace's settings in the member's popup ----------
+const P88 = require('../src/projects.js');
+const autoOn = (s, id) => P88.setProjectAutoApprove(s, id, true);
+const autoOff = (s, id) => P88.setProjectAutoApprove(s, id, false);
+const skipOn = (s, id) => P88.setProjectSkipPermissions(s, id, true);
+
+test('personalTarget: only personal:<staff id> names a personal workspace', () => {
+  assert.equal(ST.personalTarget('personal:s-a1b2c3'), 's-a1b2c3');
+  for (const bad of ['s-a1b2c3', 'personal:', 'personal:p1', 'personal:s-XYZ', '', null, 7]) assert.equal(ST.personalTarget(bad), '');
+});
+
+test('personal draft: off by default, written by the project setters, kept through a save, never taken from the form', () => {
+  const staff = [ST.normalizeMember(ayse, known)];
+  assert.equal('personal' in staff[0], false, 'nothing is widened by default');
+  assert.equal(ST.setPersonalDraft(staff, 's-ffffff', autoOn), staff, 'unknown member');
+  assert.equal(ST.setPersonalDraft(staff, ayse.id, autoOff), staff, 'no change, same list');
+  const on = ST.setPersonalDraft(staff, ayse.id, autoOn);
+  assert.deepEqual(on[0].personal, { autoApprove: true });
+  const both = ST.setPersonalDraft(on, ayse.id, skipOn);
+  assert.deepEqual(both[0].personal, { autoApprove: true, skipPermissions: true });
+  const off = ST.setPersonalDraft(both, ayse.id, autoOff);
+  assert.deepEqual(off[0].personal, { skipPermissions: true });
+  // only the two switches survive normalization, and only as true
+  assert.deepEqual(ST.normalizeMember({ ...ayse, personal: { autoApprove: true, skipPermissions: 'yes', accountId: 'x', dir: '/' } }, known).personal, { autoApprove: true });
+  // editing the member keeps the draft; a form cannot set it (new member or edit)
+  const saved = ST.saveMember(both, { ...ayse, name: 'Ayşe K', personal: {} }, known);
+  assert.deepEqual(saved.member.personal, { autoApprove: true, skipPermissions: true });
+  const fresh = ST.saveMember([], { name: 'Can', role: { preset: 'qa' }, projects: [], personal: { autoApprove: true, skipPermissions: true } }, known);
+  assert.equal('personal' in fresh.member, false);
+});
+
+test('personal draft: taken off the member when the workspace is made', () => {
+  const staff = ST.setPersonalDraft([ST.normalizeMember(ayse, known)], ayse.id, autoOn);
+  const t = ST.takePersonalDraft(staff, ayse.id);
+  assert.deepEqual(t.draft, { autoApprove: true });
+  assert.equal('personal' in t.staff[0], false);
+  const none = ST.takePersonalDraft(t.staff, ayse.id);
+  assert.deepEqual(none.draft, {});
+  assert.equal(none.staff, t.staff);
+});
+
+test('main: the personal workspace takes the project setters, its draft at creation, and staff-not-allowed names its fix', () => {
+  const MAIN88 = require('fs').readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN88, /personalSetting\(target, \(s, pid\) => P\.setProjectAutoApprove\(s, pid, value === true\)\)/);
+  assert.match(MAIN88, /personalSetting\(target, \(s, pid\) => P\.setProjectSkipPermissions\(s, pid, value === true\)\)/);
+  const ep = MAIN88.slice(MAIN88.indexOf('function ensurePersonal('), MAIN88.indexOf('function trustPersonalDesk('));
+  assert.match(ep, /ST\.takePersonalDraft\(/);
+  assert.match(ep, /if \(kept\.draft\.autoApprove\) next = P\.setProjectAutoApprove\(next, own\.id, true\);/);
+  assert.match(MAIN88, /reason: 'staff-not-allowed', hint: ST\.NOT_ALLOWED_HINT/);
+  assert.match(MAIN88, /no\('staff-not-allowed', \{ stage: s\.n, hint: ST\.NOT_ALLOWED_HINT \}\)/);
+  assert.match(ST.NOT_ALLOWED_HINT, /not assigned to that project.*member's settings/);
+});
+
+test('HQ brief and tool text: one approval for a chain, the Allow button only, a desk prompt is the person\'s', () => {
+  const read = (f) => require('fs').readFileSync(path.join(__dirname, '..', '..', f), 'utf8');
+  const team = read('plugin/hooks/staff.ts');
+  assert.match(team, /as stages of ONE request \(office_dispatch with \\`then\\`\) in the turn the person typed it, so the person approves the whole chain once/);
+  assert.match(team, /only when a later step cannot be known in advance/);
+  const hq = read('plugin/hooks/hq.ts');
+  assert.doesNotMatch(hq, /is never yours/);
+  assert.match(hq, /Only pressing Allow on a task held for consent is the person's/);
+  assert.match(hq, /Dispatching, cancelling, closing and retitling open tasks are yours/);
+  assert.match(hq, /A desk's own permission prompt is answered by the person in that desk's tab; you cannot answer it/);
+  assert.match(hq, /a member with mail asks by design/);
+  const mcp = read('app/src/office-mcp.js');
+  assert.match(mcp, /staff-not-allowed: the person can assign the project in the member\\'s settings/);
+});

@@ -616,6 +616,10 @@
     "resetRole": "↺ Hazır role dön",
     "resetRoleTitle": "Rolün alanlarını hazır rolün metniyle yeniden doldur",
     "applyNote": "Değişiklikler personelin masalarına gider: boştaki masalar konuşmasını koruyarak yeniden başlar, çalışanlar bir sonraki başlangıçta alır.",
+    "personal": "Kişisel çalışma alanı",
+    "personalHint": "Bu personelin kişisel çalışma alanının (proje dışı işler için kendi klasörü) ayarları. Bir projenin ayarları gibi çalışır ve kaydettiğinizde uygulanır.",
+    "personalHintNew": "Kişisel çalışma alanı, personel ilk kez proje dışı bir iş aldığında oluşturulur; bu iki anahtar o zaman uygulanır. Model ve diğer oturum ayarları alan oluştuktan sonra buradan yapılabilir.",
+    "personalMailHint": "Bu personelin maili var: mail koruması, Otomatik onay ne derse desin masalarının komut, düzenleme ve internet erişiminden önce size sormasını sağlar. İzinleri atla ise o masadan maili kaldırır.",
     "dept": {
       "management": "Yönetim",
       "marketing": "Pazarlama",

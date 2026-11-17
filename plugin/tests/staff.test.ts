@@ -35,4 +35,6 @@ test('team text: staff by role, desks and the folder lock, developer → QA → 
   expect(TEAM_TEXT).toContain('its test is a separate task for QA after the developer reports')
   expect(TEAM_TEXT).toContain('Deployment belongs to the DevOps member, never to a developer')
   expect(TEAM_TEXT).toContain('Production deployments only when the person asked for them')
+  expect(TEAM_TEXT).toContain('as stages of ONE request (office_dispatch with `then`) in the turn the person typed it, so the person approves the whole chain once')
+  expect(TEAM_TEXT).toContain('only when a later step cannot be known in advance')
 })

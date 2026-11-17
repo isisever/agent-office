@@ -213,9 +213,13 @@ export function openMemberEditor(c) {
     h('div', { class: 'sb-scope-list' }, ...c.projects.map((p, i) => h('label', {}, boxes[i], ' ', p.name))));
   // v3.85 mail: the accounts this member may read and draft from; the guard is explained right there
   const mailPick = new Set(Array.isArray(m?.mail) ? m.mail : []);
+  // v3.88 the personal workspace's session settings: the project popup's own controls (given by the sidebar); a
+  // member with mail is told that its desks ask whatever the switches say
+  const ps = c.personal || null;
+  const personalMail = h('span', { class: 'sb-field-hint', hidden: mailPick.size === 0 }, t('staff.personalMailHint'));
   const mailList = c.mailAccounts || [];
   const mailBox = h('div', { class: 'sb-scope-list sb-staff-mail' }, ...(mailList.length ? mailList.map((a) => h('label', {},
-    h('input', { type: 'checkbox', checked: mailPick.has(a.id), onchange: (e) => (e.target.checked ? mailPick.add(a.id) : mailPick.delete(a.id)) }),
+    h('input', { type: 'checkbox', checked: mailPick.has(a.id), onchange: (e) => { if (e.target.checked) mailPick.add(a.id); else mailPick.delete(a.id); personalMail.hidden = mailPick.size === 0; } }),
     ' ', a.label, h('span', { class: 'sb-dim' }, ` · ${a.address}`))) : [h('span', { class: 'sb-field-hint' }, t('staff.mailNone'))]));
   const err = h('div', { class: 'sb-note warn', hidden: true });
   const save = h('button', {
@@ -231,7 +235,7 @@ export function openMemberEditor(c) {
       save.disabled = true;
       const r = await c.save(form);
       save.disabled = false;
-      if (r?.ok) { c.closeModal(); return; }
+      if (r?.ok) { c.closeModal(); await ps?.apply(r.member.id); return; }
       err.textContent = t(`staff.error.${['name', 'role', 'name-used', 'too-many'].includes(r?.error) ? r.error : 'failed'}`);
       err.hidden = false;
     },
@@ -250,6 +254,8 @@ export function openMemberEditor(c) {
     field(t('staff.account'), account, t('staff.accountHint')),
     field(t('staff.projects'), scope, t('staff.projectsHint')),
     field(t('staff.mail'), mailBox, t('staff.mailHint')),
+    ...(ps ? [h('div', { class: 'sb-field sb-staff-personal' }, h('span', { class: 'sb-field-label' }, t('staff.personal')), ...ps.controls,
+      h('span', { class: 'sb-field-hint' }, t(ps.exists ? 'staff.personalHint' : 'staff.personalHintNew')), personalMail)] : []),
     h('div', { class: 'sb-field-hint' }, t('staff.applyNote')),
     err,
   ], [remove, h('button', { class: 'sb-btn', onclick: () => c.closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
