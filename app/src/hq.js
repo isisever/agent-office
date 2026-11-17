@@ -10,6 +10,8 @@ const { REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK } = require('./link-core.js');
 const HQ_ID = 'hq';
 const MAX_PER_REQUEST = 8;          // tasks one request may create
 const MAX_OPEN = 12;                // non-terminal HQ tasks at once
+const MAX_INITIATIVE = 4;           // v3.91 tasks HQ may send on its own for one typed request
+const INITIATIVE_MS = 2 * 3600 * 1000;   // v3.91 a typed request may be continued on HQ's own this long
 const HQ_TTL_MS = 4 * 3600 * 1000;  // an HQ task may wait this long in a busy boss's queue
 const RETAIN_TASKS = 500;
 const RETAIN_MS = 90 * 24 * 3600 * 1000;
@@ -69,6 +71,7 @@ function normalizeHq(raw) {
     enabled: o.enabled !== false,
     ...(hqBossModel(o.bossModel) ? { bossModel: o.bossModel } : {}),
     dispatchWithoutAsking: o.dispatchWithoutAsking === true,
+    ...(o.initiative === true ? { initiative: true } : {}),   // v3.91 HQ may continue an open typed request on its own (off: absent)
   };
 }
 
@@ -113,6 +116,9 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
   let current = null;
   /** @type {Map<string, { at: number, origin: string, ttl: number, run: string, live: boolean }>} */
   const all = new Map();
+  /** v3.91 the ids minted from the person's typed prompt, with their time (the last 50): never a routine's id */
+  /** @type {Map<string, number>} */
+  const typed = new Map();
   const fresh = (e) => Boolean(e) && now() - e.at <= e.ttl;
   const endRoutines = () => { for (const e of all.values()) if (e.origin === 'routine') e.live = false; };
   return {
@@ -123,6 +129,7 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
       if (origin !== 'routine') current = { id, at: e.at };   // a routine mint never replaces the typed one
       all.set(id, e);
       if (all.size > 50) all.delete(all.keys().next().value);
+      if (origin === 'typed') { typed.set(id, e.at); if (typed.size > 50) typed.delete(typed.keys().next().value); }
       return id;
     },
     current() { return current && now() - current.at <= MINT_MS ? current.id : null; },
@@ -136,10 +143,14 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
     endLive(id) { const e = all.get(id); if (e) e.live = false; },
     /** an id this minter issued (any of its last 50), still within its own TTL */
     issued(id) { return isStr(id) && fresh(all.get(id)); },
+    /** v3.91 when the person typed the prompt this id was minted from; 0 for any other id (a routine's, a foreign one) */
+    typedAt(id) { return (isStr(id) && typed.get(id)) || 0; },
   };
 }
 /** The request a dispatch belongs to: an id the minter issued, else the current one, else the capped 'adhoc' bucket. */
-const resolveRequest = (minter, id) => (minter.issued(id) ? id : minter.current() || ADHOC);
+// v3.91 with the initiative setting on, an id the person typed stays usable for INITIATIVE_MS (past its 30 min TTL)
+const typedWithin = (minter, id, now) => { const at = minter?.typedAt?.(id) || 0; return at > 0 && now - at < INITIATIVE_MS; };
+const resolveRequest = (minter, id, { initiative = false, now = Date.now() } = {}) => (minter.issued(id) || (initiative && typedWithin(minter, id, now)) ? id : minter.current() || ADHOC);
 /** v3.47 a dispatch without the routine's id is held only while an HQ routine turn's id is still live (never the
  *  person's own typed requests after that turn ended). */
 const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && !minter.isRoutine(request) && Boolean(openRoutine) && minter.isLiveRoutine(openRoutine);
@@ -156,6 +167,56 @@ function consentFor({ setting, remote, request, minter, routineNoAsk = false }) 
   // the run's id still live (the global setting does not apply); else a held card the person approves on the Board
   if (minter?.isRoutine?.(request)) return !remote && routineNoAsk && minter.isLiveRoutine(request) ? 'none' : 'held';
   return setting && !remote && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';
+}
+
+/**
+ * v3.91 HQ's initiative (the `initiative` setting, default off): a dispatch that consentFor would ask about needs no
+ * consent when ALL hold: the target is local; the request id was minted from a prompt the person typed (never a
+ * routine's id, never 'adhoc'); it is younger than 2 h; EVERY target (`targets`: one per task, `{ projectId, staffId,
+ * skip }`) is one the person already consented to for this request (consentedTarget) and its project does not run
+ * with Skip permissions (`skip`); the caps (8 per request counting removed rows, 12 open) leave room for the tasks;
+ * and at most MAX_INITIATIVE tasks were sent this way for the request (counted on the request record, so a removed
+ * row still counts). `counted`: these tasks are already in that count (takeInitiative ran; the re-check after a wait).
+ * Anything else → false: consentFor's answer stands.
+ */
+function initiativeFor({ initiative, remote, request, minter, board, targets, counted = false, now = Date.now() }) {
+  const n = Array.isArray(targets) ? targets.length : 0;
+  if (initiative !== true || remote || !isStr(request) || request === ADHOC || n < 1) return false;
+  if (minter?.isRoutine?.(request) || !typedWithin(minter, request, now)) return false;
+  const mine = (board?.tasks || []).filter((t) => t.request === request);
+  if (!mine.length) return false;
+  if (!targets.every((t) => t && t.skip !== true && consentedTarget(board, request, t))) return false;
+  if (openTasks(board).length + n > MAX_OPEN || mine.length + removedOf(board, request) + n > MAX_PER_REQUEST) return false;
+  return initiativeSent(board, request) + (counted ? 0 : n) <= MAX_INITIATIVE;
+}
+/**
+ * v3.91 a target the person consented to for this request: a local row of the SAME request that carries
+ * `consented: true` (stamped when the consent is known: an accepted dialog, consentFor's 'none', a consented stage
+ * chain: each of its stages' rows, a held card the person allowed) and was not sent by initiative went to the same
+ * project id and the same staff member id (or both without a member). A member's personal workspace is a project
+ * like any other here, so it counts only after a consented row went to that workspace for that member; one that is
+ * not made yet has no project id and never counts. A row with a member but no recorded id (older rows) matches nothing.
+ * A row without the flag counts for nothing whatever its status: a held card that was declined, ignored or expired,
+ * and every row written before the flag existed.
+ */
+function consentedTarget(board, request, target) {
+  const pid = typeof target?.projectId === 'string' ? target.projectId : '';
+  const sid = target?.staffId === undefined ? '' : target.staffId;
+  if (!pid || typeof sid !== 'string') return false;
+  return (board?.tasks || []).some((t) => t.request === request && t.consented === true && t.byInitiative !== true && t.machine === 'self' && t.projectId === pid
+    && (t.staff ? t.staffId || null : '') === sid);
+}
+/** v3.91 the tasks HQ sent on its own for a request (kept on the request record: removing a row does not lower it). */
+const initiativeSent = (board, request) => Math.max(0, Number((board?.requests || []).find((r) => r.id === request)?.initiative) || 0);
+/**
+ * v3.91 decide and count in one step: when initiativeFor holds, the request record's `initiative` goes up by the
+ * number of targets at once, so a second call that overlaps (its task not queued yet) sees the higher count. The count
+ * is not given back when the task is refused later or the re-check falls back to the dialog. → { ok, board }.
+ */
+function takeInitiative(board, o) {
+  const targets = Array.isArray(o?.targets) ? o.targets : [];
+  if (!initiativeFor({ ...o, board, targets, counted: false }) || !(board.requests || []).some((r) => r.id === o.request)) return { ok: false, board };
+  return { ok: true, board: { ...board, requests: board.requests.map((r) => (r.id === o.request ? { ...r, initiative: initiativeSent(board, o.request) + targets.length } : r)) } };
 }
 
 /** Typed-prompt detection for the HQ pty: true when this write submits a typed line (Enter after typed text). */
@@ -182,9 +243,14 @@ function capReason(board, request) {
 /** A paced (held) remote task got its real id when it was sent: the row, its request and its brief path follow. */
 function renameTask(board, from, to, patch = {}) {
   if (!board.tasks.some((t) => t.id === from)) return board;
+  // v3.91 an approved held card: the row written when it was sent (id `to`) is dropped for the card's row, which keeps
+  // what that row knew: the consent, the member (name + id) and the project it actually went to (the sent row's id wins over the card's)
+  const sent = board.tasks.find((t) => t.id === to && t.id !== from);
+  const keep = (t) => (sent ? { ...(sent.consented === true && t.byInitiative !== true ? { consented: true } : {}),
+    ...(sent.staff ? { staff: sent.staff, ...(sent.staffId ? { staffId: sent.staffId } : {}) } : {}), ...(sent.projectId ? { projectId: sent.projectId } : {}) } : {});
   return {
     // v3.79 a stage that waited on the old id now waits on the new one
-    tasks: board.tasks.filter((t) => t.id !== to).map((t) => (t.id === from ? { ...t, ...patch, id: to, brief: `tasks/${to}/brief.md` } : t.after === from ? { ...t, after: to } : t)),
+    tasks: board.tasks.filter((t) => t.id !== to).map((t) => (t.id === from ? { ...t, ...keep(t), ...patch, id: to, brief: `tasks/${to}/brief.md` } : t.after === from ? { ...t, after: to } : t)),
     requests: board.requests.map((r) => ({ ...r, tasks: r.tasks.map((x) => (x === from ? to : x)) })),
   };
 }
@@ -222,10 +288,12 @@ const depthRefused = (board, fromTab) => fromTab !== HQ_ID && board.tasks.some((
 function addTask(board, t, now = Date.now()) {
   const task = {
     id: t.id, request: t.request || '', title: line(t.title || t.task || '', TITLE_MAX), machine: t.pub === 'self' || !t.pub ? 'self' : t.pub,
-    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}), ...(t.staff ? { staff: line(t.staff, 40) } : {}),   // v3.83 the staff member's desk
+    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}), ...(t.staff ? { staff: line(t.staff, 40), ...(isStr(t.staffId) ? { staffId: t.staffId.slice(0, 64) } : {}) } : {}),   // v3.83 the staff member's desk (v3.91 its id: the target check)
     status: STATUSES.includes(t.status) ? t.status : 'queued', ...(t.reason ? { reason: line(t.reason, 40) } : {}),
     at: now, brief: `tasks/${t.id}/brief.md`, commits: [], prs: [], read: false,
     ...(typeof t.after === 'string' && t.after ? { after: t.after.slice(0, 64) } : {}),   // v3.79 the stage it waits for
+    ...(t.byInitiative === true ? { byInitiative: true } : {}),   // v3.91 HQ sent it on its own (no consent asked)
+    ...(t.consented === true && t.byInitiative !== true ? { consented: true } : {}),   // v3.91 the person's consent for this row is known
   };
   const tasks = [task, ...board.tasks.filter((x) => x.id !== t.id)];
   let requests = board.requests;
@@ -345,7 +413,7 @@ const waitState = (tab, isAsleep) => (tab === 'ready' || tab === 'busy' || tab =
 /** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string }} [o] */
 const boardView = (board, { request = '', status = '' } = {}) => board.tasks
   .filter((t) => (!request || t.request === request) && (!status || t.status === status)).slice(0, 50)
-  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), ...(t.personPrompted ? { personPrompted: true, note: PERSON_PROMPTED_NOTE } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
+  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), ...(t.byInitiative ? { byInitiative: true } : {}), ...(t.personPrompted ? { personPrompted: true, note: PERSON_PROMPTED_NOTE } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
 
 // --- paired devices: dispatcher-side pacing (the receiver allows a burst of 3, one per 10 s) and the peer cache
 function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {
@@ -455,10 +523,10 @@ module.exports = {
   TASK_OPS, taskOpPlan, removeTask, retitleTask, closeByHq, removedOf,
   hqBossModel, boardOfRemote, remoteOpen,
   waitState, WAIT_STATES,
-  HQ_ID, MAX_PER_REQUEST, MAX_OPEN, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
+  HQ_ID, MAX_PER_REQUEST, MAX_OPEN, MAX_INITIATIVE, INITIATIVE_MS, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
-  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, holdsOffId, submitsTyped,
+  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, initiativeFor, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
   taskFile, requestFile, reportMd, boardView, createPacer, mergePeerCache, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
 };
