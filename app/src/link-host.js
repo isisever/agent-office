@@ -313,7 +313,9 @@ function setupLink(d) {
 
   // Claude Code projects only: their busy state is known (pid file) and their prompt takes a bracketed paste.
   function onCommand({ device, id, project, text, reply, report = false, ttl = 0, revive = false }) {
-    const p = d.projects().find((x) => x.id === project);
+    // v3.81 a staff member's desk (a tab id `<project>:<n>`) is a target for this machine's own tasks only (HQ): paired
+    // devices see projects, never desks (d.desk resolves it, or null)
+    const p = d.projects().find((x) => x.id === project) || (device.pub === SELF ? d.desk?.(project) || null : null);
     const done = (status, reason) => { log(device.name, p?.name || project, text, `${report ? 'task:' : ''}${reason ? `${status}:${reason}` : status}`); reply(status, reason); };
     if (!p) return done('rejected', 'unknown-project');
     if (p.engine !== 'claude') return done('rejected', 'engine');

@@ -2684,11 +2684,17 @@ function startLink() {
     app, safeStorage, ipcMain, send, T,
     notify: (title, body) => notify(title, body, null),
     projects: () => state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p) })),
+    // v3.81 HQ's task for a staff member goes to the member's desk tab: the queue knows it by its tab id (local only)
+    desk: (id) => {
+      const r = String(id).includes(':') ? P.resolvePty(state, String(id)) : null;
+      const m = r?.tab?.staffId ? memberById(r.tab.staffId) : null;
+      return m ? { id: String(id), name: `${r.project.name} · ${m.name}`, engine: P.engineOf(r.project) } : null;
+    },
     tabState: linkTabState,
     asleep: (id) => asleep.has(id), attentionOf: (id) => attention.get(id) || '',   // v3.48 task-status for a device's task
     type: typePrompt,
     answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices
-    loginOf: (projectId) => { const p = P.findProject(state, projectId); const s = p ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },
+    loginOf: (projectId) => { const p = P.resolvePty(state, String(projectId))?.project; const s = p && !p.hq ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },   // v3.81 a desk: its member's account
     reportsDir: path.join(app.getPath('home'), '.claude', 'agent-office', 'reports'),
     onReport: onOfficeReport,
     manage: projectOp,   // v3.33 proj-op from a device allowed to manage

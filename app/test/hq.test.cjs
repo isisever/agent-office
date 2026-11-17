@@ -384,6 +384,27 @@ function waitHost(t, over = {}) {
   return { host, typed };
 }
 
+test('v3.81: HQ\'s task for a staff member reaches the member\'s desk tab; a paired device cannot target a desk', (t) => {
+  const tab = { 'p1:2': 'ready' };
+  const { host, typed } = waitHost(t, {
+    tabState: (id) => tab[id] || 'gone',
+    desk: (id) => (id === 'p1:2' ? { id: 'p1:2', name: 'pii · Ahmet', engine: 'claude' } : null),
+    type: (id, text) => { typed.push([id, text]); },
+  });
+  const seen = [];
+  const r = host.dispatchLocal('p1:2', 'deploy the SaaS', 'HQ', (id, s, why) => seen.push([s, why]), { ttl: 3600000, revive: true });
+  assert.notEqual(r.status, 'rejected', JSON.stringify(r));
+  host.pump();
+  assert.equal(typed.length, 1);
+  assert.equal(typed[0][0], 'p1:2', 'typed into the desk, not the project boss');
+  assert.match(typed[0][1], /deploy the SaaS/);
+  assert.ok(seen.some((x) => x[0] === 'delivered'));
+  assert.equal(host.dispatchLocal('p9:2', 'x', 'HQ', () => {}).reason, 'unknown-project', 'a tab that is no desk stays unknown');
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /desk: \(id\) => \{\s+const r = String\(id\)\.includes\(':'\) \? P\.resolvePty\(state, String\(id\)\) : null;/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'link-host.js'), 'utf8'), /\(device\.pub === SELF \? d\.desk\?\.\(project\) \|\| null : null\)/);
+});
+
 test('v3.46 amendment: waitState names why a task waits', () => {
   assert.deepEqual(['ready', 'busy', 'starting'].map((s) => HQ.waitState(s, false)), ['ready', 'busy', 'starting']);
   assert.equal(HQ.waitState('gone', true), 'asleep');
