@@ -208,7 +208,7 @@ function callApp(socketFile, token, tool, args) {
 // picks the tab a task is typed into and `staffName` is shown in the consent dialog, so neither is taken from a model.
 // Applied by the app where a call arrives (main.js officeTool), not in the stdio script: that script is written from
 // runStdio's own source (serverScript) and is no trust boundary.
-const INTERNAL_ARGS = ['desk', 'staffName'];
+const INTERNAL_ARGS = ['desk', 'staffName', 'targetName'];
 /** A tool call's arguments as a model may give them: an object, without the app's internal dispatch arguments. */
 function modelArgs(tool, args) {
   const a = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } : {};
