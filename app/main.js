@@ -3434,7 +3434,7 @@ async function m365Token(a) {
 async function withImap(a, fn) {
   const password = mailSecrets().load(a.id);
   if (!password) throw new Error('no-secret');
-  const s = await IMAP.open({ host: a.imap.host, port: a.imap.port, user: a.user, password });
+  const s = await IMAP.open({ host: a.imap.host, port: a.imap.port, user: a.user, password, pin: a.imap.pin });
   try { return await fn(s); } finally { await s.close(); }
 }
 /** The newest messages, as a model may see them (cleaned one-liners). */
@@ -3467,7 +3467,26 @@ function deskOfTab(tab) {
   const m = r?.tab?.staffId ? memberById(r.tab.staffId) : null;
   return m ? { member: m, project: P.findProject(state, r.project.id) || r.project } : null;
 }
-const MAIL_ERRORS = ['no-secret', 'auth', 'refused', 'timeout', 'not-found', 'network', 'closed', 'greeting'];
+const MAIL_ERRORS = ['no-secret', 'auth', 'refused', 'timeout', 'not-found', 'network', 'closed', 'greeting', 'dns', 'refused-port', 'cert', 'login-disabled', 'auth-method', 'tls', 'mailbox', 'bad'];
+/** A failure for the person: its code, which side (imap | smtp | graph), the server's words and, for `cert`, the certificate. */
+const mailFailure = (e, where) => ({ ok: false, error: MAIL_ERRORS.includes(e?.message) ? e.message : 'failed', where, detail: String(e?.detail || '').slice(0, 300), ...(e?.cert ? { cert: e.cert } : {}) });
+/**
+ * Logs in on both sides without sending anything: IMAP (open the inbox read only) and SMTP (log in, quit); Graph
+ * lists one message. → { ok: true } | mailFailure. An account is saved only after this passed.
+ */
+async function mailCheck(a, secret) {
+  if (a.provider === 'm365') {
+    try { await GRAPH.list(fetch, secret, { limit: 1, sinceDays: 1 }); return { ok: true }; } catch (e) { return mailFailure(e, 'graph'); }
+  }
+  try {
+    const s = await IMAP.open({ host: a.imap.host, port: a.imap.port, user: a.user, password: secret, pin: a.imap.pin, timeoutMs: 45000 });
+    try { await s.list({ sinceDays: 1, limit: 1 }); } finally { await s.close(); }
+  } catch (e) { return mailFailure(e, 'imap'); }
+  try {
+    await SMTP.send({ host: a.smtp.host, port: a.smtp.port, security: a.smtp.security, user: a.user, password: secret, pin: a.smtp.pin, verify: true, timeoutMs: 45000 });
+  } catch (e) { return mailFailure(e, 'smtp'); }
+  return { ok: true };
+}
 /** The mail server's tools (the socket answers through here; every call is checked against the desk's member). */
 async function mailTool(tab, tool, args) {
   const d = deskOfTab(tab);
@@ -3522,21 +3541,28 @@ function mailCommitAccounts(list) {
   commit({ ...state, mailAccounts: list, ...(state.staff ? { staff } : {}) });
   send('mail:accounts', { accounts: list.map(mailAccountRow), encryption: safeStorage.isEncryptionAvailable() });
 }
-/** Gmail / IMAP: the account and its password (required for a new one; blank keeps the stored one). */
-ipcMain.handle('mail:save', (_e, f) => {
+/**
+ * Gmail / Exchange / IMAP: the account and its password (required for a new one; blank keeps the stored one). It is
+ * tested first (IMAP and SMTP log in, nothing is sent) and saved only when both worked; `trust` { imap?, smtp? } holds
+ * the fingerprints of certificates the person chose to trust after a `cert` failure.
+ */
+ipcMain.handle('mail:save', async (_e, f) => {
   if (!stateWritable) return { ok: false, error: 'state' };
   if (f?.provider === 'm365') return { ok: false, error: 'provider' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'no-keychain' };
   const r = MST.accountFromForm(mailAccounts(), f || {});
   if (r.error) return { ok: false, error: r.error };
-  const password = typeof f.password === 'string' ? f.password.replace(/\s+/g, f.provider === 'gmail' ? '' : ' ').trim() : '';
-  const isNew = !mailAccounts().some((a) => a.id === r.account.id);
-  if (isNew && !password) return { ok: false, error: 'password' };
-  if (password) {
-    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'no-keychain' };
-    if (!mailSecrets().save(r.account.id, password)) return { ok: false, error: 'secret' };
-  }
-  mailCommitAccounts(isNew ? [...mailAccounts(), r.account] : mailAccounts().map((a) => (a.id === r.account.id ? r.account : a)));
-  return { ok: true, account: mailAccountRow(r.account) };
+  let account = r.account;
+  for (const which of ['imap', 'smtp']) if (f?.trust?.[which]) account = MST.withPin(account, which, f.trust[which]);
+  const typed = typeof f.password === 'string' ? f.password.replace(/\s+/g, f.provider === 'gmail' ? '' : ' ').trim() : '';
+  const isNew = !mailAccounts().some((a) => a.id === account.id);
+  const password = typed || (isNew ? '' : mailSecrets().load(account.id));
+  if (!password) return { ok: false, error: 'password' };
+  const check = await mailCheck(account, password);
+  if (!check.ok) return check;
+  if (!mailSecrets().save(account.id, password)) return { ok: false, error: 'secret' };
+  mailCommitAccounts(isNew ? [...mailAccounts(), account] : mailAccounts().map((a) => (a.id === account.id ? account : a)));
+  return { ok: true, account: mailAccountRow(account) };
 });
 ipcMain.handle('mail:remove', (_e, id) => {
   if (!mailAccounts().some((a) => a.id === id)) return { ok: false, error: 'unknown' };
@@ -3549,7 +3575,11 @@ ipcMain.handle('mail:remove', (_e, id) => {
 ipcMain.handle('mail:test', async (_e, id) => {
   const a = mailAccounts().find((x) => x.id === id);
   if (!a) return { ok: false, error: 'unknown' };
-  try { await mailList(a, { sinceDays: 30, limit: 1 }); return { ok: true }; } catch (e) { return { ok: false, error: MAIL_ERRORS.includes(e?.message) ? e.message : 'failed' }; }
+  try {
+    const secret = a.provider === 'm365' ? await m365Token(a) : mailSecrets().load(a.id);
+    if (!secret) return { ok: false, error: 'no-secret' };
+    return await mailCheck(a, secret);
+  } catch (e) { return mailFailure(e, a.provider === 'm365' ? 'graph' : 'imap'); }
 });
 // Microsoft 365: device code sign-in with the person's app registration; the account is saved once it worked
 let m365Flow = null;   // { cancelled }
@@ -3566,6 +3596,8 @@ ipcMain.handle('mail:m365Start', async (_e, f) => {
     try {
       const t = await GRAPH.pollDeviceCode(fetch, { clientId: f.clientId, tenant: f.tenant || 'common', ...code, cancelled: () => flow.cancelled });
       const address = await GRAPH.me(fetch, t.accessToken);
+      const check = await mailCheck({ provider: 'm365' }, t.accessToken);   // Mail.Read really granted
+      if (!check.ok) return send('mail:m365', check);
       const r = MST.accountFromForm(mailAccounts(), { ...f, provider: 'm365', address, tenant: f.tenant || 'common' });
       if (r.error) return send('mail:m365', { ok: false, error: r.error });
       if (!mailSecrets().save(r.account.id, t.refreshToken)) return send('mail:m365', { ok: false, error: 'secret' });
@@ -3610,16 +3642,16 @@ ipcMain.handle('mail:send', async (_e, id) => {
       const password = mailSecrets().load(a.id);
       if (!password) throw new Error('no-secret');
       const msg = MIME.buildMessage({ from: a.address, ...c.draft, inReplyTo: d.replyTo?.messageId || '', references: d.replyTo?.references || '' });
-      await SMTP.send({ host: a.smtp.host, port: a.smtp.port, security: a.smtp.security, user: a.user, password, from: a.address, recipients: [...c.draft.to, ...c.draft.cc], raw: msg.raw });
+      await SMTP.send({ host: a.smtp.host, port: a.smtp.port, security: a.smtp.security, user: a.user, password, pin: a.smtp.pin, from: a.address, recipients: [...c.draft.to, ...c.draft.cc], raw: msg.raw });
     }
     saveOutbox(MST.setStatus(loadOutbox(), d.id, 'sent', { sentAt: Date.now() }).outbox);
     mailAudit({ person: 'send', draft: d.id, account: a.id, to: c.draft.to.length + c.draft.cc.length });
     return { ok: true };
   } catch (e) {
-    const code = MAIL_ERRORS.includes(e?.message) ? e.message : 'failed';
-    saveOutbox(MST.setStatus(loadOutbox(), d.id, 'failed', { error: code }).outbox);
-    mailAudit({ person: 'send', draft: d.id, account: a.id, failed: code });
-    return { ok: false, error: code };
+    const f = mailFailure(e, a.provider === 'm365' ? 'graph' : 'smtp');
+    saveOutbox(MST.setStatus(loadOutbox(), d.id, 'failed', { error: f.error, detail: f.detail }).outbox);
+    mailAudit({ person: 'send', draft: d.id, account: a.id, failed: f.error });
+    return f;
   }
 });
 /** A failed draft back to pending (to send again after fixing the account). */

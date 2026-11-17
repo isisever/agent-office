@@ -1289,7 +1289,8 @@
     "provider": {
       "gmail": "Gmail",
       "m365": "Microsoft 365 / Outlook",
-      "imap": "Exchange / IMAP"
+      "imap": "Other IMAP / SMTP",
+      "exchange": "Exchange (company server)"
     },
     "empty": "No mail account connected.",
     "outbox": "Mails waiting for you ({n})",
@@ -1313,7 +1314,7 @@
     "address": "Mail address",
     "user": "User name",
     "userPh": "Blank: the mail address",
-    "userHint": "For Exchange usually the mail address or DOMAIN\\user.",
+    "userHint": "For Exchange usually DOMAIN\\user (e.g. CORP\\ali) or user@company.com. Left blank, the mail address is tried.",
     "password": "Password",
     "passwordKeep": "Type to change it; blank keeps the saved one",
     "passwordHint": "Kept encrypted in Agent Office; it never goes to a session, a member or a file.",
@@ -1327,7 +1328,8 @@
     "help": {
       "gmail": "Gmail needs an \"app password\", not your normal password: Google Account → Security → 2-Step Verification → App passwords.",
       "m365": "Microsoft 365 / Outlook.com sign-in happens on Microsoft's page in the browser; your password never reaches Agent Office. It needs an app registration (client id) of your organisation.",
-      "imap": "Exchange (on premises) or any server with IMAP/SMTP. Connections are always encrypted (TLS)."
+      "imap": "Any server with IMAP and SMTP (Yandex, Zoho, your host…). Connections are always encrypted (TLS).",
+      "exchange": "Your company's own Exchange server (Exchange 2013/2016/2019). Its IMAP4 service must be on; SMTP uses 587 (STARTTLS). For Office 365 / Exchange Online accounts choose \"Microsoft 365 / Outlook\"."
     },
     "signIn": "Sign in with Microsoft",
     "codeStep": "{url} opened in your browser. Enter this code and approve with your account:",
@@ -1361,9 +1363,9 @@
     "retry": "Try again",
     "error": {
       "no-secret": "No sign-in saved.",
-      "auth": "Sign-in refused (password or permission).",
+      "auth": "Sign-in refused: wrong user name or password, or IMAP/SMTP is off for this account.",
       "refused": "The server refused.",
-      "timeout": "The server did not answer.",
+      "timeout": "The server did not answer in time: the port may be wrong, or the server slows down failed sign-ins.",
       "not-found": "Mail not found.",
       "network": "Could not reach the server.",
       "closed": "The connection closed.",
@@ -1389,7 +1391,30 @@
       "body": "The text is empty.",
       "too-large": "The text is too long.",
       "unknown-account": "The account is gone.",
-      "interrupted": "Sending was cut short; check Sent Items whether it went."
-    }
+      "interrupted": "Sending was cut short; check Sent Items whether it went.",
+      "dns": "The server name was not found (a typo, or it needs the company network/VPN).",
+      "refused-port": "The server does not accept connections on this port (port or firewall).",
+      "cert": "The server's certificate is not trusted.",
+      "login-disabled": "This server has turned password sign-in off (Exchange Online / Office 365). Add the account with \"Microsoft 365 / Outlook\".",
+      "auth-method": "The server offers no sign-in method we support (NTLM/Kerberos only). Ask your IT team to allow Basic (LOGIN/PLAIN) sign-in on the client connector.",
+      "tls": "The server offers no encrypted connection (STARTTLS); a password is never sent in clear. Check the port or the security setting.",
+      "mailbox": "The inbox could not be opened.",
+      "bad": "The server did not understand the command.",
+      "use-m365": "This is an Office 365 / Outlook.com address: password sign-in over IMAP/SMTP is off there. Add it with \"Microsoft 365 / Outlook\"."
+    },
+    "server": "Exchange server",
+    "serverHint": "Usually mail.yourcompany.com, or the host name in your Outlook Web (OWA) address.",
+    "advanced": "Advanced: servers and ports",
+    "testSave": "Test and save",
+    "testing": "Testing: IMAP sign-in and SMTP sign-in (no mail is sent)…",
+    "where": "({where} side)",
+    "serverSaid": "The server said: \"{text}\"",
+    "certIntro": "The {where} server's certificate is not signed by an authority this computer knows (common for an Exchange server inside a company). If you are sure the server is your company's, you may trust this certificate.",
+    "certSubject": "Certificate",
+    "certIssuer": "Issued by",
+    "certNames": "Valid names",
+    "certValid": "Expires",
+    "certHint": "Compare the fingerprint with your IT team. If you trust it, only this exact certificate is accepted; you are asked again when it changes.",
+    "certTrust": "Trust this certificate and try again"
   }
 }

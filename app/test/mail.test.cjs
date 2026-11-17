@@ -93,10 +93,10 @@ test('mime: buildMessage — UTF-8 subject encoded, threading headers, no header
 
 // ---------- IMAP against a fake server
 
-function fakeImap({ messages, password = 'pw' }) {
+function fakeImap({ messages, password = 'pw', caps = 'IMAP4rev1' }) {
   const commands = [];
   const server = net.createServer((sock) => {
-    sock.write('* OK fake IMAP ready\r\n');
+    sock.write(`* OK [CAPABILITY ${caps}] fake IMAP ready\r\n`);
     let buf = '';
     sock.on('data', (c) => {
       buf += c;
@@ -107,7 +107,8 @@ function fakeImap({ messages, password = 'pw' }) {
         const [tag, ...rest] = line.split(' ');
         const cmd = rest.join(' ');
         commands.push(cmd);
-        if (/^LOGIN /.test(cmd)) sock.write(cmd === `LOGIN "me@x.com" "${password}"` ? `${tag} OK logged in\r\n` : `${tag} NO bad password\r\n`);
+        if (/^LOGIN /.test(cmd)) sock.write(caps.includes('LOGINDISABLED') ? `${tag} BAD login disabled\r\n` : cmd === `LOGIN "me@x.com" "${password}"` ? `${tag} OK logged in\r\n` : `${tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n`);
+        else if (/^AUTHENTICATE PLAIN /.test(cmd)) sock.write(Buffer.from(cmd.slice(19), 'base64').toString('utf8') === `\0me@x.com\0${password}` ? `${tag} OK authenticated\r\n` : `${tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n`);
         else if (/^EXAMINE /.test(cmd)) sock.write(`* ${messages.length} EXISTS\r\n${tag} OK [READ-ONLY] done\r\n`);
         else if (/^UID SEARCH/.test(cmd)) sock.write(`* SEARCH ${messages.map((m) => m.uid).join(' ')}\r\n${tag} OK done\r\n`);
         else if (/^UID FETCH [\d,]+ \(UID FLAGS RFC822\.SIZE BODY\.PEEK\[HEADER\.FIELDS/.test(cmd)) {
@@ -148,17 +149,36 @@ test('imap: lists newest first and reads a message, read only (EXAMINE, BODY.PEE
   } finally { server.close(); }
   const bad = await fakeImap({ messages: [], password: 'other' });
   try {
-    await assert.rejects(IMAP.open({ host: '127.0.0.1', port: bad.port, user: 'me@x.com', password: 'pw', secure: false }), /refused/);
+    await assert.rejects(IMAP.open({ host: '127.0.0.1', port: bad.port, user: 'me@x.com', password: 'pw', secure: false }), (e) => e.message === 'auth' && /Invalid credentials/.test(e.detail));
   } finally { bad.server.close(); }
-  await assert.rejects(Promise.resolve().then(() => IMAP.open({ host: '127.0.0.1', port: 1, user: 'x', password: 'y', secure: false, timeoutMs: 2000 })));
+  await assert.rejects(IMAP.open({ host: '127.0.0.1', port: 1, user: 'x', password: 'y', secure: false, timeoutMs: 2000 }), /refused-port/);
+  await assert.rejects(IMAP.open({ host: 'no-such-host.invalid', port: 993, user: 'x', password: 'y', timeoutMs: 5000 }), /dns/);
   assert.equal(IMAP.safeMailbox('INBOX"\r\nA1 DELETE INBOX'), false);
   assert.equal(IMAP.quote('a"b\\c'), '"a\\"b\\\\c"');
 });
 
+test('imap: Exchange-style AUTH=PLAIN (any characters in the password); LOGINDISABLED (Exchange Online) is named', async () => {
+  const ex = await fakeImap({ messages: [{ uid: 1, raw: 'Subject: a\r\n\r\nb' }], password: 'Şifre-ğü"\\1', caps: 'IMAP4 IMAP4rev1 AUTH=NTLM AUTH=GSSAPI AUTH=PLAIN SASL-IR UIDPLUS' });
+  try {
+    const s = await IMAP.open({ host: '127.0.0.1', port: ex.port, user: 'me@x.com', password: 'Şifre-ğü"\\1', secure: false });
+    assert.equal((await s.list()).length, 1);
+    await s.close();
+    assert.ok(ex.commands.some((c) => c.startsWith('AUTHENTICATE PLAIN ')) && !ex.commands.some((c) => c.startsWith('LOGIN')));
+  } finally { ex.server.close(); }
+  const online = await fakeImap({ messages: [], caps: 'IMAP4 IMAP4rev1 AUTH=XOAUTH2 LOGINDISABLED SASL-IR' });
+  try {
+    await assert.rejects(IMAP.open({ host: '127.0.0.1', port: online.port, user: 'me@x.com', password: 'pw', secure: false }), /login-disabled/);
+    assert.ok(!online.commands.some((c) => /^(LOGIN|AUTHENTICATE PLAIN)/.test(c)), 'the password is never sent');
+  } finally { online.server.close(); }
+  assert.deepEqual(IMAP.capsOf('* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] ready'), ['IMAP4REV1', 'AUTH=PLAIN']);
+});
+
 // ---------- SMTP against a fake server
 
-function fakeSmtp() {
+function fakeSmtp({ auth = 'PLAIN', password = 'pw' } = {}) {
   const seen = { lines: [], data: '' };
+  let loginStep = 0;
+  let loginUser = '';
   const server = net.createServer((sock) => {
     sock.write('220 fake ESMTP\r\n');
     let buf = '';
@@ -178,8 +198,11 @@ function fakeSmtp() {
         const line = buf.slice(0, i);
         buf = buf.slice(i + 2);
         seen.lines.push(line);
-        if (/^EHLO /.test(line)) sock.write('250-fake\r\n250 AUTH PLAIN\r\n');
-        else if (/^AUTH PLAIN /.test(line)) sock.write(Buffer.from(line.slice(11), 'base64').toString() === '\0me@x.com\0pw' ? '235 ok\r\n' : '535 no\r\n');
+        if (loginStep === 1) { loginUser = Buffer.from(line, 'base64').toString(); loginStep = 2; sock.write('334 UGFzc3dvcmQ6\r\n'); continue; }
+        if (loginStep === 2) { loginStep = 0; sock.write(loginUser === 'me@x.com' && Buffer.from(line, 'base64').toString() === password ? '235 2.7.0 Authentication successful\r\n' : '535 5.7.3 Authentication unsuccessful\r\n'); continue; }
+        if (/^EHLO /.test(line)) sock.write(`250-fake\r\n250-SIZE 1000\r\n250 AUTH ${auth}\r\n`);
+        else if (/^AUTH PLAIN /.test(line)) sock.write(auth.includes('PLAIN') && Buffer.from(line.slice(11), 'base64').toString() === `\0me@x.com\0${password}` ? '235 ok\r\n' : '535 no\r\n');
+        else if (line === 'AUTH LOGIN') { loginStep = 1; sock.write('334 VXNlcm5hbWU6\r\n'); }
         else if (/^(MAIL FROM|RCPT TO):/.test(line)) sock.write('250 ok\r\n');
         else if (line === 'DATA') { inData = true; sock.write('354 go\r\n'); } else if (line === 'QUIT') { sock.write('221 bye\r\n'); sock.end(); } else sock.write('500 what\r\n');
       }
@@ -196,11 +219,48 @@ test('smtp: sends an approved message (AUTH PLAIN, dot-stuffing); a wrong passwo
     assert.deepEqual(r, { ok: true, response: 'queued as 42' });
     assert.deepEqual(seen.lines.filter((l) => /^(MAIL|RCPT)/.test(l)), ['MAIL FROM:<me@x.com>', 'RCPT TO:<a@b.com>', 'RCPT TO:<c@d.com>']);
     assert.equal(seen.data, 'Subject: x\r\n\r\n..leading dot\r\nok\r\n');
-    await assert.rejects(SMTP.send({ host: '127.0.0.1', port, secure: false, user: 'me@x.com', password: 'nope', from: 'me@x.com', recipients: ['a@b.com'], raw }), /auth/);
+    await assert.rejects(SMTP.send({ host: '127.0.0.1', port, secure: false, user: 'me@x.com', password: 'nope', from: 'me@x.com', recipients: ['a@b.com'], raw }), (e) => e.message === 'auth' && /535/.test(e.detail));
     // STARTTLS asked for but not offered: nothing goes out in clear
     await assert.rejects(SMTP.send({ host: '127.0.0.1', port, security: 'starttls', user: 'me@x.com', password: 'pw', from: 'me@x.com', recipients: ['a@b.com'], raw }), /tls/);
   } finally { server.close(); }
   assert.equal(SMTP.dotStuff('a\n.b'), 'a\r\n..b\r\n.\r\n');
+});
+
+test('smtp: Exchange and Microsoft offer AUTH LOGIN, not PLAIN: LOGIN is used; NTLM only is named; verify sends nothing', async () => {
+  const ex = await fakeSmtp({ auth: 'NTLM LOGIN', password: 'Şifre' });
+  try {
+    assert.deepEqual(await SMTP.send({ host: '127.0.0.1', port: ex.port, secure: false, user: 'me@x.com', password: 'Şifre', verify: true }), { ok: true, response: 'logged in' });
+    assert.ok(ex.seen.lines.includes('AUTH LOGIN') && !ex.seen.lines.some((l) => l.startsWith('AUTH PLAIN')));
+    assert.ok(!ex.seen.lines.some((l) => /^(MAIL|RCPT|DATA)/.test(l)), 'a test sends no mail');
+    await SMTP.send({ host: '127.0.0.1', port: ex.port, secure: false, user: 'me@x.com', password: 'Şifre', from: 'me@x.com', recipients: ['a@b.com'], raw: 'Subject: x\r\n\r\nhi\r\n' });
+    assert.equal(ex.seen.data, 'Subject: x\r\n\r\nhi\r\n');
+  } finally { ex.server.close(); }
+  const ntlm = await fakeSmtp({ auth: 'NTLM GSSAPI' });
+  try {
+    await assert.rejects(SMTP.send({ host: '127.0.0.1', port: ntlm.port, secure: false, user: 'me@x.com', password: 'pw', verify: true }), (e) => e.message === 'auth-method' && /NTLM/.test(e.detail));
+  } finally { ntlm.server.close(); }
+  assert.deepEqual(SMTP.authMechs('fake\nSIZE 1\nAUTH LOGIN XOAUTH2'), ['LOGIN', 'XOAUTH2']);
+});
+
+test('tls: an untrusted certificate is refused with its facts; the pinned fingerprint is accepted', async (t) => {
+  const N = require('../src/mail/net.js');
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mailtls-'));
+  const r = require('child_process').spawnSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(dir, 'k.pem'), '-out', path.join(dir, 'c.pem'), '-days', '2', '-subj', '/CN=mail.corp.local'], { encoding: 'utf8' });
+  if (r.status !== 0) return t.skip('openssl not available');
+  const tls = require('tls');
+  const server = tls.createServer({ key: fs.readFileSync(path.join(dir, 'k.pem')), cert: fs.readFileSync(path.join(dir, 'c.pem')) }, (s) => { s.write('* OK ready\r\n'); s.on('error', () => {}); });
+  await new Promise((res) => server.listen(0, '127.0.0.1', res));
+  const port = server.address().port;
+  try {
+    const e = await N.secureSocket({ host: '127.0.0.1', port }).then(() => null, (x) => x);
+    assert.equal(e.message, 'cert');
+    assert.equal(e.cert.subject, 'mail.corp.local');
+    assert.match(e.cert.fingerprint, /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+    const ok = await N.secureSocket({ host: '127.0.0.1', port, pin: e.cert.fingerprint });
+    ok.destroy();
+    const wrong = await N.secureSocket({ host: '127.0.0.1', port, pin: e.cert.fingerprint.replace(/^../, e.cert.fingerprint.startsWith('00') ? '11' : '00') }).then(() => null, (x) => x);
+    assert.equal(wrong.message, 'cert', 'another certificate than the pinned one is refused');
+  } finally { server.close(); }
 });
 
 // ---------- Microsoft Graph with a fake fetch
@@ -253,6 +313,18 @@ test('graph: device code sign-in, read only listing and reading, sending only th
 });
 
 // ---------- accounts and the outbox
+
+test('store: Exchange — one server, IMAP 993 and SMTP 587 STARTTLS, a trusted certificate pinned; Office 365 sent to m365', () => {
+  const r = MST.accountFromForm([], { provider: 'exchange', address: 'ali@firma.com.tr', server: 'mail.firma.com.tr', user: 'FIRMA\\ali' }, () => 'm-eeeeee');
+  assert.deepEqual([r.account.provider, r.account.user, r.account.imap, r.account.smtp], ['exchange', 'FIRMA\\ali', { host: 'mail.firma.com.tr', port: 993 }, { host: 'mail.firma.com.tr', port: 587, security: 'starttls' }]);
+  const fp = Array.from({ length: 32 }, () => 'AB').join(':');
+  const pinned = MST.withPin(r.account, 'imap', fp);
+  assert.equal(pinned.imap.pin, fp);
+  assert.equal(MST.normalizeAccount(pinned).imap.pin, fp, 'kept in state.json');
+  assert.equal(MST.withPin(r.account, 'imap', 'not a fingerprint'), r.account);
+  for (const f of [{ server: 'outlook.office365.com', address: 'a@firma.com' }, { server: 'mail.x.com', address: 'a@hotmail.com' }])
+    assert.equal(MST.accountFromForm([], { provider: 'exchange', ...f }).error, 'use-m365');
+});
 
 test('store: accounts from the form (Gmail preset, IMAP hosts, m365 client id), never a secret field', () => {
   const ids = ['m-aaaaaa', 'm-bbbbbb', 'm-cccccc'];
@@ -316,13 +388,23 @@ test('main.js: mail wiring — desks of members with accounts only, guard settin
   assert.match(MAIN, /delete env\.AGENT_OFFICE_AUTO_APPROVE;\s+\/\/ and Agent Office never answers/);
   // the only SMTP / Graph send is in the person's mail:send handler
   const sendHandler = MAIN.slice(MAIN.indexOf("ipcMain.handle('mail:send'"), MAIN.indexOf("ipcMain.handle('mail:retry'"));
-  assert.equal((MAIN.match(/SMTP\.send\(/g) || []).length, 1);
+  // two SMTP calls: the person's Send, and the account test (verify: logs in and quits, no recipient, no message)
+  assert.equal((MAIN.match(/SMTP\.send\(/g) || []).length, 2);
+  const checkCall = MAIN.slice(MAIN.indexOf('async function mailCheck'), MAIN.indexOf("ipcMain.handle('mail:accounts'")).match(/SMTP\.send\(\{[^}]*\}\)/)[0];
+  assert.match(checkCall, /verify: true/);
+  assert.doesNotMatch(checkCall, /recipients|raw/);
   assert.equal((MAIN.match(/GRAPH\.sendDraft\(/g) || []).length, 1);
   assert.match(sendHandler, /SMTP\.send\(/);
   assert.match(sendHandler, /GRAPH\.sendDraft\(/);
   const tool = MAIN.slice(MAIN.indexOf('async function mailTool'), MAIN.indexOf('// IPC for the app: accounts'));
   assert.doesNotMatch(tool, /SMTP|sendDraft|mail:send/);
   assert.match(tool, /if \(replyId && !source\) return \{ error: 'read-first'/);
+  // an account is tested (IMAP and SMTP sign-in, nothing sent) before anything is saved
+  const save = MAIN.slice(MAIN.indexOf("ipcMain.handle('mail:save'"), MAIN.indexOf("ipcMain.handle('mail:remove'"));
+  assert.ok(save.indexOf('await mailCheck(account, password)') > 0 && save.indexOf('await mailCheck(account, password)') < save.indexOf('mailSecrets().save('), 'tested before the secret is stored');
+  assert.ok(save.indexOf('if (!check.ok) return check;') < save.indexOf('mailCommitAccounts('));
+  const check = MAIN.slice(MAIN.indexOf('async function mailCheck'), MAIN.indexOf("ipcMain.handle('mail:accounts'"));
+  assert.match(check, /verify: true/);
   // secrets are encrypted or not saved, and never sent to the renderer
   assert.match(MAIN, /if \(!safeStorage\.isEncryptionAvailable\(\)\) return \{ ok: false, error: 'no-keychain' \}/);
   assert.doesNotMatch(MAIN.slice(MAIN.indexOf('const mailAccountRow'), MAIN.indexOf('const mailAccountRow') + 200), /load\(/);

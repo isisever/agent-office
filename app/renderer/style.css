@@ -1494,3 +1494,10 @@ select option.rt-off { color: #888; }
 .sb-mail-warnings { margin: 4px 0; padding-left: 4px; list-style: none; color: #e0a030; font-size: 12px; }
 .sb-mail-from { font-size: 12px; opacity: .85; }
 .sb-staff-mail .sb-dim { opacity: .55; }
+.sb-mail-advanced { margin: 4px 0; }
+.sb-mail-advanced[hidden] { display: none; }
+.sb-mail-advanced summary { cursor: pointer; font-size: 11px; opacity: .75; }
+.sb-mail-cert { display: flex; flex-direction: column; gap: 3px; }
+.sb-mail-cert[hidden] { display: none; }
+.sb-mail-certrow { font-size: 11px; word-break: break-all; }
+.sb-mail-fp { font-family: ui-monospace, monospace; }

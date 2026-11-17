@@ -5,7 +5,12 @@
 const crypto = require('crypto');
 const G = require('./guard.js');
 
-const PROVIDERS = ['gmail', 'm365', 'imap'];
+const PROVIDERS = ['gmail', 'm365', 'exchange', 'imap'];
+// a certificate the person trusted for a server (its SHA-256 fingerprint as Node prints it)
+const PIN_RE = /^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/;
+// Exchange Online / Outlook.com: IMAP and SMTP take OAuth only there (IMAP says LOGINDISABLED): the m365 provider
+const MICROSOFT_HOST = /(?:^|\.)(?:office365\.com|outlook\.com|office\.com|outlook\.office\.com|hotmail\.com|live\.com)$/i;
+const MICROSOFT_DOMAIN = /@(?:outlook|hotmail|live|msn)\.[a-z.]+$/i;
 const ACCOUNT_ID_RE = /^m-[0-9a-f]{6,16}$/;
 const DRAFT_ID_RE = /^d-[0-9a-f]{8,16}$/;
 const HOST_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
@@ -18,7 +23,11 @@ const GMAIL = { imap: { host: 'imap.gmail.com', port: 993 }, smtp: { host: 'smtp
 
 const str = (v, max) => (typeof v === 'string' ? v.replace(/[\r\n\t]+/g, ' ').trim().slice(0, max) : '');
 const port = (v, d) => { const n = Number(v); return Number.isInteger(n) && n > 0 && n < 65536 ? n : d; };
-const server = (raw, def) => (raw && HOST_RE.test(String(raw.host || '')) ? { host: String(raw.host).toLowerCase(), port: port(raw.port, def.port), ...(def.security ? { security: raw.security === 'starttls' ? 'starttls' : 'tls' } : {}) } : null);
+const server = (raw, def) => (raw && HOST_RE.test(String(raw.host || '')) ? {
+  host: String(raw.host).toLowerCase(), port: port(raw.port, def.port),
+  ...(def.security ? { security: raw.security === 'starttls' || raw.security === 'tls' ? raw.security : def.security } : {}),
+  ...(PIN_RE.test(String(raw.pin || '')) ? { pin: String(raw.pin) } : {}),
+} : null);
 
 /** One stored account → the account, or null. The password / token is never here (main's encrypted store). */
 function normalizeAccount(raw) {
@@ -33,10 +42,13 @@ function normalizeAccount(raw) {
     if (!/^[0-9a-f-]{36}$/i.test(clientId)) return null;
     return { id: raw.id, label, provider: 'm365', address, clientId, tenant };
   }
-  const imap = server(raw.imap, { port: 993 });
-  const smtp = server(raw.smtp, { port: 465, security: 'tls' });
+  // Exchange (on premises): one server for both, IMAP 993 and the client submission port 587 with STARTTLS
+  const exchange = raw.provider === 'exchange';
+  const host = exchange && !raw.imap && HOST_RE.test(String(raw.server || '')) ? String(raw.server) : '';
+  const imap = server(raw.imap || (host ? { host } : null), { port: 993 });
+  const smtp = server(raw.smtp || (host ? { host } : null), exchange ? { port: 587, security: 'starttls' } : { port: 465, security: 'tls' });
   if (!imap || !smtp) return null;
-  return { id: raw.id, label, provider: 'imap', address, user: str(raw.user, 200) || address, imap, smtp };
+  return { id: raw.id, label, provider: exchange ? 'exchange' : 'imap', address, user: str(raw.user, 200) || address, imap, smtp };
 }
 const normalizeAccounts = (list) => {
   const out = [];
@@ -47,7 +59,8 @@ const normalizeAccounts = (list) => {
 const accountFile = (a) => ({ ...a });
 
 /**
- * The add / edit form → { account } | { error: 'provider' | 'address' | 'host' | 'client' | 'too-many' | 'address-used' }.
+ * The add / edit form → { account } | { error: 'provider' | 'address' | 'host' | 'client' | 'too-many' | 'address-used' | 'use-m365' }.
+ * Exchange Online and Outlook.com addresses or hosts go to the Microsoft 365 provider (their IMAP/SMTP take OAuth only).
  * Secrets in the form are not looked at here (main stores them encrypted).
  */
 function accountFromForm(list, f, newId = () => `m-${crypto.randomBytes(5).toString('hex')}`) {
@@ -58,6 +71,7 @@ function accountFromForm(list, f, newId = () => `m-${crypto.randomBytes(5).toStr
   const address = G.addressOf(f.address);
   if (!address) return { error: 'address' };
   if (accounts.some((a) => a.id !== f.id && a.address === address)) return { error: 'address-used' };
+  if ((f.provider === 'exchange' || f.provider === 'imap') && ([f.server, f.imap?.host, f.smtp?.host].some((h) => MICROSOFT_HOST.test(String(h || '').trim())) || MICROSOFT_DOMAIN.test(address))) return { error: 'use-m365' };
   const account = normalizeAccount({ ...f, id: exists ? f.id : newId(), address });
   if (!account) return { error: f.provider === 'm365' ? 'client' : 'host' };
   return { account };
@@ -124,7 +138,14 @@ function setStatus(outbox, id, status, extra = {}) {
 const draftsFor = (outbox, staffId) => outbox.drafts.filter((d) => d.staffId === staffId).slice(0, 30)
   .map((d) => ({ id: d.id, status: d.status, to: d.to, subject: d.subject, createdAt: d.createdAt }));
 
+/** Puts the person's trust in a server certificate on the account (`which`: 'imap' | 'smtp'). */
+function withPin(account, which, fingerprint) {
+  if (!account[which] || !PIN_RE.test(String(fingerprint))) return account;
+  return { ...account, [which]: { ...account[which], pin: fingerprint } };
+}
+
 module.exports = {
+  PIN_RE, withPin,
   PROVIDERS, ACCOUNTS_MAX, PENDING_MAX, GMAIL, normalizeAccount, normalizeAccounts, accountFile, accountFromForm, publicAccounts, accountFor,
   emptyOutbox, normalizeOutbox, pendingOf, addDraft, editDraft, setStatus, draftsFor,
 };

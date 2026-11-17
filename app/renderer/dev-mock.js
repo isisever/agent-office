@@ -346,6 +346,10 @@ window.agentOffice = {
     save: async (f) => {
       if (!/@/.test(String(f?.address || ''))) return { ok: false, error: 'address' };
       if (!f.id && !f.password) return { ok: false, error: 'password' };
+      await new Promise((r) => setTimeout(r, 600));   // the test: IMAP and SMTP sign-in
+      // a company Exchange with its own certificate authority: refused until the person trusts the certificate
+      if (/\.local$/.test(f.imap?.host || '') && !f.trust?.imap) return { ok: false, error: 'cert', where: 'imap', detail: 'SELF_SIGNED_CERT_IN_CHAIN', cert: { subject: f.imap.host, issuer: 'FIRMA-CA', validTo: 'Jun  1 00:00:00 2028 GMT', altNames: `DNS:${f.imap.host}`, fingerprint: Array.from({ length: 32 }, (_, i) => (i * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':') } };
+      if (f.password === 'yanlis') return { ok: false, error: 'auth', where: 'imap', detail: 'NO [AUTHENTICATIONFAILED] Invalid credentials' };
       const a = { id: f.id || `m-${rid().slice(0, 8).replace(/[^0-9a-f]/g, 'a').padEnd(8, '0')}`, label: f.label || f.address, provider: f.provider, address: f.address, hasSecret: true, ...(f.provider === 'imap' ? { user: f.user, imap: f.imap, smtp: f.smtp } : {}) };
       const i = mockMail.accounts.findIndex((x) => x.id === a.id);
       if (i >= 0) mockMail.accounts[i] = a; else mockMail.accounts.push(a);

@@ -1261,7 +1261,8 @@
     "provider": {
       "gmail": "Gmail",
       "m365": "Microsoft 365 / Outlook",
-      "imap": "Exchange / IMAP"
+      "imap": "Diğer IMAP / SMTP",
+      "exchange": "Exchange (şirket sunucusu)"
     },
     "empty": "Bağlı mail hesabı yok.",
     "outbox": "Onay bekleyen mailler ({n})",
@@ -1285,7 +1286,7 @@
     "address": "Mail adresi",
     "user": "Kullanıcı adı",
     "userPh": "Boşsa mail adresi",
-    "userHint": "Exchange'de çoğu zaman mail adresi ya da ALAN\\kullanıcı.",
+    "userHint": "Exchange'de çoğu zaman ALAN\\kullanıcı (ör. FIRMA\\ali) ya da kullanıcı@sirket.com. Boş bırakılırsa mail adresi denenir.",
     "password": "Şifre",
     "passwordKeep": "Değiştirmek için yazın; boş bırakılırsa kayıtlı şifre kalır",
     "passwordHint": "Agent Office'te şifreli saklanır; hiçbir oturuma, personele ya da dosyaya gitmez.",
@@ -1299,7 +1300,8 @@
     "help": {
       "gmail": "Gmail için normal şifre değil \"uygulama şifresi\" gerekir: Google Hesabı → Güvenlik → 2 Adımlı Doğrulama → Uygulama şifreleri.",
       "m365": "Microsoft 365 / Outlook.com girişi tarayıcıda Microsoft'un sayfasında yapılır; şifreniz Agent Office'e gelmez. Kuruluşunuzun bir uygulama kaydı (client id) gerekir.",
-      "imap": "Exchange (şirket içi) ya da IMAP/SMTP veren herhangi bir sunucu. Bağlantılar her zaman şifreli (TLS) yapılır."
+      "imap": "IMAP ve SMTP veren herhangi bir sunucu (Yandex, Zoho, hosting firması…). Bağlantılar her zaman şifreli (TLS).",
+      "exchange": "Şirketinizin kendi Exchange sunucusu (Exchange 2013/2016/2019). Sunucuda IMAP4 hizmetinin açık olması gerekir; SMTP için 587 (STARTTLS) kullanılır. Office 365 / Exchange Online hesapları için \"Microsoft 365 / Outlook\" seçin."
     },
     "signIn": "Microsoft ile giriş yap",
     "codeStep": "Tarayıcıda {url} açıldı. Bu kodu girip hesabınızla onay verin:",
@@ -1333,9 +1335,9 @@
     "retry": "Tekrar dene",
     "error": {
       "no-secret": "Giriş bilgisi kayıtlı değil.",
-      "auth": "Giriş reddedildi (şifre ya da yetki).",
+      "auth": "Giriş reddedildi: kullanıcı adı ya da şifre yanlış, ya da bu hesapta IMAP/SMTP kapalı.",
       "refused": "Sunucu isteği reddetti.",
-      "timeout": "Sunucu yanıt vermedi.",
+      "timeout": "Sunucu zamanında yanıt vermedi: port yanlış olabilir, ya da sunucu hatalı girişleri yavaşlatıyor olabilir.",
       "not-found": "Mail bulunamadı.",
       "network": "Sunucuya bağlanılamadı.",
       "closed": "Bağlantı kapandı.",
@@ -1361,7 +1363,30 @@
       "body": "Metin boş.",
       "too-large": "Metin çok uzun.",
       "unknown-account": "Hesap artık yok.",
-      "interrupted": "Gönderim yarıda kesildi; gidip gitmediğini Gönderilmiş Öğeler'den kontrol edin."
-    }
+      "interrupted": "Gönderim yarıda kesildi; gidip gitmediğini Gönderilmiş Öğeler'den kontrol edin.",
+      "dns": "Sunucu adı bulunamadı (yazım ya da şirket ağı/VPN gerekli olabilir).",
+      "refused-port": "Sunucu bu portta bağlantı kabul etmiyor (port ya da güvenlik duvarı).",
+      "cert": "Sunucunun sertifikasına güvenilmiyor.",
+      "login-disabled": "Bu sunucu şifreyle girişi kapatmış (Exchange Online / Office 365). Hesabı \"Microsoft 365 / Outlook\" ile ekleyin.",
+      "auth-method": "Sunucu desteklediğimiz bir giriş yöntemi sunmuyor (yalnızca NTLM/Kerberos). BT ekibinizden istemci bağlantısında Basic (LOGIN/PLAIN) girişi açmasını isteyin.",
+      "tls": "Sunucu şifreli bağlantı (STARTTLS) sunmuyor; şifre açıkta gönderilmez. Portu ya da güvenlik ayarını kontrol edin.",
+      "mailbox": "Gelen kutusu açılamadı.",
+      "bad": "Sunucu komutu anlamadı.",
+      "use-m365": "Bu bir Office 365 / Outlook.com adresi: şifreyle IMAP/SMTP girişi kapalı. \"Microsoft 365 / Outlook\" seçeneğiyle ekleyin."
+    },
+    "server": "Exchange sunucusu",
+    "serverHint": "Genellikle mail.sirketiniz.com ya da Outlook Web'in (OWA) adresindeki sunucu adı.",
+    "advanced": "Gelişmiş: sunucu ve portlar",
+    "testSave": "Test et ve kaydet",
+    "testing": "Bağlantı deneniyor: IMAP girişi ve SMTP girişi (mail gönderilmez)…",
+    "where": "({where} tarafı)",
+    "serverSaid": "Sunucunun yanıtı: \"{text}\"",
+    "certIntro": "{where} sunucusunun sertifikası bu bilgisayarın tanıdığı bir kuruluşça imzalanmamış (şirket içi Exchange'de sık görülür). Sunucunun gerçekten sizin şirketinizin olduğundan eminseniz bu sertifikaya güvenebilirsiniz.",
+    "certSubject": "Sertifika",
+    "certIssuer": "İmzalayan",
+    "certNames": "Geçerli adlar",
+    "certValid": "Bitiş",
+    "certHint": "Parmak izini BT ekibinizle karşılaştırın. Güvenirseniz yalnızca bu sertifika kabul edilir; sertifika değişirse yeniden sorulur.",
+    "certTrust": "Bu sertifikaya güven ve tekrar dene"
   }
 }
