@@ -666,7 +666,9 @@
     },
     "mail": "Mail access",
     "mailHint": "Accounts it may read and draft from. It never sends: drafts come to you in the MAIL panel. Every action of a desk that reads mail (files, commands, web, other tools) waits for you; projects with \"Skip permissions\" get no mail.",
-    "mailNone": "No mail account connected; add one in the MAIL panel."
+    "mailNone": "No mail account connected; add one in the MAIL panel.",
+    "personal": "Personal",
+    "personalTitle": "The member's own workspace, for work outside any project (made on first use in Documents/Agent Office)"
   },
   "chat": {
     "placeholder": "Message… (Enter sends, Shift+Enter: new line)",
@@ -937,7 +939,8 @@
     "routineNeedsApproval": "Routine {name} needs your approval to send a task to {project}",
     "routineNeedsApprovalRemote": "Routine {name} needs your approval to send a task to {project} on {machine}",
     "mailDraft": "{name} prepared a mail draft: it waits for your approval",
-    "tabStaff": "Session with a staff member"
+    "tabStaff": "Session with a staff member",
+    "personalFolder": "{name} - personal"
   },
   "auth": {
     "unreadable": "could not read the login status",
@@ -1294,7 +1297,8 @@
     },
     "staff": "Who does it",
     "staffNone": "Nobody in particular (HQ or the project's own session)",
-    "staffGone": "(member removed or not allowed)"
+    "staffGone": "(member removed or not allowed)",
+    "targetPersonal": "Outside any project (the member's own workspace)"
   },
   "mail": {
     "title": "MAIL",

@@ -656,7 +656,9 @@
     },
     "mail": "Mail erişimi",
     "mailHint": "Okuyup taslak hazırlayabileceği hesaplar. Mail göndermez: taslaklar MAİL panelinde onayınıza gelir. Mail okuyan masalarda her işlem (dosya, komut, internet, diğer araçlar) onayınızı bekler; \"İzinleri atla\" açık projelerde mail verilmez.",
-    "mailNone": "Bağlı mail hesabı yok; MAİL panelinden ekleyin."
+    "mailNone": "Bağlı mail hesabı yok; MAİL panelinden ekleyin.",
+    "personal": "Kişisel",
+    "personalTitle": "Personelin proje dışı işler için kendi çalışma alanı (ilk kullanımda Belgeler/Agent Office altında açılır)"
   },
   "chat": {
     "placeholder": "Mesaj… (Enter gönderir, Shift+Enter: yeni satır)",
@@ -918,7 +920,8 @@
     "routineNeedsApproval": "{name} rutini {project} projesine görev göndermek için onayınızı bekliyor",
     "routineNeedsApprovalRemote": "{name} rutini {machine} üzerindeki {project} projesine görev göndermek için onayınızı bekliyor",
     "mailDraft": "{name} bir mail taslağı hazırladı: onayınızı bekliyor",
-    "tabStaff": "Personel ile oturum"
+    "tabStaff": "Personel ile oturum",
+    "personalFolder": "{name} - kişisel"
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",
@@ -1266,7 +1269,8 @@
     },
     "staff": "Kim yapsın",
     "staffNone": "Belirli biri değil (Müdür ya da projenin kendi oturumu)",
-    "staffGone": "(personel silinmiş ya da yetkisi yok)"
+    "staffGone": "(personel silinmiş ya da yetkisi yok)",
+    "targetPersonal": "Proje dışı (personelin kişisel alanı)"
   },
   "mail": {
     "title": "MAİL",

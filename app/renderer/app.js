@@ -474,7 +474,7 @@ function withStaff(d) {
 }
 /** v3.81 opens a member's desk in a project and shows it. */
 async function openDesk(projectId, staffId) {
-  const r = await api.staff?.desk(projectId, staffId).catch(() => null);
+  const r = await (projectId ? api.staff?.desk(projectId, staffId) : api.staff?.personal?.(staffId))?.catch(() => null);
   if (!r?.ok) { if (r?.error) alert(t(`staff.deskError.${['staff-not-allowed', 'engine', 'git'].includes(r.error) ? r.error : 'failed'}`)); return; }
   applyProjects(await api.projects.list());
   const [pid, n] = String(r.id).split(':');
@@ -752,6 +752,7 @@ sidebar = mountSidebar($('sidebar'), {
     save: (form) => api.staff.save(form).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
     remove: (id) => api.staff.remove(id).then((r) => { loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
     openDesk: (projectId, staffId) => openDesk(projectId, staffId),
+    openPersonal: (staffId) => openDesk('', staffId),   // v3.81 amendment: the member's personal workspace
     setParallel: (projectId, on) => api.staff.setParallel(projectId, on).catch((e) => console.error(e)),
     // v3.82 the role library and the wizard
     saveRole: (form) => api.roles.save(form).then(async (r) => { await loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),

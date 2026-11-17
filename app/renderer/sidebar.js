@@ -941,7 +941,7 @@ export function mountSidebar(el, on) {
     if (panelEl) panelEl.hidden = !team.teamMode;
     teamBox.checked = team.teamMode;
     if (!team.teamMode) return;
-    teamList.replaceChildren(...teamRows({ h, t, lang: locale(), staff: team.staff, presets: team.presets, projects, accounts, labelOf, onEdit: (m) => editMember(m), desks, onDesk: (pid, sid) => on.team?.openDesk(pid, sid) }));
+    teamList.replaceChildren(...teamRows({ h, t, lang: locale(), staff: team.staff, presets: team.presets, projects, accounts, labelOf, onEdit: (m) => editMember(m), desks, onDesk: (pid, sid) => on.team?.openDesk(pid, sid), onPersonal: (sid) => on.team?.openPersonal?.(sid) }));
   }
   const listPacks = () => Promise.resolve(on.skillPacks?.list(null)).then((r) => r?.packs || []);
   function editMember(m, initialPreset = '') {

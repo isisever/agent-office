@@ -121,18 +121,20 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const counter = el('span', { class: 'rt-note' });
     // v3.49 remote targets: a paired device's project, with its machine; greyed while the device is offline (still allowed:
     // an approved run waits in the outbox). A remote run always asks first, so the no-ask checkbox is off for it.
-    const tvOf = (x) => (x.kind === 'hq' ? 'hq' : x.kind === 'remote' ? `r:${x.pub}:${x.projectId}` : `p:${x.projectId}`);
+    const tvOf = (x) => (x.kind === 'hq' ? 'hq' : x.kind === 'staff' ? 'personal' : x.kind === 'remote' ? `r:${x.pub}:${x.projectId}` : `p:${x.projectId}`);
     const remotes = rv.remotes || [];
     const gone = o.target.kind === 'remote' && !remotes.some((x) => x.pub === o.target.pub && x.id === o.target.projectId);
+    // v3.81 amendment: "outside any project" (a member's personal workspace; members' workspaces are not listed as projects)
     const target = el('select', {}, el('option', { value: 'hq' }, t('routines.targetHq')),
-      ...(rv.projects || []).map((p) => el('option', { value: `p:${p.id}`, disabled: p.engine !== 'claude' }, p.engine === 'claude' ? p.name : `${p.name} (${t('routines.engineOnly')})`)),
+      ...((rv.staff || []).length ? [el('option', { value: 'personal' }, t('routines.targetPersonal'))] : []),
+      ...(rv.projects || []).filter((p) => !p.staffOwner).map((p) => el('option', { value: `p:${p.id}`, disabled: p.engine !== 'claude' }, p.engine === 'claude' ? p.name : `${p.name} (${t('routines.engineOnly')})`)),
       ...remotes.map((x) => el('option', { value: `r:${x.pub}:${x.id}`, class: x.online ? 'rt-remote' : 'rt-remote rt-off' }, `${x.name} · ${x.machine}${x.online ? '' : ` (${t('routines.offline')})`}`)),
       ...(gone ? [el('option', { value: tvOf(o.target), disabled: true }, t('routines.remoteGone'))] : []));
     target.value = tvOf(o.target);
     // v3.81 amendment: who does it: nobody in particular (HQ, or the project's own session), or a staff member (their
     // desk). Always on show when there is staff; a member narrows the target to the projects they may work on.
     const staff = rv.staff || [];
-    const keep0 = o.target.kind === 'project' ? o.target.staffId || '' : '';
+    const keep0 = o.target.kind === 'project' || o.target.kind === 'staff' ? o.target.staffId || '' : '';
     const staffSel = el('select', {}, el('option', { value: '' }, t('routines.staffNone')), ...staff.map((m) => el('option', { value: m.id }, m.name)),
       ...(keep0 && !staff.some((m) => m.id === keep0) ? [el('option', { value: keep0, disabled: true }, t('routines.staffGone'))] : []));
     staffSel.value = keep0;
@@ -144,12 +146,11 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       for (const opt of target.options) {
         const pid = opt.value.startsWith('p:') ? opt.value.slice(2) : '';
         const engineOk = !pid || (rv.projects || []).find((p) => p.id === pid)?.engine === 'claude';
-        opt.disabled = !engineOk || (m ? !m.projects.includes(pid) : false) || (opt.value === tvOf(o.target) && gone);
+        opt.disabled = opt.value === 'personal' ? !m : !engineOk || (m ? !m.projects.includes(pid) : false) || (opt.value === tvOf(o.target) && gone);
       }
-      if (m && !(target.value.startsWith('p:') && m.projects.includes(target.value.slice(2)))) {
-        const first = [...target.options].find((x) => !x.disabled && x.value.startsWith('p:'));
-        if (first) target.value = first.value;
-      }
+      // a member: their personal workspace unless the target is a project they may work on; nobody: not "personal"
+      if (m && !(target.value === 'personal' || (target.value.startsWith('p:') && m.projects.includes(target.value.slice(2))))) target.value = 'personal';
+      if (!m && target.value === 'personal') target.value = 'hq';
     };
     staffSel.addEventListener('change', () => syncTarget());
     const kind = el('select', {}, ...['daily', 'weekdays', 'weekly', 'hours'].map((k) => el('option', { value: k }, t(`routines.${k}`))));
@@ -182,7 +183,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const save = async () => {
       const tv = target.value;
       const rest = tv.slice(2); const cut = rest.lastIndexOf(':');
-      const tg = tv === 'hq' ? { kind: 'hq' } : tv.startsWith('r:') ? { kind: 'remote', pub: rest.slice(0, cut), projectId: rest.slice(cut + 1) } : { kind: 'project', projectId: rest, ...(staffSel.value ? { staffId: staffSel.value } : {}) };
+      const tg = tv === 'hq' ? { kind: 'hq' } : tv === 'personal' ? { kind: 'staff', staffId: staffSel.value } : tv.startsWith('r:') ? { kind: 'remote', pub: rest.slice(0, cut), projectId: rest.slice(cut + 1) } : { kind: 'project', projectId: rest, ...(staffSel.value ? { staffId: staffSel.value } : {}) };
       const res = await api.routines.save({ id: r?.id, name: name.value, prompt: prompt.value, target: tg,
         schedule: schedule(), missed: missedSkip.checked ? 'skip' : 'once', maxPerDay: Number(maxPerDay.value), noAsk: noAsk.checked });
       if (!res?.ok) { note.textContent = t(res?.reason === 'too-many' ? 'routines.tooMany' : 'routines.invalid'); return; }

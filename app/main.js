@@ -1766,7 +1766,7 @@ function officeMachines() {
   const v = l ? l.view() : null;
   const here = { machine: selfName(), thisMachine: true, online: true, projects: state.projects.map((p) => ({ id: p.id, name: officeName(p.name), engine: P.engineOf(p), state: terms.has(p.id) ? 'running' : asleep.has(p.id) ? 'asleep' : 'stopped' })) };
   // v3.81 team mode: the staff (role, department, projects each may work on, desks and whether they are at work)
-  if (teamOn()) here.staff = ST.machineStaff(state.staff, presetRoles(), state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: officeName(p.name) })), deskStateOf);
+  if (teamOn()) here.staff = ST.machineStaff(state.staff, presetRoles(), state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: officeName(p.name), ...(p.staffOwner ? { staffOwner: p.staffOwner } : {}) })), deskStateOf);
   const there = (v?.devices || []).map((dv) => ({ machine: officeName(dv.name), online: dv.online, reports: dv.caps.includes('report'), manage: dv.caps.includes('manage') && Boolean(dv.catalog),
     // v3.46 an offline machine shows its last-known projects (peer cache: names and ids only)
     lastSeen: peerCache()[dv.id]?.lastSeen || 0,
@@ -2095,6 +2095,14 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const board = capBoard();   // an approved held task does not count against itself
   const cap = HQ.capReason(board, request);
   if (cap) return { status: 'rejected', reason: cap };
+  // v3.81 amendment: a task for a staff member outside any project goes to the member's personal workspace
+  if (args.staff && !String(args.project || '').trim() && !String(args.machine || '').trim() && !args.after && !(Array.isArray(args.then) && args.then.length)) {
+    const m = teamOn() ? ST.findMember(state.staff, args.staff) : null;
+    if (!m) return { status: 'rejected', reason: teamOn() ? 'unknown-staff' : 'no-team' };
+    const own = ensurePersonal(m);
+    if (!own) return { status: 'rejected', reason: 'desk-failed' };
+    args = { ...args, project: own.id };
+  }
   const key = HQ.parseRemoteKey(args.project);
   const machine = String(args.machine || '').trim();
   const remote = Boolean(key) || !isHere(machine);
@@ -2217,7 +2225,7 @@ async function hqDispatchStages(args, request, rrun) {
       if (s.staff) {
         const m = teamOn() ? ST.findMember(state.staff, s.staff) : null;
         if (!m) return no(teamOn() ? 'unknown-staff' : 'no-team', { stage: s.n });
-        if (!ST.mayWork(m, p.id)) return no('staff-not-allowed', { stage: s.n });
+        if (!ST.mayWork(m, p)) return no('staff-not-allowed', { stage: s.n });
         s.staff = m.name;
       }
       Object.assign(s, { pub: 'self', machineName: selfName(), projectName: p.name, projectId: p.id });
@@ -2395,6 +2403,7 @@ const openRunOf = (rid) => rt().runs.some((r) => r.routine === rid && ROUT.OPEN_
 function routineProblem(r) {
   if (r.target.kind === 'hq') return hqSettings().enabled ? '' : 'hq-off';
   if (r.target.kind === 'remote') return ROUT.remoteProblem(r.target, { paired: (linkHost?.link()?.devices || []).map((d) => d.pub), cache: peerCache() });
+  if (r.target.kind === 'staff') return !teamOn() ? 'no-team' : memberById(r.target.staffId) ? '' : 'staff-gone';   // v3.81 amendment
   const p = P.findProject(state, r.target.projectId);
   if (!p) return 'target-gone';
   if (P.engineOf(p) !== 'claude') return 'engine';
@@ -2402,12 +2411,13 @@ function routineProblem(r) {
   if (r.target.staffId) {
     const m = teamOn() ? memberById(r.target.staffId) : null;
     if (!m) return teamOn() ? 'staff-gone' : 'no-team';
-    if (!ST.mayWork(m, p.id)) return 'staff-not-allowed';
+    if (!ST.mayWork(m, p)) return 'staff-not-allowed';
   }
   return '';
 }
 function addRun(a, routine, now) {
-  const run = { id: `ru${crypto.randomBytes(4).toString('hex')}`, routine: routine.id, name: routine.name, kind: routine.target.kind, slotAt: a.slotAt, at: now,
+  // a member's task outside a project runs like a project run (its personal workspace is a project)
+  const run = { id: `ru${crypto.randomBytes(4).toString('hex')}`, routine: routine.id, name: routine.name, kind: routine.target.kind === 'staff' ? 'project' : routine.target.kind, slotAt: a.slotAt, at: now,
     trigger: a.trigger, status: a.kind === 'skip' ? 'skipped' : 'waiting', ...(a.reason ? { reason: a.reason } : {}), ...(a.missedCount ? { missedCount: a.missedCount } : {}),
     ...(a.notBefore ? { notBefore: a.notBefore } : {}), tasks: [], read: a.kind === 'skip' };
   rt().runs.unshift(run);
@@ -2524,12 +2534,12 @@ async function deliverRun(run, now) {
     }
     // v3.49 a remote target goes through HQ's remote path by its `<pub>:<id>` key: always a held card first (remote asks)
     const tg = routine.target;
-    const project = tg.kind === 'remote' ? HQ.remoteKey(tg.pub, tg.projectId) : P.findProject(state, tg.projectId).name;
+    const project = tg.kind === 'remote' ? HQ.remoteKey(tg.pub, tg.projectId) : tg.kind === 'staff' ? '' : P.findProject(state, tg.projectId).name;
     run.request = hqMinter.mint({ origin: 'routine', run: run.id });
     Object.assign(run, { status: 'running', typedAt: now });
     saveRt();
     const text = ROUT.wrapText({ routine, request: run.request, slotAt: run.slotAt, t: T });
-    const member = tg.kind === 'project' && tg.staffId ? memberById(tg.staffId) : null;   // checked by routineProblem
+    const member = (tg.kind === 'project' || tg.kind === 'staff') && tg.staffId ? memberById(tg.staffId) : null;   // checked by routineProblem
     const r = await hqDispatch({ project, title: routine.name, task: text, request: run.request, ...(member ? { staff: member.name } : {}) });
     hqMinter.endLive(run.request);   // the dispatch is done: HQ cannot borrow this id (office_board shows it) for no-ask
     if (r.status === 'rejected') {
@@ -2613,9 +2623,9 @@ function routinesView() {
     next: Object.fromEntries(Object.entries(f.sched).map(([k, x]) => [k, x.nextAt])),
     problems: Object.fromEntries((state.routines || []).map((r) => [r.id, routineProblem(r)])),
     held: board.tasks.filter((t) => t.status === 'awaiting-consent').map((t) => t.id),
-    projects: state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p) })),
+    projects: state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p), ...(p.staffOwner ? { staffOwner: p.staffOwner } : {}) })),
     // v3.81 amendment: the staff a project routine may name (team mode), with the projects each may work on
-    staff: teamOn() ? state.staff.map((m) => ({ id: m.id, name: m.name, projects: state.projects.filter((p) => ST.mayWork(m, p.id)).map((p) => p.id) })) : [],
+    staff: teamOn() ? state.staff.map((m) => ({ id: m.id, name: m.name, projects: state.projects.filter((p) => ST.mayWork(m, p)).map((p) => p.id) })) : [],
     // v3.49 remote targets: paired devices' projects (last-known list), with the machine and whether it is online
     remotes: HQ.remoteRows(peerCache(), liveRemotes()).map((r) => ({ pub: HQ.parseRemoteKey(r.key)?.pub || '', id: r.id, name: r.name, machine: r.machine, online: r.online })).filter((r) => r.pub),
   };
@@ -3784,7 +3794,7 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
   const p = P.findProject(state, projectId);
   const m = memberById(staffId);
   if (!p || !m || p.hq) return { ok: false, error: 'unknown' };
-  if (!ST.mayWork(m, p.id)) return { ok: false, error: 'staff-not-allowed' };
+  if (!ST.mayWork(m, p)) return { ok: false, error: 'staff-not-allowed' };
   if (P.engineOf(p) !== 'claude') return { ok: false, error: 'engine' };
   const have = P.deskOf(p, m.id);
   if (have) {
@@ -3813,6 +3823,26 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
   if (start) startPty(id);
   return { ok: true, id };
 }
+/** v3.81 amendment: a member's personal workspace (tasks outside any project): a project of its own, made on first use
+ *  in Documents/Agent Office/<name> - personal, on the member's account; only that member works there (`staffOwner`). */
+function ensurePersonal(m) {
+  const have = ST.personalOf(state.projects, m.id);
+  if (have) return have;
+  // eslint-disable-next-line no-control-regex
+  const safe = String(m.name).replace(/[/\\:*?"<>|\u0000-\u001f]/g, '-').replace(/^\.+/, '').trim().slice(0, 60) || m.id;
+  const dir = path.join(app.getPath('documents'), 'Agent Office', T('main.personalFolder', { name: safe }));
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error('personal workspace:', e.message); return null; }
+  const active = state.activeId;
+  const r = P.addProject(state, dir, m.accountId ? { accountId: m.accountId } : {});
+  commit({ ...r.state, activeId: active ?? r.state.activeId, projects: r.state.projects.map((p) => (p.id === r.project.id ? { ...p, staffOwner: m.id } : p)) });
+  return ST.personalOf(state.projects, m.id);
+}
+ipcMain.handle('staff:personal', async (_e, staffId) => {
+  const m = teamOn() ? memberById(String(staffId || '')) : null;
+  if (!m) return { ok: false, error: 'unknown' };
+  const own = ensurePersonal(m);
+  return own ? openDesk(own.id, m.id) : { ok: false, error: 'failed' };
+});
 /** A desk's state for HQ: 'busy' | 'idle' | 'asleep' | 'off', or 'none' (no desk there yet). */
 function deskStateOf(projectId, staffId) {
   const p = P.findProject(state, projectId);
@@ -3828,7 +3858,7 @@ async function hqStaffDesk(args, remote, target) {
   const m = ST.findMember(state.staff, args.staff);
   if (!m) return { reason: 'unknown-staff' };
   if (!target) return { reason: 'unknown-project' };
-  if (!ST.mayWork(m, target.id)) return { reason: 'staff-not-allowed' };
+  if (!ST.mayWork(m, target)) return { reason: 'staff-not-allowed' };
   const d = await openDesk(target.id, m.id, { start: false });
   return d.ok ? { desk: d.id, staffName: m.name } : { reason: d.error === 'engine' ? 'engine' : d.error === 'git' ? 'desk-failed' : 'unknown-project' };
 }
@@ -4193,7 +4223,7 @@ ipcMain.handle('tabs:add', async (_e, projectId, mode) => {
   if (!p || !win) return null;
   let m = mode === 'same' || mode === 'worktree' ? mode : null;
   // the staff who may work here (team mode, Claude Code projects): their desks are in the menu too
-  const staff = teamOn() && P.engineOf(p) === 'claude' ? (state.staff || []).filter((x) => ST.mayWork(x, p.id))
+  const staff = teamOn() && P.engineOf(p) === 'claude' ? (state.staff || []).filter((x) => ST.mayWork(x, p))
     .map((x) => ({ id: x.id, name: x.name, role: ST.memberRole(x, presetRoles()).name || '' })) : [];
   if (!m) m = await pickTabMode({ git: Boolean(await gitTop(p.dir)), staff }); // always asks since v3.42: the menu has the terminal entry
   if (m === 'worktree') return addWorktreeTab(p);

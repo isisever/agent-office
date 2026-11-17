@@ -115,7 +115,9 @@ function normalizeRoutine(raw, { now = Date.now(), newId } = {}) {
   // v3.49 a remote target: a project on a paired device (`<pub>:<id>` like the v3.46 remote rows)
   // v3.81 amendment: a project target may name a staff member (`staffId`): the task goes to the member's desk there
   const sid = /^[A-Za-z0-9_.-]{1,64}$/.test(String(t.staffId)) ? t.staffId : '';
-  const target = t.kind === 'hq' ? { kind: 'hq' } : t.kind === 'project' && pid ? { kind: 'project', projectId: pid, ...(sid ? { staffId: sid } : {}) }
+  // v3.81 amendment: `staff`: a member's task outside any project (their personal workspace)
+  const target = t.kind === 'hq' ? { kind: 'hq' } : t.kind === 'staff' && sid ? { kind: 'staff', staffId: sid }
+    : t.kind === 'project' && pid ? { kind: 'project', projectId: pid, ...(sid ? { staffId: sid } : {}) }
     : t.kind === 'remote' && pid && /^[0-9a-f]{16,128}$/.test(String(t.pub)) ? { kind: 'remote', pub: t.pub, projectId: pid } : null;
   if (!id || !name || !prompt || !schedule || !target) return null;
   const dflt = schedule.kind === 'hours' ? Math.min(24, Math.ceil(24 / /** @type {any} */ (schedule).every)) : 4;

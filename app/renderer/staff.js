@@ -8,7 +8,7 @@ const hueOf = (s) => { let x = 7; for (const c of String(s)) x = (Math.imul(x, 3
 /**
  * The TEAM list: department headers (none when no member has one), a card per member.
  * @param {{ h: Function, t: Function, lang: string, staff: any[], presets: any[], projects: any[], accounts: any[], labelOf: Function, onEdit: (m: any) => void,
- *   desks?: any[], onDesk?: (projectId: string, staffId: string) => void }} c  desks: main's desk states (v3.81)
+ *   desks?: any[], onDesk?: (projectId: string, staffId: string) => void, onPersonal?: (staffId: string) => void }} c  desks: main's desk states (v3.81)
  * @returns {HTMLElement[]}
  */
 export function teamRows(c) {
@@ -29,7 +29,9 @@ function card(c, m) {
     : m.projects.map((id) => c.projects.find((p) => p.id === id)?.name).filter(Boolean).join(', ') || t('staff.noProjects');
   const acc = m.accountId ? c.accounts.find((a) => a.id === m.accountId) : null;
   // v3.81 desks: one chip per project the member may work on (● at work, ○ open, ◌ asleep, + no desk yet); a click opens it
-  const allowed = m.projects === 'all' ? c.projects.filter((p) => !p.hq) : c.projects.filter((p) => m.projects.includes(p.id));
+  // v3.81 amendment: members' personal workspaces are no project chips (each member's own is the "personal" chip)
+  const allowed = (m.projects === 'all' ? c.projects.filter((p) => !p.hq) : c.projects.filter((p) => m.projects.includes(p.id))).filter((p) => !p.staffOwner);
+  const own = c.projects.find((p) => p.staffOwner === m.id);
   const deskOf = (pid) => (c.desks || []).find((d) => d.staffId === m.id && d.projectId === pid);
   const mark = { busy: '●', idle: '○', asleep: '◌', off: '○' };
   const chips = allowed.slice(0, 12).map((p) => {
@@ -39,6 +41,13 @@ function card(c, m) {
       onclick: (e) => { e.stopPropagation(); c.onDesk?.(p.id, m.id); },
     }, `${d ? mark[d.state] : '+'} ${p.name}`);
   });
+  if (c.onPersonal) {
+    const d = own ? deskOf(own.id) : null;
+    chips.unshift(h('button', {
+      class: `sb-desk sb-desk-own ${d ? d.state : 'none'}`, title: t('staff.personalTitle'),
+      onclick: (e) => { e.stopPropagation(); c.onPersonal?.(m.id); },
+    }, `${d ? mark[d.state] : '+'} ${t('staff.personal')}`));
+  }
   const atWork = (c.desks || []).filter((d) => d.staffId === m.id && d.state === 'busy')
     .map((d) => c.projects.find((p) => p.id === d.projectId)?.name).filter(Boolean);
   return h('li', {

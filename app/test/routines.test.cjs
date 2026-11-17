@@ -669,6 +669,17 @@ test('v3.81 amendment: a project routine may name a staff member; main checks th
   assert.deepEqual(rt({ target: { kind: 'project', projectId: 'p1', staffId: '../x' } }).target, { kind: 'project', projectId: 'p1' });
   assert.deepEqual(rt({ target: { kind: 'hq', staffId: 'st_ab12' } }).target, { kind: 'hq' });
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  assert.match(MAIN, /if \(!m\) return teamOn\(\) \? 'staff-gone' : 'no-team';\s+if \(!ST\.mayWork\(m, p\.id\)\) return 'staff-not-allowed';/);
+  assert.match(MAIN, /if \(!m\) return teamOn\(\) \? 'staff-gone' : 'no-team';\s+if \(!ST\.mayWork\(m, p\)\) return 'staff-not-allowed';/);
   assert.match(MAIN, /hqDispatch\(\{ project, title: routine\.name, task: text, request: run\.request, \.\.\.\(member \? \{ staff: member\.name \} : \{\}\) \}\)/);
+});
+
+test('v3.81 amendment: a staff routine outside any project; HQ dispatch without project goes to the personal workspace', () => {
+  assert.deepEqual(rt({ target: { kind: 'staff', staffId: 's-a1a1a1' } }).target, { kind: 'staff', staffId: 's-a1a1a1' });
+  assert.equal(rt({ target: { kind: 'staff' } }), null, 'a staff routine names its member');
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /const own = ensurePersonal\(m\);\s+if \(!own\) return \{ status: 'rejected', reason: 'desk-failed' \};\s+args = \{ \.\.\.args, project: own\.id \};/);
+  assert.match(MAIN, /kind: routine\.target\.kind === 'staff' \? 'project' : routine\.target\.kind/);
+  const OM = require('../src/office-mcp.js');
+  const d = OM.TOOLS ? OM.TOOLS.find((x) => x.name === 'office_dispatch') : null;
+  if (d) assert.deepEqual(d.inputSchema.required, ['task']);
 });

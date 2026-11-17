@@ -228,3 +228,23 @@ test('main.js: HQ dispatch to staff — checks, the desk, the lock, the member�
   assert.match(src, /if \(project\.hq && teamOn\(\)\) env\.AGENT_OFFICE_TEAM = '1';/);
   assert.match(fn('openDesk'), /ST\.deskWorktree\(app\.getPath\('userData'\)/);
 });
+
+test('v3.81 amendment: a personal workspace is its owner\'s alone; normalizeState keeps staffOwner', () => {
+  const ST2 = require('../src/staff.js');
+  const P2 = require('../src/projects.js');
+  const own = { id: 'p9', name: 'Ahmet - kişisel', staffOwner: 's-a1a1a1' };
+  const ahmet = { id: 's-a1a1a1', name: 'Ahmet', projects: ['p1'] };
+  const all = { id: 's-b2b2b2', name: 'Mert', projects: 'all' };
+  assert.equal(ST2.mayWork(ahmet, own), true, 'the owner, whatever the list says');
+  assert.equal(ST2.mayWork(all, own), false, '"all" never reaches another member\'s workspace');
+  assert.equal(ST2.mayWork(ahmet, 'p1'), true);
+  assert.equal(ST2.mayWork(ahmet, { id: 'p1' }), true);
+  assert.equal(ST2.personalOf([{ id: 'p1' }, own], 's-a1a1a1'), own);
+  assert.equal(ST2.personalOf([{ id: 'p1' }], 's-a1a1a1'), null);
+  const s = P2.normalizeState({ projects: [{ id: 'p9', dir: '/d/Ahmet - kişisel', staffOwner: 's-a1a1a1' }, { id: 'p8', dir: '/x', staffOwner: '../bad' }] });
+  assert.equal(s.projects[0].staffOwner, 's-a1a1a1');
+  assert.equal(s.projects[1].staffOwner, undefined);
+  const ms = ST2.machineStaff([ahmet, all], [], [{ id: 'p1', name: 'site' }, own], () => 'none');
+  assert.deepEqual([ms[0].projects, ms[0].personal], [['site'], 'Ahmet - kişisel']);
+  assert.equal(ms[1].personal, undefined);
+});

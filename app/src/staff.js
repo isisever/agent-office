@@ -227,7 +227,19 @@ const dropAccount = (staff, accountId) => (Array.isArray(staff) ? staff : [])
   .map((m) => (m.accountId === accountId ? (({ accountId: _a, ...rest }) => rest)(m) : m));
 
 /** May the member work on this project? */
-const mayWork = (member, projectId) => member?.projects === 'all' || (Array.isArray(member?.projects) && member.projects.includes(projectId));
+/**
+ * May this member work on this project? Its list ('all' or project ids). v3.81 amendment: given the project itself, a
+ * personal workspace (`staffOwner`) is its owner's alone, whatever the lists say.
+ * @param {any} member @param {string | { id: string, staffOwner?: string }} project a project or its id
+ */
+function mayWork(member, project) {
+  const p = project && typeof project === 'object' ? project : null;
+  if (p?.staffOwner) return Boolean(member) && p.staffOwner === member.id;
+  const id = p ? p.id : project;
+  return member?.projects === 'all' || (Array.isArray(member?.projects) && member.projects.includes(id));
+}
+/** v3.81 amendment: a member's personal workspace project, or null. */
+const personalOf = (projects, memberId) => (Array.isArray(projects) ? projects : []).find((p) => p?.staffOwner === memberId) || null;
 
 // ---------- desks (step 3) and HQ (step 4) ----------
 // A desk is a staff member's tab in a project (tab.staffId): its own session, with the member's account and role.
@@ -281,11 +293,13 @@ function deskRoleFile(member, defs, project, staff) {
 function machineStaff(staff, defs, projects, deskState) {
   return (Array.isArray(staff) ? staff : []).map((m) => {
     const r = memberRole(m, defs);
-    const allowed = m.projects === 'all' ? projects : projects.filter((p) => m.projects.includes(p.id));
+    const allowed = projects.filter((p) => mayWork(m, p));
+    const own = personalOf(projects, m.id);
     const desks = allowed.map((p) => ({ project: p.name, state: deskState(p.id, m.id) })).filter((d) => d.state !== 'none');
     return {
       name: m.name, role: r.name, ...(r.description ? { description: r.description } : {}), ...(m.department ? { department: m.department } : {}),
-      writesCode: r.writesCode, projects: m.projects === 'all' ? 'all' : allowed.map((p) => p.name), desks,
+      writesCode: r.writesCode, projects: m.projects === 'all' ? 'all' : allowed.filter((p) => p !== own).map((p) => p.name),
+      ...(own ? { personal: own.name } : {}), desks,
       busy: desks.some((d) => d.state === 'busy'),
     };
   });
@@ -300,5 +314,5 @@ function findMember(staff, key) {
 
 module.exports = {
   STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
-  dropProject, dropAccount, mayWork, memberRole, deskWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
+  dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
 };

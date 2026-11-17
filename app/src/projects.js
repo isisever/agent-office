@@ -49,6 +49,8 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withEngine(p.engine),
       ...withProjectFiles(p.projectFiles),
       ...(p.parallel === true ? { parallel: true } : {}),   // v3.81 several desks may change the folder at once (own copies)
+      // v3.81 amendment: a staff member's personal workspace (tasks outside any project): only that member works here
+      ...(typeof p.staffOwner === 'string' && /^s-[0-9a-f]{6,16}$/.test(p.staffOwner) ? { staffOwner: p.staffOwner } : {}),
       ...withAutoApprove(p.autoApprove),
       ...withSkipPermissions(p.skipPermissions),
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
