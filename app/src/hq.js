@@ -190,17 +190,20 @@ function initiativeFor({ initiative, remote, request, minter, board, targets, co
   return initiativeSent(board, request) + (counted ? 0 : n) <= MAX_INITIATIVE;
 }
 /**
- * v3.91 a target the person consented to for this request: a local row of the SAME request that was not sent by
- * initiative (a dialog, the live typed id, or a consented stage chain: each of its stages' rows) went to the same
+ * v3.91 a target the person consented to for this request: a local row of the SAME request that carries
+ * `consented: true` (stamped when the consent is known: an accepted dialog, consentFor's 'none', a consented stage
+ * chain: each of its stages' rows, a held card the person allowed) and was not sent by initiative went to the same
  * project id and the same staff member id (or both without a member). A member's personal workspace is a project
  * like any other here, so it counts only after a consented row went to that workspace for that member; one that is
  * not made yet has no project id and never counts. A row with a member but no recorded id (older rows) matches nothing.
+ * A row without the flag counts for nothing whatever its status: a held card that was declined, ignored or expired,
+ * and every row written before the flag existed.
  */
 function consentedTarget(board, request, target) {
   const pid = typeof target?.projectId === 'string' ? target.projectId : '';
   const sid = target?.staffId === undefined ? '' : target.staffId;
   if (!pid || typeof sid !== 'string') return false;
-  return (board?.tasks || []).some((t) => t.request === request && t.byInitiative !== true && t.machine === 'self' && t.projectId === pid
+  return (board?.tasks || []).some((t) => t.request === request && t.consented === true && t.byInitiative !== true && t.machine === 'self' && t.projectId === pid
     && (t.staff ? t.staffId || null : '') === sid);
 }
 /** v3.91 the tasks HQ sent on its own for a request (kept on the request record: removing a row does not lower it). */
@@ -240,9 +243,14 @@ function capReason(board, request) {
 /** A paced (held) remote task got its real id when it was sent: the row, its request and its brief path follow. */
 function renameTask(board, from, to, patch = {}) {
   if (!board.tasks.some((t) => t.id === from)) return board;
+  // v3.91 an approved held card: the row written when it was sent (id `to`) is dropped for the card's row, which keeps
+  // what that row knew: the consent, the member (name + id) and the project it went to when the card named none
+  const sent = board.tasks.find((t) => t.id === to && t.id !== from);
+  const keep = (t) => (sent ? { ...(sent.consented === true && t.byInitiative !== true ? { consented: true } : {}),
+    ...(sent.staff ? { staff: sent.staff, ...(sent.staffId ? { staffId: sent.staffId } : {}) } : {}), ...(sent.projectId && !t.projectId ? { projectId: sent.projectId } : {}) } : {});
   return {
     // v3.79 a stage that waited on the old id now waits on the new one
-    tasks: board.tasks.filter((t) => t.id !== to).map((t) => (t.id === from ? { ...t, ...patch, id: to, brief: `tasks/${to}/brief.md` } : t.after === from ? { ...t, after: to } : t)),
+    tasks: board.tasks.filter((t) => t.id !== to).map((t) => (t.id === from ? { ...t, ...keep(t), ...patch, id: to, brief: `tasks/${to}/brief.md` } : t.after === from ? { ...t, after: to } : t)),
     requests: board.requests.map((r) => ({ ...r, tasks: r.tasks.map((x) => (x === from ? to : x)) })),
   };
 }
@@ -285,6 +293,7 @@ function addTask(board, t, now = Date.now()) {
     at: now, brief: `tasks/${t.id}/brief.md`, commits: [], prs: [], read: false,
     ...(typeof t.after === 'string' && t.after ? { after: t.after.slice(0, 64) } : {}),   // v3.79 the stage it waits for
     ...(t.byInitiative === true ? { byInitiative: true } : {}),   // v3.91 HQ sent it on its own (no consent asked)
+    ...(t.consented === true && t.byInitiative !== true ? { consented: true } : {}),   // v3.91 the person's consent for this row is known
   };
   const tasks = [task, ...board.tasks.filter((x) => x.id !== t.id)];
   let requests = board.requests;

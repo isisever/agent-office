@@ -1178,6 +1178,9 @@ const hasCmdHistory = (dir) => AW.hasCmdSession(app.getPath('home'), dir);
 // v3.71/v3.72 Claude Code tabs started with Auto-approve or Skip permissions on. A busy tab keeps that mode after its
 // switch is turned off, so the office link asks answersPrompts, not only the stored switches.
 const promptless = new Set();
+// v3.91 fix: Claude Code tabs (a boss tab or a desk) started with Skip permissions on. Such a tab keeps bypass until
+// it restarts, whatever the switch says now (hqTargetSkips).
+const skipStarted = new Set();
 /** True when the project's main tab answers or skips permission prompts: by its switches, or by how it was started. */
 function answersPrompts(projectId) {
   const p = P.findProject(state, projectId);
@@ -1327,6 +1330,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   }
   terms.set(id, t);
   if (!project.hq && (P.skipPermissionsOf(project) || P.autoApproveOf(project))) promptless.add(id); else promptless.delete(id);
+  if (P.skipPermissionsArgs(project).length > 0) skipStarted.add(id); else skipStarted.delete(id);
   activity.set(id, { at: startedAt, draft: false });
   mcpPrint.set(id, { started: print, current: print });
   ptyStart.set(id, startedAt);
@@ -2184,10 +2188,20 @@ function tagRoutineRec(id, rrun) {
 function notifyInitiative(title, target) {
   notify(T('main.hqInitiativeSent', { title: LC.cleanLine(String(title || ''), 80), target: LC.cleanLine(String(target || ''), 80) }), '', null);
 }
+/** v3.91 Skip permissions for HQ's initiative: the project's switch, or the target tab (the member's desk, else the
+ *  boss tab) running right now from a start with Skip on: it keeps bypass after the switch is turned off. */
+function hqTargetSkips(p, staffId) {
+  if (!p || P.skipPermissionsArgs(p).length > 0) return true;
+  const desk = staffId ? P.deskOf(p, staffId) : null;
+  const tab = staffId ? (desk ? P.tabPtyId(p.id, desk.n) : '') : p.id;
+  return Boolean(tab) && terms.has(tab) && skipStarted.has(tab);
+}
 /** HQ's office_dispatch: caps, consent, auto-start of a local target, 4 h queue wait, dispatcher-side pacing for devices. */
 // v3.79 waitingId: a released stage (approved at creation, src/hq-chain.js) takes over its waiting row instead of a new one
 // v3.91 sentByInitiative: a first stage HQ sent on its own (decided in hqDispatchStages); its row is marked
-async function hqDispatch(args, { approved = false, excludeId = '', waitingId = '', sentByInitiative = false } = {}) {
+// v3.91 consentGiven: an approved call whose consent is known (a first stage of a consented chain, a held card the
+// person allowed); its row is stamped `consented`
+async function hqDispatch(args, { approved = false, excludeId = '', waitingId = '', sentByInitiative = false, consentGiven = false } = {}) {
   const capBoard = () => { const b = loadHqBoard(); return excludeId ? { ...b, tasks: b.tasks.filter((t) => t.id !== excludeId) } : b; };
   // only ids the minter issued; else the current one; else the one capped 'adhoc' bucket. An approved held task keeps
   // the request it was held under (v3.47: no re-resolve).
@@ -2232,7 +2246,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     const p = remote ? null : byName(state.projects, args.project);
     const m = args.staff && teamOn() ? ST.findMember(state.staff, args.staff) : null;
     return { initiative: state.hq?.initiative === true, remote, request, minter: hqMinter, counted,
-      targets: [{ projectId: p?.id || '', staffId: args.staff ? m?.id || null : '', skip: !p || P.skipPermissionsArgs(p).length > 0 }] };
+      targets: [{ projectId: p?.id || '', staffId: args.staff ? m?.id || null : '', skip: hqTargetSkips(p, args.staff ? m?.id || '' : '') }] };
   };
   const askPerson = async () => {
     if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
@@ -2241,12 +2255,25 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     return late ? { status: 'rejected', reason: late } : null;
   };
   let byInitiative = sentByInitiative;
+  // v3.91 fix: the row is stamped `consented` only when the person's consent is known: consentFor needed none (their
+  // own "dispatch without asking" in a live typed turn, a routine's own no-ask setting), the dialog was accepted, or
+  // the caller says so (consentGiven). Never a row sent by initiative.
+  let consented = approved ? consentGiven && !sentByInitiative : consent === 'none';
   if (consent === 'app' && !personal) {
     // decided and counted in one step: an overlapping dispatch sees the higher count before this task is queued
     const took = HQ.takeInitiative(loadHqBoard(), initiativeArgs(false));
     if (took.ok) { saveHqBoard(took.board); byInitiative = true; }
   }
-  if (consent === 'app' && !byInitiative) { const refused = await askPerson(); if (refused) return refused; }
+  if (consent === 'app' && !byInitiative) { const refused = await askPerson(); if (refused) return refused; consented = true; }
+  // v3.91 the rule again, final BEFORE anything is made (a first stage waited on its chain's dialogs and the staff
+  // check above): count, 2 h window, caps, target, Skip permissions, the setting. No longer true: the dialog, and only
+  // after it the desk tab, its worktree or the workspace (as the path that asks does).
+  if (byInitiative && !HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })) {
+    byInitiative = false;
+    const refused = await askPerson();
+    if (refused) return refused;
+    consented = true;
+  }
   // v3.83 fix: only now, with consent given (or not needed), is anything made: the member's personal workspace (its
   // folder and project), the desk tab and, in a parallel project, the desk's worktree. Declined: nothing was created.
   if (args.staff) {
@@ -2262,13 +2289,6 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     if (d.reason) return { status: 'rejected', reason: d.reason, ...(d.hint ? { hint: d.hint } : {}) };
     args = { ...args, desk: d.desk, staffName: d.staffName };
   }
-  // v3.91 the rule again right before the task is queued (the desk was opened meanwhile; a first stage waited on its
-  // chain's dialogs): count, 2 h window, caps, target, Skip permissions, the setting. No longer true: the dialog.
-  if (byInitiative && !HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })) {
-    byInitiative = false;
-    const refused = await askPerson();
-    if (refused) return refused;
-  }
   const staffId = args.staff && teamOn() ? ST.findMember(state.staff, args.staff)?.id || '' : '';
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   const row = (r, extra) => {
@@ -2280,7 +2300,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
       return;
     }
     if (!r.id || r.status === 'rejected') return;
-    saveHqBoard(HQ.addTask(loadHqBoard(), { id: r.id, request, title: args.title, task, status: r.status, reason: r.reason, prompt: rrun ? rrun.name : '', ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), ...(byInitiative && !remote ? { byInitiative: true } : {}), ...extra }));
+    saveHqBoard(HQ.addTask(loadHqBoard(), { id: r.id, request, title: args.title, task, status: r.status, reason: r.reason, prompt: rrun ? rrun.name : '', ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), ...(byInitiative && !remote ? { byInitiative: true } : {}), ...(consented && !byInitiative && !remote ? { consented: true } : {}), ...extra }));
     const f = HQ.taskFile(hqDir(), r.id, 'brief.md');
     if (f) try { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); SF.writeAtomic(f, `# ${LC.cleanLine(args.title || '', 80)}\n\nProject: ${extra.project} (${extra.machineName})\n\n${task}\n`); } catch {}
   };
@@ -2289,10 +2309,11 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     const startId = args.desk || p?.id;   // v3.83 a staff member's desk, else the project's boss tab
     if (startId && !terms.has(startId)) projectOp('start', startId);   // a stopped or sleeping target starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
-    if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName, ...(staffId ? { staffId } : {}) } : {}) });
-    // v3.91 no dialog was shown: the person is told at the moment it is sent
-    if (p && byInitiative && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') notifyInitiative(args.title, args.staffName ? `${args.staffName} @ ${p.name}` : p.name);
-    else if (waitingId) row(r, {});   // v3.79 a released stage whose project is gone: its row is refused
+    if (p) {
+      row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName, ...(staffId ? { staffId } : {}) } : {}) });
+      // v3.91 no dialog was shown: the person is told at the moment it is sent
+      if (byInitiative && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') notifyInitiative(args.title, args.staffName ? `${args.staffName} @ ${p.name}` : p.name);
+    } else if (waitingId) row(r, {});   // v3.79 a released stage whose project is gone: its row is refused
     // v3.47 a routine's own project run: its report finishes the run and writes no HQ inbox row
     tagRoutineRec(/** @type {any} */ (r).id, rrun);
     return { ...r, ...(request ? { request } : {}) };
@@ -2400,7 +2421,7 @@ async function hqDispatchStages(args, request, rrun) {
   // workspace that is not made yet has no project id, so it always asks
   const asks = local.length > 0 && HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote: false, request, minter: hqMinter, routineNoAsk: false }) !== 'none';
   const initiativeArgs = (counted) => ({ initiative: state.hq?.initiative === true, remote: false, request, minter: hqMinter, counted,
-    targets: local.map((s) => { const p = s.personalFor || !s.projectId ? null : P.findProject(state, s.projectId); return { projectId: p?.id || '', staffId: s.staff ? s.staffId || null : '', skip: !p || P.skipPermissionsArgs(p).length > 0 }; }) });
+    targets: local.map((s) => { const p = s.personalFor || !s.projectId ? null : P.findProject(state, s.projectId); return { projectId: p?.id || '', staffId: s.staff ? s.staffId || null : '', skip: hqTargetSkips(p, s.staff ? s.staffId || '' : '') }; }) });
   let byInitiative = false;
   if (asks) {
     // decided and counted in one step: an overlapping dispatch sees the higher count before these stages are queued
@@ -2415,6 +2436,7 @@ async function hqDispatchStages(args, request, rrun) {
     if (!(await confirmHqStages(local))) return no('declined');
   }
   if (byInitiative) for (const s of local) s.byInitiative = true;
+  else for (const s of local) s.consented = true;   // v3.91 fix: the dialog was accepted, or consentFor needed none: these rows are consented
   if (caps()) return no(caps());   // dialogs can overlap: the caps again on the fresh board
   // consent given. The dialogs were open meanwhile: every member a personal stage is for must still be there and the
   // team on, else nothing is created. A workspace is made only when its stage goes: now for the first stage, at
@@ -2431,7 +2453,7 @@ async function hqDispatchStages(args, request, rrun) {
         Object.assign(s, { project: own.id, projectId: own.id, projectName: own.name });
         delete s.personalFor;
       }
-      /** @type {any} */ const r = await hqDispatch({ machine: s.machine, project: s.project, title: s.title, request, task: s.task, ...(s.staff ? { staff: s.staff } : {}) }, { approved: true, sentByInitiative: s.byInitiative === true });   // consent was just given (or not needed)
+      /** @type {any} */ const r = await hqDispatch({ machine: s.machine, project: s.project, title: s.title, request, task: s.task, ...(s.staff ? { staff: s.staff } : {}) }, { approved: true, sentByInitiative: s.byInitiative === true, consentGiven: s.consented === true });   // consent was just given (or not needed)
       if (!r.id || r.status === 'rejected') return { ...r, request };   // nothing after it is created
       ids.push(r.id); prev = r.id; continue;
     }
@@ -2445,7 +2467,7 @@ async function hqDispatchStages(args, request, rrun) {
 /** A waiting stage: its board row, brief and frozen text (stage.json). → its id. */
 function hqWaitRow(s, request, after) {
   const id = `w${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
-  saveHqBoard(HQ.addTask(loadHqBoard(), { id, request, title: s.title, task: s.task, status: CH.WAITING, after, pub: s.pub, machineName: s.machineName, project: s.projectName, ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff, ...(s.staffId ? { staffId: s.staffId } : {}) } : {}), ...(s.byInitiative ? { byInitiative: true } : {}) }));
+  saveHqBoard(HQ.addTask(loadHqBoard(), { id, request, title: s.title, task: s.task, status: CH.WAITING, after, pub: s.pub, machineName: s.machineName, project: s.projectName, ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff, ...(s.staffId ? { staffId: s.staffId } : {}) } : {}), ...(s.byInitiative ? { byInitiative: true } : s.consented ? { consented: true } : {}) }));
   if (s.byInitiative) notifyInitiative(s.title, s.staff ? `${s.staff} @ ${s.projectName}` : s.projectName);   // v3.91 no dialog was shown
   const f = HQ.taskFile(hqDir(), id, 'brief.md');
   if (f) try {
@@ -2479,6 +2501,29 @@ async function hqReleaseStage({ id, after, resumed = false }) {
   const report = readJson(HQ.taskFile(hqDir(), after, 'report.json'));
   const text = HQ.redact(report || !resumed ? CH.stageText(st.task, { id: after, report: report || {}, file: HQ.taskFile(hqDir(), after, 'report.md') }, OM.TASK_MAX) : st.task);
   saveHqBoard(HQ.setStatus(b, id, 'queued', 'released'));   // never released twice
+  // v3.91 fix: a stage HQ queued on its own (no dialog) is checked again now, at its release: the setting is still on,
+  // the request is still inside its 2 h window, the target does not run with Skip permissions and still matches a
+  // consented row. No longer true: the normal dialog for this stage (nothing is made before it); declined: the stage
+  // is rejected and the stages behind it block as usual. A stage the person consented to is released as before.
+  if (t.byInitiative === true && !st.remote) {
+    const p = P.findProject(state, project);
+    const m = st.staff && teamOn() ? ST.findMember(state.staff, st.staff) : null;
+    const fresh = loadHqBoard();
+    const still = HQ.initiativeFor({ initiative: state.hq?.initiative === true, remote: false, request: t.request, minter: hqMinter, counted: true,
+      board: { ...fresh, tasks: fresh.tasks.filter((x) => x.id !== id) },   // the row does not count against itself
+      targets: [{ projectId: p?.id || '', staffId: st.staff ? m?.id || null : '', skip: hqTargetSkips(p, st.staff ? m?.id || '' : '') }] });
+    if (!still) {
+      if (!(await confirmHqDispatch({ machine: st.machine, project: p ? p.name : project, title: st.title, task: text, ...(st.staff ? { staff: st.staff, staffName: st.staff } : {}) }, false))) {
+        hqStatus(id, 'rejected', 'declined');
+        hqChainSweep();
+        return;
+      }
+      const after2 = loadHqBoard();
+      if (after2.tasks.find((x) => x.id === id)?.status !== 'queued') return;   // removed or ended while the dialog was open
+      // the person consented to this stage now: its row says so
+      saveHqBoard({ ...after2, tasks: after2.tasks.map((x) => { if (x.id !== id) return x; const y = { ...x, consented: true }; delete y.byInitiative; return y; }) });
+    }
+  }
   // approved: consent was given at creation; excludeId: the row does not count against itself (as an approved held card)
   /** @type {any} */ const r = await hqDispatch({ machine: st.machine, project, title: st.title, request: t.request, task: text, ...(st.staff ? { staff: st.staff } : {}) }, { approved: true, excludeId: id, waitingId: id });
   const cur = loadHqBoard().tasks.find((x) => x.id === id);
@@ -2708,7 +2753,7 @@ async function approveHeld(heldId, allow) {
   ROUT.approveRun(run, allow, Date.now());
   saveRt();
   if (!allow) { hqStatus(heldId, 'rejected', 'declined'); return { ok: true }; }
-  const r = await hqDispatch(h.args, { approved: true, excludeId: heldId });
+  const r = await hqDispatch(h.args, { approved: true, excludeId: heldId, consentGiven: true });   // v3.91 the person's Allow: the row is consented
   if (!r.id || r.status === 'rejected') hqStatus(heldId, 'rejected', r.reason || 'failed');
   else saveHqBoard(HQ.renameTask(loadHqBoard(), heldId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : { reason: undefined }) }));
   if (run && r.id) { run.tasks = [...run.tasks, r.id]; saveRt(); }

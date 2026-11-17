@@ -767,7 +767,7 @@ const initiativeCase = () => {
   const clock = { t: 1000 };
   const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
   const id = m.mint();
-  const board = HQ.addTask(HQ.emptyBoard(), { id: 't1', request: id, title: 'first', pub: 'self', project: 'web', projectId: 'p-web', status: 'reported' }, clock.t);
+  const board = HQ.addTask(HQ.emptyBoard(), { id: 't1', request: id, title: 'first', pub: 'self', project: 'web', projectId: 'p-web', status: 'reported', consented: true }, clock.t);
   m.clear();   // a report came in: the typed id is no longer live
   const ask = (over = {}) => HQ.initiativeFor({ initiative: true, remote: false, request: id, minter: m, board, targets: [WEB], now: clock.t, ...over });
   return { clock, m, id, board, ask };
@@ -911,7 +911,7 @@ test('initiative target: only a project the person consented to for this request
   const remote = HQ.addTask(board, { id: 'r1', request: id, title: 'x', pub: 'devpub', project: 'infra', projectId: 'p-infra' }, clock.t);
   assert.equal(ask({ board: remote, targets: [{ projectId: 'p-infra' }] }), false);
   // a consented chain: each of its stages' targets counts, waiting rows too
-  const chain = HQ.addTask(board, { id: 'w1', request: id, title: 'x', pub: 'self', project: 'infra', projectId: 'p-infra', status: 'waiting', after: 't1' }, clock.t);
+  const chain = HQ.addTask(board, { id: 'w1', request: id, title: 'x', pub: 'self', project: 'infra', projectId: 'p-infra', status: 'waiting', after: 't1', consented: true }, clock.t);
   assert.equal(ask({ board: chain, targets: [{ projectId: 'p-infra' }] }), true);
   assert.equal(HQ.consentedTarget(chain, id, { projectId: 'p-infra' }), true);
   assert.equal(HQ.consentedTarget(chain, 'rother', { projectId: 'p-infra' }), false);
@@ -927,7 +927,7 @@ test('initiative target: a row sent by initiative does not make its target eligi
 test('initiative target: the same project with another member, or with / without a member, asks', () => {
   const { clock, id, board, ask } = initiativeCase();
   assert.equal(ask({ targets: [{ projectId: 'p-web', staffId: 's-ada' }] }), false);   // the boss was consented, not the member
-  const b = HQ.addTask(board, { id: 't2', request: id, title: 'x', pub: 'self', project: 'api', projectId: 'p-api', staff: 'Ada', staffId: 's-ada' }, clock.t);
+  const b = HQ.addTask(board, { id: 't2', request: id, title: 'x', pub: 'self', project: 'api', projectId: 'p-api', staff: 'Ada', staffId: 's-ada', consented: true }, clock.t);
   assert.equal(b.tasks[0].staffId, 's-ada');
   assert.equal(HQ.boardView(b)[0].staffId, undefined);   // the id stays in the app
   assert.equal(ask({ board: b, targets: [{ projectId: 'p-api', staffId: 's-ada' }] }), true);
@@ -955,9 +955,60 @@ test('initiative target: a member\'s personal workspace only after a consented r
   assert.equal(ask({ board: unmade, targets: [own] }), false);
   const byHq = HQ.addTask(board, { id: 'i1', request: id, title: 'x', pub: 'self', project: 'Ada', projectId: 'p-ada-own', staff: 'Ada', staffId: 's-ada', byInitiative: true }, clock.t);
   assert.equal(ask({ board: byHq, targets: [own] }), false);
-  const consented = HQ.addTask(board, { id: 't4', request: id, title: 'x', pub: 'self', project: 'Ada', projectId: 'p-ada-own', staff: 'Ada', staffId: 's-ada' }, clock.t);
+  const consented = HQ.addTask(board, { id: 't4', request: id, title: 'x', pub: 'self', project: 'Ada', projectId: 'p-ada-own', staff: 'Ada', staffId: 's-ada', consented: true }, clock.t);
   assert.equal(ask({ board: consented, targets: [own] }), true);
   assert.equal(ask({ board: consented, targets: [{ projectId: 'p-ada-own', staffId: 's-bob' }] }), false);
+});
+
+test('initiative target: only a row stamped consented counts; a held card only after the person allowed it', () => {
+  const { clock, id, board, ask } = initiativeCase();
+  const INFRA = { projectId: 'p-infra' };
+  const row = (over) => HQ.addTask(board, { id: 'h1', request: id, title: 'x', pub: 'self', project: 'infra', projectId: 'p-infra', ...over }, clock.t);
+  // a row written before the flag existed counts for nothing, whatever its status
+  for (const status of ['queued', 'running', 'reported']) assert.equal(HQ.consentedTarget(row({ status }), id, INFRA), false, status);
+  // a held card: awaiting consent, declined, expired
+  const held = row({ status: 'awaiting-consent', reason: 'awaiting-consent' });
+  assert.equal(held.tasks[0].consented, undefined);
+  assert.equal(HQ.consentedTarget(held, id, INFRA), false);
+  assert.equal(ask({ board: held, targets: [INFRA] }), false);
+  assert.equal(HQ.consentedTarget(HQ.setStatus(held, 'h1', 'rejected', 'declined'), id, INFRA), false);
+  const gone = HQ.expireHeld(held, clock.t + HQ.HELD_MS + 1);
+  assert.deepEqual(gone.expired, ['h1']);
+  assert.equal(HQ.consentedTarget(gone.board, id, INFRA), false);
+  // taken by Allow but not sent yet: still nothing
+  const taken = HQ.takeHeld(held, 'h1', clock.t);
+  assert.equal(taken.ok, true);
+  assert.equal(HQ.consentedTarget(taken.board, id, INFRA), false);
+  // sent after Allow: the sent row is stamped, and the card's row keeps the stamp through the rename
+  const sent = HQ.addTask(taken.board, { id: 'c9', request: id, title: 'x', pub: 'self', project: 'infra', projectId: 'p-infra', consented: true }, clock.t);
+  const done = HQ.renameTask(sent, 'h1', 'c9', { status: 'queued', reason: undefined });
+  assert.deepEqual(done.tasks.filter((t) => t.id === 'c9' || t.id === 'h1').map((t) => [t.id, t.consented]), [['c9', true]]);
+  assert.equal(HQ.consentedTarget(done, id, INFRA), true);
+  assert.equal(ask({ board: done, targets: [INFRA] }), true);
+  // a rename without a sent row (a paced remote task, a released stage) stamps nothing
+  assert.equal(HQ.renameTask(taken.board, 'h1', 'c9', { status: 'queued' }).tasks.find((t) => t.id === 'c9').consented, undefined);
+  // a row sent by initiative is never stamped
+  const own = row({ byInitiative: true, consented: true });
+  assert.equal(own.tasks[0].consented, undefined);
+  assert.equal(HQ.consentedTarget(own, id, INFRA), false);
+});
+
+test('initiative target: an approved held card for a member counts for that member, never for the project\'s boss tab', () => {
+  const { clock, id, board, ask } = initiativeCase();
+  // the card's row names the project only; the row written when it is sent knows the member
+  const held = HQ.addTask(board, { id: 'h2', request: id, title: 'x', pub: 'self', project: 'api', projectId: 'p-api', status: 'awaiting-consent', reason: 'awaiting-consent' }, clock.t);
+  const sent = HQ.addTask(HQ.takeHeld(held, 'h2', clock.t).board, { id: 'c8', request: id, title: 'x', pub: 'self', project: 'api', projectId: 'p-api', staff: 'Ada', staffId: 's-ada', consented: true }, clock.t);
+  const done = HQ.renameTask(sent, 'h2', 'c8', { status: 'queued', reason: undefined });
+  const kept = done.tasks.find((t) => t.id === 'c8');
+  assert.deepEqual([kept.staff, kept.staffId, kept.consented, kept.title], ['Ada', 's-ada', true, 'x']);
+  assert.equal(HQ.consentedTarget(done, id, { projectId: 'p-api', staffId: 's-ada' }), true);
+  assert.equal(HQ.consentedTarget(done, id, { projectId: 'p-api' }), false);                     // not the boss tab
+  assert.equal(HQ.consentedTarget(done, id, { projectId: 'p-api', staffId: 's-bob' }), false);
+  assert.equal(ask({ board: done, targets: [{ projectId: 'p-api' }] }), false);
+  // a card for a personal workspace that was made after Allow: the row gets the project it went to
+  const bare = HQ.addTask(board, { id: 'h3', request: id, title: 'x', pub: 'self', project: 'Ada', status: 'awaiting-consent' }, clock.t);
+  const made = HQ.addTask(HQ.takeHeld(bare, 'h3', clock.t).board, { id: 'c7', request: id, title: 'x', pub: 'self', project: 'Ada', projectId: 'p-ada-own', staff: 'Ada', staffId: 's-ada', consented: true }, clock.t);
+  assert.equal(HQ.consentedTarget(HQ.renameTask(made, 'h3', 'c7', { status: 'queued' }), id, { projectId: 'p-ada-own', staffId: 's-ada' }), true);
 });
 
 test('initiative target: a project with Skip permissions always asks', () => {
@@ -968,12 +1019,19 @@ test('initiative target: a project with Skip permissions always asks', () => {
   assert.equal(HQ.takeInitiative(board, { initiative: true, remote: false, request: id, minter: m, targets: [{ projectId: 'p-web', skip: true }], now: 1000 }).ok, false);
 });
 
-test('initiative wiring: decided and counted by HQ.takeInitiative, checked again before queueing, the person is told', () => {
+test('initiative wiring: decided and counted by HQ.takeInitiative, final before anything is made, the person is told', () => {
   const d = fnBody('hqDispatch');
   assert.equal((d.match(/HQ\.takeInitiative\(loadHqBoard\(\), initiativeArgs\(false\)\)/g) || []).length, 1);
-  assert.ok(d.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') > d.lastIndexOf('await hqStaffDesk('));   // after the last wait
+  assert.equal((d.match(/HQ\.initiativeFor\(\{ \.\.\.initiativeArgs\(true\), board: loadHqBoard\(\) \}\)/g) || []).length, 1);
+  // the re-check is final before the desk tab, its worktree or a personal workspace is made
+  assert.ok(d.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') < d.lastIndexOf('await hqStaffDesk('));
+  assert.ok(d.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') < d.indexOf('ensurePersonal(m)'));
+  assert.ok(d.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') > d.indexOf('{ open: false }'));   // after the staff check's wait
   assert.ok(d.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') < d.indexOf('officeDispatch(HQ.HQ_ID'));  // before queueing
-  assert.match(d, /skip: !p \|\| P\.skipPermissionsArgs\(p\)\.length > 0/);
+  assert.match(d, /skip: hqTargetSkips\(p, /);
+  assert.match(fnBody('hqTargetSkips'), /!p \|\| P\.skipPermissionsArgs\(p\)\.length > 0/);
+  assert.match(fnBody('hqTargetSkips'), /terms\.has\(tab\) && skipStarted\.has\(tab\)/);
+  assert.match(fnBody('approveHeld'), /hqDispatch\(h\.args, \{ approved: true, excludeId: heldId, consentGiven: true \}\)/);
   assert.match(d, /consent === 'held' \|\| HQ\.holdsOffId/);   // a routine's hold comes first, unchanged
   assert.match(d, /notifyInitiative\(args\.title/);
   const s = fnBody('hqDispatchStages');

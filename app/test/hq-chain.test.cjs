@@ -120,7 +120,7 @@ const path = require('path');
 const MAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 function stageHarness({ noAsk = false, allow = true, initiative = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-chain-'));
-  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative'];
+  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips'];
   const lines = ['const isHere', 'const byName', 'const officeName', 'const routineRunOfRequest', 'const openHqRoutineRequest', 'const routineById', 'const readJson'];
   const src = [
     ...lines.map((l) => { const x = MAIN_SRC.split('\n').find((y) => y.startsWith(l)); assert.ok(x, l); return x; }),
@@ -138,7 +138,7 @@ function stageHarness({ noAsk = false, allow = true, initiative = false } = {}) 
     const loadHqBoard = () => env.board; const saveHqBoard = (b) => { env.board = b; };
     const loadDispatches = () => new Map(); const saveDispatches = () => {};
     const selfName = () => 'Mac1'; const peerCache = () => ({}); const notify = (title) => { env.notices.push(title); }; const routinesOnDone = (d) => d;
-    const holdDispatch = () => ({ status: 'held' }); const projectOp = () => {}; const terms = new Map([['pa', {}], ['pb', {}]]);
+    const holdDispatch = () => ({ status: 'held' }); const projectOp = () => {}; const terms = new Map([['pa', {}], ['pb', {}]]); const skipStarted = new Set(); env.skipStarted = skipStarted;
     const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
     const linkHost = { link: () => ({ devices: [], conns: new Set(), remotes: new Map(), outgoing: [] }) };
     const officeDispatch = (tab, args) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task }); return { id, status: 'queued' }; };
@@ -377,6 +377,113 @@ test('initiative end to end: a chain with one stage outside the consented target
   off.env.minter.clear();
   await off.api.hqDispatch({ project: 'office', task: 'follow', request: r2 });
   assert.equal(off.env.remoteDialogs, 1);
+});
+
+// --- v3.91 fix: consent is stamped on the row, and a stage HQ queued on its own is checked again at its release
+const settled = () => new Promise((r) => setImmediate(r));
+async function initiativeChain() {
+  const h = stageHarness({ noAsk: true, initiative: true });
+  const request = h.env.minter.mint();
+  await h.api.hqDispatch({ project: 'office', task: 'first', request });       // c1: the live typed id
+  await h.api.hqDispatch({ project: 'erp', task: 'first erp', request });      // c2
+  h.env.minter.clear();
+  const chain = await h.api.hqDispatch({ project: 'office', task: 's1', title: 'S1', request, then: [{ project: 'erp', task: 's2', title: 'S2' }, { project: 'office', task: 's3', title: 'S3' }] });
+  assert.equal(h.env.dialogs.length + h.env.remoteDialogs, 0);                 // c3 went, two stages wait: all by initiative
+  assert.deepEqual(chain.stages.map((id) => h.env.board.tasks.find((t) => t.id === id).byInitiative), [true, true, true]);
+  assert.equal(h.env.sent.length, 3);
+  return { ...h, request, chain };
+}
+const rowOf = (env, id) => env.board.tasks.find((t) => t.id === id);
+
+test('consent stamp: the live typed id, an accepted dialog and an approved call stamp the row; initiative and a declined dialog never', async () => {
+  const { env, api } = stageHarness({ noAsk: true, initiative: true });
+  const request = env.minter.mint();
+  const typed = await api.hqDispatch({ project: 'office', task: 'first', request });
+  assert.equal(rowOf(env, typed.id).consented, true);
+  env.minter.clear();
+  const own = await api.hqDispatch({ project: 'office', task: 'follow', request });
+  assert.deepEqual([rowOf(env, own.id).byInitiative, rowOf(env, own.id).consented], [true, undefined]);
+  env.allow = false;
+  const no = await api.hqDispatch({ project: 'erp', task: 'other', request });
+  assert.deepEqual([no.status, no.reason, env.remoteDialogs], ['rejected', 'declined', 1]);
+  assert.equal(HQ.consentedTarget(env.board, request, { projectId: 'pb' }), false);
+  env.allow = true;
+  const asked = await api.hqDispatch({ project: 'erp', task: 'other', request });
+  assert.equal(env.remoteDialogs, 2);
+  assert.equal(rowOf(env, asked.id).consented, true);
+  // an approved call (a held card the person allowed) says so; one that does not is not stamped
+  const held = await api.hqDispatch({ project: 'office', task: 'held', request }, { approved: true, consentGiven: true });
+  assert.equal(rowOf(env, held.id).consented, true);
+  const bare = await api.hqDispatch({ project: 'office', task: 'bare', request }, { approved: true });
+  assert.equal(rowOf(env, bare.id).consented, undefined);
+  // a consented chain: its waiting row is stamped too
+  env.state.hq.initiative = false;
+  const chain = await api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });
+  assert.equal(env.dialogs.length, 1);
+  assert.deepEqual(chain.stages.map((id) => [rowOf(env, id).consented, rowOf(env, id).byInitiative]), [[true, undefined], [true, undefined]]);
+});
+
+test('initiative release: still allowed, the stage goes without a dialog and its row keeps byInitiative', async () => {
+  const { env, api, chain } = await initiativeChain();
+  report(env, chain.stages[0]);
+  api.hqChainSweep();
+  await settled();
+  assert.equal(env.dialogs.length + env.remoteDialogs, 0);
+  assert.deepEqual(env.sent.map((s) => s.project), ['office', 'erp', 'office', 'pb']);
+  const second = env.board.tasks.find((t) => t.id === 'c4');
+  assert.deepEqual([second.byInitiative, second.consented, second.status], [true, undefined, 'queued']);
+  assert.equal(env.board.tasks.filter((t) => t.id === 'c4').length, 1);
+});
+
+test('initiative release: the setting off, Skip permissions on, or a tab still running with Skip: the dialog, then the stage goes as consented', async () => {
+  const cases = [
+    (env) => { env.state.hq.initiative = false; },
+    (env) => { env.state.projects[1].skipPermissions = true; },
+    (env) => { env.skipStarted.add('pb'); },                     // started with Skip, the switch is off again
+    (env) => { env.board = HQ.removeTask(env.board, 'c2'); },    // the consented row of that target is gone
+  ];
+  for (const [i, change] of cases.entries()) {
+    const { env, api, chain, request } = await initiativeChain();
+    change(env);
+    report(env, chain.stages[0]);
+    api.hqChainSweep();
+    assert.equal(env.sent.length, 3, `case ${i}: nothing is sent before the answer`);
+    await settled();
+    assert.equal(env.remoteDialogs, 1, `case ${i}`);
+    assert.equal(env.sent.length, 4, `case ${i}`);
+    const second = env.board.tasks.find((t) => t.id === 'c4');
+    assert.deepEqual([second.byInitiative, second.consented], [undefined, true], `case ${i}`);
+    assert.equal(HQ.initiativeSent(env.board, request), 3);
+  }
+});
+
+test('initiative release: past the 2 h window and declined: the stage is rejected, nothing is sent, the stage behind it blocks', async () => {
+  const { env, api, chain } = await initiativeChain();
+  const real = Date.now;
+  Date.now = () => real() + HQ.INITIATIVE_MS + 1000;
+  try {
+    env.allow = false;
+    report(env, chain.stages[0]);
+    api.hqChainSweep();
+    await settled();
+  } finally { Date.now = real; }
+  assert.equal(env.remoteDialogs, 1);
+  assert.equal(env.sent.length, 3);
+  assert.deepEqual([rowOf(env, chain.stages[1]).status, rowOf(env, chain.stages[1]).reason], ['rejected', 'declined']);
+  assert.equal(rowOf(env, chain.stages[2]).status, 'blocked');
+});
+
+test('a consented chain is released without a dialog whatever the initiative setting, Skip permissions or the window say', async () => {
+  const { env, api } = stageHarness({ noAsk: true });
+  const request = env.minter.mint();
+  const chain = await api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });
+  env.minter.clear();
+  env.state.projects[1].skipPermissions = true;
+  env.skipStarted.add('pb');
+  report(env, chain.stages[0]);
+  api.hqChainSweep();
+  assert.equal(env.sent.length, 2);
+  assert.equal(env.dialogs.length + env.remoteDialogs, 0);
 });
 
 test('resumable: only a stage blocked by how the one before it ended; never one behind another blocked stage', () => {
