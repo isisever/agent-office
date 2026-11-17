@@ -2522,11 +2522,14 @@ ipcMain.handle('hq:cancel', (_e, id) => {
 });
 // v3.92 Continue on a blocked stage's card: the person's click releases it as if the stage before it had reported
 // (the click is the consent). Only this IPC does it: no HQ tool, no office_task op. A stage no longer blocked, a state
-// file that cannot be saved or a full board changes nothing; a gone project or member refuses the row (hqReleaseStage).
+// file that cannot be saved, a full board or a stage blocked more than 7 days ago changes nothing; a gone project or
+// member refuses the row (hqReleaseStage), and the stages that waited again behind it are blocked as `after-blocked`.
 ipcMain.handle('hq:resume', (_e, id) => {
-  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || !stateWritable) return hqView();
+  // a refusal is told to the Board (`refused`), which shows why on the card
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return { ...hqView(), refused: 'not-resumable' };
+  if (!stateWritable) return { ...hqView(), refused: 'read-only' };
   const r = CH.resume(loadHqBoard(), id, { maxOpen: HQ.MAX_OPEN });
-  if (!r.ok) return hqView();
+  if (!r.ok) return { ...hqView(), refused: r.error };
   saveHqBoard(r.board);
   hqReleaseStage({ id, after: r.after, resumed: true }).catch((e) => console.error('hq stage:', e.message));   // 'queued' before it returns: no sweep sees it waiting
   return hqView();
@@ -3991,20 +3994,16 @@ function writeDeskRole(id, project, staffId) {
   } catch (e) { console.error('desk role:', e.message); return null; }
 }
 /**
- * v3.92 a desk's worktree gets the project's untracked `.claude/settings.local.json` (src/desk-rules.js): only that
- * file, never over one git tracks there, and kept out of the desk's commits (already ignored, or one line in the
- * repository's shared info/exclude). Not for a member with a mail account (the mail guard decides) or a personal workspace.
+ * v3.92 a desk's worktree gets the rules of the project's untracked `.claude/settings.local.json` (src/desk-rules.js):
+ * only `permissions.allow` / `deny` / `ask`, merged into the desk's own file; never over a file git tracks there, and
+ * only where git reports the file ignored (already, or after one line in the repository's shared info/exclude). Not
+ * for a member with a mail account (the mail guard decides) or a personal workspace.
  */
 async function syncDeskRules(p, tab, m) {
   try {
-    if (!DR.wanted({ project: p, tab, hasMail: mailIdsOf(m).length > 0 }) || !DR.needsCopy(p.dir, tab.dir)) return;
-    const tracked = await git(['-C', tab.dir, 'ls-files', '--', DR.REL]);
-    if (!tracked.ok || tracked.stdout.trim()) return;   // tracked there (git brought it), or git could not say
-    if (!(await git(['-C', tab.dir, 'check-ignore', '-q', '--', DR.REL])).ok) {
-      const common = await git(['-C', tab.dir, 'rev-parse', '--git-common-dir']);
-      if (!common.ok || !common.stdout.trim() || !DR.ensureExcluded(path.resolve(tab.dir, common.stdout.trim()))) return;   // never a file the desk could commit
-    }
-    DR.copy(p.dir, tab.dir);
+    if (!DR.wanted({ project: p, tab, hasMail: mailIdsOf(m).length > 0 }) || !DR.needsSync(p.dir, tab.dir)) return;
+    const r = await DR.sync(p.dir, tab.dir, { git, tmpDir: path.join(app.getPath('userData'), 'tmp') });   // the temp file: outside the worktree, on its filesystem
+    if (r === 'failed') console.error('desk rules: could not write', tab.dir);
   } catch (e) { console.error('desk rules:', e.message); }
 }
 /**
@@ -4022,7 +4021,7 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
     const id = P.tabPtyId(p.id, have.n);
     trustPersonalDesk(id);
     if (start && !terms.has(id)) {
-      await syncDeskRules(p, have, m);   // v3.92 the project's local rules, when they are newer than the desk's copy
+      await syncDeskRules(p, have, m);   // v3.92 the project's local rules, when the desk's file does not hold them yet
       if (!terms.has(id)) { if (asleep.has(id)) wake(id); else startPty(id, { resume: true }); }
     }
     return { ok: true, id };

@@ -1231,7 +1231,13 @@
       "cancelTip": "Cancel this stage; the stages after it are blocked",
       "blocked": "blocked: #{id} did not report in full",
       "continue": "Continue",
-      "continueTip": "Send this stage now, with the report of the previous stage if there is one; the stages blocked behind it wait again"
+      "continueTip": "Send this stage now, with the report of the previous stage if there is one; the stages blocked behind it wait again",
+      "refused": {
+        "notResumable": "This stage can no longer be continued here.",
+        "tooOld": "Blocked more than 7 days ago: have the work dispatched again.",
+        "openCap": "Too many open tasks on the board. Try again when some have ended.",
+        "readOnly": "Agent Office cannot save its state right now, so nothing was sent."
+      }
     },
     "view": {
       "board": "Board",

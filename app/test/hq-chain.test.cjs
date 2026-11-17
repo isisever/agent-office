@@ -336,7 +336,7 @@ test('resumable: only a stage blocked by how the one before it ended; never one 
     task('odd', { status: 'blocked', reason: 'other', after: 'a' }),
     task('ok', { status: 'reported' }), task('ok2', { status: 'blocked', reason: 'after-partial', after: 'ok' }),
   );
-  const can = (id) => CH.resumable(b, b.tasks.find((t) => t.id === id));
+  const can = (id) => CH.resumable(b, b.tasks.find((t) => t.id === id), 2000);
   for (const id of ['s2', 'h2', 'pp2', 'gone2', 'f2']) assert.equal(can(id), true, id);
   for (const id of ['s3', 'a', 'w', 'x', 'c', 'n', 'odd', 'ok2', 'nope']) assert.equal(can(id), false, id);
 });
@@ -371,11 +371,62 @@ test('resume: the stage and the ones blocked only behind it wait again; the requ
 test('resume: refused for a stage that is not resumable and past the open cap; nothing changes', () => {
   const b = board(task('a', { status: 'partial' }), task('s2', { status: 'blocked', reason: 'after-partial', after: 'a' }), task('s3', { status: 'blocked', reason: 'after-blocked', after: 's2' }),
     task('o1'), task('o2', { status: 'running' }));
-  assert.deepEqual(CH.resume(b, 's3'), { ok: false, error: 'not-resumable' });
-  assert.deepEqual(CH.resume(b, 'a'), { ok: false, error: 'not-resumable' });
-  assert.deepEqual(CH.resume(b, 'nope'), { ok: false, error: 'not-resumable' });
-  assert.deepEqual(CH.resume(b, 's2', { maxOpen: 3 }), { ok: false, error: 'open-cap' });   // 2 open + 2 waiting again
-  assert.equal(CH.resume(b, 's2', { maxOpen: 4 }).ok, true);
-  const again = CH.resume(b, 's2', { maxOpen: 4 }).board;
-  assert.deepEqual(CH.resume(again, 's2'), { ok: false, error: 'not-resumable' });   // a second click finds nothing to continue
+  assert.deepEqual(CH.resume(b, 's3', { now: 2000 }), { ok: false, error: 'not-resumable' });
+  assert.deepEqual(CH.resume(b, 'a', { now: 2000 }), { ok: false, error: 'not-resumable' });
+  assert.deepEqual(CH.resume(b, 'nope', { now: 2000 }), { ok: false, error: 'not-resumable' });
+  assert.deepEqual(CH.resume(b, 's2', { now: 2000, maxOpen: 3 }), { ok: false, error: 'open-cap' });   // 2 open + 2 waiting again
+  assert.equal(CH.resume(b, 's2', { now: 2000, maxOpen: 4 }).ok, true);
+  const again = CH.resume(b, 's2', { now: 2000, maxOpen: 4 }).board;
+  assert.deepEqual(CH.resume(again, 's2', { now: 2000 }), { ok: false, error: 'not-resumable' });   // a second click finds nothing to continue
+});
+
+test('resume: a continued stage that is refused blocks the stages behind it as after-blocked; none has a Continue of its own', () => {
+  const b = board(
+    task('a', { status: 'partial', finishedAt: 5 }),
+    task('s2', { status: 'blocked', reason: 'after-partial', after: 'a', finishedAt: 6 }),
+    task('s3', { status: 'blocked', reason: 'after-blocked', after: 's2', finishedAt: 7 }),
+    task('s4', { status: 'blocked', reason: 'after-blocked', after: 's3', finishedAt: 8 }),
+  );
+  const r = CH.resume(b, 's2', { now: 9000 });
+  const by = (x, id) => x.tasks.find((t) => t.id === id);
+  assert.deepEqual(['s2', 's3', 's4'].map((id) => by(r.board, id).resumed), [true, undefined, undefined]);
+  // refused at release (a lost stage.json, a gone project or member) or by dispatch: the row ends 'rejected'
+  let cur = HQ.setStatus(r.board, 's2', 'rejected', 'unknown-project', 9100);
+  assert.equal(by(cur, 's2').resumed, true);
+  for (let i = 0; i < 5; i++) {   // the sweep, as hqChainSweep runs it
+    const { release, block } = CH.settle(cur, 9200);
+    assert.deepEqual(release, []);
+    if (!block.length) break;
+    for (const x of block) cur = HQ.setStatus(cur, x.id, x.status, x.reason, 9200);
+  }
+  assert.deepEqual(['s3', 's4'].map((id) => [by(cur, id).status, by(cur, id).reason]), [['blocked', 'after-blocked'], ['blocked', 'after-blocked']]);
+  for (const id of ['s2', 's3', 's4']) {
+    assert.equal(CH.resumable(cur, by(cur, id), 9300), false, id);
+    assert.deepEqual(CH.resume(cur, id, { now: 9300 }), { ok: false, error: 'not-resumable' }, id);
+  }
+  // the same when it was queued first and refused after (a cap refusal in dispatch, a cancel): it still never ran
+  const queued = HQ.setStatus(HQ.setStatus(r.board, 's2', 'queued', 'released'), 's2', 'rejected', 'open-cap', 9100);
+  assert.deepEqual(CH.settle(queued, 9200).block, [{ id: 's3', status: 'blocked', reason: 'after-blocked' }]);
+  // a continued stage that ran and reported in part: the next one is blocked by that report and can be continued
+  const ran = HQ.setStatus(HQ.setStatus(r.board, 's2', 'queued', 'released'), 's2', 'partial', '', 9100);
+  assert.deepEqual(CH.settle(ran, 9200).block, [{ id: 's3', status: 'blocked', reason: 'after-partial' }]);
+  // a stage that was never continued and is rejected keeps its reason
+  const plain = board(task('p', { status: 'rejected', reason: 'cancelled' }), task('p2', { status: 'waiting', after: 'p' }));
+  assert.deepEqual(CH.settle(plain, 2000).block, [{ id: 'p2', status: 'blocked', reason: 'after-rejected' }]);
+});
+
+test('resume: only within 7 days of being blocked', () => {
+  const at = 1_000_000;
+  const b = board(task('a', { status: 'partial', at: 10, finishedAt: 20 }), task('s2', { status: 'blocked', reason: 'after-partial', after: 'a', at: 30, finishedAt: at }));
+  const s2 = b.tasks[1];
+  assert.equal(CH.RESUME_MS, 7 * 24 * 3600 * 1000);
+  assert.equal(CH.resumable(b, s2, at + CH.RESUME_MS), true);
+  assert.equal(CH.resumeRefused(b, s2, at + CH.RESUME_MS), null);
+  assert.equal(CH.resumable(b, s2, at + CH.RESUME_MS + 1), false);
+  assert.equal(CH.resumeRefused(b, s2, at + CH.RESUME_MS + 1), 'too-old');
+  assert.deepEqual(CH.resume(b, 's2', { now: at + CH.RESUME_MS + 1 }), { ok: false, error: 'too-old' });
+  assert.equal(CH.resume(b, 's2', { now: at + CH.RESUME_MS }).ok, true);
+  // a row without the time it was blocked falls back to when it was made
+  const old = board(task('a', { status: 'partial' }), task('s2', { status: 'blocked', reason: 'after-partial', after: 'a', at: 30 }));
+  assert.deepEqual(CH.resume(old, 's2', { now: 30 + CH.RESUME_MS + 1 }), { ok: false, error: 'too-old' });
 });

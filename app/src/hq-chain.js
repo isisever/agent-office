@@ -13,6 +13,7 @@ const ADHOC = 'adhoc';
 const WAITING = 'waiting';
 const BLOCKED = 'blocked';
 const WAIT_MS = 24 * 3600 * 1000;   // a stage waits at most this long for the one before it
+const RESUME_MS = 7 * 24 * 3600 * 1000;   // v3.92 a blocked stage can be continued this long after it was blocked
 const THEN_MAX = 7;                 // later stages in one call (with the first: 8, the per-request cap)
 const REPORT_MAX = 4096;            // bytes of the previous report embedded in the next stage
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -72,32 +73,40 @@ function settle(board, now = Date.now(), waitMs = WAIT_MS) {
     const pre = board.tasks.find((x) => x.id === t.after);
     const st = stageState(pre);
     if (st === 'go') release.push({ id: t.id, after: t.after });
-    else if (st === 'block') block.push({ id: t.id, status: BLOCKED, reason: !pre ? 'after-lost' : pre.closedByHq ? 'after-closed-by-hq' : pre.status === 'reported' && pre.personPrompted ? 'after-person-prompted' : `after-${pre.status}` });
+    // v3.92 a continued stage that was refused never ran: the stages that waited again behind it are blocked behind it
+    // ('after-blocked': no Continue of their own), never sendable past it
+    else if (st === 'block') block.push({ id: t.id, status: BLOCKED, reason: !pre ? 'after-lost' : pre.status === 'rejected' && pre.resumed === true ? 'after-blocked' : pre.closedByHq ? 'after-closed-by-hq' : pre.status === 'reported' && pre.personPrompted ? 'after-person-prompted' : `after-${pre.status}` });
     else if (now - t.at > waitMs) block.push({ id: t.id, status: 'expired', reason: 'after-timeout' });
   }
   return { release, block };
 }
 
 /**
- * v3.92: can the person continue this blocked stage from the Board? Only a stage that waited and was blocked by how
- * the stage before it ended (reason `after-…`). One blocked only because the stage before it is itself blocked
- * is not: that one is continued first, and this one waits again with it (resume).
+ * v3.92: why the person cannot continue this blocked stage from the Board → 'not-resumable' | 'too-old' | null (they
+ * can). Only a stage that waited and was blocked by how the stage before it ended (reason `after-…`), at most
+ * RESUME_MS ago. One blocked behind another stage (`after-blocked`: that stage is itself blocked, or was continued and
+ * refused) is not: the blocked one is continued first, and this one waits again with it (resume).
  */
-function resumable(board, t) {
-  if (!t || t.status !== BLOCKED || typeof t.after !== 'string' || !t.after || !/^after-/.test(t.reason || '')) return false;
+function resumeRefused(board, t, now = Date.now()) {
+  if (!t || t.status !== BLOCKED || typeof t.after !== 'string' || !t.after || !/^after-/.test(t.reason || '') || t.reason === 'after-blocked') return 'not-resumable';
   const pre = board.tasks.find((x) => x.id === t.after);
-  return stageState(pre) === 'block' && pre?.status !== BLOCKED;
+  if (stageState(pre) !== 'block' || pre?.status === BLOCKED) return 'not-resumable';
+  return now - (Number(t.finishedAt) || Number(t.at) || 0) > RESUME_MS ? 'too-old' : null;
 }
+const resumable = (board, t, now = Date.now()) => resumeRefused(board, t, now) === null;
 
 /**
  * v3.92 the person's Continue on a blocked stage → { ok, board, after, again } | { ok: false, error }. The stage
  * waits again (the caller releases it at once, as if the stage before it had reported), and so do the stages that
  * were blocked only because of it (`after-blocked`, transitively): they go when it reports, as they would have. Each
- * gets a fresh wait time; their request is open again. Refused past the open cap ('open-cap'): nothing changes.
+ * gets a fresh wait time; their request is open again. The continued stage is marked `resumed`: if it is refused
+ * before it runs (status 'rejected'), settle blocks the ones behind it as 'after-blocked'. Refused when the stage is
+ * not resumable ('not-resumable'), was blocked too long ago ('too-old') or past the open cap ('open-cap'): nothing changes.
  */
 function resume(board, id, { now = Date.now(), maxOpen = 12 } = {}) {
   const t = board.tasks.find((x) => x.id === id);
-  if (!resumable(board, t)) return { ok: false, error: 'not-resumable' };
+  const refused = resumeRefused(board, t, now);
+  if (refused) return { ok: false, error: refused };
   const again = new Set([id]);
   for (let grew = true; grew;) {
     grew = false;
@@ -107,7 +116,7 @@ function resume(board, id, { now = Date.now(), maxOpen = 12 } = {}) {
   if (open + again.size > maxOpen) return { ok: false, error: 'open-cap' };
   const tasks = board.tasks.map((x) => {
     if (!again.has(x.id)) return x;
-    const n = { ...x, status: WAITING, at: now };
+    const n = { ...x, status: WAITING, at: now, ...(x.id === id ? { resumed: true } : {}) };
     delete n.reason;
     delete n.finishedAt;
     return n;
@@ -177,4 +186,4 @@ function stageProject(st, projects) {
   return hits.length === 1 ? hits[0].id : '';
 }
 
-module.exports = { ADHOC, WAITING, BLOCKED, WAIT_MS, THEN_MAX, REPORT_MAX, stagesOf, hasCycle, afterRefused, stageState, settle, resumable, resume, stageText, cutBytes, renameAfter, consentLines, capFor, stageProject };
+module.exports = { ADHOC, WAITING, BLOCKED, WAIT_MS, RESUME_MS, THEN_MAX, REPORT_MAX, stagesOf, hasCycle, afterRefused, stageState, settle, resumeRefused, resumable, resume, stageText, cutBytes, renameAfter, consentLines, capFor, stageProject };
