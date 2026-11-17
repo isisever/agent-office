@@ -204,6 +204,16 @@ function callApp(socketFile, token, tool, args) {
   });
 }
 
+// Dispatch arguments only the app sets (main.js hqDispatch, after it checked the member and opened the desk): `desk`
+// picks the tab a task is typed into and `staffName` is shown in the consent dialog, so neither is taken from a model.
+const INTERNAL_ARGS = ['desk', 'staffName'];
+/** A tool call's arguments as a model may give them: an object, without the app's internal dispatch arguments. */
+function modelArgs(tool, args) {
+  const a = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } : {};
+  if (tool === 'office_dispatch') for (const k of INTERNAL_ARGS) delete a[k];
+  return a;
+}
+
 /** Serves MCP over `input`/`output` (newline-delimited JSON-RPC 2.0). Resolves when the input ends. */
 function runStdio({ input = process.stdin, output = process.stdout, env = process.env } = {}) {
   const socketFile = env.AGENT_OFFICE_SOCKET || '';
@@ -222,7 +232,7 @@ function runStdio({ input = process.stdin, output = process.stdout, env = proces
     if (m.method === 'tools/list') return reply({ tools });
     if (m.method === 'tools/call') {
       const name = m.params?.name;
-      const args = m.params?.arguments && typeof m.params.arguments === 'object' ? m.params.arguments : {};
+      const args = modelArgs(m.params?.name, m.params?.arguments);
       if (!names.has(name)) return hasId && send({ id: m.id, error: { code: -32602, message: `unknown tool ${String(name).slice(0, 60)}` } });
       if (name === 'office_dispatch' && Buffer.byteLength(String(args.task ?? ''), 'utf8') > TASK_MAX) return reply({ content: [{ type: 'text', text: JSON.stringify({ status: 'rejected', reason: 'too-large' }) }], isError: true });
       const r = socketFile && token ? await callApp(socketFile, token, name, args) : { ok: false, error: 'not-configured' };
@@ -281,6 +291,6 @@ function writeServerScript(dir, { file = 'office-mcp.js', ...opts } = {}) {
   return f;
 }
 
-module.exports = { SERVER_NAME, TOOLS, HQ_TOOLS, toolsFor, TASK_MAX, SOCKET_MAX, socketPath, socketSalt, secureDir, serverConfig, createOfficeSocket, runStdio, serverScript, writeServerScript };
+module.exports = { SERVER_NAME, TOOLS, HQ_TOOLS, toolsFor, TASK_MAX, SOCKET_MAX, socketPath, socketSalt, secureDir, serverConfig, createOfficeSocket, runStdio, modelArgs, serverScript, writeServerScript };
 
 if (require.main === module) runStdio().then(() => setTimeout(() => process.exit(0), 200));
