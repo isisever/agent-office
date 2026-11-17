@@ -602,3 +602,13 @@ test('HQ boss model: a listed model or a valid custom id; anything else is dropp
   assert.equal('bossModel' in P.normalizeState({ hq: { bossModel: '$(id)' } }).hq, false);
   assert.match(fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8'), /o\.bossModel === '' \|\| HQ\.hqBossModel\(o\.bossModel\)/); // the IPC setter leaves an invalid value out
 });
+
+test('v3.81 amendment: a task started as the first-prompt argument keeps a marker the plugin reads', () => {
+  const C = require('../src/link-core.js');
+  const R = require('../src/resume.js');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'hooks', 'reports.ts'), 'utf8');
+  const MARKER = new RegExp(src.match(/^const MARKER = \/(.*)\/$/m)[1]);
+  const typed = C.markedTask('edb2d4505fa1dd57', 'Yasin-MacBook-Air', 'deploy\n1. "check" it');
+  assert.equal(MARKER.exec(typed)?.[1], 'edb2d4505fa1dd57');
+  assert.equal(MARKER.exec(R.promptArg(typed))?.[1], 'edb2d4505fa1dd57', 'quotes and line breaks dropped, the id still read');
+});
