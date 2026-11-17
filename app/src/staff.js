@@ -157,6 +157,34 @@ function takePersonalDraft(staff, memberId) {
   const draft = personalDraft(m?.personal);
   return { staff: m?.personal ? list.map((x) => (x.id === memberId ? withPersonal(x, {}) : x)) : list, draft };
 }
+/**
+ * Routes a project-setting call: a real project with that id always wins; only when no project has it does
+ * 'personal:<staff id>' name the member's workspace (the project, or the member's draft while it is not made yet).
+ * @param {any} state @param {string} id @param {(state: any, projectId: string) => any} set
+ * @returns {{ next: any, id: string }} id: the project to restart, '' for a draft
+ */
+function routePersonalSetting(state, id, set) {
+  const projects = Array.isArray(state?.projects) ? state.projects : [];
+  const sid = projects.some((p) => p?.id === id) ? '' : personalTarget(id);
+  if (!sid) return { next: set(state, id), id };
+  const own = personalOf(projects, sid);
+  if (own) return { next: set(state, own.id), id: own.id };
+  const cur = state.staff || [];
+  const staff = setPersonalDraft(cur, sid, set);
+  return { next: staff === cur ? state : { ...state, staff }, id: '' };
+}
+/**
+ * The workspace was made: the member's draft moves onto the project (with the project's own setters) and leaves the member.
+ * @param {any} state @param {string} memberId @param {string} projectId
+ * @param {{ autoApprove: Function, skipPermissions: Function }} setters (state, projectId, true) → state
+ */
+function applyPersonalDraft(state, memberId, projectId, setters) {
+  const kept = takePersonalDraft(state.staff || [], memberId);
+  let next = { ...state, staff: kept.staff };
+  if (kept.draft.autoApprove) next = setters.autoApprove(next, projectId, true);
+  if (kept.draft.skipPermissions) next = setters.skipPermissions(next, projectId, true);
+  return next;
+}
 /** What HQ reads next to the refusal `staff-not-allowed` (the reason code itself is unchanged). */
 const NOT_ALLOWED_HINT = 'The member is not assigned to that project. The person can assign it in the member\'s settings (TEAM panel, edit the member, Projects); tell them so.';
 
@@ -352,7 +380,7 @@ function findMember(staff, key) {
 }
 
 module.exports = {
-  personalDraft, personalTarget, setPersonalDraft, takePersonalDraft, NOT_ALLOWED_HINT,
+  personalDraft, personalTarget, setPersonalDraft, takePersonalDraft, routePersonalSetting, applyPersonalDraft, NOT_ALLOWED_HINT,
   STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
   dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
 };

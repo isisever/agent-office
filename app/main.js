@@ -4041,10 +4041,7 @@ function ensurePersonal(m) {
   const own = ST.personalOf(state.projects, m.id);
   const kept = ST.takePersonalDraft(state.staff || [], m.id);
   if (own && (kept.draft.autoApprove || kept.draft.skipPermissions)) {
-    let next = { ...state, staff: kept.staff };
-    if (kept.draft.autoApprove) next = P.setProjectAutoApprove(next, own.id, true);
-    if (kept.draft.skipPermissions) next = P.setProjectSkipPermissions(next, own.id, true);
-    commit(next);
+    commit(ST.applyPersonalDraft(state, m.id, own.id, { autoApprove: P.setProjectAutoApprove, skipPermissions: P.setProjectSkipPermissions }));
   }
   return ST.personalOf(state.projects, m.id);
 }
@@ -4261,13 +4258,7 @@ ipcMain.handle('projects:setProjectFiles', (_e, id, value) => {
  * (ST.setPersonalDraft; applied by ensurePersonal). → { next, id } (id: the project to restart, '' for a draft)
  */
 function personalSetting(id, set) {
-  const sid = ST.personalTarget(id);
-  if (!sid) return { next: set(state, id), id };
-  const own = ST.personalOf(state.projects, sid);
-  if (own) return { next: set(state, own.id), id: own.id };
-  const cur = state.staff || [];
-  const staff = ST.setPersonalDraft(cur, sid, set);
-  return { next: staff === cur ? state : { ...state, staff }, id: '' };
+  return ST.routePersonalSetting(state, id, set);
 }
 ipcMain.handle('projects:setAutoApprove', (_e, target, value) => {
   const { next, id } = personalSetting(target, (s, pid) => P.setProjectAutoApprove(s, pid, value === true));

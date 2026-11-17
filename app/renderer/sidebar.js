@@ -994,7 +994,9 @@ export function mountSidebar(el, on) {
   }
   function editMember(m, initialPreset = '') {
     const personal = personalSettings(m);
+    badFields.clear();   // the member popup's own Save guards the custom model field (not a project popup's button)
     openMemberEditor({
+      bindSave: (btn) => { saveButton = btn; syncSave(); }, hasBadFields: () => badFields.size > 0, reload: () => on.team?.reload?.(),
       h, t, lang: locale(), member: m, staff: team.staff, presets: team.presets, projects, accounts, labelOf, closeModal, personal,
       openModal: (...a) => { openModal(...a); draft = personal.map; },   // after openModal: its closeModal clears the previous draft
       save: (form) => on.team?.save(form), remove: (id) => on.team?.remove(id),

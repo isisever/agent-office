@@ -234,12 +234,13 @@ export function openMemberEditor(c) {
       };
       save.disabled = true;
       const r = await c.save(form);
-      save.disabled = false;
-      if (r?.ok) { c.closeModal(); await ps?.apply(r.member.id); return; }
+      save.disabled = Boolean(c.hasBadFields?.());
+      if (r?.ok) { c.closeModal(); await ps?.apply(r.member.id); await c.reload?.(); return; }   // reload after apply: the draft is on the member only then
       err.textContent = t(`staff.error.${['name', 'role', 'name-used', 'too-many'].includes(r?.error) ? r.error : 'failed'}`);
       err.hidden = false;
     },
   }, t('sidebar.save'));
+  c.bindSave?.(save);
   const remove = m ? h('button', {
     class: 'sb-btn sb-warn', onclick: async () => {
       if (!confirm(t('staff.removeConfirm', { name: m.name }))) return;

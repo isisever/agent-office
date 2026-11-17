@@ -440,7 +440,7 @@ test('main: the personal workspace takes the project setters, its draft at creat
   assert.match(MAIN88, /personalSetting\(target, \(s, pid\) => P\.setProjectSkipPermissions\(s, pid, value === true\)\)/);
   const ep = MAIN88.slice(MAIN88.indexOf('function ensurePersonal('), MAIN88.indexOf('function trustPersonalDesk('));
   assert.match(ep, /ST\.takePersonalDraft\(/);
-  assert.match(ep, /if \(kept\.draft\.autoApprove\) next = P\.setProjectAutoApprove\(next, own\.id, true\);/);
+  assert.match(ep, /ST\.applyPersonalDraft\(state, m\.id, own\.id, \{ autoApprove: P\.setProjectAutoApprove, skipPermissions: P\.setProjectSkipPermissions \}\)/);
   assert.match(MAIN88, /reason: 'staff-not-allowed', hint: ST\.NOT_ALLOWED_HINT/);
   assert.match(MAIN88, /no\('staff-not-allowed', \{ stage: s\.n, hint: ST\.NOT_ALLOWED_HINT \}\)/);
   assert.match(ST.NOT_ALLOWED_HINT, /not assigned to that project.*member's settings/);
@@ -459,4 +459,46 @@ test('HQ brief and tool text: one approval for a chain, the Allow button only, a
   assert.match(hq, /a member with mail asks by design/);
   const mcp = read('app/src/office-mcp.js');
   assert.match(mcp, /staff-not-allowed: the person can assign the project in the member\\'s settings/);
+});
+
+test('routePersonalSetting: a workspace that exists gets the setting, not the draft', () => {
+  const P = require('../src/projects.js');
+  const set = (s, pid) => P.setProjectSkipPermissions(s, pid, true);
+  const state = { projects: [{ id: 'p9', dir: '/w/ada', name: 'Ada', staffOwner: 's-a1b2c3' }], staff: [{ id: 's-a1b2c3', name: 'Ada' }] };
+  const r = ST.routePersonalSetting(state, 'personal:s-a1b2c3', set);
+  assert.equal(r.id, 'p9');
+  assert.equal(r.next.projects[0].skipPermissions, true);
+  assert.equal('personal' in r.next.staff[0], false, 'the draft stays untouched');
+});
+
+test('routePersonalSetting: no workspace yet goes to the draft; a real project with that id wins', () => {
+  const P = require('../src/projects.js');
+  const set = (s, pid) => P.setProjectAutoApprove(s, pid, true);
+  const state = { projects: [], staff: [{ id: 's-a1b2c3', name: 'Ada' }] };
+  const d = ST.routePersonalSetting(state, 'personal:s-a1b2c3', set);
+  assert.equal(d.id, '');
+  assert.deepEqual(d.next.staff[0].personal, { autoApprove: true });
+  // a hand-edited project whose real id looks like a personal target is a project, not the member's workspace
+  const odd = { projects: [{ id: 'personal:s-a1b2c3', dir: '/w/x', name: 'x' }], staff: state.staff };
+  const o = ST.routePersonalSetting(odd, 'personal:s-a1b2c3', set);
+  assert.equal(o.id, 'personal:s-a1b2c3');
+  assert.equal(o.next.projects[0].autoApprove, true);
+  assert.equal('personal' in o.next.staff[0], false);
+  // an ordinary project id passes straight through
+  assert.equal(ST.routePersonalSetting({ projects: [{ id: 'p1', dir: '/a', name: 'a' }], staff: [] }, 'p1', set).id, 'p1');
+});
+
+test('applyPersonalDraft: the draft is applied to the new workspace and cleared from the member', () => {
+  const P = require('../src/projects.js');
+  const setters = { autoApprove: P.setProjectAutoApprove, skipPermissions: P.setProjectSkipPermissions };
+  const state = {
+    projects: [{ id: 'p9', dir: '/w/ada', name: 'Ada', staffOwner: 's-a1b2c3' }],
+    staff: [{ id: 's-a1b2c3', name: 'Ada', personal: { autoApprove: true, skipPermissions: true } }],
+  };
+  const next = ST.applyPersonalDraft(state, 's-a1b2c3', 'p9', setters);
+  assert.equal(next.projects[0].autoApprove, true);
+  assert.equal(next.projects[0].skipPermissions, true);
+  assert.equal('personal' in next.staff[0], false);
+  const none = ST.applyPersonalDraft({ ...state, staff: [{ id: 's-a1b2c3', name: 'Ada' }] }, 's-a1b2c3', 'p9', setters);
+  assert.equal(none.projects[0].autoApprove, undefined, 'off when never chosen');
 });
