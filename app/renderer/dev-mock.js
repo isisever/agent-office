@@ -151,10 +151,11 @@ let shareMcpSetting = true;
 let reloadMcpSetting = true;
 let fallbackSetting = true;
 let sleepSetting = 30;
+let keepAwakeSetting = 'working';
 // "Resume unfinished work" (v3.8): the first click finds two projects with unfinished work (?unfinished=0: none);
 // a stopped one starts, as main starts a lazy tab with --resume
 let mockUnfinished = q.get('unfinished') !== '0';
-const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows });
+const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, keepAwake: keepAwakeSetting, ...engineRows });
 const engineRows = { showAgyAccount: null, showCmdAccount: null, showOcAccount: null }; // v3.30
 
 window.agentOffice = {
@@ -405,6 +406,7 @@ window.agentOffice = {
       if (p?.look !== undefined) lookSetting = normalizeLook(p.look);
       if (p?.mode !== undefined) modeSetting = normalizeMode(p.mode);
       if ([0, 15, 30, 60].includes(p?.sleepMinutes)) sleepSetting = p.sleepMinutes;
+      if (['off', 'working', 'always'].includes(p?.keepAwake)) keepAwakeSetting = p.keepAwake;
       for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (typeof p?.[k] === 'boolean') engineRows[k] = p[k];
       return prefsNow();
     },

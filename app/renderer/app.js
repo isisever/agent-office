@@ -640,6 +640,7 @@ sidebar = mountSidebar($('sidebar'), {
   setReloadMcp: (on) => api.prefs?.set({ reloadMcp: on }).then((p) => sidebar.setReloadMcp(p?.reloadMcp)).catch((e) => console.error(e)),
   setFallback: (on) => api.prefs?.set({ fallback: on }).then((p) => sidebar.setFallback(p?.fallback)).catch((e) => console.error(e)),
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
+  setKeepAwake: (v) => api.prefs?.set({ keepAwake: v }).then((p) => sidebar.setKeepAwake(p?.keepAwake)).catch((e) => console.error(e)),
   setTheme: setThemeSetting,
   setLook: (v) => setAppearance({ look: v }),
   setMode: (v) => setAppearance({ mode: v }),
@@ -807,6 +808,7 @@ api.prefs?.get().then((p) => {
   sidebar.setReloadMcp(p?.reloadMcp);
   sidebar.setFallback(p?.fallback);
   sidebar.setSleep(p?.sleepMinutes);
+  sidebar.setKeepAwake(p?.keepAwake);
   sidebar.setEngineRows(p);
   if (typeof p?.theme === 'string') themeSetting = p.theme;
   applyThemeChoice();

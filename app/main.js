@@ -1,5 +1,5 @@
 // Agent Office shell: window, projects, accounts, one claude pty per project (several with tabs), and office data.
-const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, nativeTheme, safeStorage, powerMonitor, shell: eShell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, nativeTheme, safeStorage, powerMonitor, powerSaveBlocker, shell: eShell } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -43,6 +43,7 @@ const LC = require('./src/link-core.js');
 const OM = require('./src/office-mcp.js');
 const HQ = require('./src/hq.js');
 const ROUT = require('./src/routines.js');
+const KA = require('./src/keep-awake.js');
 const PTY = require('./src/pty-attach.js');
 // dev only: a throwaway profile (two instances side by side for the device link, v3.28); never in the packaged app
 if (!app.isPackaged && process.env.AGENT_OFFICE_USER_DATA) {
@@ -423,10 +424,41 @@ function setMarks(next) {
   state = { ...state, interrupted: next };
   saveState();
 }
+// --- v3.78 Keep computer awake (src/keep-awake.js decides; this is the glue): one powerSaveBlocker of the type
+// 'prevent-app-suspension' (never 'prevent-display-sleep': the display may turn off), started and stopped from
+// checkTurns' 1.5 s poll, at once when the setting changes, and stopped for good when the app quits.
+let keepAwakeId = null;      // the running blocker's id
+let keepAwakeBusy = 0;       // busy sessions + routine runs in progress at the last poll
+let keepAwakeIdleAt = 0;     // when that count last fell to zero
+let keepAwakeOver = false;   // the app is quitting: nothing starts again
+const keepAwakePref = () => KA.normalizeKeepAwake(state?.keepAwake);
+function stopKeepAwake() {
+  if (keepAwakeId === null) return;
+  try { if (powerSaveBlocker.isStarted(keepAwakeId)) powerSaveBlocker.stop(keepAwakeId); } catch (e) { console.error('keep awake:', e.message); }
+  keepAwakeId = null;
+}
+/** @param {number} [busy] the new busy count (left out: the last one, e.g. when only the setting changed) */
+function syncKeepAwake(busy = keepAwakeBusy) {
+  const now = Date.now();
+  keepAwakeIdleAt = KA.nextIdleAt({ lastIdleAt: keepAwakeIdleAt, wasBusy: keepAwakeBusy, busy, now });
+  keepAwakeBusy = busy;
+  if (keepAwakeOver || !KA.shouldHold({ pref: keepAwakePref(), busy, lastIdleAt: keepAwakeIdleAt, now })) return stopKeepAwake();
+  if (keepAwakeId !== null) return;
+  try { keepAwakeId = powerSaveBlocker.start('prevent-app-suspension'); } catch (e) { console.error('keep awake:', e.message); }
+}
+const endKeepAwake = () => { keepAwakeOver = true; stopKeepAwake(); };
+app.on('will-quit', endKeepAwake);
+app.on('quit', endKeepAwake);
+/** Routine runs in progress (typed or running; one that waits for its turn or for consent keeps nothing awake). */
+function routineRunsBusy() {
+  try { return rt().runs.filter((r) => r.status === 'typed' || r.status === 'running').length; } catch { return 0; }
+}
+
 // Every running tab: is its claude mid-turn? (Claude Code's pid file status, else the office file's isBossBusy.)
 function checkTurns() {
   if (quitting || !state) return;
   let next = marks();
+  let working = 0;   // v3.78: tabs mid-turn
   const home = app.getPath('home');
   for (const [id, t] of terms) {
     const r = P.resolvePty(state, id);
@@ -439,8 +471,10 @@ function checkTurns() {
     const w = ptyLimit.get(id);
     if (w && claude?.status === 'busy') w.busyAt = Date.now(); // v3.77: a compaction failure follows a running turn
     next = R.nextInterrupted(next, id, { busy, sessionId: sid });
+    if (busy) working++;
   }
   setMarks(next);
+  syncKeepAwake(working + routineRunsBusy());
   checkMcp();
   checkModelLeak();
   checkLimits();
@@ -4060,7 +4094,7 @@ function buildMenu() {
 // showAgyAccount / showCmdAccount / showOcAccount = the Antigravity / Command Code / OpenCode row in Accounts: true (added via Add account),
 // false (removed), null (the old rule: shown when installed or a project runs it) (contract v3.30)
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null });
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
@@ -4082,6 +4116,8 @@ ipcMain.handle('prefs:set', (_e, p) => {
     // turned off: every sleeping tab starts again, as if the app had started without sleeping
     if (!p.sleepMinutes) for (const id of [...asleep.keys()]) wake(id);
   }
+  // keep computer awake (v3.78): applied at once (Off releases the block now, Always takes it now)
+  if (p && KA.KEEP_AWAKE_CHOICES.includes(p.keepAwake) && p.keepAwake !== prefs().keepAwake) { commit({ ...state, keepAwake: p.keepAwake }); syncKeepAwake(); }
   return prefs();
 });
 
@@ -4144,7 +4180,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
   const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });
