@@ -130,9 +130,10 @@ const serverConfig = ({ socket, token, execPath = process.execPath, script = __f
  * Listens on `socketFile` (0600, its folder 0700). Each line { token, tool, args } is answered with one line
  * { ok: true, result } or { ok: false, error }. handle(tab, tool, args) may return a promise.
  * Throws when its folder is not private (secureDir); `ready` resolves false when listening failed.
- * @param {{ socketFile: string, handle: (tab: string, tool: string, args: any) => any, ownDir?: string }} o
+ * v3.83 the mail server (src/mail-mcp.js) runs on a socket of its own with its own tool names (`names`, no HQ tools).
+ * @param {{ socketFile: string, handle: (tab: string, tool: string, args: any) => any, ownDir?: string, names?: Set<string>, hqNames?: Set<string> }} o
  */
-function createOfficeSocket({ socketFile, handle, ownDir = '' }) {
+function createOfficeSocket({ socketFile, handle, ownDir = '', names = TOOL_NAMES, hqNames = HQ_TOOL_NAMES }) {
   const tokens = new Map();   // sha256(token) → tab
   const isPipe = socketFile.startsWith('\\\\.\\pipe\\');
   if (!isPipe) {
@@ -159,8 +160,8 @@ function createOfficeSocket({ socketFile, handle, ownDir = '' }) {
     try { m = JSON.parse(line); } catch { return { ok: false, error: 'bad-request' }; }
     const tab = typeof m?.token === 'string' ? tokens.get(fullHash(m.token)) : undefined;
     if (!tab) return { ok: false, error: 'unauthorized' };
-    if (!TOOL_NAMES.has(m.tool)) return { ok: false, error: 'unknown-tool' };
-    if (HQ_TOOL_NAMES.has(m.tool) && tab !== 'hq') return { ok: false, error: 'unknown-tool' };   // v3.46 HQ only
+    if (!names.has(m.tool)) return { ok: false, error: 'unknown-tool' };
+    if (hqNames.has(m.tool) && tab !== 'hq') return { ok: false, error: 'unknown-tool' };   // v3.46 HQ only
     try { return { ok: true, result: await handle(tab, m.tool, m.args && typeof m.args === 'object' ? m.args : {}) }; } catch (e) { return { ok: false, error: String(e?.message || e).slice(0, 200) }; }
   }
   const ready = new Promise((resolve) => {
@@ -252,24 +253,27 @@ function runStdio({ input = process.stdin, output = process.stdout, env = proces
  * The stdio server as one self-contained script (no require of app files: only Node's net), written to userData and
  * run from there, never from inside app.asar (like the status line script, usage.js).
  */
-const serverScript = () => [
-  "// Agent Office: the agent-office MCP server of a boss tab (contract v3.35). Written by the app; do not edit.",
+const serverScript = ({ name = SERVER_NAME, tools = TOOLS, hqTools = HQ_TOOLS, callMs = CALL_MS, what = 'the agent-office MCP server of a boss tab (contract v3.35)' } = {}) => [
+  `// Agent Office: ${what}. Written by the app; do not edit.`,
   "'use strict';",
   "const net = require('net');",
-  `const SERVER_NAME = ${JSON.stringify(SERVER_NAME)};`,
+  `const SERVER_NAME = ${JSON.stringify(name)};`,
   `const TASK_MAX = ${TASK_MAX};`,
-  `const CALL_MS = ${CALL_MS};`,
-  `const TOOLS = ${JSON.stringify(TOOLS)};`,
-  `const HQ_TOOLS = ${JSON.stringify(HQ_TOOLS)};`,
+  `const CALL_MS = ${callMs};`,
+  `const TOOLS = ${JSON.stringify(tools)};`,
+  `const HQ_TOOLS = ${JSON.stringify(hqTools)};`,
   callApp.toString(),
   runStdio.toString(),
   'runStdio().then(() => setTimeout(() => process.exit(0), 200));',
   '',
 ].join('\n');
-/** Writes the script to <dir>/office-mcp.js (0600, only when changed). → its path. Throws when it cannot. */
-function writeServerScript(dir) {
-  const f = path.join(dir, 'office-mcp.js');
-  const text = serverScript();
+/**
+ * Writes the script to <dir>/office-mcp.js (0600, only when changed). → its path. Throws when it cannot.
+ * @param {string} dir @param {{ file?: string, name?: string, tools?: any[], hqTools?: any[], callMs?: number, what?: string }} [opts]
+ */
+function writeServerScript(dir, { file = 'office-mcp.js', ...opts } = {}) {
+  const f = path.join(dir, file);
+  const text = serverScript(opts);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   let same = false;
   try { same = fs.readFileSync(f, 'utf8') === text; } catch { /* not there yet */ }

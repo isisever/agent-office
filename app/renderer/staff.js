@@ -64,7 +64,8 @@ function card(c, m) {
  * (listTools() → app-added servers) reach all its desks; a role from the person's library can be removed here.
  * @param {{ h: Function, t: Function, lang: string, member: any, staff: any[], presets: any[], projects: any[], accounts: any[], labelOf: Function,
  *   openModal: Function, closeModal: Function, save: (form: any) => Promise<any>, remove: (id: string) => Promise<any>, listPacks?: () => Promise<any[]>,
- *   listTools?: () => Promise<any[]>, openWizard?: () => void, removeRole?: (id: string) => Promise<any>, initialPreset?: string }} c
+ *   listTools?: () => Promise<any[]>, openWizard?: () => void, removeRole?: (id: string) => Promise<any>, initialPreset?: string,
+ *   mailAccounts?: { id: string, label: string, address: string }[] }} c
  */
 export function openMemberEditor(c) {
   const { h, t } = c;
@@ -201,10 +202,17 @@ export function openMemberEditor(c) {
   const scope = h('div', { class: 'sb-scope' },
     h('label', { class: 'sb-scope-all' }, all, ' ', t('staff.allProjects')),
     h('div', { class: 'sb-scope-list' }, ...c.projects.map((p, i) => h('label', {}, boxes[i], ' ', p.name))));
+  // v3.83 mail: the accounts this member may read and draft from; the guard is explained right there
+  const mailPick = new Set(Array.isArray(m?.mail) ? m.mail : []);
+  const mailList = c.mailAccounts || [];
+  const mailBox = h('div', { class: 'sb-scope-list sb-staff-mail' }, ...(mailList.length ? mailList.map((a) => h('label', {},
+    h('input', { type: 'checkbox', checked: mailPick.has(a.id), onchange: (e) => (e.target.checked ? mailPick.add(a.id) : mailPick.delete(a.id)) }),
+    ' ', a.label, h('span', { class: 'sb-dim' }, ` · ${a.address}`))) : [h('span', { class: 'sb-field-hint' }, t('staff.mailNone'))]));
   const err = h('div', { class: 'sb-note warn', hidden: true });
   const save = h('button', {
     class: 'sb-btn primary', onclick: async () => {
       const form = {
+        mail: [...mailPick],
         ...(m ? { id: m.id } : {}), name: name.value, department: dept.value, accountId: account.value,
         role: roleForm(),
         skillPacks: Object.fromEntries([...packPick].filter(([, v]) => v !== 'inherit').map(([id, v]) => [id, v === 'on'])),
@@ -232,6 +240,7 @@ export function openMemberEditor(c) {
     field(t('staff.department'), dept, t('staff.departmentHint')), deptList,
     field(t('staff.account'), account, t('staff.accountHint')),
     field(t('staff.projects'), scope, t('staff.projectsHint')),
+    field(t('staff.mail'), mailBox, t('staff.mailHint')),
     h('div', { class: 'sb-field-hint' }, t('staff.applyNote')),
     err,
   ], [remove, h('button', { class: 'sb-btn', onclick: () => c.closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');

@@ -653,7 +653,10 @@
         "too-many": "Rol kütüphanesi dolu (en çok 60).",
         "failed": "Rol kaydedilemedi."
       }
-    }
+    },
+    "mail": "Mail erişimi",
+    "mailHint": "Okuyup taslak hazırlayabileceği hesaplar. Mail göndermez: taslaklar MAİL panelinde onayınıza gelir. Mail okuyan masalarda her işlem (dosya, komut, internet, diğer araçlar) onayınızı bekler; \"İzinleri atla\" açık projelerde mail verilmez.",
+    "mailNone": "Bağlı mail hesabı yok; MAİL panelinden ekleyin."
   },
   "chat": {
     "placeholder": "Mesaj… (Enter gönderir, Shift+Enter: yeni satır)",
@@ -901,7 +904,8 @@
     "routineAllGood": "Her şey yolunda",
     "routineFailed": "{name} rutini başarısız ({reason})",
     "routineNeedsApproval": "{name} rutini {project} projesine görev göndermek için onayınızı bekliyor",
-    "routineNeedsApprovalRemote": "{name} rutini {machine} üzerindeki {project} projesine görev göndermek için onayınızı bekliyor"
+    "routineNeedsApprovalRemote": "{name} rutini {machine} üzerindeki {project} projesine görev göndermek için onayınızı bekliyor",
+    "mailDraft": "{name} bir mail taslağı hazırladı: onayınızı bekliyor"
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",
@@ -1242,6 +1246,122 @@
       "delivered": "teslim edildi",
       "running": "cihazda çalışıyor",
       "needs-approval": "cihazda onay bekliyor"
+    }
+  },
+  "mail": {
+    "title": "MAİL",
+    "add": "+ Mail hesabı ekle",
+    "noKeychain": "Bu bilgisayarda şifreleri koruyacak bir anahtar zinciri yok; mail şifresi kaydedilemez.",
+    "signedIn": "Giriş bilgisi kayıtlı (şifreli)",
+    "noSecret": "Giriş bilgisi yok",
+    "test": "Bağlantıyı dene",
+    "testOk": "Bağlantı çalışıyor",
+    "edit": "Düzenle",
+    "remove": "Kaldır",
+    "provider": {
+      "gmail": "Gmail",
+      "m365": "Microsoft 365 / Outlook",
+      "imap": "Exchange / IMAP"
+    },
+    "empty": "Bağlı mail hesabı yok.",
+    "outbox": "Onay bekleyen mailler ({n})",
+    "status": {
+      "pending": "Onayınızı bekliyor",
+      "failed": "Gönderilemedi"
+    },
+    "warn": {
+      "new-recipient": "Konuşmada olmayan bir alıcı var",
+      "not-a-reply": "Yanıt değil, yeni bir mail",
+      "external": "Şirket dışı alıcı var",
+      "links": "Metinde bağlantı var",
+      "source-flagged": "Yanıtlanan mail şüpheli işaretlendi"
+    },
+    "removeConfirm": "\"{name}\" hesabı kaldırılsın mı? Şifresi silinir ve personelin bu hesaba erişimi kalkar.",
+    "addTitle": "Mail hesabı ekle",
+    "editTitle": "Mail hesabı · {name}",
+    "providerLabel": "Sağlayıcı",
+    "label": "Ad",
+    "labelPh": "Destek, Muhasebe, …",
+    "address": "Mail adresi",
+    "user": "Kullanıcı adı",
+    "userPh": "Boşsa mail adresi",
+    "userHint": "Exchange'de çoğu zaman mail adresi ya da ALAN\\kullanıcı.",
+    "password": "Şifre",
+    "passwordKeep": "Değiştirmek için yazın; boş bırakılırsa kayıtlı şifre kalır",
+    "passwordHint": "Agent Office'te şifreli saklanır; hiçbir oturuma, personele ya da dosyaya gitmez.",
+    "imap": "IMAP sunucusu ve portu",
+    "smtp": "SMTP sunucusu ve portu",
+    "smtpSecurity": "SMTP güvenliği",
+    "clientId": "Uygulama (client) kimliği",
+    "clientIdHint": "Azure Portal → Uygulama kayıtları → Yeni kayıt (Public client, \"Allow public client flows\" açık; izinler: Mail.Read, Mail.Send, User.Read, offline_access).",
+    "tenant": "Kiracı (tenant)",
+    "tenantHint": "common, şirket alan adınız ya da kiracı kimliği.",
+    "help": {
+      "gmail": "Gmail için normal şifre değil \"uygulama şifresi\" gerekir: Google Hesabı → Güvenlik → 2 Adımlı Doğrulama → Uygulama şifreleri.",
+      "m365": "Microsoft 365 / Outlook.com girişi tarayıcıda Microsoft'un sayfasında yapılır; şifreniz Agent Office'e gelmez. Kuruluşunuzun bir uygulama kaydı (client id) gerekir.",
+      "imap": "Exchange (şirket içi) ya da IMAP/SMTP veren herhangi bir sunucu. Bağlantılar her zaman şifreli (TLS) yapılır."
+    },
+    "signIn": "Microsoft ile giriş yap",
+    "codeStep": "Tarayıcıda {url} açıldı. Bu kodu girip hesabınızla onay verin:",
+    "codeWait": "Girişi bekliyorum…",
+    "safety": "Personel mailleri yalnızca okuyabilir ve taslak hazırlayabilir. Hiçbir mail onayınız olmadan gönderilmez; mail okuyan masalarda her işlem onayınızı bekler.",
+    "reviewTitle": "Mail taslağı",
+    "reviewIntro": "{name} hazırladı ({project}, {when}). Gönderilmedi: okuyun, gerekirse düzeltin, sonra gönderin ya da silin.",
+    "replyTo": "Yanıtladığı mail: {from} · {subject}",
+    "sourceFlags": "Dikkat: yanıtlanan mailde yapay zekâya talimat verme girişimine benzeyen içerik vardı ({flags}).",
+    "flag": {
+      "ignore-instructions": "talimatları yok saydırma",
+      "role-play": "rol değiştirme",
+      "system-prompt": "sistem talimatı",
+      "fake-turn": "sahte konuşma satırı",
+      "tool-request": "komut/araç çalıştırma isteği",
+      "exfiltration": "bilgi sızdırma isteği",
+      "urgent-action": "acil ödeme/işlem baskısı",
+      "invisible-characters": "görünmez karakterler",
+      "hidden-text": "gizli metin"
+    },
+    "from": "Kimden",
+    "to": "Kime",
+    "cc": "Bilgi (CC)",
+    "subject": "Konu",
+    "body": "Metin",
+    "send": "Gönder",
+    "sending": "Gönderiliyor…",
+    "sendConfirm": "Bu mail {from} adresinden {n} alıcıya gönderilsin mi?\n\n\"{subject}\"",
+    "discard": "Sil",
+    "discardConfirm": "Taslak silinsin mi?",
+    "retry": "Tekrar dene",
+    "error": {
+      "no-secret": "Giriş bilgisi kayıtlı değil.",
+      "auth": "Giriş reddedildi (şifre ya da yetki).",
+      "refused": "Sunucu isteği reddetti.",
+      "timeout": "Sunucu yanıt vermedi.",
+      "not-found": "Mail bulunamadı.",
+      "network": "Sunucuya bağlanılamadı.",
+      "closed": "Bağlantı kapandı.",
+      "greeting": "Sunucu beklenen yanıtı vermedi.",
+      "failed": "İşlem yapılamadı.",
+      "unknown": "Bulunamadı.",
+      "provider": "Sağlayıcı seçin.",
+      "address": "Geçerli bir mail adresi yazın.",
+      "host": "IMAP ve SMTP sunucularını yazın.",
+      "client": "Geçerli bir uygulama (client) kimliği ve kiracı yazın.",
+      "too-many": "En çok 10 mail hesabı bağlanabilir.",
+      "address-used": "Bu adres zaten bağlı.",
+      "password": "Şifreyi yazın.",
+      "no-keychain": "Bu bilgisayarda şifreler korunamıyor; kaydedilmedi.",
+      "secret": "Giriş bilgisi kaydedilemedi.",
+      "state": "Ayarlar şu an kaydedilemiyor.",
+      "device-code": "Microsoft girişi başlatılamadı (client id / tenant?).",
+      "expired": "Kodun süresi doldu; tekrar deneyin.",
+      "declined": "Giriş reddedildi.",
+      "token": "Microsoft girişi tamamlanamadı.",
+      "to": "En az bir alıcı gerekir.",
+      "subject": "Konu gerekir (en çok 300 karakter).",
+      "body": "Metin boş.",
+      "too-large": "Metin çok uzun.",
+      "unknown-account": "Hesap artık yok.",
+      "interrupted": "Gönderim yarıda kesildi; gidip gitmediğini Gönderilmiş Öğeler'den kontrol edin."
     }
   }
 }

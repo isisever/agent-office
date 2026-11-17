@@ -8,6 +8,7 @@ import { BOSS_MODEL_CHOICES, bossModelChoices, cap, isCustomModelId } from '../s
 import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
 import { teamRows, openMemberEditor } from './staff.js';
 import { openRoleWizard } from './role-wizard.js';
+import { createMail } from './mail.js';
 
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -187,6 +188,8 @@ export function mountSidebar(el, on) {
   const mcpNote = h('div', { class: 'sb-note', id: 'sb-mcp-note', hidden: true });
   const addMcpBtn = h('button', { class: 'sb-add', id: 'sb-add-mcp', onclick: () => openMcpForm() });
   let mcpKey = null;
+  // v3.83 the MAIL panel (renderer/mail.js): accounts and the outbox of drafts waiting for the person
+  const mail = on.mail ? createMail({ h, t, api: on.mail, openModal, closeModal }) : null;
   function panel(id, head, body, cls = '') {
     let open = true;
     try { open = localStorage.getItem(`ao.panel.${id}`) !== '0'; } catch {}
@@ -199,6 +202,7 @@ export function mountSidebar(el, on) {
     panel('projects', [projHead], h('div', { class: 'sb-top', id: 'sb-top' }, projList, addProjectBtn, resumeAllBtn, resumeNote)),
     panel('accounts', [acctHead], h('div', { class: 'sb-panel-body' }, acctList), 'sb-accounts'),
     panel('mcp', [mcpHead], h('div', { class: 'sb-panel-body' }, mcpNote, mcpList, addMcpBtn), 'sb-mcp-panel'),
+    ...(mail ? [panel('mail', [mail.head], mail.body, 'sb-mail-panel')] : []),
   );
   el.querySelector('#sb-panel-mcp')?.addEventListener('toggle', () => renderMcp(true)); // re-read Claude Code's files
 
@@ -226,6 +230,7 @@ export function mountSidebar(el, on) {
     teamRow.title = t('staff.modeTitle');
     teamHead.textContent = t('staff.panel');
     addStaffBtn.textContent = t('staff.add');
+    mail?.redraw();
     wizardBtn.textContent = t('staff.wizard.open');
     wizardBtn.title = t('staff.wizard.openTitle');
     managerRow.title = t('sidebar.managerTitle');
@@ -944,7 +949,7 @@ export function mountSidebar(el, on) {
       h, t, lang: locale(), member: m, staff: team.staff, presets: team.presets, projects, accounts, labelOf, openModal, closeModal,
       save: (form) => on.team?.save(form), remove: (id) => on.team?.remove(id),
       listPacks, listTools: () => Promise.resolve(on.team?.tools?.() || []), openWizard: () => openWizard(),
-      removeRole: (id) => on.team?.removeRole(id), initialPreset,
+      removeRole: (id) => on.team?.removeRole(id), initialPreset, mailAccounts: mail ? mail.accounts() : [],
     });
   }
   /** v3.82 the role wizard; a saved role can go straight to a new member's popup (the list is reloaded first). */
@@ -1376,6 +1381,9 @@ export function mountSidebar(el, on) {
     setReloadMcp(on) { reloadMcpBox.checked = on !== false; },
     /** "Chat view" setting (v3.78; off unless set). */
     setChatView(on) { chatViewBox.checked = on === true; },
+    /** v3.83 mail accounts ({ accounts, encryption }) and the outbox ({ drafts, pending }). */
+    setMailAccounts(v) { mail?.setAccounts(v); },
+    setMailOutbox(v) { mail?.setOutbox(v); },
     /** "3D office" setting (v3.79; off unless set). */
     setOffice3d(on) { office3dBox.checked = on === true; },
     /** "Backup account at the usage limit" setting (v3.17). */

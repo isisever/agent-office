@@ -1740,3 +1740,34 @@ test('team: the team env alone on a project session adds no section', async ($, 
   setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_TEAM: '1' })
   expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(['intro', 'agent-office:manager', 'agent-office:host'])
 })
+
+// mail guard (app contract v3.83): a mail session gets the mail rules and never auto-approves; the guard's decisions
+// themselves are tested in mail-guard.test.ts (a test raises classic.PreToolUse only through $.tool.call)
+test('mail guard: the mail section is added to a mail session only', async ($, on) => {
+  const env: Record<string, string> = { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MAIL_GUARD: '1' }
+  setUpCompose(on, env)
+  expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toContain('agent-office:mail')
+  delete env.AGENT_OFFICE_MAIL_GUARD
+  expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).not.toContain('agent-office:mail')
+})
+
+test('mail guard: auto-approve never answers for a mail session', async ($, on) => {
+  setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_AUTO_APPROVE: '1', AGENT_OFFICE_MAIL_GUARD: '1' })
+  answerTurns(on)
+  on('classic.PermissionRequest', () => ({}) as never)
+  await $.session.start(start)
+  await $.turn.start({ text: 'hello', turnId: 'turn-1' })
+  const dialog = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'npm test' } })
+  expect(dialog.decision).toBe(undefined)
+})
+
+test('mail guard: a call refused in a mode that cannot ask ends with the reason', async ($, on) => {
+  setUp(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MAIL_GUARD: '1' })
+  answerTurns(on)
+  let ran = false
+  on('tool.call', () => { ran = true; return { result: 'ok' } as never })
+  await $.session.start(start)
+  const read = await $.tool.call({ tool: 'Read', file_path: '/work/my-app/a.txt' } as never)
+  expect(ran).toBe(true)
+  expect('deny' in read).toBe(false)
+})

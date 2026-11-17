@@ -189,6 +189,16 @@ let office3dSetting = q.has('office3d'); // v3.79 ?office3d: the 3D office from 
 let teamSetting = q.has('staff');
 const ROLE_IDS = ['accountant', 'assistant', 'chatbot', 'content-writer', 'customer-support', 'data-analyst', 'devops', 'digital-marketer', 'erp-odoo',
   'financial-analyst', 'hr-specialist', 'operations-specialist', 'product', 'project-manager', 'qa', 'rpa', 'sales-rep', 'social-media-designer', 'software-developer'];
+// v3.83 mail
+const mailEv = { accounts: listeners(), outbox: listeners() };
+const mockMail = {
+  accounts: [{ id: 'm-aaaa1111', label: 'Destek', provider: 'gmail', address: 'destek@acme.com', hasSecret: true }],
+  drafts: q.has('staff') ? [
+    { id: 'd-aaaa0001', status: 'pending', account: 'm-aaaa1111', from: 'destek@acme.com', to: ['musteri@ornek.com'], cc: [], subject: 'Re: Sipariş #4512 nerede?', body: 'Merhaba Ayşe Hanım,\n\nSiparişiniz dün kargoya verildi; takip numarası 7781234. Yarın elinizde olur.\n\nİyi günler,\nDestek', replyTo: { id: '812', from: 'Ayşe Kaya <musteri@ornek.com>', subject: 'Sipariş #4512 nerede?', flags: [] }, warnings: ['external'], staffId: 's-a1a1a1', staffName: 'Ayşe', projectId: 'p1', projectName: 'agent-office', createdAt: Date.now() - 600000 },
+    { id: 'd-aaaa0002', status: 'pending', account: 'm-aaaa1111', from: 'destek@acme.com', to: ['finans@ornek-tedarik.com'], cc: [], subject: 'Re: Banka hesabımız değişti', body: 'Merhaba,\n\nBildiriminizi aldık; değişikliği yetkili kişiyle telefonla teyit etmeden ödeme bilgisi güncellemiyoruz.\n\nSaygılarımızla', replyTo: { id: '813', from: 'Finans <finans@ornek-tedarik.com>', subject: 'Banka hesabımız değişti', flags: ['urgent-action', 'ignore-instructions'] }, warnings: ['external', 'source-flagged'], staffId: 's-a1a1a1', staffName: 'Ayşe', projectId: 'p1', projectName: 'agent-office', createdAt: Date.now() - 120000 },
+  ] : [],
+};
+const mailOut = () => mailEv.outbox.emit({ drafts: structuredClone(mockMail.drafts), pending: mockMail.drafts.filter((d) => d.status === 'pending').length });
 /** @type {any[]} */
 const mockRoles = [];   // v3.82 the person's roles
 const rolePresets = (await Promise.all(ROLE_IDS.map((n) => fetch(`../../roles/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
@@ -330,6 +340,31 @@ window.agentOffice = {
   },
 
   // v3.82 the role library and a scripted wizard: a question first, then a role (no claude in the browser)
+  // v3.83 mail: one Gmail account and, with ?staff, two drafts waiting (sending only changes their status here)
+  mail: {
+    accounts: async () => ({ accounts: structuredClone(mockMail.accounts), encryption: true }),
+    save: async (f) => {
+      if (!/@/.test(String(f?.address || ''))) return { ok: false, error: 'address' };
+      if (!f.id && !f.password) return { ok: false, error: 'password' };
+      const a = { id: f.id || `m-${rid().slice(0, 8).replace(/[^0-9a-f]/g, 'a').padEnd(8, '0')}`, label: f.label || f.address, provider: f.provider, address: f.address, hasSecret: true, ...(f.provider === 'imap' ? { user: f.user, imap: f.imap, smtp: f.smtp } : {}) };
+      const i = mockMail.accounts.findIndex((x) => x.id === a.id);
+      if (i >= 0) mockMail.accounts[i] = a; else mockMail.accounts.push(a);
+      mailEv.accounts.emit({ accounts: structuredClone(mockMail.accounts), encryption: true });
+      return { ok: true, account: a };
+    },
+    remove: async (id) => { mockMail.accounts = mockMail.accounts.filter((a) => a.id !== id); mailEv.accounts.emit({ accounts: structuredClone(mockMail.accounts), encryption: true }); return { ok: true }; },
+    test: async () => { await new Promise((r) => setTimeout(r, 300)); return { ok: true }; },
+    m365Start: async (f) => (/^[0-9a-f-]{36}$/i.test(f?.clientId || '') ? { ok: true, userCode: 'ABCD-EFGH', verificationUri: 'https://microsoft.com/devicelogin' } : { ok: false, error: 'client' }),
+    m365Cancel: async () => ({ ok: true }),
+    onM365: () => () => {},
+    onAccounts: mailEv.accounts.add,
+    outbox: async () => ({ drafts: structuredClone(mockMail.drafts), pending: mockMail.drafts.filter((d) => d.status === 'pending').length }),
+    onOutbox: mailEv.outbox.add,
+    edit: async (id, f) => { const d = mockMail.drafts.find((x) => x.id === id); if (!d) return { ok: false, error: 'unknown' }; Object.assign(d, { to: String(f.to).split(',').map((x) => x.trim()).filter(Boolean), cc: String(f.cc).split(',').map((x) => x.trim()).filter(Boolean), subject: f.subject, body: f.body }); mailOut(); return { ok: true, draft: structuredClone(d) }; },
+    send: async (id) => { const d = mockMail.drafts.find((x) => x.id === id); if (!d) return { ok: false, error: 'state' }; d.status = 'sent'; mailOut(); return { ok: true }; },
+    discard: async (id) => { const d = mockMail.drafts.find((x) => x.id === id); if (d) d.status = 'discarded'; mailOut(); return { ok: true }; },
+    retry: async (id) => { const d = mockMail.drafts.find((x) => x.id === id); if (d) d.status = 'pending'; mailOut(); return { ok: true }; },
+  },
   roles: {
     save: async (f) => {
       if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };

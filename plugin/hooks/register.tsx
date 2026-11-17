@@ -25,6 +25,7 @@ import type { Host, JournalSeen, OfficeProject } from './journal'
 import { readyText, ReportTracker, typedTaskId, writeReport } from './reports'
 import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from './hq'
 import { memberText, parseMember, STAFF_SECTION_ID, TEAM_SECTION_ID, TEAM_TEXT } from './staff'
+import { MAIL_SECTION_ID, MAIL_TEXT, mailGuardDecision } from './mail-guard'
 
 // Claude Code side of Agent Office: writes agent arrivals, tools, deliveries and background shells to
 // ~/.claude/agent-office/sessions/<session>.json. The office itself is drawn by the
@@ -405,6 +406,12 @@ let verifyOn = false
 // AGENT_OFFICE_AUTO_APPROVE=1 (the project's switch in the app, contract v3.71): permission dialogs are answered
 // "allow" for the person, except what auto-approve.ts leaves to them. Never nested, never in HQ.
 let autoApproveOn = false
+// AGENT_OFFICE_MAIL_GUARD=1 (app contract v3.83): this session can read the person's mail; every call beyond reading
+// waits for the person (mail-guard.ts), auto-approve is off, and nested sessions keep the guard (the env is inherited)
+let mailGuardOn = false
+let guardLang: 'en' | 'tr' = 'en'
+// read from the env on every check too: the guard must hold even before session.start ran (a reload mid-session)
+const isMailSession = async ($: EngineInterface): Promise<boolean> => mailGuardOn || (await $.env.get('AGENT_OFFICE_MAIL_GUARD')) === '1'
 let isBriefReminded = false
 let factsFile = ''
 const FACTS_SECTION_ID = 'agent-office:facts'
@@ -1368,7 +1375,9 @@ export const register: Register = on => {
     isStepCapped = stepBudget > 0 && (await $.env.get('AGENT_OFFICE_STEP_CAP')) === '1'
     const verify = (await $.env.get('AGENT_OFFICE_VERIFY')) ?? ''
     verifyOn = !isNested && (verify === '1' || (verify !== '0' && stepBudget > 0))
-    autoApproveOn = !isNested && !isHq && (await $.env.get('AGENT_OFFICE_AUTO_APPROVE')) === '1'
+    mailGuardOn = (await $.env.get('AGENT_OFFICE_MAIL_GUARD')) === '1'
+    guardLang = t === STRINGS.tr ? 'tr' : 'en'
+    autoApproveOn = !isNested && !isHq && !mailGuardOn && (await $.env.get('AGENT_OFFICE_AUTO_APPROVE')) === '1'
     await $.command.register(
       isInApp
         ? { name: 'office', description: t.appDescription, argumentHint: t.appArgumentHint }
@@ -1405,6 +1414,8 @@ export const register: Register = on => {
     const result = await next(e)
     if (isNested || (await nestedOf($))) return result
     const sections = [...result.sections]
+    // mail (v3.83): every loop of a mail session, subagents too, gets the mail rules
+    if ((await isMailSession($)) && !sections.some(section => section.id === MAIL_SECTION_ID)) sections.push({ id: MAIL_SECTION_ID, text: MAIL_TEXT, scope: 'session' as const })
     const isLoopManager =
       (await $.env.get('AGENT_OFFICE_MANAGER')) === '1' && !e.traits.includes('teammate') && e.tools.some(tool => AGENT_TOOLS.includes(tool))
     // HQ (v3.46): its own brief instead of the manager's, never both
@@ -1641,13 +1652,23 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // mail guard (v3.83): in a session that reads mail, every call beyond reading asks the person (or is refused where
+  // the mode answers without them); a refusal another hook made stands
+  on('classic.PreToolUse', async ($, e, next) => {
+    if (!(await isMailSession($))) return next(e)
+    const decision = mailGuardDecision(typeof e.tool_name === 'string' ? e.tool_name : '', typeof e.permission_mode === 'string' ? e.permission_mode : undefined, guardLang)
+    const answer = await next(e)
+    if (!decision || answer.deny) return answer
+    return { ...answer, allow: undefined, ...decision }
+  }).catch(($, e, next) => (mailGuardOn ? { ask: 'Agent Office mail guard: this call waits for your approval.' } : next(e)))   // fails closed
+
   // a permission dialog opens (main session or a subagent): the app tells the person (contract v2.6)
   on('classic.PermissionRequest', async ($, e, next) => {
     noteTranscript(e)
     const tool = typeof e.tool_name === 'string' ? e.tool_name : ''
     // auto-approve (contract v3.71): answered for the person, so no dialog opens and nothing waits; a decision
     // another hook already made stands
-    if (autoApproveOn && canAutoApprove(tool, e.tool_input)) {
+    if (autoApproveOn && !(await isMailSession($)) && canAutoApprove(tool, e.tool_input)) {
       const answer = await next(e)
       return answer.decision ? answer : { ...answer, decision: { behavior: 'allow' } }
     }

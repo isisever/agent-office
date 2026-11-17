@@ -1479,3 +1479,18 @@ select option.rt-off { color: #888; }
 .sb-role-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .sb-staff-tools .sb-dim { opacity: .55; }
 .sb-mcp-presets { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+
+/* v3.83 mail (mail.js) */
+.sb-mail-outbox-head { margin-top: 8px; }
+.sb-mail-outbox-head[hidden] { display: none; }
+.sb-draft.pending .sb-dot { background: var(--accent); }
+.sb-draft.failed .sb-dot { background: #d9534f; }
+.sb-draft-warn { color: #e0a030; }
+.sb-mail-code { display: flex; flex-direction: column; gap: 6px; }
+.sb-mail-code[hidden] { display: none; }
+.sb-mail-usercode { font-size: 20px; letter-spacing: 4px; font-weight: bold; color: var(--accent-text); user-select: all; }
+.sb-port { flex: 0 0 80px !important; }
+.sb-mail-review textarea.sb-mail-body { min-height: 220px; font-size: 12px; }
+.sb-mail-warnings { margin: 4px 0; padding-left: 4px; list-style: none; color: #e0a030; font-size: 12px; }
+.sb-mail-from { font-size: 12px; opacity: .85; }
+.sb-staff-mail .sb-dim { opacity: .55; }

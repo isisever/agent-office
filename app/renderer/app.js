@@ -759,6 +759,7 @@ sidebar = mountSidebar($('sidebar'), {
     wizard: (req) => api.roles.wizard(req).catch(() => ({ ok: false, error: 'failed' })),
     tools: () => (api.mcp?.apps ? api.mcp.apps().then((r) => r?.servers || []).catch(() => []) : Promise.resolve([])),
   },
+  mail: api.mail || null,   // v3.83 the MAIL panel talks to main directly (renderer/mail.js)
   setFallback: (on) => api.prefs?.set({ fallback: on }).then((p) => sidebar.setFallback(p?.fallback)).catch((e) => console.error(e)),
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
   setTheme: setThemeSetting,
@@ -924,6 +925,13 @@ async function resumeUnfinished() {
 }
 api.work?.onResumed?.((r) => sidebar.showResumed(r));
 
+// v3.83 mail: accounts and the outbox, then their changes
+if (api.mail) {
+  api.mail.accounts().then((v) => sidebar?.setMailAccounts(v)).catch(() => {});
+  api.mail.outbox().then((v) => sidebar?.setMailOutbox(v)).catch(() => {});
+  api.mail.onAccounts?.((v) => { sidebar?.setMailAccounts(v); loadStaff(); });
+  api.mail.onOutbox?.((v) => sidebar?.setMailOutbox(v));
+}
 api.prefs?.get().then((p) => {
   sidebar.setResume(p?.resume);
   sidebar.setResumeWork(p?.resumeWork);

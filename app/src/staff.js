@@ -101,9 +101,9 @@ function roleValue(raw, presetIds = null) {
  * One staff member, cleaned against what exists: projects and accounts that are gone are dropped (an unknown account
  * means "the project's account"). → the member, or null when it has no valid id, name or role.
  * @param {any} raw
- * @param {{ projectIds?: string[] | null, accountIds?: string[] | null, presetIds?: string[] | null, toolIds?: string[] | null }} [known]
+ * @param {{ projectIds?: string[] | null, accountIds?: string[] | null, presetIds?: string[] | null, toolIds?: string[] | null, mailIds?: string[] | null }} [known]
  */
-function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds = null, toolIds = null } = {}) {
+function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds = null, toolIds = null, mailIds = null } = {}) {
   if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !STAFF_ID_RE.test(raw.id)) return null;
   const name = str(raw.name, NAME_MAX);
   const role = roleValue(raw.role, presetIds);
@@ -114,9 +114,11 @@ function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds 
     : [...new Set((Array.isArray(raw.projects) ? raw.projects : []).filter((id) => typeof id === 'string' && PROJECT_ID_RE.test(id) && (!projectIds || projectIds.includes(id))))];
   // v3.82 the member's own MCP tools: app-added servers its desks get whatever the project's scope says
   const tools = [...new Set((Array.isArray(raw.tools) ? raw.tools : []).filter((id) => typeof id === 'string' && TOOL_ID_RE.test(id) && (!toolIds || toolIds.includes(id))))].slice(0, 20);
+  // v3.83 the mail accounts the member may read and draft from (src/mail: read only; sending is the person's)
+  const mail = [...new Set((Array.isArray(raw.mail) ? raw.mail : []).filter((id) => typeof id === 'string' && /^m-[0-9a-f]{6,16}$/.test(id) && (!mailIds || mailIds.includes(id))))].slice(0, 10);
   return {
     id: raw.id, name, role, ...(department ? { department } : {}), ...(accountId ? { accountId } : {}),
-    ...(Object.keys(packMap(raw.skillPacks)).length ? { skillPacks: packMap(raw.skillPacks) } : {}), ...(tools.length ? { tools } : {}), projects,
+    ...(Object.keys(packMap(raw.skillPacks)).length ? { skillPacks: packMap(raw.skillPacks) } : {}), ...(tools.length ? { tools } : {}), ...(mail.length ? { mail } : {}), projects,
   };
 }
 

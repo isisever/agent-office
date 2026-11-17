@@ -60,6 +60,23 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onDesks: listen('staff:desks'),                         // the same list when it changes
     setParallel: (projectId, on) => ipcRenderer.invoke('projects:setParallel', projectId, on),   // several desks at once, each in its own worktree
   },
+  // v3.83 mail: accounts (passwords and tokens go in, never out) and the outbox; sending is only mail.send, the person's click
+  mail: {
+    accounts: () => ipcRenderer.invoke('mail:accounts'),            // → { accounts: [{ id, label, provider, address, imap?, smtp?, user?, clientId?, tenant?, hasSecret }], encryption }
+    save: (form) => ipcRenderer.invoke('mail:save', form),          // Gmail / IMAP add or edit (password: blank keeps it) → { ok, account } | { ok: false, error }
+    remove: (id) => ipcRenderer.invoke('mail:remove', id),          // the account, its secret, and every member's access to it
+    test: (id) => ipcRenderer.invoke('mail:test', id),              // log in and list one → { ok } | { ok: false, error }
+    m365Start: (form) => ipcRenderer.invoke('mail:m365Start', form), // { clientId, tenant?, label? } → { ok, userCode, verificationUri } | { ok: false, error }
+    m365Cancel: () => ipcRenderer.invoke('mail:m365Cancel'),
+    onM365: listen('mail:m365'),                                     // the sign-in's end: { ok, address } | { ok: false, error }
+    onAccounts: listen('mail:accounts'),
+    outbox: () => ipcRenderer.invoke('mail:outbox'),                 // → { drafts, pending }
+    onOutbox: listen('mail:outbox'),
+    edit: (id, form) => ipcRenderer.invoke('mail:edit', id, form),   // the person's changes to a pending draft
+    send: (id) => ipcRenderer.invoke('mail:send', id),               // the one way a mail leaves → { ok } | { ok: false, error }
+    discard: (id) => ipcRenderer.invoke('mail:discard', id),
+    retry: (id) => ipcRenderer.invoke('mail:retry', id),
+  },
   // v3.82 the person's own roles (listed with the presets in staff.list) and the role wizard
   roles: {
     save: (form) => ipcRenderer.invoke('roles:save', form),   // { id?, name, short?, department?, description, brief, writesCode, skillPacks, tools } → { ok, role } | { ok: false, error: 'name' | 'brief' | 'name-used' | 'too-many' | 'state' }

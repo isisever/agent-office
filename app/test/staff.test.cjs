@@ -116,6 +116,9 @@ test('member tools (v3.82): known server ids kept; a desk gets them on top of it
   const m = ST.normalizeMember({ ...ayse, tools: ['srv1', 'gone', 'srv1', '../x'] }, { ...known, toolIds: ['srv1', 'srv2'] });
   assert.deepEqual(m.tools, ['srv1']);
   assert.equal(ST.normalizeMember(ayse, known).tools, undefined, 'none: no field');
+  // v3.83 mail accounts: known ids only
+  assert.deepEqual(ST.normalizeMember({ ...ayse, mail: ['m-aaaaaa', 'm-gone00', 'x', 'm-aaaaaa'] }, { ...known, mailIds: ['m-aaaaaa'] }).mail, ['m-aaaaaa']);
+  assert.equal(ST.normalizeMember(ayse, known).mail, undefined);
   const servers = [{ id: 'srv1', name: 'canva', type: 'http', url: 'https://mcp.canva.com/mcp', scope: 'p9' }, { id: 'srv2', name: 'x', type: 'http', url: 'https://x', scope: 'p2' }];
   assert.deepEqual(MS.withTools(servers, 'p1', ['srv1']).map((s) => s.scope), ['p1', 'p2']);
   assert.equal(MS.withTools(servers, 'p1', undefined), servers);

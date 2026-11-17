@@ -663,7 +663,10 @@
         "too-many": "The role library is full (60 at most).",
         "failed": "The role could not be saved."
       }
-    }
+    },
+    "mail": "Mail access",
+    "mailHint": "Accounts it may read and draft from. It never sends: drafts come to you in the MAIL panel. Every action of a desk that reads mail (files, commands, web, other tools) waits for you; projects with \"Skip permissions\" get no mail.",
+    "mailNone": "No mail account connected; add one in the MAIL panel."
   },
   "chat": {
     "placeholder": "Message… (Enter sends, Shift+Enter: new line)",
@@ -920,7 +923,8 @@
     "routineAllGood": "All good",
     "routineFailed": "Routine {name} failed ({reason})",
     "routineNeedsApproval": "Routine {name} needs your approval to send a task to {project}",
-    "routineNeedsApprovalRemote": "Routine {name} needs your approval to send a task to {project} on {machine}"
+    "routineNeedsApprovalRemote": "Routine {name} needs your approval to send a task to {project} on {machine}",
+    "mailDraft": "{name} prepared a mail draft: it waits for your approval"
   },
   "auth": {
     "unreadable": "could not read the login status",
@@ -1270,6 +1274,122 @@
       "delivered": "delivered",
       "running": "running on the device",
       "needs-approval": "needs approval on the device"
+    }
+  },
+  "mail": {
+    "title": "MAIL",
+    "add": "+ Add mail account",
+    "noKeychain": "This computer has no keychain to protect passwords; a mail password cannot be saved.",
+    "signedIn": "Sign-in saved (encrypted)",
+    "noSecret": "No sign-in saved",
+    "test": "Test the connection",
+    "testOk": "The connection works",
+    "edit": "Edit",
+    "remove": "Remove",
+    "provider": {
+      "gmail": "Gmail",
+      "m365": "Microsoft 365 / Outlook",
+      "imap": "Exchange / IMAP"
+    },
+    "empty": "No mail account connected.",
+    "outbox": "Mails waiting for you ({n})",
+    "status": {
+      "pending": "Waiting for your approval",
+      "failed": "Could not be sent"
+    },
+    "warn": {
+      "new-recipient": "A recipient who is not in the conversation",
+      "not-a-reply": "Not a reply: a new mail",
+      "external": "A recipient outside your domain",
+      "links": "The text has links",
+      "source-flagged": "The mail it answers was flagged as suspicious"
+    },
+    "removeConfirm": "Remove the account \"{name}\"? Its password is deleted and no member can use it any more.",
+    "addTitle": "Add a mail account",
+    "editTitle": "Mail account · {name}",
+    "providerLabel": "Provider",
+    "label": "Name",
+    "labelPh": "Support, Accounting, …",
+    "address": "Mail address",
+    "user": "User name",
+    "userPh": "Blank: the mail address",
+    "userHint": "For Exchange usually the mail address or DOMAIN\\user.",
+    "password": "Password",
+    "passwordKeep": "Type to change it; blank keeps the saved one",
+    "passwordHint": "Kept encrypted in Agent Office; it never goes to a session, a member or a file.",
+    "imap": "IMAP server and port",
+    "smtp": "SMTP server and port",
+    "smtpSecurity": "SMTP security",
+    "clientId": "Application (client) ID",
+    "clientIdHint": "Azure Portal → App registrations → New registration (public client, \"Allow public client flows\" on; permissions Mail.Read, Mail.Send, User.Read, offline_access).",
+    "tenant": "Tenant",
+    "tenantHint": "common, your company domain or the tenant id.",
+    "help": {
+      "gmail": "Gmail needs an \"app password\", not your normal password: Google Account → Security → 2-Step Verification → App passwords.",
+      "m365": "Microsoft 365 / Outlook.com sign-in happens on Microsoft's page in the browser; your password never reaches Agent Office. It needs an app registration (client id) of your organisation.",
+      "imap": "Exchange (on premises) or any server with IMAP/SMTP. Connections are always encrypted (TLS)."
+    },
+    "signIn": "Sign in with Microsoft",
+    "codeStep": "{url} opened in your browser. Enter this code and approve with your account:",
+    "codeWait": "Waiting for the sign-in…",
+    "safety": "Members can only read mail and prepare drafts. No mail is sent without your approval, and every action of a desk that reads mail waits for you.",
+    "reviewTitle": "Mail draft",
+    "reviewIntro": "Prepared by {name} ({project}, {when}). Not sent: read it, fix it if needed, then send or delete it.",
+    "replyTo": "Answers: {from} · {subject}",
+    "sourceFlags": "Careful: the mail it answers had content that looks like an attempt to instruct an AI ({flags}).",
+    "flag": {
+      "ignore-instructions": "ignore instructions",
+      "role-play": "role change",
+      "system-prompt": "system prompt",
+      "fake-turn": "fake conversation line",
+      "tool-request": "command or tool request",
+      "exfiltration": "data leak request",
+      "urgent-action": "urgent payment or action",
+      "invisible-characters": "invisible characters",
+      "hidden-text": "hidden text"
+    },
+    "from": "From",
+    "to": "To",
+    "cc": "Cc",
+    "subject": "Subject",
+    "body": "Text",
+    "send": "Send",
+    "sending": "Sending…",
+    "sendConfirm": "Send this mail from {from} to {n} recipient(s)?\n\n\"{subject}\"",
+    "discard": "Delete",
+    "discardConfirm": "Delete the draft?",
+    "retry": "Try again",
+    "error": {
+      "no-secret": "No sign-in saved.",
+      "auth": "Sign-in refused (password or permission).",
+      "refused": "The server refused.",
+      "timeout": "The server did not answer.",
+      "not-found": "Mail not found.",
+      "network": "Could not reach the server.",
+      "closed": "The connection closed.",
+      "greeting": "The server did not answer as expected.",
+      "failed": "It did not work.",
+      "unknown": "Not found.",
+      "provider": "Choose a provider.",
+      "address": "Type a valid mail address.",
+      "host": "Type the IMAP and SMTP servers.",
+      "client": "Type a valid application (client) ID and tenant.",
+      "too-many": "At most 10 mail accounts.",
+      "address-used": "This address is already connected.",
+      "password": "Type the password.",
+      "no-keychain": "Passwords cannot be protected on this computer; not saved.",
+      "secret": "The sign-in could not be saved.",
+      "state": "Settings cannot be saved right now.",
+      "device-code": "Microsoft sign-in could not start (client id / tenant?).",
+      "expired": "The code expired; try again.",
+      "declined": "The sign-in was declined.",
+      "token": "Microsoft sign-in did not finish.",
+      "to": "At least one recipient.",
+      "subject": "A subject is needed (300 characters at most).",
+      "body": "The text is empty.",
+      "too-large": "The text is too long.",
+      "unknown-account": "The account is gone.",
+      "interrupted": "Sending was cut short; check Sent Items whether it went."
     }
   }
 }

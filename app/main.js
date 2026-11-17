@@ -26,6 +26,14 @@ const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
 const ST = require('./src/staff.js');
 const RW = require('./src/role-wizard.js');
+// v3.83 mail: accounts, the outbox, the read-only readers, the guard and the desk's mail server
+const MG = require('./src/mail/guard.js');
+const MIME = require('./src/mail/mime.js');
+const IMAP = require('./src/mail/imap.js');
+const SMTP = require('./src/mail/smtp.js');
+const GRAPH = require('./src/mail/graph.js');
+const MST = require('./src/mail/store.js');
+const MMCP = require('./src/mail-mcp.js');
 const MR = require('./src/mcp-reload.js');
 const SP = require('./src/skill-packs.js');
 const R = require('./src/resume.js');
@@ -361,6 +369,8 @@ function dropProjectServers(projectId) {
 }
 function removeMcpFile(id) {
   officeSock?.remove(id);   // v3.35 its office_* token stops working with it
+  mailSock?.remove(id);     // v3.83 its mail_* token too
+  mailRead.delete(id);
   try { fs.rmSync(path.join(mcpDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
   try { fs.rmSync(path.join(directoryDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
   try { fs.rmSync(path.join(deskRoleDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}   // v3.81 a desk's role file
@@ -1174,11 +1184,13 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   if (!sessionId && tab?.staffId && tab.sessionId && TIO.findTranscript(cwd, tab.sessionId, configDir, app.getPath('home'))) sessionId = tab.sessionId;
   const isResume = Boolean(sessionId) || (resume && (!tab || Boolean(tab.worktree)) && hasHistory(cwd, configDir));
   const resumeArgs = sessionId ? ['--resume', sessionId] : isResume ? ['--continue'] : [];
-  const settingsArg = IS_WIN && settings ? settingsFile(usageKey(id), settings) : settings;
   // Default's plugins and MCP servers for other accounts, other projects' MCP servers (--plugin-dir each,
   // --mcp-config <file>; see shared-config.js) and the office directory naming them (contract v3.9)
   // v3.35 one boss: a manager-mode boss tab (the main tab) gets the agent-office MCP server; its token only in that file
-  const bossMcp = officeServerFor(id, project);
+  const officeMcp = officeServerFor(id, project);
+  // v3.83 a desk whose member has mail accounts gets the mail server (and the plugin's guard, AGENT_OFFICE_MAIL_GUARD)
+  const mailMcp = project.hq ? null : mailServerFor(id, project, tab);
+  const bossMcp = officeMcp && mailMcp ? { ...officeMcp, ...mailMcp } : officeMcp || mailMcp;
   // v3.44 servers added in Agent Office, Claude Code only: into this tab's 0600 MCP file, unless the name is taken
   // v3.46 HQ: none of these (no Default/other projects' servers, no app servers, no skill packs): its own MCP file
   // holds only the agent-office server and it runs with --strict-mcp-config (HQ.launchArgs)
@@ -1196,7 +1208,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const hqArgs = project.hq ? HQ.launchArgs({ dir: cwd, mcpConfig: prepared.mcpConfig || '' }) : [];
   // v3.72 skip permissions: the project's switch adds --dangerously-skip-permissions here, for every Claude Code tab
   // start (fresh, --continue, --resume, worktree tabs, Windows); never the HQ session (P.skipPermissionsArgs)
-  const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
+  // v3.83 a mail session: Claude Code itself asks the person for every action beyond reading (ask rules for the
+  // built-in tools and every other MCP server of its file, bypass and auto mode off) and loads only the servers of
+  // its --mcp-config file (no claude.ai connectors, no account servers: none of them could send mail behind the outbox)
+  const guarded = mailMcp ? MG.guardSettings(settings, Object.keys(readJson(prepared.mcpConfig || '')?.mcpServers || {}).filter((n) => n !== MMCP.SERVER_NAME)) : settings;
+  const settingsArg = IS_WIN && guarded ? settingsFile(usageKey(id), guarded) : guarded;
+  const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(mailMcp ? ['--strict-mcp-config'] : []), ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
@@ -1225,7 +1242,13 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const roleFile = tab?.staffId ? writeDeskRole(id, project, tab.staffId) : null;
   if (roleFile) env.AGENT_OFFICE_ROLE = roleFile;
   if (project.hq && teamOn()) env.AGENT_OFFICE_TEAM = '1';
-  if (bossMcp && (linkHost?.link()?.devices.length || 0) > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
+  delete env.AGENT_OFFICE_MAIL_GUARD;
+  if (mailMcp) {
+    env.AGENT_OFFICE_MAIL_GUARD = '1';           // v3.83 the plugin's second layer and the mail rules section
+    env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false';   // no claude.ai connector (a Gmail one could send behind the outbox)
+    delete env.AGENT_OFFICE_AUTO_APPROVE;        // and Agent Office never answers its permission dialogs
+  }
+  if (officeMcp && (linkHost?.link()?.devices.length || 0) > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
   if (sl?.userCommand) env.AGENT_OFFICE_STATUSLINE = sl.userCommand;
   delete env[D.DELEGATE_ENV];
   delete env.AGENT_OFFICE_DELEGATE_BIN;
@@ -1690,6 +1713,13 @@ async function startOffice() {
     console.error('office socket:', e.message);
     notify(T('main.officeUnavailable'), String(e.message || e).slice(0, 120), null);
   }
+  // v3.83 the mail server's socket, next to the office one (no mail for desks when it cannot listen)
+  if (officeSock) try {
+    mailScript = MMCP.writeServerScript(path.join(ud, 'office'));
+    const sock = MMCP.createSocket({ socketFile: MMCP.socketPath(officeSock.socketFile), handle: mailTool, ownDir: ud });
+    if (!(await sock.ready)) { sock.close(); throw new Error('cannot listen'); }
+    mailSock = sock;
+  } catch (e) { console.error('mail socket:', e.message); }
 }
 const dispatchFile = () => path.join(app.getPath('userData'), 'link', 'dispatches.json');
 let dispatches = null;   // id → { id, tab, machine, project, pub, at, status, reason?, report? } (newest 50, 0600)
@@ -3242,7 +3272,7 @@ const builtinRoles = () => rolePresets || (rolePresets = ST.loadRoles(rolesRoot(
 const presetRoles = () => [...builtinRoles(), ...(state.customRoles || [])];
 const staffKnown = () => ({
   projectIds: state.projects.map((p) => p.id), accountIds: state.accounts.map((a) => a.id), presetIds: presetRoles().map((d) => d.id),
-  toolIds: appServers().map((s) => s.id),
+  toolIds: appServers().map((s) => s.id), mailIds: (state.mailAccounts || []).map((a) => a.id),
 });
 ipcMain.handle('staff:list', () => ({ teamMode: state.teamMode === true, presets: presetRoles(), departments: ST.DEPARTMENTS, staff: state.staff || [] }));
 ipcMain.handle('staff:save', (_e, form) => {
@@ -3347,6 +3377,257 @@ ipcMain.handle('roles:wizard', async (_e, req) => {
     console.error('role wizard:', e.message);
     return { ok: false, error: 'failed' };
   } finally { wizardBusy = false; }
+});
+
+// --- mail (contract v3.83): accounts (state.mailAccounts, no secret), their passwords / tokens (userData/mail-secrets,
+// encrypted with safeStorage; never saved where no keychain encrypts them), the outbox (userData/mail/outbox.json,
+// 0600) and an audit log (userData/mail/audit.log: who called what, never a mail's text). A desk whose member was given
+// accounts gets the `agent-office-mail` server: read only, and drafts go to the outbox. Sending is only ever the
+// person's click on a draft here (mail:send); no session, MCP tool, routine or paired device can send.
+let mailSock = null;
+let mailScript = '';
+const mailRead = new Map();   // tab → Map(mail id → the mail it read: from, to, cc, subject, messageId, flags) for replies
+const mailDir = () => path.join(app.getPath('userData'), 'mail');
+const mailSecrets = () => MS.tokenStore(path.join(app.getPath('userData'), 'mail-secrets'), safeStorage);
+const mailAccounts = () => state.mailAccounts || [];
+const mailToken = new Map();  // m365 account id → { accessToken, expiresAt } (memory only)
+let outbox = null;
+const outboxFile = () => path.join(mailDir(), 'outbox.json');
+function loadOutbox() { if (!outbox) outbox = MST.normalizeOutbox(readJson(outboxFile()) || MST.emptyOutbox()); return outbox; }
+function saveOutbox(next) {
+  outbox = next;
+  try { fs.mkdirSync(mailDir(), { recursive: true, mode: 0o700 }); SF.writeAtomic(outboxFile(), JSON.stringify(next)); } catch (e) { console.error('mail outbox:', e.message); }
+  send('mail:outbox', outboxView());
+}
+const outboxView = () => ({ drafts: loadOutbox().drafts.slice(0, 100), pending: MST.pendingOf(loadOutbox()).length });
+function mailAudit(entry) {
+  try {
+    fs.mkdirSync(mailDir(), { recursive: true, mode: 0o700 });
+    const f = path.join(mailDir(), 'audit.log');
+    try { if (fs.statSync(f).size > 1 << 20) fs.renameSync(f, `${f}.1`); } catch { /* new */ }
+    fs.appendFileSync(f, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, { mode: 0o600 });
+  } catch { /* the log is best effort */ }
+}
+/** The member's mail accounts (ids that still exist). */
+const mailIdsOf = (m) => (Array.isArray(m?.mail) ? m.mail.filter((id) => mailAccounts().some((a) => a.id === id)) : []);
+
+/** The mail server for a desk's tab, or null: a Claude Code desk, its member given accounts, the project not skipping permissions. */
+function mailServerFor(id, project, tab) {
+  if (!tab?.staffId || !mailSock || !mailScript || P.engineOf(project) !== 'claude' || project.skipPermissions === true) return null;
+  if (!mailIdsOf(memberById(tab.staffId)).length) return null;
+  const token = mailSock.add(id);
+  return { [MMCP.SERVER_NAME]: MMCP.serverConfig({ socket: mailSock.socketFile, token, script: mailScript }) };
+}
+
+/** A fresh access token for an m365 account (refreshed and the rotated refresh token stored). */
+async function m365Token(a) {
+  const c = mailToken.get(a.id);
+  if (c && c.expiresAt > Date.now()) return c.accessToken;
+  const refreshToken = mailSecrets().load(a.id);
+  if (!refreshToken) throw new Error('no-secret');
+  const t = await GRAPH.refresh(fetch, { clientId: a.clientId, tenant: a.tenant, refreshToken });
+  if (t.refreshToken !== refreshToken) mailSecrets().save(a.id, t.refreshToken);
+  mailToken.set(a.id, { accessToken: t.accessToken, expiresAt: t.expiresAt });
+  return t.accessToken;
+}
+/** Runs fn with an IMAP session of the account (always closed). */
+async function withImap(a, fn) {
+  const password = mailSecrets().load(a.id);
+  if (!password) throw new Error('no-secret');
+  const s = await IMAP.open({ host: a.imap.host, port: a.imap.port, user: a.user, password });
+  try { return await fn(s); } finally { await s.close(); }
+}
+/** The newest messages, as a model may see them (cleaned one-liners). */
+async function mailList(a, q) {
+  const rows = a.provider === 'm365'
+    ? await GRAPH.list(fetch, await m365Token(a), q)
+    : (await withImap(a, (s) => s.list(q))).map((r) => {
+      const h = MIME.parseMessage(r.header);
+      return { id: String(r.uid), from: h.from, subject: h.subject, date: h.date, seen: r.seen, hasAttachments: /multipart\/mixed/i.test(r.header.toString('latin1')) };
+    });
+  return rows.map((r) => ({ id: r.id, from: MG.cleanLine(r.from, 120), subject: MG.cleanLine(r.subject), date: MG.cleanLine(r.date, 60), seen: r.seen, attachments: r.hasAttachments }));
+}
+/** One message parsed: { from, to, cc, subject, date, text, hiddenDropped, attachments, messageId, references } */
+async function mailMessage(a, id) {
+  if (a.provider === 'm365') {
+    const m = await GRAPH.read(fetch, await m365Token(a), id);
+    const html = m.html ? MIME.htmlToText(m.html) : null;
+    return { ...m, text: html ? html.text : m.text, hiddenDropped: Boolean(html?.hiddenDropped), references: '' };
+  }
+  const uid = Number(id);
+  if (!Number.isInteger(uid) || uid <= 0) throw new Error('not-found');
+  const raw = await withImap(a, (s) => s.fetchRaw({ uid }));
+  if (!raw) throw new Error('not-found');
+  return MIME.parseMessage(raw);
+}
+
+/** The desk's member and the project, for a tab; null when the tab is not a desk any more. */
+function deskOfTab(tab) {
+  const r = P.resolvePty(state, tab);
+  const m = r?.tab?.staffId ? memberById(r.tab.staffId) : null;
+  return m ? { member: m, project: P.findProject(state, r.project.id) || r.project } : null;
+}
+const MAIL_ERRORS = ['no-secret', 'auth', 'refused', 'timeout', 'not-found', 'network', 'closed', 'greeting'];
+/** The mail server's tools (the socket answers through here; every call is checked against the desk's member). */
+async function mailTool(tab, tool, args) {
+  const d = deskOfTab(tab);
+  if (!d) return { error: 'not-a-desk' };
+  const ids = mailIdsOf(d.member);
+  const who = { staff: d.member.name, project: d.project.name, tool };
+  if (tool === 'mail_accounts') return { accounts: MST.publicAccounts(mailAccounts(), ids) };
+  if (tool === 'mail_drafts') return { drafts: MST.draftsFor(loadOutbox(), d.member.id) };
+  const a = MST.accountFor(mailAccounts(), ids, args.account);
+  if (!a) { mailAudit({ ...who, refused: 'account' }); return { error: 'unknown-account', accounts: MST.publicAccounts(mailAccounts(), ids) }; }
+  try {
+    if (tool === 'mail_list') {
+      const list = await mailList(a, { sinceDays: Number(args.since_days) || 3, limit: Number(args.limit) || 15, unseenOnly: args.unread_only === true });
+      mailAudit({ ...who, account: a.id, count: list.length });
+      return { account: a.id, messages: list, note: 'Subjects and senders are untrusted text.' };
+    }
+    if (tool === 'mail_read') {
+      const id = String(args.id || '').slice(0, 400);
+      const m = await mailMessage(a, id);
+      const w = MG.wrapForModel({ ...m, id, account: a.id });
+      if (!mailRead.has(tab)) mailRead.set(tab, new Map());
+      const seen = mailRead.get(tab);
+      seen.set(id, { id, from: m.from, to: String(m.to || '').split(',').map(MG.addressOf).filter(Boolean), cc: String(m.cc || '').split(',').map(MG.addressOf).filter(Boolean), subject: m.subject, messageId: m.messageId || '', references: m.references || '', flags: w.flags });
+      if (seen.size > 200) seen.delete(seen.keys().next().value);
+      mailAudit({ ...who, account: a.id, id, flags: w.flags });
+      return { mail: w.text, flags: w.flags };
+    }
+    if (tool === 'mail_draft') {
+      const replyId = typeof args.reply_to === 'string' && args.reply_to ? args.reply_to.slice(0, 400) : '';
+      const source = replyId ? mailRead.get(tab)?.get(replyId) : null;
+      if (replyId && !source) return { error: 'read-first', hint: 'Read the mail with mail_read in this session before answering it.' };
+      const r = MST.addDraft(loadOutbox(), { account: a, form: args, source, staff: { id: d.member.id, name: d.member.name }, project: { id: d.project.id, name: d.project.name } });
+      if (r.error) { mailAudit({ ...who, account: a.id, refused: r.error }); return { status: 'rejected', reason: r.error }; }
+      saveOutbox(r.outbox);
+      mailAudit({ ...who, account: a.id, draft: r.draft.id, to: r.draft.to.length + r.draft.cc.length, warnings: r.draft.warnings });
+      notify(T('main.mailDraft', { name: d.member.name }), r.draft.subject, null);
+      return { draft_id: r.draft.id, status: 'awaiting-approval', note: 'Not sent. The person decides in Agent Office.', warnings: r.draft.warnings };
+    }
+    return { error: 'unknown-tool' };
+  } catch (e) {
+    const code = MAIL_ERRORS.includes(e?.message) ? e.message : 'failed';
+    mailAudit({ ...who, account: a.id, failed: code });
+    return { error: code };
+  }
+}
+
+// IPC for the app: accounts, sign-in, the outbox. Passwords and tokens go in, never out.
+const mailAccountRow = (a) => ({ ...a, hasSecret: mailSecrets().has(a.id) });
+ipcMain.handle('mail:accounts', () => ({ accounts: mailAccounts().map(mailAccountRow), encryption: safeStorage.isEncryptionAvailable() }));
+function mailCommitAccounts(list) {
+  const staff = (state.staff || []).map((m) => (Array.isArray(m.mail) && m.mail.some((id) => !list.some((a) => a.id === id)) ? { ...m, mail: m.mail.filter((id) => list.some((a) => a.id === id)) } : m));
+  commit({ ...state, mailAccounts: list, ...(state.staff ? { staff } : {}) });
+  send('mail:accounts', { accounts: list.map(mailAccountRow), encryption: safeStorage.isEncryptionAvailable() });
+}
+/** Gmail / IMAP: the account and its password (required for a new one; blank keeps the stored one). */
+ipcMain.handle('mail:save', (_e, f) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  if (f?.provider === 'm365') return { ok: false, error: 'provider' };
+  const r = MST.accountFromForm(mailAccounts(), f || {});
+  if (r.error) return { ok: false, error: r.error };
+  const password = typeof f.password === 'string' ? f.password.replace(/\s+/g, f.provider === 'gmail' ? '' : ' ').trim() : '';
+  const isNew = !mailAccounts().some((a) => a.id === r.account.id);
+  if (isNew && !password) return { ok: false, error: 'password' };
+  if (password) {
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'no-keychain' };
+    if (!mailSecrets().save(r.account.id, password)) return { ok: false, error: 'secret' };
+  }
+  mailCommitAccounts(isNew ? [...mailAccounts(), r.account] : mailAccounts().map((a) => (a.id === r.account.id ? r.account : a)));
+  return { ok: true, account: mailAccountRow(r.account) };
+});
+ipcMain.handle('mail:remove', (_e, id) => {
+  if (!mailAccounts().some((a) => a.id === id)) return { ok: false, error: 'unknown' };
+  mailSecrets().remove(String(id));
+  mailToken.delete(id);
+  mailCommitAccounts(mailAccounts().filter((a) => a.id !== id));
+  return { ok: true };
+});
+/** Logs in and lists one message: { ok } | { ok: false, error }. */
+ipcMain.handle('mail:test', async (_e, id) => {
+  const a = mailAccounts().find((x) => x.id === id);
+  if (!a) return { ok: false, error: 'unknown' };
+  try { await mailList(a, { sinceDays: 30, limit: 1 }); return { ok: true }; } catch (e) { return { ok: false, error: MAIL_ERRORS.includes(e?.message) ? e.message : 'failed' }; }
+});
+// Microsoft 365: device code sign-in with the person's app registration; the account is saved once it worked
+let m365Flow = null;   // { cancelled }
+ipcMain.handle('mail:m365Start', async (_e, f) => {
+  if (!stateWritable) return { ok: false, error: 'state' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'no-keychain' };
+  if (!GRAPH.validClient(f?.clientId) || !GRAPH.validTenant(f?.tenant || 'common')) return { ok: false, error: 'client' };
+  if (m365Flow) m365Flow.cancelled = true;
+  const flow = { cancelled: false };
+  m365Flow = flow;
+  let code;
+  try { code = await GRAPH.startDeviceCode(fetch, { clientId: f.clientId, tenant: f.tenant || 'common' }); } catch { return { ok: false, error: 'device-code' }; }
+  (async () => {
+    try {
+      const t = await GRAPH.pollDeviceCode(fetch, { clientId: f.clientId, tenant: f.tenant || 'common', ...code, cancelled: () => flow.cancelled });
+      const address = await GRAPH.me(fetch, t.accessToken);
+      const r = MST.accountFromForm(mailAccounts(), { ...f, provider: 'm365', address, tenant: f.tenant || 'common' });
+      if (r.error) return send('mail:m365', { ok: false, error: r.error });
+      if (!mailSecrets().save(r.account.id, t.refreshToken)) return send('mail:m365', { ok: false, error: 'secret' });
+      mailToken.set(r.account.id, { accessToken: t.accessToken, expiresAt: t.expiresAt });
+      const exists = mailAccounts().some((a) => a.id === r.account.id);
+      mailCommitAccounts(exists ? mailAccounts().map((a) => (a.id === r.account.id ? r.account : a)) : [...mailAccounts(), r.account]);
+      send('mail:m365', { ok: true, address });
+    } catch (e) { if (!flow.cancelled) send('mail:m365', { ok: false, error: ['expired', 'declined'].includes(e?.message) ? e.message : 'token' }); } finally { if (m365Flow === flow) m365Flow = null; }
+  })();
+  if (/^https:\/\/[\w.-]*microsoft(online)?\.com\//i.test(code.verificationUri)) eShell.openExternal(code.verificationUri).catch(() => {});
+  return { ok: true, userCode: code.userCode, verificationUri: code.verificationUri };
+});
+ipcMain.handle('mail:m365Cancel', () => { if (m365Flow) m365Flow.cancelled = true; m365Flow = null; return { ok: true }; });
+ipcMain.handle('mail:outbox', () => outboxView());
+ipcMain.handle('mail:edit', (_e, id, f) => {
+  const r = MST.editDraft(loadOutbox(), String(id), f || {});
+  if (r.error) return { ok: false, error: r.error };
+  saveOutbox(r.outbox);
+  return { ok: true, draft: r.draft };
+});
+ipcMain.handle('mail:discard', (_e, id) => {
+  const r = MST.setStatus(loadOutbox(), String(id), 'discarded', { decidedAt: Date.now() });
+  if (r.error) return { ok: false, error: r.error };
+  saveOutbox(r.outbox);
+  mailAudit({ person: 'discard', draft: id });
+  return { ok: true };
+});
+/** The person's Send: the one way a mail leaves. The draft is checked again; a failure keeps it to retry or discard. */
+ipcMain.handle('mail:send', async (_e, id) => {
+  const d = loadOutbox().drafts.find((x) => x.id === id);
+  const a = d && mailAccounts().find((x) => x.id === d.account);
+  if (!d || d.status !== 'pending') return { ok: false, error: 'state' };
+  if (!a) return { ok: false, error: 'unknown-account' };
+  const c = MG.checkDraft(d);
+  if (c.error) return { ok: false, error: c.error };
+  const started = MST.setStatus(loadOutbox(), d.id, 'sending', { decidedAt: Date.now() });
+  if (started.error) return { ok: false, error: started.error };
+  saveOutbox(started.outbox);
+  try {
+    if (a.provider === 'm365') await GRAPH.sendDraft(fetch, await m365Token(a), { ...c.draft, replyToId: d.replyTo?.id });
+    else {
+      const password = mailSecrets().load(a.id);
+      if (!password) throw new Error('no-secret');
+      const msg = MIME.buildMessage({ from: a.address, ...c.draft, inReplyTo: d.replyTo?.messageId || '', references: d.replyTo?.references || '' });
+      await SMTP.send({ host: a.smtp.host, port: a.smtp.port, security: a.smtp.security, user: a.user, password, from: a.address, recipients: [...c.draft.to, ...c.draft.cc], raw: msg.raw });
+    }
+    saveOutbox(MST.setStatus(loadOutbox(), d.id, 'sent', { sentAt: Date.now() }).outbox);
+    mailAudit({ person: 'send', draft: d.id, account: a.id, to: c.draft.to.length + c.draft.cc.length });
+    return { ok: true };
+  } catch (e) {
+    const code = MAIL_ERRORS.includes(e?.message) ? e.message : 'failed';
+    saveOutbox(MST.setStatus(loadOutbox(), d.id, 'failed', { error: code }).outbox);
+    mailAudit({ person: 'send', draft: d.id, account: a.id, failed: code });
+    return { ok: false, error: code };
+  }
+});
+/** A failed draft back to pending (to send again after fixing the account). */
+ipcMain.handle('mail:retry', (_e, id) => {
+  const r = MST.setStatus(loadOutbox(), String(id), 'pending', { error: undefined });
+  if (r.error) return { ok: false, error: r.error };
+  saveOutbox(r.outbox);
+  return { ok: true };
 });
 
 // --- desks (contract v3.81 step 3): a staff member's tab in a project. Its own session (account, role section,
@@ -4550,6 +4831,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
   // v3.81 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
   if (Array.isArray(raw.customRoles)) state = { ...state, customRoles: ST.normalizeCustomRoles(raw.customRoles) };   // v3.82, before the staff that use them
+  if (Array.isArray(raw.mailAccounts)) state = { ...state, mailAccounts: MST.normalizeAccounts(raw.mailAccounts) };   // v3.83, before the staff given them
   if (Array.isArray(raw.staff)) state = { ...state, staff: ST.normalizeStaff(raw.staff, staffKnown()) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go
