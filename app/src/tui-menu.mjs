@@ -98,3 +98,26 @@ export function liveStatus(lines) {
   }
   return { busy: true, text: '' };
 }
+
+// v3.80 amendment: any other open dialog (one parseMenu does not read: a picker without numbers, a confirmation, a
+// prompt Claude Code adds later). Claude Code puts a key hint at its foot ("Enter to confirm · Esc to cancel"), so
+// the chat shows the dialog's text as it is, with the keys a person would press, instead of only "answer it in the
+// terminal".
+// a dialog's own hint, never the prompt's ("esc to interrupt", "shift+tab to cycle", "? for shortcuts")
+const HINT_RE = /\b(?:Esc|Enter|Return)\s+to\s+(?:close|continue|submit|save|skip|dismiss|apply|accept|retry|toggle)\b|[↑↓]\S*\s+to\s+(?:navigate|select|move|choose)\b/i;
+/** The open dialog at the foot of a screen → { lines: string[] (≤ 14, trimmed), numbers: number[] } or null. */
+export function openDialog(lines) {
+  const L = (Array.isArray(lines) ? lines : []).map((l) => String(l ?? '').replace(/\s+$/, ''));
+  let foot = -1;
+  for (let i = L.length - 1, seen = 0; i >= 0 && seen < 3; i--) {
+    if (!L[i].trim()) continue;
+    seen++;
+    if (FOOT_RE.test(L[i]) || HINT_RE.test(L[i])) { foot = i; break; }
+  }
+  if (foot < 0) return null;
+  let top = 0;
+  for (let i = foot - 1; i >= 0; i--) if (RULE_RE.test(L[i])) { top = i + 1; break; }
+  const body = L.slice(Math.max(top, foot - 14), foot + 1).filter((l) => l.trim() && !DASH_RE.test(l)).map((l) => l.trim());
+  const numbers = [...new Set(body.map((l) => OPTION_RE.exec(l)).filter(Boolean).map((m) => Number(m?.[1])).filter((n) => n >= 1 && n <= 9))];
+  return body.length ? { lines: body, numbers } : null;
+}

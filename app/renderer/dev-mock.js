@@ -128,7 +128,7 @@ function boot(id) {
     `\x1b[38;5;173m✻\x1b[0m Welcome to \x1b[1mClaude Code\x1b[0m (sahte)\r\n\r\n` +
     `  cwd: ${tab?.dir || p?.dir}\r\n  hesap: ${acc?.label}${tab?.worktree ? `\r\n  dal: ${tab.worktree.branch}` : ''}\r\n\r\n> `), 50);
   // v3.80 ?menu: the main tab then shows Claude Code's approval menu (?menu=q: an AskUserQuestion); an answer clears it
-  if (q.has('menu') && !n) setTimeout(() => ev.data.emit(id, q.get('menu') === 'q' ? MOCK_QUESTION : MOCK_APPROVAL), 120);
+  if (q.has('menu') && !n) setTimeout(() => ev.data.emit(id, q.get('menu') === 'q' ? MOCK_QUESTION : q.get('menu') === 'd' ? MOCK_DIALOG : MOCK_APPROVAL), 120);
   changed();
 }
 for (const p of projects) for (const id of tabIds(p)) if (running.get(id)) boot(id);
@@ -163,6 +163,8 @@ let fallbackSetting = true;
 let sleepSetting = 30;
 const MOCK_RULE = `${'─'.repeat(60)}\r\n`;
 const MOCK_APPROVAL = `\r\n${MOCK_RULE} Bash command\r\n npm test\r\n Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. Yes, and don't ask again for npm test commands in /Users/me/web\r\n   3. No\r\n Esc to cancel · Tab to amend\r\n`;
+// ?menu=d: a dialog without numbered options (the chat shows its text and the keys)
+const MOCK_DIALOG = `\r\n${MOCK_RULE} Select model\r\n Switch between Claude models for this session.\r\n   Sonnet\r\n ❯ Opus\r\n   Haiku\r\n\r\n ↑/↓ to navigate · Enter to confirm · Esc to exit\r\n`;
 const MOCK_QUESTION = `\r\n${MOCK_RULE}←  ☐ Scope  ✔ Submit  →\r\nWhich scope?\r\n❯ 1. Only README\r\n     The setup section\r\n  2. README and docs/\r\n     Every page that mentions setup\r\n  3. Type something.\r\n${MOCK_RULE}  4. Chat about this\r\nEnter to select · ↑/↓ to navigate · Esc to cancel\r\n`;
 // v3.80 chat view: ?chat starts with the setting on; every Claude tab has a short fake conversation, a sent message
 // gets an answer after a second
@@ -177,7 +179,7 @@ const chatOf = (id) => {
       { key: `${id}-3`, at, kind: 'toolDone', id: `${id}-t1`, error: false },
       { key: `${id}-4`, at, kind: 'tool', id: `${id}-t2`, name: 'Bash', detail: 'npm test' },
       { key: `${id}-5`, at, kind: 'toolDone', id: `${id}-t2`, error: true },
-      { key: `${id}-6`, at, kind: 'assistant', text: 'README\'ye "Kurulum" bölümünü ekledim:\n\n```sh\nnpm install\nnpm start\n```\n\nTestler bir yerde kalıyor; bakmamı ister misin?' },
+      { key: `${id}-6`, at, kind: 'assistant', text: '## Kurulum eklendi\n\nREADME\'ye **Kurulum** bölümünü ekledim, `npm test` ise *bir yerde* kalıyor:\n\n```sh\nnpm install\nnpm start\n```\n\n- **Geçen:** 12 test\n- **Kalan:** 1 test\n  - `login.test.js` zaman aşımı\n\n| Adım | Durum |\n|---|---|\n| Kurulum | ✓ |\n| Testler | ~~tamam~~ 1 hata |\n\n> Ayrıntı: [rapor](https://example.com/rapor)\n\nBakmamı ister misin?' },
       { key: `${id}-7`, at, kind: 'command', text: '/model sonnet' },
       { key: `${id}-8`, at, kind: 'note', note: 'compact' },
     ]);

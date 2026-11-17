@@ -682,7 +682,7 @@
     "terminalTitle": "Show the terminal (approvals, menus, keys)",
     "chat": "Chat",
     "chatTitle": "Show this tab as a chat",
-    "permission": "Claude is waiting for an approval: answer it in the terminal.",
+    "permission": "A tab of this project is waiting for an approval (not this one): open that tab.",
     "empty": "No conversation yet: write the first message below.",
     "images": "{count} image(s)",
     "freePlaceholder": "Your answer…",

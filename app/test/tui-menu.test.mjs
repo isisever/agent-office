@@ -113,3 +113,17 @@ test('liveStatus: the spinner row while Claude Code works, nothing when idle', a
   assert.deepEqual(liveStatus(['· a bullet in an answer…', 'esc to interrupt']).busy, true);
   assert.deepEqual(liveStatus([]), { busy: false, text: '' });
 });
+
+test('openDialog: a dialog parseMenu does not read is shown as its text, never the prompt or a working row', async () => {
+  const { openDialog, parseMenu } = await import('../src/tui-menu.mjs');
+  const d = openDialog(['answer text', RULE, ' Select model', '   Sonnet', ' ❯ Opus', '', ' ↑/↓ to navigate · Enter to confirm · Esc to exit']);
+  assert.deepEqual(d.lines, ['Select model', 'Sonnet', '❯ Opus', '↑/↓ to navigate · Enter to confirm · Esc to exit']);
+  assert.deepEqual(d.numbers, []);
+  assert.equal(openDialog(['✻ Creating… (3s)', RULE, '❯ ', RULE, '  ⏸ manual mode on · esc to interrupt']), null);
+  assert.equal(openDialog([RULE, '❯ ', RULE, '  ⏵⏵ accept edits on (shift+tab to cycle)']), null);
+  assert.equal(openDialog([RULE, '❯ ', RULE, '  ? for shortcuts']), null);
+  // a numbered approval: parseMenu reads it; openDialog also sees it (the chat uses it only when parseMenu gives null)
+  const ap = PERMISSION;
+  assert.ok(parseMenu(ap));
+  assert.ok(openDialog(ap).numbers.includes(1));
+});

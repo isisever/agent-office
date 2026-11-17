@@ -169,7 +169,8 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     screen() {
       const b = term.buffer.active;
       const out = [];
-      for (let i = 0; i < term.rows; i++) out.push(b.getLine(b.viewportY + i)?.translateToString(true) ?? '');
+      // the live screen (the buffer's bottom), also when the person scrolled the terminal up before the chat was shown
+      for (let i = 0; i < term.rows; i++) out.push(b.getLine(b.baseY + i)?.translateToString(true) ?? '');
       return out;
     },
     focus() { term.focus(); },
