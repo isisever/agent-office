@@ -4,9 +4,10 @@
 // Claude Code's own menus (approvals, AskUserQuestion, /model, …) are drawn only in the terminal: the chat reads the open
 // one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
 import { t } from './i18n.js';
-import { parseMenu, isFreeOption, isApproval, menuKey, liveStatus } from '../src/tui-menu.mjs';
+import { parseMenu, isFreeOption, isApproval, menuKey, liveStatus, openDialog } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
+import { blocks as mdBlocks } from '../src/chat-md.mjs';
 
 const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
@@ -22,6 +23,34 @@ function h(tag, attrs = {}, ...kids) {
   }
   el.append(...kids.filter((x) => x !== null && x !== undefined));
   return el;
+}
+
+/** v3.80 amendment: Claude's markdown (src/chat-md.mjs) as DOM nodes; every text goes in as text, links open outside. */
+function mdInline(kids) {
+  return kids.map((k) => {
+    if (k.t === 'text') return document.createTextNode(k.text);
+    if (k.t === 'code') return h('code', { class: 'chat-icode' }, k.text);
+    if (k.t === 'link') return h('a', { href: k.href, target: '_blank', rel: 'noreferrer', title: k.href }, ...mdInline(k.kids));
+    return h(k.t === 'b' ? 'strong' : k.t === 'i' ? 'em' : 's', {}, ...mdInline(k.kids));
+  });
+}
+function mdNodes(list) {
+  return list.map((b) => {
+    if (b.t === 'p') return h('div', { class: 'chat-p' }, ...mdInline(b.kids));
+    if (b.t === 'h') return h('div', { class: `chat-h chat-h${Math.min(b.level, 4)}` }, ...mdInline(b.kids));
+    if (b.t === 'pre') return h('pre', { class: 'chat-code' }, b.text);
+    if (b.t === 'hr') return h('hr', { class: 'chat-hr' });
+    if (b.t === 'quote') return h('blockquote', { class: 'chat-quote' }, ...mdNodes(b.blocks));
+    if (b.t === 'table') {
+      const row = (cells, tag) => h('tr', {}, ...cells.map((c, n) => h(tag, { style: `text-align:${b.align[n] || 'left'}` }, ...mdInline(c))));
+      return h('div', { class: 'chat-table-wrap' }, h('table', { class: 'chat-table' }, h('thead', {}, row(b.head, 'th')), h('tbody', {}, ...b.rows.map((r) => row(r, 'td')))));
+    }
+    const attrs = b.t === 'ol' && b.start !== 1 ? { start: String(b.start) } : {};
+    return h(b.t, { class: 'chat-list-md', ...attrs }, ...b.items.map((it) => h('li', {}, ...mdInline(it.kids), ...mdNodes(it.sub))));
+  });
+}
+function mdBody(text) {
+  return h('div', { class: 'chat-text chat-md' }, ...mdNodes(mdBlocks(text)));
 }
 
 /** Message text: ``` fences become code blocks, the rest keeps its line breaks (no other markdown, no HTML). */
@@ -99,7 +128,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   /** @type {HTMLElement[]} */
   const pending = [];
   function echo(text) {
-    const n = h('div', { class: 'chat-msg user pending' }, textBody(text));
+    const n = h('div', { class: 'chat-msg user pending' }, mdBody(text));
     pending.push(n);
     list.append(n);
     empty.hidden = true;
@@ -133,11 +162,11 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
       return null;
     }
     if (it.kind === 'user') {
-      const body = textBody(it.text);
+      const body = mdBody(it.text);
       if (it.images) body.append(h('div', { class: 'chat-images dim' }, t('chat.images', { count: it.images })));
       return message('user', it.text, body);
     }
-    if (it.kind === 'assistant') return message('assistant', it.text, textBody(it.text));
+    if (it.kind === 'assistant') return message('assistant', it.text, mdBody(it.text));
     if (it.kind === 'error') return message('error', it.text, textBody(it.text));
     if (it.kind === 'tool') {
       const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''));
@@ -191,13 +220,22 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     row.replaceWith(h('div', { class: 'chat-free-row' }, box, h('button', { class: 'chat-send', onclick: go }, t('chat.send'))));
     box.focus();
   }
+  // v3.80 amendment: a dialog parseMenu does not read ({ dialog, lines, numbers }) is shown as its text with the keys
+  const keyOf = (m) => (m?.dialog ? JSON.stringify(m.lines) : menuKey(m));
+  function drawDialog() {
+    const keys = [...menu.numbers.map((n) => [String(n), String(n)]), ['↑', '\x1b[A'], ['↓', '\x1b[B'], ['Enter', '\r'], [t('chat.menuCancel'), '\x1b']];
+    card.replaceChildren(h('div', { class: 'chat-menu-title' }, h('pre', { class: 'chat-dialog' }, menu.lines.join('\n'))),
+      h('div', { class: 'chat-menu-nav' }, ...keys.map(([label, k]) => h('button', { class: 'chat-nav', onclick: () => press([k]) }, label))));
+  }
   function drawMenu() {
-    const key = menuKey(menu);
+    const key = keyOf(menu);
     if (key === menuShown) return;
     menuShown = key;
     card.hidden = !menu;
+    // the project's attention is any of its tabs: with nothing open here, the approval waits in another tab
     banner.hidden = Boolean(menu) || attention !== 'permission';
     if (!menu) { card.replaceChildren(); return; }
+    if (menu.dialog) { drawDialog(); if (atBottomNow()) list.scrollTop = list.scrollHeight; return; }
     const titles = menu.title.map((l, n) => h('div', { class: n === menu.title.length - 1 ? 'chat-menu-q' : 'chat-menu-ctx' }, l));
     const opts = menu.options.filter((o) => o.n <= 9).map((o) => {
       const row = h('button', { class: `chat-opt${o.checked ? ' checked' : ''}`, title: o.desc || '' },
@@ -223,8 +261,12 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   function checkMenu() {
     if (!shown) return;
     let m = null;
-    try { m = parseMenu(screen()); } catch (e) { console.error(e); }
-    if (menuKey(m) !== menuShown) waitUntil = 0;
+    try {
+      const lines = screen();
+      m = parseMenu(lines);
+      if (!m) { const d = openDialog(lines); if (d) m = { dialog: true, ...d }; }
+    } catch (e) { console.error(e); }
+    if (keyOf(m) !== menuShown) waitUntil = 0;
     if (Date.now() < waitUntil) return;
     menu = m;
     drawMenu();

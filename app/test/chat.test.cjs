@@ -132,12 +132,12 @@ test('sendRefused: nothing is typed over an approval menu, a draft, a handoff or
   assert.equal(C.sendRefused({ ...ok, draft: true }), 'draft');
 });
 
-test('menuKeys: only option numbers, Esc, the tab arrows, Enter and one line of text', () => {
+test('menuKeys: only option numbers, Esc, the arrows (v3.80 amendment: ↑ ↓ for a dialog without numbers), Enter and one line of text', () => {
   assert.deepEqual(C.menuKeys(['2']), ['2']);
   assert.deepEqual(C.menuKeys(['3', { text: ' Yeşil\nve\x1b[2Jmavi ' }, '\r']), ['3', 'Yeşil ve [2Jmavi', '\r']);
   assert.deepEqual(C.menuKeys(['\x1b[C', '1']), ['\x1b[C', '1']);
   assert.deepEqual(C.menuKeys(['\x1b']), ['\x1b']);
-  for (const bad of [[], ['0'], ['10'], ['a'], ['\x03'], ['\x1b[A'], [{ text: '   ' }], [{ text: 'x'.repeat(2001) }], [1], null, 'x', Array(9).fill('1')]) {
+  for (const bad of [[], ['0'], ['10'], ['a'], ['\x03'], ['\x1b[H'], ['\x1b[3~'], [{ text: '   ' }], [{ text: 'x'.repeat(2001) }], [1], null, 'x', Array(9).fill('1')]) {
     assert.equal(C.menuKeys(bad), null, JSON.stringify(bad));
   }
 });
@@ -177,4 +177,24 @@ test('chat reply: the quoted message goes first as "> " lines, cut at a word end
   const q = R.quoteExcerpt(long);
   assert.ok(q.length <= R.QUOTE_MAX + 1 && q.endsWith('…') && !q.includes('wor…'));
   assert.equal(R.quoteExcerpt('a\r\nb'), 'a\nb');
+});
+
+test('chat markdown: blocks and inline marks as data, never HTML', async () => {
+  const M = await import('../src/chat-md.mjs');
+  const flat = (k) => k.map((x) => (x.t === 'text' || x.t === 'code' ? `${x.t === 'code' ? '`' : ''}${x.text}` : `<${x.t}${x.href ? ` ${x.href}` : ''}>${flat(x.kids)}</${x.t}>`)).join('');
+  assert.equal(flat(M.inline('**aa** and *bb* and __cc__ ~~dd~~ `x*y*` snake_case_name')), '<b>aa</b> and <i>bb</i> and <b>cc</b> <s>dd</s> `x*y* snake_case_name');
+  assert.equal(flat(M.inline('see [docs](https://ex.com/a) or https://ex.com/b.')), 'see <link https://ex.com/a>docs</link> or <link https://ex.com/b>https://ex.com/b</link>.');
+  assert.equal(flat(M.inline('[x](javascript:alert(1)) <b>raw</b> 2 * 3 * 4')), '[x](javascript:alert(1)) <b>raw</b> 2 * 3 * 4', 'unsafe links and HTML stay text; spaced stars are no italic');
+  const b = M.blocks('# Title\n\nText **bold**\nnext line\n\n- one\n- two\n  - nested\n1. first\n2. second\n\n> quoted\n\n---\n\n```js\nconst a = 1;\n```\n\n| A | B |\n|---|--:|\n| 1 | **2** |');
+  assert.deepEqual(b.map((x) => x.t), ['h', 'p', 'ul', 'ol', 'quote', 'hr', 'pre', 'table']);
+  assert.equal(b[0].level, 1);
+  assert.equal(flat(b[1].kids), 'Text <b>bold</b>\nnext line');
+  assert.equal(b[2].items.length, 2);
+  assert.equal(b[2].items[1].sub[0].t, 'ul');
+  assert.deepEqual([b[3].start, b[3].items.length], [1, 2]);
+  assert.equal(b[6].lang, 'js');
+  assert.equal(b[6].text, 'const a = 1;');
+  assert.deepEqual([b[7].head.length, b[7].rows.length, b[7].align], [2, 1, ['left', 'right']]);
+  assert.equal(flat(b[7].rows[0][1]), '<b>2</b>');
+  assert.deepEqual(M.blocks('```\nunclosed\n# not a head').map((x) => x.t), ['pre'], 'an open fence runs to the end');
 });

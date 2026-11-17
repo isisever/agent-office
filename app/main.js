@@ -1902,11 +1902,43 @@ function officeTool(tab, tool, args) {
   if (tool === 'office_machines') return officeMachines();
   if (tool === 'office_project') return officeProject(tab, args);
   if (tool === 'office_dispatch') return tab === HQ.HQ_ID ? hqDispatch(args) : officeDispatch(tab, args);
-  if (tool === 'office_board' || tool === 'office_summary') {   // v3.46 HQ only (the socket refuses them from other tabs too)
+  if (tool === 'office_board' || tool === 'office_summary' || tool === 'office_task') {   // v3.46 HQ only (the socket refuses them from other tabs too)
     if (tab !== HQ.HQ_ID) return { error: 'unknown-tool' };
-    return tool === 'office_board' ? hqBoardTool(args) : hqSummary(args);
+    return tool === 'office_board' ? hqBoardTool(args) : tool === 'office_task' ? hqTaskOp(args) : hqSummary(args);
   }
   return officeReports(args);
+}
+/**
+ * v3.87 office_task: HQ changes one board task on the person's word (src/hq.js taskOpPlan). Approving a held task is
+ * never done here (the person's Allow on the Board); a typed task's session is never stopped, only no longer followed.
+ */
+async function hqTaskOp(args) {
+  const id = typeof args?.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(args.id) ? args.id : '';
+  const op = String(args?.op || '');
+  const task = id ? loadHqBoard().tasks.find((t) => t.id === id) : null;
+  const plan = HQ.taskOpPlan(task, op);
+  if (plan.error) return { ok: false, reason: plan.error };
+  const note = HQ.redact(typeof args?.note === 'string' ? args.note : '').slice(0, 2000);
+  const stopFollowing = () => { const rec = loadDispatches().get(id); if (rec) { rec.report = rec.report || { ok: false, partial: true, summary: note || 'closed by HQ', commits: [], at: Date.now() }; saveDispatches(); } watchMem.delete(id); };
+  switch (plan.do) {
+    case 'cancel-waiting': hqStatus(id, 'rejected', 'cancelled'); break;
+    case 'decline': await approveHeld(id, false); break;
+    case 'cancel-queued': linkHost?.cancel(id); break;
+    case 'cancel-remote': linkHost?.cancelRemote(id); hqMirrorRemote(); break;
+    case 'close-open': stopFollowing(); hqStatus(id, 'rejected', 'cancelled'); break;
+    case 'done': {
+      stopFollowing();
+      const { board, done } = HQ.finishRequests(HQ.applyReport(loadHqBoard(), id, { ok: true, partial: false, summary: `[Closed by HQ on the person's word] ${note}`.trim(), commits: [], at: Date.now() }));
+      saveHqBoard(board);
+      routinesOnDone(done);
+      break;
+    }
+    case 'remove': saveHqBoard(HQ.removeTask(loadHqBoard(), id)); { const d = loadDispatches(); if (d.delete(id)) saveDispatches(); } break;
+    case 'retitle': saveHqBoard(HQ.retitleTask(loadHqBoard(), id, typeof args?.title === 'string' ? args.title : '')); break;
+    default: return { ok: false, reason: 'bad-op' };
+  }
+  const now = loadHqBoard().tasks.find((t) => t.id === id);
+  return { ok: true, ...(now ? { status: now.status } : { removed: true }) };
 }
 /** A report of a task this office dispatched: kept for office_reports; the boss gets only a fixed "report ready" row. */
 function onOfficeReport({ id, pub, report }) {
@@ -2265,7 +2297,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
 async function confirmHqStages(stages) {
   if (!win || win.isDestroyed()) return false;
   const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
-    message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.project)}` : officeName(s.project), machine: '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}` });
+    message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.projectName || s.project)}` : officeName(s.project), machine: '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}` });
   return r.response === 0;
 }
 async function hqDispatchStages(args, request, rrun) {
@@ -2284,6 +2316,15 @@ async function hqDispatchStages(args, request, rrun) {
     s.key = HQ.parseRemoteKey(s.project);
     s.remote = Boolean(s.key) || !isHere(s.machine.trim());
     if (!s.remote) {
+      // v3.83 amendment: a stage for a member without a project is the member's work outside any project: their
+      // personal workspace, made only after the person's consent below (the dialog names its folder)
+      if (s.staff && !String(s.project || '').trim()) {
+        const m = teamOn() ? ST.findMember(state.staff, s.staff) : null;
+        if (!m) return no(teamOn() ? 'unknown-staff' : 'no-team', { stage: s.n });
+        const have = ST.personalOf(state.projects, m.id);
+        if (have) s.project = have.id;
+        else { Object.assign(s, { staff: m.name, personalFor: m, pub: 'self', machineName: selfName(), projectName: personalFolderName(m), projectId: '' }); continue; }
+      }
       const p = byName(state.projects, s.project);
       if (!p) return no('unknown-project', { stage: s.n });
       // v3.83 a stage for a staff member: checked now (team on, known member, allowed on the project), its desk at release
@@ -2308,6 +2349,13 @@ async function hqDispatchStages(args, request, rrun) {
     && !(await confirmHqStages(local))) return no('declined');
   for (const s of stages.filter((x) => x.remote)) if (!(await confirmHqDispatch(s, true))) return no('declined', { stage: s.n });
   if (caps()) return no(caps());   // dialogs can overlap: the caps again on the fresh board
+  // consent given: personal workspaces the stages need are made now
+  for (const s of stages.filter((x) => x.personalFor)) {
+    const own = ensurePersonal(s.personalFor);
+    if (!own) return no('desk-failed', { stage: s.n });
+    Object.assign(s, { project: own.id, projectId: own.id, projectName: own.name });
+    delete s.personalFor;
+  }
   const ids = [];
   let prev = after;
   for (const s of stages) {
@@ -3948,13 +3996,19 @@ function personalFolderName(m) {
 }
 function ensurePersonal(m) {
   const have = ST.personalOf(state.projects, m.id);
-  if (have) return have;
+  if (have) { trustPersonal(have); return have; }
   const dir = path.join(app.getPath('documents'), 'Agent Office', personalFolderName(m));
   try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error('personal workspace:', e.message); return null; }
   const active = state.activeId;
   const r = P.addProject(state, dir, m.accountId ? { accountId: m.accountId } : {});
   commit({ ...r.state, activeId: active ?? r.state.activeId, projects: r.state.projects.map((p) => (p.id === r.project.id ? { ...p, staffOwner: m.id } : p)) });
-  return ST.personalOf(state.projects, m.id);
+  const own = ST.personalOf(state.projects, m.id);
+  if (own) trustPersonal(own);
+  return own;
+}
+/** The workspace folder trusted in its account (the app made it): no trust dialog the member's desk would wait behind. */
+function trustPersonal(p) {
+  try { PD.trustFolder(A.accountOf(state, p).configDir, app.getPath('home'), p.dir); } catch (e) { console.error('personal trust:', e.message); }
 }
 ipcMain.handle('staff:personal', async (_e, staffId) => {
   const m = teamOn() ? memberById(String(staffId || '')) : null;
@@ -4645,10 +4699,29 @@ function handoffMenu(p) {
   }];
 }
 // right click on a project in the sidebar
+// v3.86 project groups: set from the project's settings or its right-click menu
+ipcMain.handle('projects:setGroup', (_e, id, group) => {
+  if (!P.findProject(state, String(id))) return { ok: false };
+  commit(P.setGroup(state, String(id), group));
+  broadcast();
+  return { ok: true };
+});
 ipcMain.handle('projects:menu', (_e, id) => {
   const p = P.findProject(state, id);
   if (!p || !win) return;
+  const groups = [...new Set(state.projects.filter((x) => !x.staffOwner && x.group).map((x) => x.group))].sort((a, b) => a.localeCompare(b, 'tr'));
+  const setGroup = (g) => { commit(P.setGroup(state, p.id, g)); broadcast(); };
   Menu.buildFromTemplate([
+    {
+      label: T('main.moveToGroup'),
+      submenu: [
+        ...groups.filter((g) => g !== p.group).map((g) => ({ label: g, click: () => setGroup(g) })),
+        ...(groups.filter((g) => g !== p.group).length ? [{ type: /** @type {const} */ ('separator') }] : []),
+        { label: T('main.newGroupHint'), enabled: false },
+        ...(p.group ? [{ label: T('main.removeFromGroup', { group: p.group }), click: () => setGroup('') }] : []),
+      ],
+    },
+    { type: 'separator' },
     { label: T('main.moveSession'), enabled: P.engineOf(p) === 'claude', click: () => exportSession(p.id) },
     ...handoffMenu(p),
     { type: 'separator' },

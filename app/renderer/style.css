@@ -1521,10 +1521,11 @@ select option.rt-off { color: #888; }
 /* chat: message text is selectable; each message has copy / reply buttons on hover; the reply bar above the input */
 .chat-msg, .chat-tool, .chat-cmd, .chat-code { user-select: text; cursor: text; }
 .chat-msg { position: relative; }
-.chat-acts { display: flex; gap: 4px; justify-content: flex-end; margin-top: 4px; opacity: 0; transition: opacity .12s; user-select: none; }
+.chat-acts { position: absolute; top: -11px; right: 8px; display: flex; gap: 4px; opacity: 0; pointer-events: none; transition: opacity .12s; user-select: none; }
+.chat-msg:hover .chat-acts, .chat-acts:focus-within { pointer-events: auto; }
 .chat-msg:hover .chat-acts, .chat-acts:focus-within { opacity: 1; }
-.chat-act { font: inherit; font-size: 11px; padding: 1px 7px; border-radius: 4px; border: 1px solid currentColor; background: transparent; color: inherit; opacity: .75; cursor: pointer; }
-.chat-act:hover { opacity: 1; }
+.chat-act { font: inherit; font-size: 11px; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--border, var(--line)); background: var(--raised, var(--status-bg)); color: var(--status-text, inherit); cursor: pointer; }
+.chat-act:hover { border-color: var(--accent); }
 .chat-copy-buf { position: fixed; left: -9999px; top: 0; opacity: 0; }
 .chat-reply { flex: 0 0 auto; display: flex; gap: 6px; align-items: center; font-size: 11px; padding: 4px 8px; border-left: 3px solid var(--accent); background: var(--raised); border-radius: 4px; min-width: 0; }
 .chat-reply[hidden] { display: none; }
@@ -1536,3 +1537,27 @@ select option.rt-off { color: #888; }
 .chat-live { flex: 0 0 auto; font-size: 11px; padding: 2px 6px; opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: chat-live-pulse 1.6s ease-in-out infinite; }
 .chat-live[hidden] { display: none; }
 @keyframes chat-live-pulse { 50% { opacity: .45; } }
+/* chat: a dialog the chat cannot read as a menu, shown as its own text */
+.chat-dialog { margin: 0; white-space: pre-wrap; font: inherit; font-size: 12px; line-height: 1.4; max-height: 14em; overflow: auto; }
+/* chat: Claude's markdown */
+.chat-md strong { font-weight: 700; }
+.chat-md .chat-p + .chat-p, .chat-md .chat-p + .chat-list-md, .chat-md .chat-list-md + .chat-p { margin-top: 6px; }
+.chat-md .chat-h { font-weight: 700; margin: 8px 0 4px; }
+.chat-md .chat-h1 { font-size: 1.25em; } .chat-md .chat-h2 { font-size: 1.15em; } .chat-md .chat-h3 { font-size: 1.05em; }
+.chat-md .chat-h:first-child { margin-top: 0; }
+.chat-md .chat-list-md { margin: 4px 0; padding-left: 1.4em; }
+.chat-md .chat-list-md li + li { margin-top: 2px; }
+.chat-md .chat-icode { font-family: ui-monospace, var(--font-mono, monospace); font-size: .92em; padding: 0 4px; border-radius: 4px; background: color-mix(in srgb, currentColor 12%, transparent); }
+.chat-md .chat-quote { margin: 4px 0; padding: 2px 0 2px 10px; border-left: 3px solid color-mix(in srgb, currentColor 35%, transparent); opacity: .9; }
+.chat-md .chat-hr { border: 0; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); margin: 8px 0; }
+.chat-md a { color: var(--accent-text, var(--accent)); text-decoration: underline; cursor: pointer; }
+.chat-md .chat-table-wrap { overflow-x: auto; margin: 6px 0; }
+.chat-md .chat-table { border-collapse: collapse; font-size: .95em; }
+.chat-md .chat-table th, .chat-md .chat-table td { border: 1px solid color-mix(in srgb, currentColor 22%, transparent); padding: 3px 8px; vertical-align: top; }
+.chat-md .chat-table th { font-weight: 700; }
+/* v3.86 project groups in the PROJECTS list */
+.sb-group-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 2px; font-size: 11px; font-weight: 700; letter-spacing: .3px; opacity: .8; cursor: pointer; user-select: none; list-style: none; }
+.sb-group-head:hover { opacity: 1; }
+.sb-group-head .sb-group-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-group-head .sb-group-count { font-weight: 400; opacity: .7; }
+.sb-group-head.has-active .sb-group-name { text-decoration: underline; }

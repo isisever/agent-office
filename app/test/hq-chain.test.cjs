@@ -231,6 +231,20 @@ test('cancelling a waiting stage blocks the stages after it at the next sweep', 
   assert.equal(env.sent.length, 1);   // nothing after a cancelled stage is sent
 });
 
+test('v3.83 amendment: a stage for a staff member may leave out the project (the member\'s personal workspace)', () => {
+  const CH2 = require('../src/hq-chain.js');
+  const r = CH2.stagesOf({ staff: 'Natasha', task: 'collect', then: [{ staff: 'Tipsiz', task: 'backlog' }, { task: 'no one' }] });
+  assert.deepEqual([r.first.project, r.first.staff], ['', 'Natasha']);
+  assert.deepEqual(r.then.map((x) => [x.project, x.staff]), [['', 'Tipsiz']], 'a stage with neither project nor staff is dropped');
+  // the workspace is made only after the person's consent (as for a single dispatch), and the dialog names its folder
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const fn = MAIN.slice(MAIN.indexOf('async function hqDispatchStages('), MAIN.indexOf('\n}\n', MAIN.indexOf('async function hqDispatchStages(')));
+  const ask = fn.indexOf('confirmHqStages(');
+  assert.ok(fn.indexOf('personalFor: m') > 0 && fn.indexOf('personalFor: m') < ask, 'before consent: only noted');
+  assert.ok(fn.indexOf('ensurePersonal(') > ask, 'made after consent');
+  assert.match(MAIN, /officeName\(s\.projectName \|\| s\.project\)/);
+});
+
 test('stageProject: a frozen stage is released to its project by id; a gone id is never found again by name', () => {
   const projects = [{ id: 'p1', name: 'acme' }, { id: 'p2', name: 'beta' }];
   assert.equal(CH.stageProject({ project: 'acme', projectId: 'p1' }, projects), 'p1');

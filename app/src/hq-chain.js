@@ -17,7 +17,7 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** The stages of one office_dispatch call: [first, ...then], each { project, machine, title, task }; malformed `then` entries are dropped. */
 function stagesOf(args) {
   const one = (o) => ({ project: String(o?.project || ''), machine: String(o?.machine || ''), title: String(o?.title || ''), task: typeof o?.task === 'string' ? o.task : '', ...(typeof o?.staff === 'string' && o.staff.trim() ? { staff: o.staff.trim() } : {}) });   // v3.83 a stage may name a staff member
-  const then = (Array.isArray(args?.then) ? args.then : []).filter((o) => o && typeof o === 'object' && o.project && typeof o.task === 'string' && o.task);
+  const then = (Array.isArray(args?.then) ? args.then : []).filter((o) => o && typeof o === 'object' && (o.project || (typeof o.staff === 'string' && o.staff.trim())) && typeof o.task === 'string' && o.task);   // v3.83 amendment: a member's stage may have no project (their personal workspace)
   return { first: one(args), then: then.map(one), tooMany: then.length > THEN_MAX };
 }
 

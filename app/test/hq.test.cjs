@@ -52,7 +52,7 @@ test('launch args: strict MCP (agent-office only), --tools Read allowlist, no us
   assert.deepEqual(a, [
     '--setting-sources', 'project', '--strict-mcp-config', '--mcp-config', '/m/hq.json', '--permission-mode', 'default', '--tools', 'Read',
     '--disallowedTools', 'Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch,Glob,Grep,Task,Agent,Skill,mcp__agent-office__office_project',
-    '--allowedTools', 'Read(//ud/hq/**),mcp__agent-office__office_machines,mcp__agent-office__office_reports,mcp__agent-office__office_board,mcp__agent-office__office_summary,mcp__agent-office__office_dispatch',
+    '--allowedTools', 'Read(//ud/hq/**),mcp__agent-office__office_machines,mcp__agent-office__office_reports,mcp__agent-office__office_board,mcp__agent-office__office_summary,mcp__agent-office__office_dispatch,mcp__agent-office__office_task',   // office_task: v3.87
   ]);
   assert.ok(!HQ.launchArgs({ dir: '/ud/hq' }).includes('--mcp-config'));
   // the MCP file holds only agent-office, 0600
@@ -311,9 +311,9 @@ function rpc(env, msgs) {
     for (const m of msgs) p.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...m })}\n`);
   });
 }
-test('office MCP: the HQ tab lists 6 tools, a project boss 4; HQ-only tools refused for other tabs', async () => {
+test('office MCP: the HQ tab lists 7 tools (v3.87 office_task), a project boss 4; HQ-only tools refused for other tabs', async () => {
   const [hq] = await rpc({ AGENT_OFFICE_HQ: '1' }, [{ id: 1, method: 'tools/list' }]);
-  assert.deepEqual(hq.result.tools.map((t) => t.name).sort(), ['office_board', 'office_dispatch', 'office_machines', 'office_project', 'office_reports', 'office_summary']);
+  assert.deepEqual(hq.result.tools.map((t) => t.name).sort(), ['office_board', 'office_dispatch', 'office_machines', 'office_project', 'office_reports', 'office_summary', 'office_task']);
   const [boss, call] = await rpc({}, [{ id: 1, method: 'tools/list' }, { id: 2, method: 'tools/call', params: { name: 'office_board', arguments: {} } }]);
   assert.equal(boss.result.tools.length, 4);
   assert.ok(call.error);
@@ -654,4 +654,32 @@ test('v3.83 amendment: lastAnswer reads the newest assistant text of a transcrip
     + line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Sunucuya giremedim.' }] } }));
   assert.equal(CHAT.lastAnswer(f), 'Sunucuya giremedim.');
   assert.equal(CHAT.lastAnswer(path.join(path.dirname(f), 'none.jsonl')), '');
+});
+
+test('v3.87 office_task: what each op does; approving a held task is the person\'s alone', () => {
+  const t = (status, machine = 'self') => ({ id: 'x', status, machine });
+  const plan = (task, op) => HQ.taskOpPlan(task, op);
+  assert.deepEqual(plan(t('awaiting-consent'), 'approve'), { error: 'person-only' });
+  assert.deepEqual(plan(t('awaiting-consent'), 'allow'), { error: 'person-only' });
+  assert.deepEqual(plan(t('awaiting-consent'), 'cancel'), { do: 'decline' });
+  assert.deepEqual(plan(t('waiting'), 'cancel'), { do: 'cancel-waiting' });
+  assert.deepEqual(plan(t('queued'), 'cancel'), { do: 'cancel-queued' });
+  assert.deepEqual(plan(t('queued', 'abc'), 'cancel'), { do: 'cancel-remote' });
+  assert.deepEqual(plan(t('delivered'), 'cancel'), { do: 'close-open' });
+  assert.deepEqual(plan(t('running'), 'done'), { do: 'done' });
+  assert.deepEqual(plan(t('queued'), 'done'), { error: 'not-started' });
+  assert.deepEqual(plan(t('running'), 'remove'), { error: 'still-open' });
+  assert.deepEqual(plan(t('reported'), 'remove'), { do: 'remove' });
+  assert.deepEqual(plan(t('reported'), 'cancel'), { error: 'already-ended' });
+  assert.deepEqual(plan(null, 'cancel'), { error: 'unknown-task' });
+  assert.deepEqual(plan(t('running'), 'delete-all'), { error: 'bad-op' });
+  const board = { tasks: [{ id: 'a', request: 'r1', status: 'reported', title: 'A' }, { id: 'b', request: 'r2', status: 'reported', title: 'B' }], requests: [{ id: 'r1' }, { id: 'r2' }] };
+  const nb = HQ.removeTask(board, 'a');
+  assert.deepEqual([nb.tasks.map((x) => x.id), nb.requests.map((x) => x.id)], [['b'], ['r2']]);
+  assert.equal(HQ.retitleTask(board, 'b', '  New\ntitle ').tasks[1].title, 'New title');
+  assert.equal(HQ.retitleTask(board, 'b', '   ').tasks[1].title, 'B', 'an empty title changes nothing');
+  assert.ok(HQ.HQ_OFFICE_TOOLS.includes('office_task'));
+  const OM2 = require('../src/office-mcp.js');
+  assert.ok(OM2.toolsFor('hq').some((x) => x.name === 'office_task'));
+  assert.ok(!OM2.toolsFor('p1').some((x) => x.name === 'office_task'), 'a project boss never gets it');
 });

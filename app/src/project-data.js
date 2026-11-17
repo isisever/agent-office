@@ -239,6 +239,28 @@ function mergeClaudeJson(fromFile, toFile, dirs) {
   return true;
 }
 
+/**
+ * v3.83 amendment: marks a folder the app made itself (a staff member's personal workspace) as trusted in an account's
+ * .claude.json, so the member's session starts without Claude Code's trust dialog (no session file is written while
+ * that dialog is up, so the app could never hand it a task). Only that folder's own entry (and its real path) gets
+ * hasTrustDialogAccepted; nothing else is touched; an unreadable file is left alone. → whether the file was written
+ */
+function trustFolder(configDir, home, dir) {
+  const file = claudeJson(configDir, home);
+  const exists = Boolean(lstat(file));
+  const config = exists ? readJson(file) : {};
+  if (exists && !isObj(config)) return false;
+  const projects = isObj(config.projects) ? { ...config.projects } : {};
+  let changed = false;
+  for (const d of projectPaths([dir])) {
+    if (trustedIn(projects, d)) continue;
+    projects[d] = { ...(isObj(projects[d]) ? projects[d] : {}), [TRUST_KEY]: true };
+    changed = true;
+  }
+  if (changed) writeJson(file, { ...config, projects });
+  return changed;
+}
+
 // ---- the bypass mode warning (contract v3.76)
 
 const BYPASS_KEY = 'skipDangerousModePermissionPrompt';      // user settings.json; what Claude Code 2.1.325 writes
@@ -390,5 +412,5 @@ function restartAfterMove({ sessionId = null, continues = false, busy = false } 
 
 module.exports = {
   restartAfterMove, claudeRoot, claudeJson, projectPaths, mergeJsonl, mergeFile, mergeTree, mergeEntry, mergeProjectEntries, mergeClaudeJson,
-  historyLines, mergeHistory, trustedIn, bypassAccepted, carryBypassAcceptance, moveProjectData,
+  historyLines, mergeHistory, trustedIn, trustFolder, bypassAccepted, carryBypassAcceptance, moveProjectData,
 };

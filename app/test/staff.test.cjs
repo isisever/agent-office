@@ -249,6 +249,27 @@ test('v3.83 amendment: a personal workspace is its owner\'s alone; normalizeStat
   assert.equal(ms[1].personal, undefined);
 });
 
+test('v3.83 amendment: trustFolder marks only the app-made folder trusted, once, keeping every other field', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const PD = require('../src/project-data.js');
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ao-trust-'));
+  const ws = path.join(dir, 'Natasha - kişisel');
+  fs.mkdirSync(ws);
+  const cfg = path.join(dir, 'cfg');
+  fs.mkdirSync(cfg);
+  fs.writeFileSync(path.join(cfg, '.claude.json'), JSON.stringify({ oauthAccount: { x: 1 }, projects: { '/other': { allowedTools: ['Read'] } } }));
+  assert.equal(PD.trustFolder(cfg, dir, ws), true);
+  const j = JSON.parse(fs.readFileSync(path.join(cfg, '.claude.json'), 'utf8'));
+  assert.equal(j.projects[ws].hasTrustDialogAccepted, true);
+  assert.deepEqual([j.oauthAccount, j.projects['/other']], [{ x: 1 }, { allowedTools: ['Read'] }]);
+  assert.equal(PD.trustFolder(cfg, dir, ws), false, 'already trusted: not written again');
+  fs.writeFileSync(path.join(cfg, '.claude.json'), '{ broken');
+  assert.equal(PD.trustFolder(cfg, dir, ws), false, 'an unreadable file is left alone');
+  assert.equal(fs.readFileSync(path.join(cfg, '.claude.json'), 'utf8'), '{ broken');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('followsProjectAccount: every tab moves with its project’s account except a desk on its member’s own account', () => {
   const state = {
     accounts: [{ id: 'default' }, { id: 'work' }, { id: 'spare' }],
