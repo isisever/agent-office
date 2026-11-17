@@ -3066,7 +3066,9 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
   if (!p || P.engineOf(p) !== 'claude') return; // accounts change nothing for agy or Command Code (v3.22, v3.25)
   const home = app.getPath('home');
   const plan = [];
-  for (const id of P.ptyIdsOf(p)) {
+  // v3.83 fix: only the tabs on the project's account move. A desk on its member's own account keeps running: its
+  // account did not change, and its pid file and transcripts are not in `from`.
+  for (const id of accountTabs(p)) {
     const r = P.resolvePty(state, id);
     if (asleep.has(id)) continue;
     let sid = lastSid.get(id) || '';
@@ -3083,7 +3085,7 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
   try {
     PD.moveProjectData({
       from: from.configDir || null, to: to.configDir || null, home,
-      dirs: [p.dir, ...P.tabsOf(p).filter((t) => !t.shell).map((t) => t.dir).filter(Boolean)],
+      dirs: [p.dir, ...P.tabsOf(p).filter((t) => !t.shell && P.followsProjectAccount(state, P.tabPtyId(p.id, t.n))).map((t) => t.dir).filter(Boolean)],
       otherDirs: state.projects.filter((x) => x.id !== p.id).map((x) => x.dir),
       skipPermissions: P.skipPermissionsArgs(p).length > 0, // v3.76: the old account's bypass mode acceptance goes with it
     });
@@ -3098,7 +3100,12 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
 // own conversation there and the tabs stopped by the limit are told to carry on. The account it left is its home; once
 // the home's limit resets and every tab is idle, the project goes back. Each account's limit is remembered until its
 // reset (state.accountLimits), so no project moves onto an account at its limit and none ping-pongs.
+// v3.83 fix: a desk on its member's own account (P.followsProjectAccount false) is no part of this. It is not read
+// for a limit (its words and transcript belong to another account and never mark or move the project's), not counted
+// for the project's idleness and not restarted by a move. Its own account's limit is left to Claude Code's message.
 const fallbackOn = () => state.fallback !== false;
+/** The project's tabs that run on the project's account: the ones a limit or a move of that account concerns. */
+const accountTabs = (p) => P.ptyIdsOf(p).filter((id) => P.followsProjectAccount(state, id));
 const limitMarks = () => state.accountLimits || {};
 const switches = new Map();   // projectId → times of its automatic moves (FB.switchAllowed)
 const limitDone = new Set();  // "<pty id>|<limit time>": a limit already acted on
@@ -3196,7 +3203,7 @@ function checkLimits() {
     const account = A.accountOf(state, p);
     const usageFull = () => FB.limitedUntil({ usage: usages.get(account.id), now }) > 0;
     const hits = [];
-    for (const id of P.ptyIdsOf(p)) {
+    for (const id of accountTabs(p)) {   // never a desk on its own account: `account` is not where it runs
       if (!terms.has(id)) continue;
       const r = P.resolvePty(state, id);
       if (!r) continue;
@@ -3235,7 +3242,7 @@ function onLimit(p, account, hits, now) {
   switches.set(p.id, [...allowed.history, now]);
   const next = P.fallbackTo(state, p.id, to.id);
   if (next === state) return;
-  fallbackNotice(p, 'switched', T('main.fallbackSwitched', { from: accountName(account), to: accountName(to) }), { from: account.id, to: to.id, ptyIds: P.ptyIdsOf(p) });
+  fallbackNotice(p, 'switched', T('main.fallbackSwitched', { from: accountName(account), to: accountName(to) }), { from: account.id, to: to.id, ptyIds: accountTabs(p) });
   commit(next);
   moveProject(p.id, account, { carryOn: hits.map((h) => h.id) });
 }
@@ -3254,7 +3261,7 @@ function maybeReturn(p, account, now) {
   const home = accountById(p.homeAccount);
   if (!home) return;
   const hist = switches.get(p.id) || [];
-  const idle = P.ptyIdsOf(p).every((pid) => tabIdle(pid, account.configDir));
+  const idle = accountTabs(p).every((pid) => tabIdle(pid, account.configDir));   // a desk on its own account is not restarted: its work does not hold the return
   const ok = FB.shouldReturn({
     home: { id: home.id, auth: auths.get(home.id), usage: usages.get(home.id) }, current: account.id,
     mark: limitMarks()[home.id], idle, lastSwitch: hist.length ? Math.max(...hist) : 0, now,
@@ -3263,7 +3270,7 @@ function maybeReturn(p, account, now) {
   const next = P.returnHome(state, p.id);
   if (next === state) return;
   switches.set(p.id, [...hist, now]);
-  fallbackNotice(p, 'returned', T('main.fallbackReturned', { to: accountName(home), from: accountName(account) }), { from: account.id, to: home.id, ptyIds: P.ptyIdsOf(p) });
+  fallbackNotice(p, 'returned', T('main.fallbackReturned', { to: accountName(home), from: accountName(account) }), { from: account.id, to: home.id, ptyIds: accountTabs(p) });
   commit(next);
   moveProject(p.id, account);
 }

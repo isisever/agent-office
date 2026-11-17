@@ -121,6 +121,22 @@ const ptyIdsOf = (project) => [project.id, ...tabsOf(project).filter((t) => !t.s
 const allPtyIdsOf = (project) => [project.id, ...tabsOf(project).map((t) => tabPtyId(project.id, t.n))];
 /** The folder the tab runs in. */
 const tabDir = (project, tab) => tab?.dir || project.dir;
+/** v3.83 the account a desk's member has of its own (one the app still knows), else ''. */
+function ownAccountOf(state, tab) {
+  const member = tab?.staffId && Array.isArray(state.staff) ? state.staff.find((m) => m.id === tab.staffId) : null;
+  return member?.accountId && Array.isArray(state.accounts) && state.accounts.some((a) => a.id === member.accountId) ? member.accountId : '';
+}
+/**
+ * v3.83 fix: does this tab run on its project's account and so move with it (backup account v3.17, an account change
+ * v3.16)? Every tab does, except a desk whose member has an account of its own: that desk stays on the member's
+ * account whatever the project does, also while the two happen to be the same account.
+ */
+function followsProjectAccount(state, id) {
+  const r = parsePtyId(id);
+  const project = r && findProject(state, r.projectId);
+  if (!project || r.n === MAIN_TAB) return true;
+  return !ownAccountOf(state, tabsOf(project).find((t) => t.n === r.n));
+}
 /** Project and tab from a pty id (tab is null for the main tab); unknown → null. */
 function resolvePty(state, id) {
   if (isHqId(id)) { const hq = hqProject(state); return hq ? { project: hq, tab: null, dir: hq.dir } : null; }
@@ -134,7 +150,7 @@ function resolvePty(state, id) {
   // (launch, pid file, transcript, sleep, typing) sees the project with the member's accountId. The member's skill
   // packs ({ id: on }) go on top of the project's own setting the same way, and its own MCP tools ride along.
   const member = tab.staffId && Array.isArray(state.staff) ? state.staff.find((m) => m.id === tab.staffId) : null;
-  const own = member?.accountId && Array.isArray(state.accounts) && state.accounts.some((a) => a.id === member.accountId) ? member.accountId : '';
+  const own = ownAccountOf(state, tab);
   const packs = member?.skillPacks && typeof member.skillPacks === 'object' && !Array.isArray(member.skillPacks) && Object.keys(member.skillPacks).length ? member.skillPacks : null;
   let seen = project;
   if (own && own !== project.accountId) seen = { ...seen, accountId: own };
@@ -615,7 +631,7 @@ function stateFile(prev, state) {
 module.exports = {
   forRenderer, stateFile,
   historyDir,
-  MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty,
+  MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty, followsProjectAccount,
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,
   setParallel, desksOf, deskOf, setDeskSession,
   newId, projectName, findProject, setHqDir, hqProject, isHqId,

@@ -134,4 +134,8 @@ async function sendDraft(fetchFn, token, d) {
   return { ok: true };
 }
 
-module.exports = { SCOPES, validClient, validTenant, startDeviceCode, pollDeviceCode, refresh, me, list, read, sendDraft, ID_RE };
+/** Is this an https page of microsoft.com or microsoftonline.com (the host itself or a subdomain)? Only such a
+ *  sign-in page is opened in the browser; a look-alike host ("evilmicrosoft.com") is not. */
+const isMicrosoftUrl = (url) => typeof url === 'string' && /^https:\/\/([\w-]+\.)*microsoft(online)?\.com\//i.test(url);
+
+module.exports = { SCOPES, validClient, validTenant, startDeviceCode, pollDeviceCode, refresh, me, list, read, sendDraft, ID_RE, isMicrosoftUrl };
