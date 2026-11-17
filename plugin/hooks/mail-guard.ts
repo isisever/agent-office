@@ -1,4 +1,4 @@
-// Mail guard (app contract v3.83). A session that can read the person's mail (the app sets AGENT_OFFICE_MAIL_GUARD=1
+// Mail guard (app contract v3.85). A session that can read the person's mail (the app sets AGENT_OFFICE_MAIL_GUARD=1
 // when a desk gets the agent-office-mail server) has read text written by strangers, so nothing it does on its own
 // may reach outside its own reading: every tool call other than reading files, talking to the person and the mail
 // server's own read/draft tools waits for the person's approval (`ask`), whatever the permission settings say. In the

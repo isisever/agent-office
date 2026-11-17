@@ -1,4 +1,4 @@
-// Chat view (contract v3.78): src/chat.js reads a Claude Code transcript into chat items.
+// Chat view (contract v3.80): src/chat.js reads a Claude Code transcript into chat items.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');

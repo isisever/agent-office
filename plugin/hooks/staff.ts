@@ -1,4 +1,4 @@
-// Team: staff (app contract v3.81). Two sections, each keyed on its own env var and independent of the manager and HQ
+// Team: staff (app contract v3.83). Two sections, each keyed on its own env var and independent of the manager and HQ
 // sections (their templates are untouched):
 // - agent-office:staff — a desk's session (a staff member's tab): the app writes the member's file (0600; name, role,
 //   brief, department, the project, the rest of the team by name and role) and passes its path in AGENT_OFFICE_ROLE.

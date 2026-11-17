@@ -539,7 +539,7 @@ function updateParty(workers, now) {
 
 const slots = new Map()
 
-// app team (contract v3.81): the first desks belong to staff members (data.staff, in order; at most half the desks):
+// app team (contract v3.83): the first desks belong to staff members (data.staff, in order; at most half the desks):
 // their plates carry the member's name and a working member sits there. Agents take the other desks.
 function staffDesks(data) {
   const list = Array.isArray(data.staff) ? data.staff.filter(m => m && m.name) : []
@@ -1438,7 +1438,7 @@ function drawBackground() {
   chair(L.boss.seat[0], L.boss.by, true)
 }
 
-// ---------- scene (app contract v3.79: the app's 3D office) ----------
+// ---------- scene (app contract v3.81: the app's 3D office) ----------
 // What the last frame showed, for a renderer other than this framebuffer: the layout, every bot with its pose, the
 // desks' state, the labels (lines of [text, 0xRRGGBB]) and the theme's colours. Filled while the frame is drawn;
 // nothing here changes the frame.
@@ -1578,7 +1578,7 @@ function renderFrame(now, data, focus = '', selected = null) {
     const seed = strHash(`staff:${m.id ?? m.name}`)
     drawables.push({ y: d.by, draw: () => {
       bot(d.cx - 5, d.by - SIT, { pose: 'type', frame: (typeFrame + seed) % 2, isBlink: (now + seed) % 3700 < 120 })
-      scene.bots.push({ id: `staff:${m.id ?? m.name}`, x: d.cx - 5, y: d.by, pose: 'type', seated: true, frame: (typeFrame + seed) % 2 })   // the 3D office (v3.79)
+      scene.bots.push({ id: `staff:${m.id ?? m.name}`, x: d.cx - 5, y: d.by, pose: 'type', seated: true, frame: (typeFrame + seed) % 2 })   // the 3D office (v3.81)
     } })
   }
   const beatMs = hot ? 230 : 320

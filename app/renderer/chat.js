@@ -1,4 +1,4 @@
-// Chat view (contract v3.78): a Claude Code tab shown as a conversation instead of its terminal. Main reads the
+// Chat view (contract v3.80): a Claude Code tab shown as a conversation instead of its terminal. Main reads the
 // session's transcript (src/chat.js) and hands over chat items a little at a time; a message typed here is typed into
 // the tab's terminal like a prompt (chat:send), so the session, its plugin and HQ work exactly as with the terminal.
 // Claude Code's own menus (approvals, AskUserQuestion, /model, …) are drawn only in the terminal: the chat reads the open

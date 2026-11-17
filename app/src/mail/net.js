@@ -1,4 +1,4 @@
-// Mail (contract v3.83 amendment): the TLS connection both clients use, and what its failures mean. No dependencies;
+// Mail (contract v3.85 amendment): the TLS connection both clients use, and what its failures mean. No dependencies;
 // tested in test/mail.test.cjs. A server certificate must be valid for the host (the system's trust store) or be
 // the exact certificate the person trusted for this account (`pin`: its SHA-256 fingerprint, for an Exchange server
 // with the company's own certificate authority). Nothing is written to the socket before that check passed.

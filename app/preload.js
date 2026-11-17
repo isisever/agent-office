@@ -41,27 +41,27 @@ contextBridge.exposeInMainWorld('agentOffice', {
   },
   mcp: {   // contract v3.44: one MCP list; the token goes in, never out
     list: (projectId) => ipcRenderer.invoke('mcp:list', projectId),   // { servers: [{ name, source, type, host, readOnly, id?, scope?, hasToken?, approved?, shadowed? }] }
-    add: (form) => ipcRenderer.invoke('mcp:add', form),   // remote { name, url, type: 'http' | 'sse', token?, scope } | stdio { name, type: 'stdio', command, args: string[], env: {k: v}, scope }; scope: 'all' | projectId | projectId[] (v3.80) → { ok, restarted } | { ok: false, error }
+    add: (form) => ipcRenderer.invoke('mcp:add', form),   // remote { name, url, type: 'http' | 'sse', token?, scope } | stdio { name, type: 'stdio', command, args: string[], env: {k: v}, scope }; scope: 'all' | projectId | projectId[] (v3.82) → { ok, restarted } | { ok: false, error }
     get: (id) => ipcRenderer.invoke('mcp:get', id),   // v3.69 → { ok, server: remote { id, name, type, url, urlHidden?, scope, hasToken } | stdio { id, name, type, command, args, env, scope } } (never the token)
     update: (id, form) => ipcRenderer.invoke('mcp:update', id, form),   // v3.69 the add form plus clearToken?; blank token/url keep the stored ones → { ok, restarted } | { ok: false, error }
     getFile: (projectId, where, name) => ipcRenderer.invoke('mcp:getFile', projectId, where, name),   // v3.69 a server in Claude Code's files → { ok, server: { name, type, url, urlHidden?, headers: {k: MASK} | command, args, env: {k: MASK}, where } } (values masked)
     updateFile: (projectId, where, name, form) => ipcRenderer.invoke('mcp:updateFile', projectId, where, name, form),   // v3.69 edits that entry in that file; a MASK value or blank url keeps the stored one → { ok, name } | { ok: false, error }
     remove: (id) => ipcRenderer.invoke('mcp:remove', id),   // → { ok, restarted } | { ok: false, error: 'unknown' }
-    apps: () => ipcRenderer.invoke('mcp:apps'),   // v3.80 → { servers: [{ id, name, type, host, scope: 'all' | projectId | projectId[], hasToken }] }
-    scope: (id, scope) => ipcRenderer.invoke('mcp:scope', id, scope),   // v3.80 scope: 'all' | projectId[] → { ok, restarted } | { ok: false, error: 'unknown' | 'scope' | 'name-used' }
+    apps: () => ipcRenderer.invoke('mcp:apps'),   // v3.82 → { servers: [{ id, name, type, host, scope: 'all' | projectId | projectId[], hasToken }] }
+    scope: (id, scope) => ipcRenderer.invoke('mcp:scope', id, scope),   // v3.82 scope: 'all' | projectId[] → { ok, restarted } | { ok: false, error: 'unknown' | 'scope' | 'name-used' }
   },
-  // v3.81 team: staff kept in Agent Office (never in a project folder); team mode is prefs.teamMode
+  // v3.83 team: staff kept in Agent Office (never in a project folder); team mode is prefs.teamMode
   staff: {
     list: () => ipcRenderer.invoke('staff:list'),           // → { teamMode, presets: RoleDef[], staff: Staff[] }
     save: (form) => ipcRenderer.invoke('staff:save', form), // add (no id) or edit → { ok, member } | { ok: false, error: 'name' | 'role' | 'name-used' | 'too-many' | 'state' }
     remove: (id) => ipcRenderer.invoke('staff:remove', id), // → { ok } | { ok: false, error: 'unknown' }
-    desk: (projectId, staffId) => ipcRenderer.invoke('staff:desk', projectId, staffId),   // v3.81 opens (and starts) the member's desk → { ok, id } | { ok: false, error }
-    personal: (staffId) => ipcRenderer.invoke('staff:personal', staffId),   // v3.81 amendment: opens the member's personal workspace desk (made on first use)
+    desk: (projectId, staffId) => ipcRenderer.invoke('staff:desk', projectId, staffId),   // v3.83 opens (and starts) the member's desk → { ok, id } | { ok: false, error }
+    personal: (staffId) => ipcRenderer.invoke('staff:personal', staffId),   // v3.83 amendment: opens the member's personal workspace desk (made on first use)
     desks: () => ipcRenderer.invoke('staff:desks'),         // → [{ id, projectId, n, staffId, state: 'busy' | 'idle' | 'asleep' | 'off' }]
     onDesks: listen('staff:desks'),                         // the same list when it changes
     setParallel: (projectId, on) => ipcRenderer.invoke('projects:setParallel', projectId, on),   // several desks at once, each in its own worktree
   },
-  // v3.83 mail: accounts (passwords and tokens go in, never out) and the outbox; sending is only mail.send, the person's click
+  // v3.85 mail: accounts (passwords and tokens go in, never out) and the outbox; sending is only mail.send, the person's click
   mail: {
     accounts: () => ipcRenderer.invoke('mail:accounts'),            // → { accounts: [{ id, label, provider, address, imap?, smtp?, user?, clientId?, tenant?, hasSecret }], encryption }
     save: (form) => ipcRenderer.invoke('mail:save', form),          // Gmail / IMAP add or edit (password: blank keeps it) → { ok, account } | { ok: false, error }
@@ -78,7 +78,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     discard: (id) => ipcRenderer.invoke('mail:discard', id),
     retry: (id) => ipcRenderer.invoke('mail:retry', id),
   },
-  // v3.82 the person's own roles (listed with the presets in staff.list) and the role wizard
+  // v3.84 the person's own roles (listed with the presets in staff.list) and the role wizard
   roles: {
     save: (form) => ipcRenderer.invoke('roles:save', form),   // { id?, name, short?, department?, description, brief, writesCode, skillPacks, tools } → { ok, role } | { ok: false, error: 'name' | 'brief' | 'name-used' | 'too-many' | 'state' }
     remove: (id) => ipcRenderer.invoke('roles:remove', id),   // members using it keep it as their own role → { ok } | { ok: false, error: 'unknown' | 'state' }
@@ -131,7 +131,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onReloaded: listen('pty:reloaded'),                 // v3.11: restarted in its session because its MCP servers changed
     onSleep: listen('pty:sleep'),                       // an idle background claude was ended to save memory
   },
-  // v3.78 chat view: a Claude Code tab's conversation read from its transcript; a message is typed into the tab
+  // v3.80 chat view: a Claude Code tab's conversation read from its transcript; a message is typed into the tab
   chat: {
     read: (id, cursor) => ipcRenderer.invoke('chat:read', id, cursor),   // → { unsupported } | { sid, cursor, items, reset, more }
     send: (id, text) => ipcRenderer.invoke('chat:send', id, text),       // → 'ok' | why not ('empty', 'not-running', 'permission', 'draft', 'locked', …)
@@ -155,7 +155,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     install: () => ipcRenderer.send('update:install'),
   },
   prefs: {
-    get: () => ipcRenderer.invoke('prefs:get'),         // { resume: boolean, resumeWork: boolean, theme: 'auto' | name, look: 'pixel' | 'claude', mode: 'system' | 'light' | 'dark', manager: boolean, shareMcp: boolean, reloadMcp: boolean, fallback: boolean, sleepMinutes: 0 | 15 | 30 | 60, showAgyAccount: boolean | null, showCmdAccount: boolean | null, showOcAccount: boolean | null, office3d: boolean, teamMode: boolean } (theme: v3.1, manager: v3.2, sleepMinutes: v3.3, resumeWork: v3.7, shareMcp: v3.9, reloadMcp: v3.11, fallback: v3.17, showAgyAccount/showCmdAccount: v3.30, showOcAccount: v3.40, look/mode: v3.74, chatView: v3.78, office3d: v3.79, teamMode: v3.81)
+    get: () => ipcRenderer.invoke('prefs:get'),         // { resume: boolean, resumeWork: boolean, theme: 'auto' | name, look: 'pixel' | 'claude', mode: 'system' | 'light' | 'dark', manager: boolean, shareMcp: boolean, reloadMcp: boolean, fallback: boolean, sleepMinutes: 0 | 15 | 30 | 60, keepAwake: 'off' | 'working' | 'always', showAgyAccount: boolean | null, showCmdAccount: boolean | null, showOcAccount: boolean | null, office3d: boolean, teamMode: boolean } (theme: v3.1, manager: v3.2, sleepMinutes: v3.3, resumeWork: v3.7, shareMcp: v3.9, reloadMcp: v3.11, fallback: v3.17, showAgyAccount/showCmdAccount: v3.30, showOcAccount: v3.40, look/mode: v3.74, chatView: v3.80, office3d: v3.81, teamMode: v3.83, keepAwake: v3.78)
     set: (p) => ipcRenderer.invoke('prefs:set', p),
   },
   language: {

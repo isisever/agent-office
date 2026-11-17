@@ -1,4 +1,4 @@
-// Team: staff (contract v3.81): the TEAM panel's rows and the member popup, drawn into the sidebar (sidebar.js passes
+// Team: staff (contract v3.83): the TEAM panel's rows and the member popup, drawn into the sidebar (sidebar.js passes
 // its own h / openModal / closeModal). The team lives in Agent Office: nothing here touches a project folder. Main
 // keeps and checks the list (staff:list / staff:save / staff:remove, src/staff.js).
 import { roleOf, byDepartment, deptLabel, groupRoles, DEPARTMENTS } from '../src/staff-view.mjs';
@@ -8,7 +8,7 @@ const hueOf = (s) => { let x = 7; for (const c of String(s)) x = (Math.imul(x, 3
 /**
  * The TEAM list: department headers (none when no member has one), a card per member.
  * @param {{ h: Function, t: Function, lang: string, staff: any[], presets: any[], projects: any[], accounts: any[], labelOf: Function, onEdit: (m: any) => void,
- *   desks?: any[], onDesk?: (projectId: string, staffId: string) => void, onPersonal?: (staffId: string) => void }} c  desks: main's desk states (v3.81)
+ *   desks?: any[], onDesk?: (projectId: string, staffId: string) => void, onPersonal?: (staffId: string) => void }} c  desks: main's desk states (v3.83)
  * @returns {HTMLElement[]}
  */
 export function teamRows(c) {
@@ -28,8 +28,8 @@ function card(c, m) {
   const projects = m.projects === 'all' ? t('staff.allProjects')
     : m.projects.map((id) => c.projects.find((p) => p.id === id)?.name).filter(Boolean).join(', ') || t('staff.noProjects');
   const acc = m.accountId ? c.accounts.find((a) => a.id === m.accountId) : null;
-  // v3.81 desks: one chip per project the member may work on (● at work, ○ open, ◌ asleep, + no desk yet); a click opens it
-  // v3.81 amendment: members' personal workspaces are no project chips (each member's own is the "personal" chip)
+  // v3.83 desks: one chip per project the member may work on (● at work, ○ open, ◌ asleep, + no desk yet); a click opens it
+  // v3.83 amendment: members' personal workspaces are no project chips (each member's own is the "personal" chip)
   const allowed = (m.projects === 'all' ? c.projects.filter((p) => !p.hq) : c.projects.filter((p) => m.projects.includes(p.id))).filter((p) => !p.staffOwner);
   const own = c.projects.find((p) => p.staffOwner === m.id);
   const deskOf = (pid) => (c.desks || []).find((d) => d.staffId === m.id && d.projectId === pid);
@@ -68,7 +68,7 @@ function card(c, m) {
  * The role's settings are always on show and editable: a preset fills them in (name, description, instructions,
  * writes code, its suggested skill packs) and the member keeps only what differs from the preset, so a preset's later
  * wording still reaches it; "own role" keeps what is in the fields. listPacks() → the skill packs ([{ id, name }]).
- * v3.82: the picker groups roles by department (the person's own roles marked ★) and ends with "Own role…" and the
+ * v3.84: the picker groups roles by department (the person's own roles marked ★) and ends with "Own role…" and the
  * role wizard; a preset fills the department when it is empty or one of the functions; the member's own MCP tools
  * (listTools() → app-added servers) reach all its desks; a role from the person's library can be removed here.
  * @param {{ h: Function, t: Function, lang: string, member: any, staff: any[], presets: any[], projects: any[], accounts: any[], labelOf: Function,
@@ -128,7 +128,7 @@ export function openMemberEditor(c) {
     for (const id of def.skillPacks || []) packPick.set(id, 'on');
     drawPacks(packList);
   };
-  // v3.82 the member's own MCP tools: app-added servers, ticked by id; a new member gets the role's suggested ones
+  // v3.84 the member's own MCP tools: app-added servers, ticked by id; a new member gets the role's suggested ones
   /** @type {any[]} */
   let toolList = [];
   const toolPick = new Set(Array.isArray(m?.tools) ? m.tools : []);
@@ -211,7 +211,7 @@ export function openMemberEditor(c) {
   const scope = h('div', { class: 'sb-scope' },
     h('label', { class: 'sb-scope-all' }, all, ' ', t('staff.allProjects')),
     h('div', { class: 'sb-scope-list' }, ...c.projects.map((p, i) => h('label', {}, boxes[i], ' ', p.name))));
-  // v3.83 mail: the accounts this member may read and draft from; the guard is explained right there
+  // v3.85 mail: the accounts this member may read and draft from; the guard is explained right there
   const mailPick = new Set(Array.isArray(m?.mail) ? m.mail : []);
   const mailList = c.mailAccounts || [];
   const mailBox = h('div', { class: 'sb-scope-list sb-staff-mail' }, ...(mailList.length ? mailList.map((a) => h('label', {},

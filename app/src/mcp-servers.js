@@ -15,7 +15,7 @@ const SC = require('./shared-config.js');
 
 const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
-// v3.80 a server can reach several projects: scope 'all', one project id (as before), or a list of two or more ids.
+// v3.82 a server can reach several projects: scope 'all', one project id (as before), or a list of two or more ids.
 // A list is kept only with two or more ids; one id is stored as a string, so single-project servers (and the held /
 // handoff logic built on them) are unchanged.
 /**
@@ -119,7 +119,7 @@ function normalizeServers(list, projectIds) {
     const held = typeof s.held === 'string' && s.held && typeof s.scope === 'string' && s.scope !== 'all' && (!known || !known.has(s.scope)) ? s.held : null;
     const scope = Array.isArray(s.scope) ? cleanScope(s.scope, known)
       : s.scope === 'all' || (typeof s.scope === 'string' && s.scope && (!known || known.has(s.scope) || held)) ? s.scope : null;
-    // a later server of the same name in the same scope is dropped (v3.80: a list meeting another scope too)
+    // a later server of the same name in the same scope is dropped (v3.82: a list meeting another scope too)
     const dup = (o) => o.name === name && (Array.isArray(o.scope) || Array.isArray(scope) ? !o.held && !held && overlaps(o.scope, scope) : o.scope === scope);
     if (!name || (stdio ? !command : !url) || !scope || out.some(dup)) continue;
     ids.add(s.id); names.add(name);
@@ -198,7 +198,7 @@ function editable(s, hasToken = false) {
   return { id: s.id, name: s.name, type: s.type, url: hidden ? '' : s.url, ...(hidden ? { urlHidden: true } : {}), scope: s.scope, hasToken: Boolean(hasToken) };
 }
 /**
- * v3.80 Which projects a server reaches, changed from the project popup or the panel: → { servers, server, before }
+ * v3.82 Which projects a server reaches, changed from the project popup or the panel: → { servers, server, before }
  * | { error: 'unknown' | 'scope' | 'name-used' }. A held server is not changed.
  */
 function setScope(servers, id, scope, projectIds = []) {
@@ -242,7 +242,7 @@ function dirKey(dir) {
  * A project handed off from here (v3.44): its own servers and their tokens stay on this machine, held for its folder
  * (`held: dir`), and come back to it when a project at that folder is adopted again (`adoptHeld`).
  */
-// A server shared with other projects (v3.80 list) stays theirs: the handed-off project only leaves its list.
+// A server shared with other projects (v3.82 list) stays theirs: the handed-off project only leaves its list.
 const holdProject = (servers, projectId, dir) => servers.map((s) => (s.scope === projectId ? { ...s, held: dirKey(dir) } : listed(s, projectId) ? leaveScope(s, projectId) : s));
 /**
  * A project arrives at `dir` (handed back, or the folder added again): the servers held for that folder are its own
@@ -280,7 +280,7 @@ function appConfigs(servers, projectId, tokenOf) {
  * engine nothing, and no token is read (leak rule).
  */
 /**
- * v3.82 a desk's member may have tools of its own (member.tools: server ids): those servers reach the desk's session
+ * v3.84 a desk's member may have tools of its own (member.tools: server ids): those servers reach the desk's session
  * as if they were scoped to its project. → the list to pass on (unchanged without tools).
  */
 const withTools = (servers, projectId, toolIds) => (Array.isArray(toolIds) && toolIds.length

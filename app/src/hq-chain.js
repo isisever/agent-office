@@ -1,4 +1,4 @@
-// Staged HQ requests (contract v3.77): pure logic, no Electron; tested in test/hq-chain.test.cjs.
+// Staged HQ requests (contract v3.79): pure logic, no Electron; tested in test/hq-chain.test.cjs.
 // HQ can chain tasks of one request: "the assistant scopes it → the ERP developer builds it → the assistant writes the
 // delivery form". office_dispatch takes `then` (later stages, in order, in the same call) and `after` (a task of the
 // same live request that this one waits for). A stage that waits is a board row with status 'waiting', created and
@@ -16,7 +16,7 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** The stages of one office_dispatch call: [first, ...then], each { project, machine, title, task }; malformed `then` entries are dropped. */
 function stagesOf(args) {
-  const one = (o) => ({ project: String(o?.project || ''), machine: String(o?.machine || ''), title: String(o?.title || ''), task: typeof o?.task === 'string' ? o.task : '', ...(typeof o?.staff === 'string' && o.staff.trim() ? { staff: o.staff.trim() } : {}) });   // v3.81 a stage may name a staff member
+  const one = (o) => ({ project: String(o?.project || ''), machine: String(o?.machine || ''), title: String(o?.title || ''), task: typeof o?.task === 'string' ? o.task : '', ...(typeof o?.staff === 'string' && o.staff.trim() ? { staff: o.staff.trim() } : {}) });   // v3.83 a stage may name a staff member
   const then = (Array.isArray(args?.then) ? args.then : []).filter((o) => o && typeof o === 'object' && o.project && typeof o.task === 'string' && o.task);
   return { first: one(args), then: then.map(one), tooMany: then.length > THEN_MAX };
 }

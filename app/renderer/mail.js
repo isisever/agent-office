@@ -1,4 +1,4 @@
-// Mail (contract v3.83): the MAIL panel's rows and its popups, drawn into the sidebar (sidebar.js passes h / t /
+// Mail (contract v3.85): the MAIL panel's rows and its popups, drawn into the sidebar (sidebar.js passes h / t /
 // openModal / closeModal). Accounts: Gmail (app password), Microsoft 365 / Outlook (device code sign-in with the
 // person's app registration) and Exchange or any IMAP/SMTP server. The outbox: drafts staff members made, each
 // opened here, read whole, edited if needed and sent only by the person's Send (and a confirmation). Passwords go to

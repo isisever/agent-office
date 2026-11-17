@@ -1,4 +1,4 @@
-// Team: staff (contract v3.81), the parts the renderer shares (the TEAM panel, the member popup); pure, tested in
+// Team: staff (contract v3.83), the parts the renderer shares (the TEAM panel, the member popup); pure, tested in
 // test/staff.test.cjs through a dynamic import. src/staff.js keeps the state logic (main side).
 
 /** The member's role definition: the preset (if any) with the member's own name, description, brief on top. */
@@ -28,7 +28,7 @@ export function byDepartment(staff) {
 }
 
 
-// v3.82 the company's functions (the same list as src/staff.js DEPARTMENTS): a preset's department id, shown as the
+// v3.84 the company's functions (the same list as src/staff.js DEPARTMENTS): a preset's department id, shown as the
 // localized label (staff.dept.<id>); any other value is a label the person wrote and is shown as it is.
 export const DEPARTMENTS = ['management', 'marketing', 'sales', 'operations', 'hr', 'finance', 'rnd'];
 export const deptLabel = (t, d) => (DEPARTMENTS.includes(d) ? t(`staff.dept.${d}`) : d || '');

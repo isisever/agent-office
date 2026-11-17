@@ -18,7 +18,7 @@ export const TASK_MAX_MS = 2 * 3600 * 1000 // an open task is reported as partia
 const TYPED_FRESH_MS = 10 * 60 * 1000
 const ID = /^[A-Za-z0-9_.:-]{1,64}$/
 // the sender's name is quoted when typed; a task given as Claude Code's first-prompt argument loses its quotes (the
-// app's promptArg drops `"` for Windows' cmd.exe, v3.81 amendment), so an unquoted name is a marker too
+// app's promptArg drops `"` for Windows' cmd.exe, v3.83 amendment), so an unquoted name is a marker too
 const MARKER = /^\[Agent Office: remote task #([A-Za-z0-9_.:-]{1,64}) from (?:"[^"\n]{0,64}"|[^"\]\n]{0,64})\] /
 
 export type PendingTask = { id: string; sinceMs: number; answer: string }

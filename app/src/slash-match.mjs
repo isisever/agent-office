@@ -1,4 +1,4 @@
-// Chat view slash commands (contract v3.78 amendment): which "/" suggestions the chat input shows. Pure; the renderer
+// Chat view slash commands (contract v3.80 amendment): which "/" suggestions the chat input shows. Pure; the renderer
 // imports it, tested in test/slash-commands.test.cjs. The list comes from main (chat:commands, src/slash-commands.js).
 
 /**

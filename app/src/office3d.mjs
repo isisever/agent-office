@@ -1,4 +1,4 @@
-// 3D office (contract v3.79): pure, no DOM; shared with the renderer (renderer/office3d.js draws it with WebGL) and
+// 3D office (contract v3.81): pure, no DOM; shared with the renderer (renderer/office3d.js draws it with WebGL) and
 // tested in test/office3d.test.mjs. core.mjs still runs the office (who sits where, who walks, who dances) and
 // draws its pixel frame; sceneOf() hands over what that frame showed, and this module builds the same office from
 // boxes: x = core's x, z = core's y (toward the camera), y = up, one unit = one logical pixel.

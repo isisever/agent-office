@@ -1,8 +1,8 @@
-// Team: staff (contract v3.81): pure logic plus the preset role loader, no Electron; tested in test/staff.test.cjs.
+// Team: staff (contract v3.83): pure logic plus the preset role loader, no Electron; tested in test/staff.test.cjs.
 // The team lives in Agent Office, not in the project folders: a staff member is a name, a role (a preset from
 // roles/*.json, shipped like themes/ and skill-packs/, or the person's own role written on the member), an optional
 // department label, an optional Claude account of its own, and the projects it may work on. Nothing here starts a
-// session (desks: v3.81 step 3) or gives work (HQ: step 4). What the renderer also needs is in src/staff-view.mjs. With state.teamMode off the TEAM panel is not shown;
+// session (desks: v3.83 step 3) or gives work (HQ: step 4). What the renderer also needs is in src/staff-view.mjs. With state.teamMode off the TEAM panel is not shown;
 // the stored staff stays for when it is turned on again. Design: .claude/docs/design-staff.md.
 const fs = require('fs');
 const path = require('path');
@@ -15,7 +15,7 @@ const NAME_MAX = 40;
 const DEPT_MAX = 30;
 const DESC_MAX = 400;
 const BRIEF_MAX = 4000;
-// v3.82 the company's functions: a preset's department, in this order in the role picker; an own or custom role may
+// v3.84 the company's functions: a preset's department, in this order in the role picker; an own or custom role may
 // also carry a free label (≤ 30)
 const DEPARTMENTS = ['management', 'marketing', 'sales', 'operations', 'hr', 'finance', 'rnd'];
 const CUSTOM_ID_RE = /^my-[0-9a-f]{6,16}$/;       // a role from the person's library (the wizard or the popup)
@@ -112,9 +112,9 @@ function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds 
   const accountId = typeof raw.accountId === 'string' && raw.accountId && (!accountIds || accountIds.includes(raw.accountId)) ? raw.accountId : '';
   const projects = raw.projects === 'all' ? 'all'
     : [...new Set((Array.isArray(raw.projects) ? raw.projects : []).filter((id) => typeof id === 'string' && PROJECT_ID_RE.test(id) && (!projectIds || projectIds.includes(id))))];
-  // v3.82 the member's own MCP tools: app-added servers its desks get whatever the project's scope says
+  // v3.84 the member's own MCP tools: app-added servers its desks get whatever the project's scope says
   const tools = [...new Set((Array.isArray(raw.tools) ? raw.tools : []).filter((id) => typeof id === 'string' && TOOL_ID_RE.test(id) && (!toolIds || toolIds.includes(id))))].slice(0, 20);
-  // v3.83 the mail accounts the member may read and draft from (src/mail: read only; sending is the person's)
+  // v3.85 the mail accounts the member may read and draft from (src/mail: read only; sending is the person's)
   const mail = [...new Set((Array.isArray(raw.mail) ? raw.mail : []).filter((id) => typeof id === 'string' && /^m-[0-9a-f]{6,16}$/.test(id) && (!mailIds || mailIds.includes(id))))].slice(0, 10);
   return {
     id: raw.id, name, role, ...(department ? { department } : {}), ...(accountId ? { accountId } : {}),
@@ -122,7 +122,7 @@ function normalizeMember(raw, { projectIds = null, accountIds = null, presetIds 
   };
 }
 
-// ---------- the person's role library (v3.82) ----------
+// ---------- the person's role library (v3.84) ----------
 // Roles the person made (the role wizard, or "save as a role" later) live in state.customRoles and are offered with
 // the presets; members point at them like at a preset ({ preset: 'my-…' }). Their name is one string (both languages).
 
@@ -228,7 +228,7 @@ const dropAccount = (staff, accountId) => (Array.isArray(staff) ? staff : [])
 
 /** May the member work on this project? */
 /**
- * May this member work on this project? Its list ('all' or project ids). v3.81 amendment: given the project itself, a
+ * May this member work on this project? Its list ('all' or project ids). v3.83 amendment: given the project itself, a
  * personal workspace (`staffOwner`) is its owner's alone, whatever the lists say.
  * @param {any} member @param {string | { id: string, staffOwner?: string }} project a project or its id
  */
@@ -238,7 +238,7 @@ function mayWork(member, project) {
   const id = p ? p.id : project;
   return member?.projects === 'all' || (Array.isArray(member?.projects) && member.projects.includes(id));
 }
-/** v3.81 amendment: a member's personal workspace project, or null. */
+/** v3.83 amendment: a member's personal workspace project, or null. */
 const personalOf = (projects, memberId) => (Array.isArray(projects) ? projects : []).find((p) => p?.staffOwner === memberId) || null;
 
 // ---------- desks (step 3) and HQ (step 4) ----------

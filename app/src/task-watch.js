@@ -1,4 +1,4 @@
-// HQ task watch (contract v3.81 amendment): this machine's own dispatched tasks (HQ's, a boss's, a routine's) are
+// HQ task watch (contract v3.83 amendment): this machine's own dispatched tasks (HQ's, a boss's, a routine's) are
 // followed in the tab they were typed into, so the Board and HQ know where each one is, and a task always ends.
 // The session's plugin writes the report when its turn ends (plugin/hooks/reports.ts); if that never happens (the
 // session went idle without a marked task, crashed, or its tab was closed) the app ends the task itself with a partial

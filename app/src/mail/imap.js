@@ -1,4 +1,4 @@
-// Mail (contract v3.83): a minimal IMAP4rev1 client, read only, no dependencies; tested in test/mail.test.cjs against
+// Mail (contract v3.85): a minimal IMAP4rev1 client, read only, no dependencies; tested in test/mail.test.cjs against
 // a fake server. TLS on connect (993), the certificate checked by net.js (system trust or the account's pinned one).
 // The mailbox is opened with EXAMINE (read only: no flag, no move, no expunge can happen) and bodies are fetched with
 // BODY.PEEK, so reading never marks a mail as seen. Login follows the server's CAPABILITY: XOAUTH2 with an OAuth

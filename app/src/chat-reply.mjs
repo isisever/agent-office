@@ -1,4 +1,4 @@
-// Chat view (contract v3.78 amendment): replying to a message. The quoted message goes in front of the person's text
+// Chat view (contract v3.80 amendment): replying to a message. The quoted message goes in front of the person's text
 // as a markdown quote ("> " lines), cut to QUOTE_MAX characters, so the session sees what the answer is about.
 // Pure; the renderer imports it, tested in test/chat.test.cjs.
 

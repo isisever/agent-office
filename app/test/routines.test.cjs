@@ -664,7 +664,7 @@ test('restart while a remote send is paced → the run ends failed: lost; the pa
   assert.deepEqual([run.status, run.reason, env.sent.length], ['failed', 'lost', 0]);
 });
 
-test('v3.81 amendment: a project routine may name a staff member; main checks the member and dispatches to the desk', () => {
+test('v3.83 amendment: a project routine may name a staff member; main checks the member and dispatches to the desk', () => {
   assert.deepEqual(rt({ target: { kind: 'project', projectId: 'p1', staffId: 'st_ab12' } }).target, { kind: 'project', projectId: 'p1', staffId: 'st_ab12' });
   assert.deepEqual(rt({ target: { kind: 'project', projectId: 'p1', staffId: '../x' } }).target, { kind: 'project', projectId: 'p1' });
   assert.deepEqual(rt({ target: { kind: 'hq', staffId: 'st_ab12' } }).target, { kind: 'hq' });
@@ -673,7 +673,7 @@ test('v3.81 amendment: a project routine may name a staff member; main checks th
   assert.match(MAIN, /hqDispatch\(\{ project, title: routine\.name, task: text, request: run\.request, \.\.\.\(member \? \{ staff: member\.name \} : \{\}\) \}\)/);
 });
 
-test('v3.81 amendment: a staff routine outside any project; HQ dispatch without project goes to the personal workspace', () => {
+test('v3.83 amendment: a staff routine outside any project; HQ dispatch without project goes to the personal workspace', () => {
   assert.deepEqual(rt({ target: { kind: 'staff', staffId: 's-a1a1a1' } }).target, { kind: 'staff', staffId: 's-a1a1a1' });
   assert.equal(rt({ target: { kind: 'staff' } }), null, 'a staff routine names its member');
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');

@@ -1,4 +1,4 @@
-// Team: staff (contract v3.81): src/staff.js (state) and src/staff-view.mjs (the TEAM panel's helpers).
+// Team: staff (contract v3.83): src/staff.js (state) and src/staff-view.mjs (the TEAM panel's helpers).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
@@ -77,7 +77,7 @@ test('staff-view: roleOf merges the preset with the member’s own words; byDepa
   assert.deepEqual([own.name, own.short, own.writesCode], ['İçerik yazarı', 'İÇERİK', false]);
   const groups = V.byDepartment([{ name: 'a', department: 'Dev' }, { name: 'b' }, { name: 'c', department: 'Ops' }, { name: 'd', department: 'Dev' }]);
   assert.deepEqual(groups.map((g) => [g.head, g.members.map((m) => m.name)]), [['Dev', ['a', 'd']], ['Ops', ['c']], ['', ['b']]]);
-  // v3.82 the role picker: the functions in order, other labels after them, roles without one last
+  // v3.84 the role picker: the functions in order, other labels after them, roles without one last
   assert.deepEqual(V.DEPARTMENTS, ST.DEPARTMENTS, 'one list on both sides');
   const picked = V.groupRoles([{ id: 'a', department: 'rnd' }, { id: 'b' }, { id: 'c', department: 'management' }, { id: 'd', department: 'Kendi' }, { id: 'e', department: 'rnd' }]);
   assert.deepEqual(picked.map((g) => [g.dept, g.roles.map((r) => r.id)]), [['management', ['c']], ['rnd', ['a', 'e']], ['Kendi', ['d']], ['', ['b']]]);
@@ -85,7 +85,7 @@ test('staff-view: roleOf merges the preset with the member’s own words; byDepa
   assert.deepEqual([V.deptLabel(t, 'hr'), V.deptLabel(t, 'Kendi'), V.deptLabel(t, '')], ['<staff.dept.hr>', 'Kendi', '']);
 });
 
-test('role library (v3.82): custom roles saved, offered like presets, removed without leaving a member roleless', () => {
+test('role library (v3.84): custom roles saved, offered like presets, removed without leaving a member roleless', () => {
   const defs = ST.loadRoles(ROLES);
   const form = { name: 'Etkinlik Planlayıcı', short: 'ETKİNLİK', department: 'marketing', description: 'Plans events.', brief: 'You plan events.', writesCode: true, skillPacks: ['anthropic-skills', 'BAD id'], tools: ['canva'] };
   const r = ST.saveCustomRole([], form, defs, () => 'my-aaaaaa');
@@ -111,12 +111,12 @@ test('role library (v3.82): custom roles saved, offered like presets, removed wi
   assert.ok(ST.normalizeMember(gone.staff[0], known), 'still a valid member');
 });
 
-test('member tools (v3.82): known server ids kept; a desk gets them on top of its project’s scope', () => {
+test('member tools (v3.84): known server ids kept; a desk gets them on top of its project’s scope', () => {
   const MS = require('../src/mcp-servers.js');
   const m = ST.normalizeMember({ ...ayse, tools: ['srv1', 'gone', 'srv1', '../x'] }, { ...known, toolIds: ['srv1', 'srv2'] });
   assert.deepEqual(m.tools, ['srv1']);
   assert.equal(ST.normalizeMember(ayse, known).tools, undefined, 'none: no field');
-  // v3.83 mail accounts: known ids only
+  // v3.85 mail accounts: known ids only
   assert.deepEqual(ST.normalizeMember({ ...ayse, mail: ['m-aaaaaa', 'm-gone00', 'x', 'm-aaaaaa'] }, { ...known, mailIds: ['m-aaaaaa'] }).mail, ['m-aaaaaa']);
   assert.equal(ST.normalizeMember(ayse, known).mail, undefined);
   const servers = [{ id: 'srv1', name: 'canva', type: 'http', url: 'https://mcp.canva.com/mcp', scope: 'p9' }, { id: 'srv2', name: 'x', type: 'http', url: 'https://x', scope: 'p2' }];
@@ -229,7 +229,7 @@ test('main.js: HQ dispatch to staff — checks, the desk, the lock, the member�
   assert.match(fn('openDesk'), /ST\.deskWorktree\(app\.getPath\('userData'\)/);
 });
 
-test('v3.81 amendment: a personal workspace is its owner\'s alone; normalizeState keeps staffOwner', () => {
+test('v3.83 amendment: a personal workspace is its owner\'s alone; normalizeState keeps staffOwner', () => {
   const ST2 = require('../src/staff.js');
   const P2 = require('../src/projects.js');
   const own = { id: 'p9', name: 'Ahmet - kişisel', staffOwner: 's-a1a1a1' };

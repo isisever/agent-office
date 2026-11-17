@@ -1,4 +1,4 @@
-// Team: the role wizard (contract v3.82): pure logic, no Electron; tested in test/role-wizard.test.cjs.
+// Team: the role wizard (contract v3.84): pure logic, no Electron; tested in test/role-wizard.test.cjs.
 // The person describes a job in their own words; main runs one non-interactive Claude Code turn per message
 // (`claude -p`, no tools, no MCP, no session kept, the Default account) with the system prompt below and the whole
 // conversation so far on stdin, and gets back JSON: a short message, the questions still open and, once the job is

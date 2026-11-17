@@ -1,4 +1,4 @@
-// Mail (contract v3.83): mail accounts (state.mailAccounts, no secret) and the outbox of drafts waiting for the person
+// Mail (contract v3.85): mail accounts (state.mailAccounts, no secret) and the outbox of drafts waiting for the person
 // (userData/mail/outbox.json, 0600). Pure, no Electron; tested in test/mail.test.cjs. A draft only ever leaves the
 // outbox through the person's "Send" in the app (main: mail:send); a model can add drafts, never send or approve one.
 'use strict';

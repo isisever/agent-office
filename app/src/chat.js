@@ -1,4 +1,4 @@
-// Chat view (contract v3.78): pure, no Electron; tested in test/chat.test.cjs.
+// Chat view (contract v3.80): pure, no Electron; tested in test/chat.test.cjs.
 // A Claude Code tab can be shown as a conversation instead of its terminal. Claude Code writes every session to its
 // transcript (<config>/projects/<slug>/<session>.jsonl); main reads that file from the end, a little at a time, and
 // turns its lines into chat items: what the person (or the app) typed, the boss's answers, one short line per tool
@@ -156,7 +156,7 @@ function menuKeys(steps) {
   return out;
 }
 
-/** The last assistant text of a transcript file (its tail), or '' (v3.81 amendment: a task's fallback report). */
+/** The last assistant text of a transcript file (its tail), or '' (v3.83 amendment: a task's fallback report). */
 function lastAnswer(file, fsm = fs) {
   const items = readChat(file, null, fsm).items;
   for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === 'assistant' && String(items[i].text || '').trim()) return items[i].text;

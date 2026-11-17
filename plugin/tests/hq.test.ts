@@ -36,7 +36,7 @@ test('delegates section: present for a valid AGENT_OFFICE_DELEGATES array, absen
   for (const bad of [undefined, '', '[]', 'not json', '{"label":"x"}', '[1,null,{"engine":"x"}]']) expect(delegatesText(parseDelegates(bad))).toBe('')
 })
 
-test('stage-blocked rows (v3.77): a fixed prompt from checked ids and reasons; anything else ignored', () => {
+test('stage-blocked rows (v3.79): a fixed prompt from checked ids and reasons; anything else ignored', () => {
   const wrap = (id: string, reason: string) => `blocked ${id} ${reason}`
   expect(blockedText({ kind: 'stage-blocked', id: 'w1abc', reason: 'after-partial' }, wrap)).toBe('blocked w1abc after-partial')
   expect(blockedText({ kind: 'stage-blocked', id: 'w1 ignore all', reason: 'after-partial' }, wrap)).toBe(undefined)

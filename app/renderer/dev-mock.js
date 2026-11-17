@@ -15,7 +15,7 @@
 // ?longDir → the first project's folder is a long path (title bar cuts it from the left, v3.18).
 // ?usage[=<n>] → opens project n's token usage panel (v3.13; default the first) after a moment.
 // ?remotes → three paired machines (one with a long name, one offline) whose projects are rows in PROJECTS (v3.46 HQ).
-// ?stages (with ?remotes) → the Board shows a staged request (v3.77): one running stage, one waiting (Cancel), one blocked.
+// ?stages (with ?remotes) → the Board shows a staged request (v3.79): one running stage, one waiting (Cancel), one blocked.
 // ?machines[=<n>] → a fake device link (v3.31/v3.32) with n paired machines (default 2; one v1, one offline from n ≥ 3); opens the Machines panel.
 // ?theme=<name> → theme picker setting (v3.1; e.g. ?theme=sakura, ?theme=forest); default auto. The gallery is read from
 // ?look=pixel|claude and ?mode=system|light|dark → the appearance setting (v3.74; default pixel + system).
@@ -100,10 +100,10 @@ const running = new Map(projects.flatMap((p, i) => tabIds(p).map((id) => [id, i 
 let activeId = projects[0]?.id ?? null;
 /** @type {any[]} */
 const mockMcp = [];
-// v3.80 a server's scope as main keeps it ('all' | id | id[]); the list shows it as 'all' | 'project' | 'projects'
+// v3.82 a server's scope as main keeps it ('all' | id | id[]); the list shows it as 'all' | 'project' | 'projects'
 const shownScope = (sc) => (sc === 'all' ? { scope: 'all' } : Array.isArray(sc) && sc.length > 1 ? { scope: 'projects', projects: sc.length } : { scope: 'project' });
 const realScope = (sc) => (sc === 'all' ? 'all' : Array.isArray(sc) ? (sc.length === 1 ? sc[0] : sc) : sc);
-// ?tools (v3.80): two tools added in Agent Office, one for every project, one for the first two
+// ?tools (v3.82): two tools added in Agent Office, one for every project, one for the first two
 if (q.has('tools') && projects.length >= 2) mockMcp.push(
   { id: 'm1', name: 'notion', type: 'http', host: 'mcp.notion.com', real: 'all' },
   { id: 'm2', name: 'jira', type: 'http', host: 'acme.atlassian.net', real: [projects[0].id, projects[1].id] });
@@ -127,7 +127,7 @@ function boot(id) {
   setTimeout(() => ev.data.emit(id,
     `\x1b[38;5;173m✻\x1b[0m Welcome to \x1b[1mClaude Code\x1b[0m (sahte)\r\n\r\n` +
     `  cwd: ${tab?.dir || p?.dir}\r\n  hesap: ${acc?.label}${tab?.worktree ? `\r\n  dal: ${tab.worktree.branch}` : ''}\r\n\r\n> `), 50);
-  // v3.78 ?menu: the main tab then shows Claude Code's approval menu (?menu=q: an AskUserQuestion); an answer clears it
+  // v3.80 ?menu: the main tab then shows Claude Code's approval menu (?menu=q: an AskUserQuestion); an answer clears it
   if (q.has('menu') && !n) setTimeout(() => ev.data.emit(id, q.get('menu') === 'q' ? MOCK_QUESTION : MOCK_APPROVAL), 120);
   changed();
 }
@@ -164,7 +164,7 @@ let sleepSetting = 30;
 const MOCK_RULE = `${'─'.repeat(60)}\r\n`;
 const MOCK_APPROVAL = `\r\n${MOCK_RULE} Bash command\r\n npm test\r\n Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. Yes, and don't ask again for npm test commands in /Users/me/web\r\n   3. No\r\n Esc to cancel · Tab to amend\r\n`;
 const MOCK_QUESTION = `\r\n${MOCK_RULE}←  ☐ Scope  ✔ Submit  →\r\nWhich scope?\r\n❯ 1. Only README\r\n     The setup section\r\n  2. README and docs/\r\n     Every page that mentions setup\r\n  3. Type something.\r\n${MOCK_RULE}  4. Chat about this\r\nEnter to select · ↑/↓ to navigate · Esc to cancel\r\n`;
-// v3.78 chat view: ?chat starts with the setting on; every Claude tab has a short fake conversation, a sent message
+// v3.80 chat view: ?chat starts with the setting on; every Claude tab has a short fake conversation, a sent message
 // gets an answer after a second
 let chatViewSetting = q.has('chat');
 const mockChats = new Map();   // pty id → items
@@ -184,12 +184,12 @@ const chatOf = (id) => {
   }
   return mockChats.get(id);
 };
-let office3dSetting = q.has('office3d'); // v3.79 ?office3d: the 3D office from the start
-// v3.81 team: ?staff turns team mode on with three members; the presets are read as main reads them
+let office3dSetting = q.has('office3d'); // v3.81 ?office3d: the 3D office from the start
+// v3.83 team: ?staff turns team mode on with three members; the presets are read as main reads them
 let teamSetting = q.has('staff');
 const ROLE_IDS = ['accountant', 'assistant', 'chatbot', 'content-writer', 'customer-support', 'data-analyst', 'devops', 'digital-marketer', 'erp-odoo',
   'financial-analyst', 'hr-specialist', 'operations-specialist', 'product', 'project-manager', 'qa', 'rpa', 'sales-rep', 'social-media-designer', 'software-developer'];
-// v3.83 mail
+// v3.85 mail
 const mailEv = { accounts: listeners(), outbox: listeners() };
 const mockMail = {
   accounts: [{ id: 'm-aaaa1111', label: 'Destek', provider: 'gmail', address: 'destek@acme.com', hasSecret: true }],
@@ -200,17 +200,18 @@ const mockMail = {
 };
 const mailOut = () => mailEv.outbox.emit({ drafts: structuredClone(mockMail.drafts), pending: mockMail.drafts.filter((d) => d.status === 'pending').length });
 /** @type {any[]} */
-const mockRoles = [];   // v3.82 the person's roles
+const mockRoles = [];   // v3.84 the person's roles
 const rolePresets = (await Promise.all(ROLE_IDS.map((n) => fetch(`../../roles/${n}.json`).then((r) => r.json()).catch(() => null)))).filter(Boolean);
 /** @type {any[]} */
 const mockStaff = [];
 const mockDesks = new Map();   // pty id → desk state
 /** @type {Function[]} */
 const deskListeners = [];
+let keepAwakeSetting = 'working';
 // "Resume unfinished work" (v3.8): the first click finds two projects with unfinished work (?unfinished=0: none);
 // a stopped one starts, as main starts a lazy tab with --resume
 let mockUnfinished = q.get('unfinished') !== '0';
-const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, ...engineRows, chatView: chatViewSetting, office3d: office3dSetting, teamMode: teamSetting });
+const prefsNow = () => ({ resume: resumeSetting, resumeWork: resumeWorkSetting, theme: themeSetting, look: lookSetting, mode: modeSetting, manager: managerSetting, shareMcp: shareMcpSetting, reloadMcp: reloadMcpSetting, fallback: fallbackSetting, sleepMinutes: sleepSetting, keepAwake: keepAwakeSetting, ...engineRows, chatView: chatViewSetting, office3d: office3dSetting, teamMode: teamSetting });
 const engineRows = { showAgyAccount: null, showCmdAccount: null, showOcAccount: null }; // v3.30
 
 window.agentOffice = {
@@ -328,7 +329,7 @@ window.agentOffice = {
       Object.assign(s, { name: String(f.name).trim().toLowerCase(), type: f.type === 'stdio' ? 'stdio' : f.type === 'sse' ? 'sse' : 'http', host, real: realScope(f.scope) });
       return { ok: true, restarted: [] };
     },
-    // v3.80 the app-added servers with their projects; a new project set
+    // v3.82 the app-added servers with their projects; a new project set
     apps: async () => ({ servers: mockMcp.map(({ real, ...s }) => ({ id: s.id, name: s.name, type: s.type, host: s.host, scope: real, hasToken: s.type !== 'stdio' })) }),
     scope: async (id, sc) => { const s = mockMcp.find((x) => x.id === id); if (!s) return { ok: false, error: 'unknown' }; s.real = realScope(sc); return { ok: true, restarted: [] }; },
     // v3.69 a server in Claude Code's files: values masked, the mock writes nothing
@@ -339,8 +340,8 @@ window.agentOffice = {
     remove: async (id) => { const i = mockMcp.findIndex((s) => s.id === id); if (i >= 0) mockMcp.splice(i, 1); return { ok: i >= 0, restarted: [] }; },
   },
 
-  // v3.82 the role library and a scripted wizard: a question first, then a role (no claude in the browser)
-  // v3.83 mail: one Gmail account and, with ?staff, two drafts waiting (sending only changes their status here)
+  // v3.84 the role library and a scripted wizard: a question first, then a role (no claude in the browser)
+  // v3.85 mail: one Gmail account and, with ?staff, two drafts waiting (sending only changes their status here)
   mail: {
     accounts: async () => ({ accounts: structuredClone(mockMail.accounts), encryption: true }),
     save: async (f) => {
@@ -387,7 +388,7 @@ window.agentOffice = {
     },
   },
 
-  staff: { // v3.81
+  staff: { // v3.83
     list: async () => ({ teamMode: teamSetting, presets: [...rolePresets, ...mockRoles], staff: structuredClone(mockStaff) }),
     save: async (f) => {
       if (!String(f?.name || '').trim()) return { ok: false, error: 'name' };
@@ -401,7 +402,7 @@ window.agentOffice = {
       return { ok: true, member };
     },
     remove: async (id) => { const i = mockStaff.findIndex((m) => m.id === id); if (i >= 0) mockStaff.splice(i, 1); return { ok: i >= 0 }; },
-    // v3.81 desks: a desk is a tab with staffId; opening one adds the tab and boots it (busy for ?staff, see below)
+    // v3.83 desks: a desk is a tab with staffId; opening one adds the tab and boots it (busy for ?staff, see below)
     desk: async (projectId, staffId) => {
       const p = /** @type {any} */ (projects.find((x) => x.id === projectId));
       if (!p) return { ok: false, error: 'unknown' };
@@ -521,7 +522,7 @@ window.agentOffice = {
     shown: () => {},
     onSleep: () => {},
   },
-  // v3.78: the cursor is how many items were handed over
+  // v3.80: the cursor is how many items were handed over
   chat: {
     // the "/" list main builds from Claude Code's built-ins and the tab's commands, skills and plugins
     commands: async () => [
@@ -582,6 +583,7 @@ window.agentOffice = {
       if (p?.look !== undefined) lookSetting = normalizeLook(p.look);
       if (p?.mode !== undefined) modeSetting = normalizeMode(p.mode);
       if ([0, 15, 30, 60].includes(p?.sleepMinutes)) sleepSetting = p.sleepMinutes;
+      if (['off', 'working', 'always'].includes(p?.keepAwake)) keepAwakeSetting = p.keepAwake;
       for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (typeof p?.[k] === 'boolean') engineRows[k] = p[k];
       return prefsNow();
     },
@@ -898,7 +900,7 @@ if (q.has('remotes')) {
   const hok = () => Promise.resolve(structuredClone(hv));
   const cancel = (id) => { const t = hv.board.tasks.find((x) => x.id === id); if (t && t.status === 'waiting') Object.assign(t, { status: 'rejected', reason: 'cancelled' }); return hok(); };
   window.agentOffice.hq = { get: hok, open: hok, setSettings: hok, cancel, onBoard: listeners().add, remoteOp: () => Promise.resolve({ ok: true }), openFolder: () => {} };
-  // ?routines: the routine list and editor (v3.47), with the staff a project routine may name (v3.81 amendment)
+  // ?routines: the routine list and editor (v3.47), with the staff a project routine may name (v3.83 amendment)
   if (q.has('routines')) {
     const rv = { routines: [], cfg: { quiet: null, dailyCap: 48 }, runs: [], next: {}, problems: {}, held: [], remotes: [],
       projects: projects.map((p) => ({ id: p.id, name: p.name, engine: 'claude' })), staff: [] };

@@ -1,4 +1,4 @@
-// Mail (contract v3.83): the `agent-office-mail` MCP server of a desk whose member was given mail accounts. The same
+// Mail (contract v3.85): the `agent-office-mail` MCP server of a desk whose member was given mail accounts. The same
 // stdio script and socket protocol as the office server (src/office-mcp.js: a per-tab token in the tab's 0600
 // --mcp-config file, every call answered by main), with its own socket and tools. There is no tool that sends,
 // deletes, moves or marks mail: reading is read only, and mail_draft only puts a draft in the person's outbox in
@@ -70,7 +70,7 @@ const READ_ONLY = ['mail_accounts', 'mail_list', 'mail_read', 'mail_drafts', 'ma
 const serverConfig = ({ socket, token, script, execPath = process.execPath }) => OM.serverConfig({ socket, token, script, execPath });
 
 /** Writes the script to <dir>/mail-mcp.js (0600, only when changed). → its path. */
-const writeServerScript = (dir) => OM.writeServerScript(dir, { file: 'mail-mcp.js', name: SERVER_NAME, tools: TOOLS, hqTools: [], callMs: CALL_MS, what: 'the agent-office-mail MCP server of a desk (contract v3.83)' });
+const writeServerScript = (dir) => OM.writeServerScript(dir, { file: 'mail-mcp.js', name: SERVER_NAME, tools: TOOLS, hqTools: [], callMs: CALL_MS, what: 'the agent-office-mail MCP server of a desk (contract v3.85)' });
 
 /** The socket's path: in the office socket's private folder, a name no longer than its own (the sun_path limit). */
 const socketPath = (officeSocket) => (officeSocket.startsWith('\\\\.\\pipe\\') ? `${officeSocket}-mail`

@@ -1,4 +1,4 @@
-// Chat view slash commands (contract v3.78 amendment): what the chat's "/" list offers for a Claude Code tab, the way
+// Chat view slash commands (contract v3.80 amendment): what the chat's "/" list offers for a Claude Code tab, the way
 // Claude Code's own input does. Pure apart from the fs it is given; tested in test/slash-commands.test.cjs.
 // - Built-in commands of Claude Code (2.1.286, read off its own "/" list): `ui` ones open a screen of their own in the
 //   terminal (settings, pickers, panels), so the chat switches to the terminal after sending them.

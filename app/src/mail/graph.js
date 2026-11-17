@@ -1,4 +1,4 @@
-// Mail (contract v3.83): Microsoft 365 / Outlook.com through Microsoft Graph, no dependencies; `fetch` is passed in so
+// Mail (contract v3.85): Microsoft 365 / Outlook.com through Microsoft Graph, no dependencies; `fetch` is passed in so
 // tests run without a network (test/mail.test.cjs). Sign-in is the OAuth device code flow with the person's own app
 // registration (a public client id; tenant 'common' by default): the person opens the address, types the code and
 // consents; main keeps the refresh token encrypted (never in a session, the renderer or state.json). Reading uses GET

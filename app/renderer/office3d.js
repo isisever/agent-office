@@ -1,4 +1,4 @@
-// 3D office (contract v3.79): draws src/office3d.mjs's boxes with WebGL 1 (no library) into an offscreen canvas, which
+// 3D office (contract v3.81): draws src/office3d.mjs's boxes with WebGL 1 (no library) into an offscreen canvas, which
 // office-view.js copies onto the office canvas; labels (the bots' tags, desk plates, the board) are drawn on top with
 // the 2D context. Light: one sun from the top left with a shadow map (depth packed into RGBA), a sky/ground fill,
 // emissive screens, LEDs and dance-floor tiles.

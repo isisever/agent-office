@@ -136,16 +136,16 @@ export function mountSidebar(el, on) {
   const managerLabel = h('span', {});
   const managerBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setManager?.(e.target.checked) });
   const managerRow = h('label', { class: 'sb-botcolor sb-langrow' }, managerLabel, managerBox);
-  // v3.81 team: the TEAM panel (staff kept in Agent Office, renderer/staff.js); off = no panel
+  // v3.83 team: the TEAM panel (staff kept in Agent Office, renderer/staff.js); off = no panel
   let team = { teamMode: false, staff: [], presets: [] };
-  let desks = [];   // v3.81 main's desk states
+  let desks = [];   // v3.83 main's desk states
   const teamLabel = h('span', {});
   const teamBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.team?.setMode(e.target.checked) });
   const teamRow = h('label', { class: 'sb-botcolor sb-langrow' }, teamLabel, teamBox);
   const teamHead = h('span', {});
   const teamList = h('ul', { class: 'sb-list', id: 'sb-team' });
   const addStaffBtn = h('button', { class: 'sb-add', id: 'sb-add-staff', onclick: () => editMember(null) });
-  const wizardBtn = h('button', { class: 'sb-add', id: 'sb-role-wizard', onclick: () => openWizard() });   // v3.82
+  const wizardBtn = h('button', { class: 'sb-add', id: 'sb-role-wizard', onclick: () => openWizard() });   // v3.84
   // every session also gets the other office projects' MCP servers (contract v3.9); sessions started afterwards
   const shareMcpLabel = h('span', {});
   const shareMcpBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setShareMcp?.(e.target.checked) });
@@ -154,11 +154,11 @@ export function mountSidebar(el, on) {
   const reloadMcpLabel = h('span', {});
   const reloadMcpBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setReloadMcp?.(e.target.checked) });
   const reloadMcpRow = h('label', { class: 'sb-botcolor sb-langrow' }, reloadMcpLabel, reloadMcpBox);
-  // Claude Code tabs shown as a conversation, the terminal one click away (contract v3.78, chat.js)
+  // Claude Code tabs shown as a conversation, the terminal one click away (contract v3.80, chat.js)
   const chatViewLabel = h('span', {});
   const chatViewBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setChatView?.(e.target.checked) });
   const chatViewRow = h('label', { class: 'sb-botcolor sb-langrow' }, chatViewLabel, chatViewBox);
-  // the office drawn in 3D instead of 8-bit pixels (contract v3.79, office3d.js)
+  // the office drawn in 3D instead of 8-bit pixels (contract v3.81, office3d.js)
   const office3dLabel = h('span', {});
   const office3dBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setOffice3d?.(e.target.checked) });
   const office3dRow = h('label', { class: 'sb-botcolor sb-langrow' }, office3dLabel, office3dBox);
@@ -172,6 +172,12 @@ export function mountSidebar(el, on) {
   const sleepLabel = h('span', {});
   const sleepSelect = h('select', { class: 'sb-acct sb-lang sb-sleep', onchange: (e) => on.setSleep?.(Number(e.target.value)) });
   const sleepRow = h('div', { class: 'sb-botcolor sb-langrow' }, sleepLabel, sleepSelect);
+  // keep computer awake (v3.78): Off | While agents work | Always; main's src/keep-awake.js has the rules
+  const KEEP_AWAKE_CHOICES = ['off', 'working', 'always'];
+  let keepAwake = 'working';
+  const keepAwakeLabel = h('span', {});
+  const keepAwakeSelect = h('select', { class: 'sb-acct sb-lang', id: 'sb-keepawake', onchange: (e) => on.setKeepAwake?.(e.target.value) });
+  const keepAwakeRow = h('div', { class: 'sb-botcolor sb-langrow' }, keepAwakeLabel, keepAwakeSelect);
   const projHead = h('span', {});
   const acctHead = h('span', {});
   const addProjectBtn = h('button', { class: 'sb-add', id: 'sb-add-project', onclick: () => on.addProject() });
@@ -188,7 +194,7 @@ export function mountSidebar(el, on) {
   const mcpNote = h('div', { class: 'sb-note', id: 'sb-mcp-note', hidden: true });
   const addMcpBtn = h('button', { class: 'sb-add', id: 'sb-add-mcp', onclick: () => openMcpForm() });
   let mcpKey = null;
-  // v3.83 the MAIL panel (renderer/mail.js): accounts and the outbox of drafts waiting for the person
+  // v3.85 the MAIL panel (renderer/mail.js): accounts and the outbox of drafts waiting for the person
   const mail = on.mail ? createMail({ h, t, api: on.mail, openModal, closeModal }) : null;
   function panel(id, head, body, cls = '') {
     let open = true;
@@ -247,6 +253,9 @@ export function mountSidebar(el, on) {
     sleepLabel.textContent = t('sidebar.sleep');
     sleepRow.title = t('sidebar.sleepTitle');
     renderSleep();
+    keepAwakeLabel.textContent = t('sidebar.keepAwake');
+    keepAwakeRow.title = t('sidebar.keepAwakeTitle');
+    renderKeepAwake();
     langSelect.title = t('sidebar.languageTitle');
     themeLabel.textContent = t('sidebar.theme');
     renderAppearance();
@@ -274,6 +283,10 @@ export function mountSidebar(el, on) {
     sleepSelect.replaceChildren(...SLEEP_CHOICES.map((n) =>
       h('option', { value: String(n), selected: n === sleepMinutes }, n ? t('sidebar.sleepAfter', { n }) : t('sidebar.sleepOff'))));
   }
+  function renderKeepAwake() {
+    const labels = { off: t('sidebar.keepAwakeOff'), working: t('sidebar.keepAwakeWorking'), always: t('sidebar.keepAwakeAlways') };
+    keepAwakeSelect.replaceChildren(...KEEP_AWAKE_CHOICES.map((v) => h('option', { value: v, selected: v === keepAwake }, labels[v])));
+  }
   function renderLanguages() {
     langSelect.replaceChildren(
       h('option', { value: 'auto', selected: langSetting === 'auto' }, t('sidebar.auto')),
@@ -281,7 +294,7 @@ export function mountSidebar(el, on) {
     );
   }
   renderChrome();
-  el.querySelector('#sb-panel-team').hidden = true;   // v3.81 until team mode is known on
+  el.querySelector('#sb-panel-team').hidden = true;   // v3.83 until team mode is known on
 
   // Settings popups: the project popup collects its changes as a draft and applies them on Save (account first, it
   // may restart the tabs); Cancel / Escape / a click outside discards. The global popup applies each change at once.
@@ -462,7 +475,7 @@ export function mountSidebar(el, on) {
     return control(p, 'projectFiles', t('sidebar.projectFiles'), box);
   }
 
-  // v3.81 team: several desks may work in this project at once, each in its own worktree (userData/work); team mode only
+  // v3.83 team: several desks may work in this project at once, each in its own worktree (userData/work); team mode only
   function parallelToggle(p) {
     if (!team.teamMode || p.engine && p.engine !== 'claude') return null;
     const box = h('input', {
@@ -708,7 +721,7 @@ export function mountSidebar(el, on) {
   }
 
   /**
-   * v3.80 The tools (MCP servers added in Agent Office) this project's sessions get: one box per server; a server for
+   * v3.82 The tools (MCP servers added in Agent Office) this project's sessions get: one box per server; a server for
    * every project is ticked and fixed; one that reaches only this project can't be unticked here (remove it in the
    * MCP panel). Save applies the changes (each server's new project list).
    */
@@ -824,7 +837,7 @@ export function mountSidebar(el, on) {
    * encrypted there). With `edit` (v3.69, from mcp:get) the same form edits an app-added server: filled with its fields
    * but never its token; a blank token keeps the stored one, "remove the saved token" clears it.
    */
-  /** v3.82 servers the add form can fill in with one click (remote, signed in with the service's own OAuth). */
+  /** v3.84 servers the add form can fill in with one click (remote, signed in with the service's own OAuth). */
   const MCP_PRESETS = [{ id: 'canva', label: 'Canva', name: 'canva', url: 'https://mcp.canva.com/mcp', type: 'http' }];
   function openMcpForm(edit = null) {
     const field = (label, input, hint) => h('label', { class: 'sb-field' }, h('span', { class: 'sb-field-label' }, label), input, hint ? h('span', { class: 'sb-field-hint' }, hint) : null);
@@ -844,7 +857,7 @@ export function mountSidebar(el, on) {
     env.value = Object.entries(edit?.env || {}).map(([k, v]) => `${k}=${v}`).join('\n');
     const headers = h('textarea', { rows: 3, placeholder: t('sidebar.mcpHeadersPh'), spellcheck: false });
     headers.value = Object.entries(edit?.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
-    // v3.80 which projects it reaches: every project, or the ones ticked (one or more)
+    // v3.82 which projects it reaches: every project, or the ones ticked (one or more)
     const scopeOf = edit ? edit.scope : activeId;
     const picked = new Set(scopeOf === 'all' ? [] : Array.isArray(scopeOf) ? scopeOf : [scopeOf]);
     const allBox = h('input', { type: 'checkbox', checked: scopeOf === 'all', onchange: () => { for (const b of projBoxes) b.disabled = allBox.checked; } });
@@ -872,7 +885,7 @@ export function mountSidebar(el, on) {
     };
     kind.onchange = syncKind;
     syncKind();
-    // v3.82 ready-made servers: one click fills the form; the service's own sign-in (OAuth) happens in the session
+    // v3.84 ready-made servers: one click fills the form; the service's own sign-in (OAuth) happens in the session
     const presetNote = h('div', { class: 'sb-note', hidden: true });
     const presetRow = edit ? null : h('div', { class: 'sb-mcp-presets' }, h('span', { class: 'sb-field-label' }, t('sidebar.mcpPresets')),
       ...MCP_PRESETS.map((pr) => h('button', {
@@ -935,7 +948,7 @@ export function mountSidebar(el, on) {
     ], [h('button', { class: 'sb-btn', onclick: () => closeModal() }, t('sidebar.cancel')), save], 'sb-modal-form');
   }
 
-  /** v3.81 the TEAM panel: shown only with team mode on; one card per member, department headers when any. */
+  /** v3.83 the TEAM panel: shown only with team mode on; one card per member, department headers when any. */
   function renderTeam() {
     const panelEl = el.querySelector('#sb-panel-team');
     if (panelEl) panelEl.hidden = !team.teamMode;
@@ -952,7 +965,7 @@ export function mountSidebar(el, on) {
       removeRole: (id) => on.team?.removeRole(id), initialPreset, mailAccounts: mail ? mail.accounts() : [],
     });
   }
-  /** v3.82 the role wizard; a saved role can go straight to a new member's popup (the list is reloaded first). */
+  /** v3.84 the role wizard; a saved role can go straight to a new member's popup (the list is reloaded first). */
   function openWizard() {
     openRoleWizard({
       h, t, lang: locale(), openModal, closeModal, listPacks,
@@ -964,7 +977,7 @@ export function mountSidebar(el, on) {
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, langRow, lookRow, modeRow, office3dRow, chatViewRow, themeRow, botRow, skillsSection()],
+      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, langRow, lookRow, modeRow, office3dRow, chatViewRow, themeRow, botRow, skillsSection()],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 
@@ -1364,7 +1377,7 @@ export function mountSidebar(el, on) {
     },
     /** Manager mode setting (the boss delegates to agents). */
     setManager(on) { managerBox.checked = on !== false; },
-    /** v3.81 team mode, the staff and the preset roles (main's staff:list). */
+    /** v3.83 team mode, the staff and the preset roles (main's staff:list). */
     setDesks(list) {
       const next = Array.isArray(list) ? list : [];
       if (JSON.stringify(next) === JSON.stringify(desks)) return;
@@ -1379,12 +1392,12 @@ export function mountSidebar(el, on) {
     setShareMcp(on) { shareMcpBox.checked = on !== false; },
     /** "Reload sessions when MCP changes" setting (v3.11). */
     setReloadMcp(on) { reloadMcpBox.checked = on !== false; },
-    /** "Chat view" setting (v3.78; off unless set). */
+    /** "Chat view" setting (v3.80; off unless set). */
     setChatView(on) { chatViewBox.checked = on === true; },
-    /** v3.83 mail accounts ({ accounts, encryption }) and the outbox ({ drafts, pending }). */
+    /** v3.85 mail accounts ({ accounts, encryption }) and the outbox ({ drafts, pending }). */
     setMailAccounts(v) { mail?.setAccounts(v); },
     setMailOutbox(v) { mail?.setOutbox(v); },
-    /** "3D office" setting (v3.79; off unless set). */
+    /** "3D office" setting (v3.81; off unless set). */
     setOffice3d(on) { office3dBox.checked = on === true; },
     /** "Backup account at the usage limit" setting (v3.17). */
     setFallback(on) { fallbackBox.checked = on !== false; },
@@ -1393,6 +1406,12 @@ export function mountSidebar(el, on) {
       if (!SLEEP_CHOICES.includes(minutes)) return;
       sleepMinutes = minutes;
       renderSleep();
+    },
+    /** "Keep computer awake" setting (v3.78): 'off' | 'working' | 'always'. */
+    setKeepAwake(value) {
+      if (!KEEP_AWAKE_CHOICES.includes(value)) return;
+      keepAwake = value;
+      renderKeepAwake();
     },
     /** Bot color shown in the picker. */
     setBotColor(hex) { botInput.value = hex || '#3fb6a8'; },

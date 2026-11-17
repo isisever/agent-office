@@ -1,4 +1,4 @@
-// Chat view menus (contract v3.78): src/tui-menu.mjs reads Claude Code's open menu off a terminal screen.
+// Chat view menus (contract v3.80): src/tui-menu.mjs reads Claude Code's open menu off a terminal screen.
 // The screens below were captured from Claude Code 2.1.286 in a pty (110 columns).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

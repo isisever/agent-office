@@ -1,4 +1,4 @@
-// 3D office (contract v3.79): core.mjs's scene and src/office3d.mjs's boxes, camera and picking.
+// 3D office (contract v3.81): core.mjs's scene and src/office3d.mjs's boxes, camera and picking.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { demoOffice, render, resetOffice, sceneOf, setGeometry, setLanguage, setTheme, BOSS_ID } from '../src/office/core.mjs'

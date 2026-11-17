@@ -22,7 +22,7 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
   let timer = 0
   let dead = false
   let selected = null
-  // v3.79 the 3D office: core.mjs still runs the office every frame; its scene is drawn in 3D instead of its pixels
+  // v3.81 the 3D office: core.mjs still runs the office every frame; its scene is drawn in 3D instead of its pixels
   let r3d = null
   let use3d = false
 
@@ -172,7 +172,7 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
       coreSetBotColor(hex)
       draw()
     },
-    /** v3.79 the 3D office on or off (off, or no WebGL: the 8-bit office). → whether 3D is drawn. */
+    /** v3.81 the 3D office on or off (off, or no WebGL: the 8-bit office). → whether 3D is drawn. */
     set3d(on) {
       use3d = Boolean(on)
       if (use3d && !r3d) r3d = createOffice3d()

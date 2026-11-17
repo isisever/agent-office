@@ -1,5 +1,5 @@
 // Agent Office shell: window, projects, accounts, one claude pty per project (several with tabs), and office data.
-const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, nativeTheme, safeStorage, powerMonitor, shell: eShell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, nativeTheme, safeStorage, powerMonitor, powerSaveBlocker, shell: eShell } = require('electron');
 const { execFile, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -27,7 +27,7 @@ const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
 const ST = require('./src/staff.js');
 const RW = require('./src/role-wizard.js');
-// v3.83 mail: accounts, the outbox, the read-only readers, the guard and the desk's mail server
+// v3.85 mail: accounts, the outbox, the read-only readers, the guard and the desk's mail server
 const MG = require('./src/mail/guard.js');
 const MIME = require('./src/mail/mime.js');
 const IMAP = require('./src/mail/imap.js');
@@ -57,6 +57,7 @@ const OM = require('./src/office-mcp.js');
 const HQ = require('./src/hq.js');
 const CH = require('./src/hq-chain.js');
 const ROUT = require('./src/routines.js');
+const KA = require('./src/keep-awake.js');
 const PTY = require('./src/pty-attach.js');
 // dev only: a throwaway profile (two instances side by side for the device link, v3.28); never in the packaged app
 if (!app.isPackaged && process.env.AGENT_OFFICE_USER_DATA) {
@@ -371,11 +372,11 @@ function dropProjectServers(projectId) {
 }
 function removeMcpFile(id) {
   officeSock?.remove(id);   // v3.35 its office_* token stops working with it
-  mailSock?.remove(id);     // v3.83 its mail_* token too
+  mailSock?.remove(id);     // v3.85 its mail_* token too
   mailRead.delete(id);
   try { fs.rmSync(path.join(mcpDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
   try { fs.rmSync(path.join(directoryDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}
-  try { fs.rmSync(path.join(deskRoleDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}   // v3.81 a desk's role file
+  try { fs.rmSync(path.join(deskRoleDir(), SC.mcpFileName(usageKey(id))), { force: true }); } catch {}   // v3.83 a desk's role file
 }
 
 // Killed on purpose (restart, removal, sleep, account change): its interrupted mark goes too, except while quitting.
@@ -391,6 +392,8 @@ function killPty(id) {
   mcpPrint.delete(id);
   ptyStart.delete(id);
   ptyLimit.delete(id);
+  tailSeen.delete(id);
+  compactTail.delete(id);
   release(t);   // dispose its onData/onExit listeners before the kill: nothing is left to fire from a dying pty
   if (quitting && t.pid) dying.push(t.pid);   // will-quit waits for these (≤ 1 s)
   try { t.kill(); } catch {}
@@ -438,10 +441,41 @@ function setMarks(next) {
   state = { ...state, interrupted: next };
   saveState();
 }
+// --- v3.78 Keep computer awake (src/keep-awake.js decides; this is the glue): one powerSaveBlocker of the type
+// 'prevent-app-suspension' (never 'prevent-display-sleep': the display may turn off), started and stopped from
+// checkTurns' 1.5 s poll, at once when the setting changes, and stopped for good when the app quits.
+let keepAwakeId = null;      // the running blocker's id
+let keepAwakeBusy = 0;       // busy sessions + routine runs in progress at the last poll
+let keepAwakeIdleAt = 0;     // when that count last fell to zero
+let keepAwakeOver = false;   // the app is quitting: nothing starts again
+const keepAwakePref = () => KA.normalizeKeepAwake(state?.keepAwake);
+function stopKeepAwake() {
+  if (keepAwakeId === null) return;
+  try { if (powerSaveBlocker.isStarted(keepAwakeId)) powerSaveBlocker.stop(keepAwakeId); } catch (e) { console.error('keep awake:', e.message); }
+  keepAwakeId = null;
+}
+/** @param {number} [busy] the new busy count (left out: the last one, e.g. when only the setting changed) */
+function syncKeepAwake(busy = keepAwakeBusy) {
+  const now = Date.now();
+  keepAwakeIdleAt = KA.nextIdleAt({ lastIdleAt: keepAwakeIdleAt, wasBusy: keepAwakeBusy, busy, now });
+  keepAwakeBusy = busy;
+  if (keepAwakeOver || !KA.shouldHold({ pref: keepAwakePref(), busy, lastIdleAt: keepAwakeIdleAt, now })) return stopKeepAwake();
+  if (keepAwakeId !== null) return;
+  try { keepAwakeId = powerSaveBlocker.start('prevent-app-suspension'); } catch (e) { console.error('keep awake:', e.message); }
+}
+const endKeepAwake = () => { keepAwakeOver = true; stopKeepAwake(); };
+app.on('will-quit', endKeepAwake);
+app.on('quit', endKeepAwake);
+/** Routine runs in progress (typed or running; one that waits for its turn or for consent keeps nothing awake). */
+function routineRunsBusy() {
+  try { return rt().runs.filter((r) => r.status === 'typed' || r.status === 'running').length; } catch { return 0; }
+}
+
 // Every running tab: is its claude mid-turn? (Claude Code's pid file status, else the office file's isBossBusy.)
 function checkTurns() {
   if (quitting || !state) return;
   let next = marks();
+  let working = 0;   // v3.78: tabs mid-turn
   const home = app.getPath('home');
   for (const [id, t] of terms) {
     const r = P.resolvePty(state, id);
@@ -451,9 +485,13 @@ function checkTurns() {
     const sid = validSid(claude?.sessionId);
     const busy = R.isTurnBusy({ claude, office: sid ? office()?.readSession(sid) : undefined });
     if (sid) lastSid.set(id, sid);
+    const w = ptyLimit.get(id);
+    if (w && claude?.status === 'busy') w.busyAt = Date.now(); // v3.77: a compaction failure follows a running turn
     next = R.nextInterrupted(next, id, { busy, sessionId: sid });
+    if (busy) working++;
   }
   setMarks(next);
+  syncKeepAwake(working + routineRunsBusy());
   checkMcp();
   checkModelLeak();
   checkLimits();
@@ -1182,7 +1220,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const dir = pluginDir();
   const sl = usageStatusLine(project, configDir, cwd, usageKey(id));
   const settings = M.withMemorySetting(sl?.settings, isDir(cwd) ? projectMemoryDir(cwd, configDir) : null);
-  // v3.81 a desk continues its own conversation (kept on the tab), when its transcript is still there
+  // v3.83 a desk continues its own conversation (kept on the tab), when its transcript is still there
   if (!sessionId && tab?.staffId && tab.sessionId && TIO.findTranscript(cwd, tab.sessionId, configDir, app.getPath('home'))) sessionId = tab.sessionId;
   const isResume = Boolean(sessionId) || (resume && (!tab || Boolean(tab.worktree)) && hasHistory(cwd, configDir));
   const resumeArgs = sessionId ? ['--resume', sessionId] : isResume ? ['--continue'] : [];
@@ -1190,7 +1228,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // --mcp-config <file>; see shared-config.js) and the office directory naming them (contract v3.9)
   // v3.35 one boss: a manager-mode boss tab (the main tab) gets the agent-office MCP server; its token only in that file
   const officeMcp = officeServerFor(id, project);
-  // v3.83 a desk whose member has mail accounts gets the mail server (and the plugin's guard, AGENT_OFFICE_MAIL_GUARD)
+  // v3.85 a desk whose member has mail accounts gets the mail server (and the plugin's guard, AGENT_OFFICE_MAIL_GUARD)
   const mailMcp = project.hq ? null : mailServerFor(id, project, tab);
   const bossMcp = officeMcp && mailMcp ? { ...officeMcp, ...mailMcp } : officeMcp || mailMcp;
   // v3.44 servers added in Agent Office, Claude Code only: into this tab's 0600 MCP file, unless the name is taken
@@ -1210,7 +1248,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const hqArgs = project.hq ? HQ.launchArgs({ dir: cwd, mcpConfig: prepared.mcpConfig || '' }) : [];
   // v3.72 skip permissions: the project's switch adds --dangerously-skip-permissions here, for every Claude Code tab
   // start (fresh, --continue, --resume, worktree tabs, Windows); never the HQ session (P.skipPermissionsArgs)
-  // v3.83 a mail session: Claude Code itself asks the person for every action beyond reading (ask rules for the
+  // v3.85 a mail session: Claude Code itself asks the person for every action beyond reading (ask rules for the
   // built-in tools and every other MCP server of its file, bypass and auto mode off) and loads only the servers of
   // its --mcp-config file (no claude.ai connectors, no account servers: none of them could send mail behind the outbox)
   const guarded = mailMcp ? MG.guardSettings(settings, Object.keys(readJson(prepared.mcpConfig || '')?.mcpServers || {}).filter((n) => n !== MMCP.SERVER_NAME)) : settings;
@@ -1238,7 +1276,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   if (directory) env.AGENT_OFFICE_DIRECTORY = directory;
   delete env.AGENT_OFFICE_HQ;
   if (project.hq) env.AGENT_OFFICE_HQ = '1';   // v3.46 the plugin gives the HQ section instead of the manager one
-  // v3.81 team: a desk's session gets its member's role section (AGENT_OFFICE_ROLE, a 0600 file); HQ the team section
+  // v3.83 team: a desk's session gets its member's role section (AGENT_OFFICE_ROLE, a 0600 file); HQ the team section
   delete env.AGENT_OFFICE_ROLE;
   delete env.AGENT_OFFICE_TEAM;
   const roleFile = tab?.staffId ? writeDeskRole(id, project, tab.staffId) : null;
@@ -1246,7 +1284,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   if (project.hq && teamOn()) env.AGENT_OFFICE_TEAM = '1';
   delete env.AGENT_OFFICE_MAIL_GUARD;
   if (mailMcp) {
-    env.AGENT_OFFICE_MAIL_GUARD = '1';           // v3.83 the plugin's second layer and the mail rules section
+    env.AGENT_OFFICE_MAIL_GUARD = '1';           // v3.85 the plugin's second layer and the mail rules section
     env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false';   // no claude.ai connector (a Gmail one could send behind the outbox)
     delete env.AGENT_OFFICE_AUTO_APPROVE;        // and Agent Office never answers its permission dialogs
   }
@@ -1287,7 +1325,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   activity.set(id, { at: startedAt, draft: false });
   mcpPrint.set(id, { started: print, current: print });
   ptyStart.set(id, startedAt);
-  ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0 });
+  // v3.77: a prompt given as claude's argument (the carry-on after a move) is an Enter at the start
+  ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0, input: FB.startInput({ prompt: args.includes(R.promptArg(prompt)) ? prompt : '', startedAt, sessionId }) });
   if (sessionId) lastSid.set(id, sessionId); else lastSid.delete(id);
   attachPty(terms, id, t, {
     onData: (d) => {
@@ -1301,6 +1340,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       mcpPrint.delete(id);
       ptyStart.delete(id);
       ptyLimit.delete(id);
+      tailSeen.delete(id);
+      compactTail.delete(id);
       // the session it was in, for Enter-restart: the pid file may still be there, else the last poll's
       const last = validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId);
       if (last) lastSid.set(id, last);
@@ -1645,7 +1686,7 @@ function unfinishedTabs() {
     for (const id of P.ptyIdsOf(p)) {
       const r = P.resolvePty(state, id);
       if (!r) continue;
-      const { configDir } = A.accountOf(state, r.project);   // v3.81 a desk's own account (resolvePty)
+      const { configDir } = A.accountOf(state, r.project);   // v3.83 a desk's own account (resolvePty)
       const t = terms.get(id);
       const continues = !r.tab || Boolean(r.tab.worktree);
       let sid = '';
@@ -1669,10 +1710,16 @@ function unfinishedTabs() {
   return tabs;
 }
 /** v3.47 an HQ keystroke held during a routine prompt's paste→Enter: minted and drafted as if typed now. */
+/** v3.77: what was sent to the tab (FB.inputAfter): an Enter, or text the terminal will echo. */
+function noteInput(id, d) {
+  const w = ptyLimit.get(id);
+  if (w) w.input = FB.inputAfter(w.input, d, Date.now(), lastSid.get(id) || null);
+}
 function hqWriteTyped(id, d) {
   if (HQ.submitsTyped(activity.get(id)?.draft, d)) hqMinter.mint();
   const a = activity.get(id);
   if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); }
+  noteInput(id, d);
   ptyOf(id)?.write(d);
 }
 /** Types the prompt into a running claude's input box and submits it. */
@@ -1682,7 +1729,7 @@ function typePrompt(id, text, { taskId = '' } = {}) {
   const t = terms.get(id);
   if (!t || handoffLocked(id)) return false;
   if (taskId) {
-    const p = P.resolvePty(state, id)?.project;   // a desk too (v3.81)
+    const p = P.resolvePty(state, id)?.project;   // a desk too (v3.83)
     const sid = p ? validSid(readJson(Z.claudePidFile(A.accountOf(state, p).configDir, app.getPath('home'), t.pid))?.sessionId) : null;
     const dir = path.join(app.getPath('home'), '.claude', 'agent-office', 'tasks');
     if (sid) try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, `${sid}.json`), JSON.stringify({ id: taskId, at: Date.now() }), { mode: 0o600 }); } catch (e) { console.error('task id:', e.message); }
@@ -1690,7 +1737,7 @@ function typePrompt(id, text, { taskId = '' } = {}) {
   if (P.isHqId(id)) hqGate.hold();   // v3.47 the person's HQ keystrokes wait until the pasted prompt's Enter
   t.write(R.typedPrompt(text));
   setTimeout(() => {
-    if (terms.get(id) === t) t.write('\r');
+    if (terms.get(id) === t) { t.write('\r'); noteInput(id, '\r'); }
     if (P.isHqId(id)) for (const d of hqGate.release()) hqWriteTyped(id, d);   // held keys go through the same mint/draft logic
   }, ENTER_DELAY_MS);
   const a = activity.get(id);
@@ -1699,7 +1746,7 @@ function typePrompt(id, text, { taskId = '' } = {}) {
 }
 // --- device link (v3.28, src/link-host.js): remote commands go to the project's main tab, only when it is idle
 let linkHost = null;
-// v3.81 amendment: tabs started with a queued task as their first prompt (the pty object), so one is never restarted twice
+// v3.83 amendment: tabs started with a queued task as their first prompt (the pty object), so one is never restarted twice
 const startedWith = new Map();
 /** The queue's way into a tab that takes no typing: starts it (gone) or restarts it (running, but never had a prompt and
  *  the person is not typing in it) with `text` as its first prompt. Claude Code tabs of a project or desk only, never
@@ -1736,7 +1783,7 @@ async function startOffice() {
     console.error('office socket:', e.message);
     notify(T('main.officeUnavailable'), String(e.message || e).slice(0, 120), null);
   }
-  // v3.83 the mail server's socket, next to the office one (no mail for desks when it cannot listen)
+  // v3.85 the mail server's socket, next to the office one (no mail for desks when it cannot listen)
   if (officeSock) try {
     mailScript = MMCP.writeServerScript(path.join(ud, 'office'));
     const sock = MMCP.createSocket({ socketFile: MMCP.socketPath(officeSock.socketFile), handle: mailTool, ownDir: ud });
@@ -1765,7 +1812,7 @@ function officeMachines() {
   const l = linkHost?.link();
   const v = l ? l.view() : null;
   const here = { machine: selfName(), thisMachine: true, online: true, projects: state.projects.map((p) => ({ id: p.id, name: officeName(p.name), engine: P.engineOf(p), state: terms.has(p.id) ? 'running' : asleep.has(p.id) ? 'asleep' : 'stopped' })) };
-  // v3.81 team mode: the staff (role, department, projects each may work on, desks and whether they are at work)
+  // v3.83 team mode: the staff (role, department, projects each may work on, desks and whether they are at work)
   if (teamOn()) here.staff = ST.machineStaff(state.staff, presetRoles(), state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: officeName(p.name), ...(p.staffOwner ? { staffOwner: p.staffOwner } : {}) })), deskStateOf);
   const there = (v?.devices || []).map((dv) => ({ machine: officeName(dv.name), online: dv.online, reports: dv.caps.includes('report'), manage: dv.caps.includes('manage') && Boolean(dv.catalog),
     // v3.46 an offline machine shows its last-known projects (peer cache: names and ids only)
@@ -1774,7 +1821,7 @@ function officeMachines() {
   return { machines: [here, ...there] };
 }
 function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {}) {
-  // v3.77 only HQ chains stages; a project boss keeps the one-task dispatch (depth rule unchanged)
+  // v3.79 only HQ chains stages; a project boss keeps the one-task dispatch (depth rule unchanged)
   if (tab !== HQ.HQ_ID && ((typeof args.after === 'string' && args.after) || (Array.isArray(args.then) && args.then.length))) return { status: 'rejected', reason: 'after-hq-only' };
   // v3.46 obvious secrets never leave in a task (journal patterns), and a boss working on an HQ task does not dispatch on (depth 1)
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
@@ -1791,7 +1838,7 @@ function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {
     if (!p || !linkHost) return { status: 'rejected', reason: 'unknown-project' };
     if (p.id === tab) return { status: 'rejected', reason: 'self' };   // the boss's own project: it would type into itself
     // every later status (delivered, or rejected e.g. locked/expired) lands in the record office_reports reads
-    const into = args.desk && P.resolvePty(state, args.desk)?.tab?.staffId && String(args.desk).split(':')[0] === p.id ? args.desk : p.id;   // v3.81 a desk
+    const into = args.desk && P.resolvePty(state, args.desk)?.tab?.staffId && String(args.desk).split(':')[0] === p.id ? args.desk : p.id;   // v3.83 a desk
     r = linkHost.dispatchLocal(into, task, selfName(), (id, status, reason) => {
       const x = loadDispatches().get(id);
       hqStatus(id, status, reason);
@@ -1818,7 +1865,7 @@ function officeReports(args) {
   const board = loadHqBoard();
   const out = l => l.map((x) => {
     const o = x.pub !== 'self' ? linkHost?.remoteTask(x.id) || linkHost?.link()?.outgoing.find((y) => y.id === x.id) : null;
-    // v3.81 amendment: a local task's live status is the board's (the task watch: running, needs-approval), and its tab
+    // v3.83 amendment: a local task's live status is the board's (the task watch: running, needs-approval), and its tab
     const live = x.pub === 'self' && !x.report ? board.tasks.find((t) => t.id === x.id) : null;
     const status = x.report ? (x.report.partial ? 'partial' : 'reported') : o?.status || live?.status || x.status;
     const reason = x.report ? '' : o ? o.reason : live?.reason || x.reason;
@@ -1875,7 +1922,7 @@ function onOfficeReport({ id, pub, report }) {
   inboxRow(sid, rec.tab, { kind: 'report-ready', id, machine: officeName(rec.machine), project: officeName(rec.project) });
   for (const r of done) inboxRow(sid, rec.tab, { kind: 'request-done', request: r.id, n: r.n });
 }
-// --- v3.81 amendment task watch (src/task-watch.js): this machine's own dispatched tasks, followed in their tab every
+// --- v3.83 amendment task watch (src/task-watch.js): this machine's own dispatched tasks, followed in their tab every
 // 5 s: the Board shows running / needs-approval, and a task whose session never reports (idle 3 min, or its tab gone
 // 1 min) ends with a partial report of the session's last answer, written where the plugin writes reports (the
 // queue's report scan takes it like any other), so HQ is always told.
@@ -2086,7 +2133,7 @@ function tagRoutineRec(id, rrun) {
   if (rec) { rec.routine = rrun.id; saveDispatches(); }
 }
 /** HQ's office_dispatch: caps, consent, auto-start of a local target, 4 h queue wait, dispatcher-side pacing for devices. */
-// v3.77 waitingId: a released stage (approved at creation, src/hq-chain.js) takes over its waiting row instead of a new one
+// v3.79 waitingId: a released stage (approved at creation, src/hq-chain.js) takes over its waiting row instead of a new one
 async function hqDispatch(args, { approved = false, excludeId = '', waitingId = '' } = {}) {
   const capBoard = () => { const b = loadHqBoard(); return excludeId ? { ...b, tasks: b.tasks.filter((t) => t.id !== excludeId) } : b; };
   // only ids the minter issued; else the current one; else the one capped 'adhoc' bucket. An approved held task keeps
@@ -2095,7 +2142,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const board = capBoard();   // an approved held task does not count against itself
   const cap = HQ.capReason(board, request);
   if (cap) return { status: 'rejected', reason: cap };
-  // v3.81 amendment: a task for a staff member outside any project goes to the member's personal workspace
+  // v3.83 amendment: a task for a staff member outside any project goes to the member's personal workspace
   if (args.staff && !String(args.project || '').trim() && !String(args.machine || '').trim() && !args.after && !(Array.isArray(args.then) && args.then.length)) {
     const m = teamOn() ? ST.findMember(state.staff, args.staff) : null;
     if (!m) return { status: 'rejected', reason: teamOn() ? 'unknown-staff' : 'no-team' };
@@ -2107,10 +2154,10 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const machine = String(args.machine || '').trim();
   const remote = Boolean(key) || !isHere(machine);
   const rrun = routineRunOfRequest(request);
-  // v3.77 staged: a call with `after` or `then` takes its own path (one consent for its local stages, waiting rows)
+  // v3.79 staged: a call with `after` or `then` takes its own path (one consent for its local stages, waiting rows)
   if (!approved && ((typeof args.after === 'string' && args.after) || (Array.isArray(args.then) && args.then.length))) return hqDispatchStages(args, request, rrun);
   const target = key ? null : byName(state.projects, args.project);
-  // v3.81 team: a task for a staff member goes to the member's desk in that project (the desk is opened, not started yet)
+  // v3.83 team: a task for a staff member goes to the member's desk in that project (the desk is opened, not started yet)
   if (args.staff) {
     const d = await hqStaffDesk(args, remote, target);
     if (d.reason) return { status: 'rejected', reason: d.reason };
@@ -2142,11 +2189,11 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   };
   if (!remote) {
     const p = byName(state.projects, args.project);
-    const startId = args.desk || p?.id;   // v3.81 a staff member's desk, else the project's boss tab
+    const startId = args.desk || p?.id;   // v3.83 a staff member's desk, else the project's boss tab
     if (startId && !terms.has(startId)) projectOp('start', startId);   // a stopped or sleeping target starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
     if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName } : {}) });
-    else if (waitingId) row(r, {});   // v3.77 a released stage whose project is gone: its row is refused
+    else if (waitingId) row(r, {});   // v3.79 a released stage whose project is gone: its row is refused
     // v3.47 a routine's own project run: its report finishes the run and writes no HQ inbox row
     tagRoutineRec(/** @type {any} */ (r).id, rrun);
     return { ...r, ...(request ? { request } : {}) };
@@ -2173,7 +2220,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   }
   /** @type {any} */ let now = null;
   // a held (paced) task gets a 'queued' row now, so the caps count it and the person sees it; sent → its real id
-  const heldId = waitingId || `h${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;   // v3.77 a released stage keeps its row
+  const heldId = waitingId || `h${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;   // v3.79 a released stage keeps its row
   let held = false;
   const sent = hqPacer.submit(pub, () => {
     /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task }, { ttl: HQ.HQ_TTL_MS });   // v3.48 4 h wait there (cap task-status)
@@ -2194,7 +2241,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   row(now, extra);
   return { ...now, ...(request ? { request } : {}) };
 }
-// --- v3.77 staged requests (src/hq-chain.js): `then` / `after` on HQ's office_dispatch. Consent is asked when HQ
+// --- v3.79 staged requests (src/hq-chain.js): `then` / `after` on HQ's office_dispatch. Consent is asked when HQ
 // dispatches (today's rule; local stages of one call in one dialog, every remote stage its own); a waiting stage's text
 // is frozen in tasks/<id>/stage.json then and released unchanged except for the previous report, appended as marked data.
 async function confirmHqStages(stages) {
@@ -2221,7 +2268,7 @@ async function hqDispatchStages(args, request, rrun) {
     if (!s.remote) {
       const p = byName(state.projects, s.project);
       if (!p) return no('unknown-project', { stage: s.n });
-      // v3.81 a stage for a staff member: checked now (team on, known member, allowed on the project), its desk at release
+      // v3.83 a stage for a staff member: checked now (team on, known member, allowed on the project), its desk at release
       if (s.staff) {
         const m = teamOn() ? ST.findMember(state.staff, s.staff) : null;
         if (!m) return no(teamOn() ? 'unknown-staff' : 'no-team', { stage: s.n });
@@ -2232,7 +2279,7 @@ async function hqDispatchStages(args, request, rrun) {
     } else {
       const dv = s.key ? (l?.devices || []).find((x) => x.pub === s.key.pub) : byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), s.machine.trim());
       if (!dv) return no('unknown-machine', { stage: s.n });
-      if (s.staff) return no('staff-local-only', { stage: s.n });   // v3.81 paired devices know no staff
+      if (s.staff) return no('staff-local-only', { stage: s.n });   // v3.83 paired devices know no staff
       Object.assign(s, { pub: s.key ? s.key.pub : dv.id, machineName: dv.name, projectName: s.project, projectId: s.key ? s.key.id : '' });
     }
   }
@@ -2315,7 +2362,7 @@ function hqTick() {
     hqWasRunning = running;
   }
   hqPacer.flush();
-  hqChainSweep();   // v3.77 stages whose previous stage ended: released (≤ 5 s after its report), blocked or expired
+  hqChainSweep();   // v3.79 stages whose previous stage ended: released (≤ 5 s after its report), blocked or expired
   hqWaitsPush();
   const l = linkHost?.link();
   if (l) {
@@ -2345,7 +2392,7 @@ function setupHq() {
   // restart: an open task whose queue entry is gone is lost (no automatic re-dispatch)
   // v3.48 a remote task with a persisted record stays open: it is asked about on the device's next hello
   saveHqBoard(HQ.markLost(loadHqBoard(), (t) => (t.machine === 'self' ? Boolean(linkHost?.knows(t.id)) : HQ.remoteOpen(linkHost?.remoteTask(t.id)))));
-  hqChainSweep();   // v3.77 stages whose previous stage ended while the app was closed
+  hqChainSweep();   // v3.79 stages whose previous stage ended while the app was closed
   setInterval(() => { hqTick(); routinesTick(); }, 5000).unref?.();
   setupRoutines();
 }
@@ -2369,7 +2416,7 @@ ipcMain.handle('hq:markRead', (_e, id) => { const b = loadHqBoard(); saveHqBoard
 ipcMain.handle('hq:cancel', (_e, id) => {
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return hqView();
   const t = loadHqBoard().tasks.find((x) => x.id === id);
-  if (t && t.status === CH.WAITING) hqStatus(id, 'rejected', 'cancelled');   // v3.77 a waiting stage: the stages after it are blocked
+  if (t && t.status === CH.WAITING) hqStatus(id, 'rejected', 'cancelled');   // v3.79 a waiting stage: the stages after it are blocked
   else if (t && t.status === 'queued' && t.machine === 'self') linkHost?.cancel(id);   // its reply sets the card (hqStatus)
   else if (t && t.status === 'queued') { linkHost?.cancelRemote(id); hqMirrorRemote(); }   // v3.48 held here, or queued there (cap task-status)
   return hqView();
@@ -2403,11 +2450,11 @@ const openRunOf = (rid) => rt().runs.some((r) => r.routine === rid && ROUT.OPEN_
 function routineProblem(r) {
   if (r.target.kind === 'hq') return hqSettings().enabled ? '' : 'hq-off';
   if (r.target.kind === 'remote') return ROUT.remoteProblem(r.target, { paired: (linkHost?.link()?.devices || []).map((d) => d.pub), cache: peerCache() });
-  if (r.target.kind === 'staff') return !teamOn() ? 'no-team' : memberById(r.target.staffId) ? '' : 'staff-gone';   // v3.81 amendment
+  if (r.target.kind === 'staff') return !teamOn() ? 'no-team' : memberById(r.target.staffId) ? '' : 'staff-gone';   // v3.83 amendment
   const p = P.findProject(state, r.target.projectId);
   if (!p) return 'target-gone';
   if (P.engineOf(p) !== 'claude') return 'engine';
-  // v3.81 amendment: a routine for a staff member needs team mode, the member, and the member's right to work there
+  // v3.83 amendment: a routine for a staff member needs team mode, the member, and the member's right to work there
   if (r.target.staffId) {
     const m = teamOn() ? memberById(r.target.staffId) : null;
     if (!m) return teamOn() ? 'staff-gone' : 'no-team';
@@ -2624,7 +2671,7 @@ function routinesView() {
     problems: Object.fromEntries((state.routines || []).map((r) => [r.id, routineProblem(r)])),
     held: board.tasks.filter((t) => t.status === 'awaiting-consent').map((t) => t.id),
     projects: state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p), ...(p.staffOwner ? { staffOwner: p.staffOwner } : {}) })),
-    // v3.81 amendment: the staff a project routine may name (team mode), with the projects each may work on
+    // v3.83 amendment: the staff a project routine may name (team mode), with the projects each may work on
     staff: teamOn() ? state.staff.map((m) => ({ id: m.id, name: m.name, projects: state.projects.filter((p) => ST.mayWork(m, p)).map((p) => p.id) })) : [],
     // v3.49 remote targets: paired devices' projects (last-known list), with the machine and whether it is online
     remotes: HQ.remoteRows(peerCache(), liveRemotes()).map((r) => ({ pub: HQ.parseRemoteKey(r.key)?.pub || '', id: r.id, name: r.name, machine: r.machine, online: r.online })).filter((r) => r.pub),
@@ -2677,7 +2724,7 @@ ipcMain.handle('hq:remoteOp', async (_e, key, op) => {
 // sleep and stop refuse a busy tab (a turn, a dialog, a draft, a permission prompt) and a non-Claude engine for sleep.
 function projectOp(op, projectId) {
   if (P.isHqId(projectId)) return { ok: false, reason: 'unknown-project' };   // v3.46 HQ is never a project target
-  // v3.81 HQ's task for a desk starts or wakes that desk (only start / wake: a desk is managed from its tab)
+  // v3.83 HQ's task for a desk starts or wakes that desk (only start / wake: a desk is managed from its tab)
   const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
   if (desk?.tab?.staffId && (op === 'start' || op === 'wake')) {
     if (handoffLocks.has(desk.project.id)) return { ok: false, reason: 'locked' };
@@ -2718,7 +2765,7 @@ function projectOp(op, projectId) {
 }
 /** The link sees projects only: HQ (and any non-project id) is 'gone' for remote commands. */
 function linkTabState(projectId) {
-  // v3.81 a desk (a staff member's tab): its own state; with the project's lock it waits while another tab works
+  // v3.83 a desk (a staff member's tab): its own state; with the project's lock it waits while another tab works
   const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
   if (desk?.tab?.staffId) {
     const ts = tabStateOf(projectId);
@@ -2782,7 +2829,7 @@ function startLink() {
     app, safeStorage, ipcMain, send, T,
     notify: (title, body) => notify(title, body, null),
     projects: () => state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p) })),
-    // v3.81 HQ's task for a staff member goes to the member's desk tab: the queue knows it by its tab id (local only)
+    // v3.83 HQ's task for a staff member goes to the member's desk tab: the queue knows it by its tab id (local only)
     desk: (id) => {
       const r = String(id).includes(':') ? P.resolvePty(state, String(id)) : null;
       const m = r?.tab?.staffId ? memberById(r.tab.staffId) : null;
@@ -2790,10 +2837,10 @@ function startLink() {
     },
     tabState: linkTabState,
     asleep: (id) => asleep.has(id), attentionOf: (id) => attention.get(id) || '',   // v3.48 task-status for a device's task
-    startWith: startWithPrompt,   // v3.81 amendment: a tab that takes no typing yet gets the task as its first prompt
+    startWith: startWithPrompt,   // v3.83 amendment: a tab that takes no typing yet gets the task as its first prompt
     type: typePrompt,
     answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices
-    loginOf: (projectId) => { const p = P.resolvePty(state, String(projectId))?.project; const s = p && !p.hq ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },   // v3.81 a desk: its member's account
+    loginOf: (projectId) => { const p = P.resolvePty(state, String(projectId))?.project; const s = p && !p.hq ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },   // v3.83 a desk: its member's account
     reportsDir: path.join(app.getPath('home'), '.claude', 'agent-office', 'reports'),
     onReport: onOfficeReport,
     manage: projectOp,   // v3.33 proj-op from a device allowed to manage
@@ -3010,6 +3057,8 @@ function sleepIdle() {
 // folder and merged there, and each tab starts again in the conversation it was in (--resume <its session>, else
 // --continue for a tab that continues), like an MCP reload. A tab cut off mid-turn is told to carry on. A sleeping
 // tab stays asleep and wakes into its own session. from: the project's account before the change.
+// v3.76: the start-up acceptances the old account holds go too (folder trust held on a parent folder; for a
+// Skip permissions project the bypass mode warning), written before any tab starts, so no dialog stops a moved tab.
 // carryOn (v3.17): tabs that stopped at the usage limit; they are told to carry on like a tab cut off mid-turn.
 // An Antigravity project (v3.22) ignores accounts: nothing moves and its tabs keep running.
 function moveProject(projectId, from, { carryOn = [] } = {}) {
@@ -3036,6 +3085,7 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
       from: from.configDir || null, to: to.configDir || null, home,
       dirs: [p.dir, ...P.tabsOf(p).filter((t) => !t.shell).map((t) => t.dir).filter(Boolean)],
       otherDirs: state.projects.filter((x) => x.id !== p.id).map((x) => x.dir),
+      skipPermissions: P.skipPermissionsArgs(p).length > 0, // v3.76: the old account's bypass mode acceptance goes with it
     });
   } catch (e) { console.error('proje verisi taşınamadı:', e.message); }
   for (const { id, opts } of plan) startPty(id, opts);
@@ -3043,7 +3093,8 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
 
 // --- backup account at the usage limit (contract v3.17, src/fallback.js)
 // A tab whose session ends on Claude Code's usage-limit error (its transcript; the terminal's words only with the
-// account's quota at 100 %) moves its project to the project's backup account with moveProject: every tab resumes its
+// account's quota at 100 %; v3.77: "automatic compaction failed: <usage limit>" on screen, which no transcript entry
+// records, unless the transcript contradicts it) moves its project to the project's backup account with moveProject: every tab resumes its
 // own conversation there and the tabs stopped by the limit are told to carry on. The account it left is its home; once
 // the home's limit resets and every tab is idle, the project goes back. Each account's limit is remembered until its
 // reset (state.accountLimits), so no project moves onto an account at its limit and none ping-pongs.
@@ -3059,7 +3110,15 @@ function watchLimit(id, d, startedAt) {
   if (!w) return;
   const r = FB.scanPty(w.scan, d);
   w.scan = r.scan;
-  if (r.hit && Date.now() - startedAt > FB.PTY_GRACE_MS) w.hitAt = Date.now();
+  if (!r.hit) return;
+  const now = Date.now();
+  // v3.77: "automatic compaction failed: <usage limit>" leaves no transcript entry, so the sighting is kept with what
+  // the tab had just done (an Enter, a running turn, typing) and judged in checkLimits (compactionSeen). The start
+  // grace does not drop it: a tab resumed with the carry-on prompt may fail at once on the next account, and a
+  // sighting without a cause (the resumed conversation drawn) is void by the verdict. A sighting still being judged or
+  // acted on stays: the same words redrawn are not a second failure. A void one is replaced.
+  if (r.compaction && (!w.compact || w.compact.void)) w.compact = { ...FB.compactionSighting({ at: now, input: w.input, busyAt: w.busyAt, startedAt }), void: false };
+  if (now - startedAt > FB.PTY_GRACE_MS) w.hitAt = now;
 }
 /** The end of a file (FB.TAIL_BYTES), or ''. */
 function readTail(file) {
@@ -3073,7 +3132,7 @@ function readTail(file) {
     return buf.toString('utf8');
   } catch { return ''; } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch {} }
 }
-const tailSeen = new Map(); // transcript → { key: "size|mtime|since", hit }
+const tailSeen = new Map(); // pty id → { key: "file|size|mtime|since", hit }
 /** Does the tab's session end on a usage limit written since the tab started? → FB.limitFromTranscript result | null */
 function transcriptLimit(id, dir, configDir) {
   const sid = lastSid.get(id);
@@ -3082,20 +3141,44 @@ function transcriptLimit(id, dir, configDir) {
   const st = file ? statOrNull(file) : null;
   if (!st) return null;
   const since = ptyStart.get(id) || 0;
-  const key = `${st.size}|${st.mtimeMs}|${since}`;
-  const old = tailSeen.get(file);
+  const key = `${file}|${st.size}|${st.mtimeMs}|${since}`;
+  const old = tailSeen.get(id);
   if (old?.key === key) return old.hit;
   const hit = FB.limitFromTranscript(readTail(file), { since });
-  tailSeen.set(file, { key, hit });
+  tailSeen.set(id, { key, hit });
   return hit;
+}
+const compactTail = new Map(); // pty id → { key: "file|size|mtime", tail }: read again only when the transcript changed
+/**
+ * v3.77: the compaction failure seen on the tab's screen (w.compact) → a limit hit, or null. Glue only: the tab's
+ * transcript end, Claude Code's status and session, and the tab's input state go to FB.compactionVerdict, which decides.
+ */
+function compactionSeen(id, dir, configDir, w, now) {
+  const c = w?.compact;
+  if (!c || c.void) return null;
+  const sid = lastSid.get(id);
+  const file = sid ? TIO.findTranscript(dir, sid, configDir, app.getPath('home'))?.file : null;
+  const st = file ? statOrNull(file) : null;
+  let tail = null;
+  if (st) {
+    const key = `${file}|${st.size}|${st.mtimeMs}`;
+    const old = compactTail.get(id);
+    tail = old?.key === key ? old.tail : readTail(file);
+    compactTail.set(id, { key, tail });
+  }
+  const live = liveSession(id, configDir);
+  const verdict = FB.compactionVerdict({ sighting: c, now, status: live?.claude?.status, sessionId: live?.sessionId || null, input: w.input, tail });
+  if (verdict === 'void') { c.void = true; compactTail.delete(id); }
+  return verdict === 'limit' ? FB.compactionHit(c) : null;
 }
 const accountName = (a) => (a.id === A.DEFAULT_ID ? T('main.defaultAccount') : a.label);
 /** Accounts as FB.pickBackup reads them: login state and quota. */
 const fallbackAccounts = () => state.accounts.map((a) => ({ id: a.id, provider: a.provider, auth: auths.get(a.id), usage: usages.get(a.id) }));
 function setLimitMark(accountId, mark) {
   const old = limitMarks()[accountId];
-  if (old && old.until >= mark.until) return;
-  state = { ...state, accountLimits: { ...FB.normalizeMarks(limitMarks(), state.accounts.map((a) => a.id)), [accountId]: mark } };
+  const next = FB.mergeMarks(old, mark);
+  if (next === old) return;
+  state = { ...state, accountLimits: { ...FB.normalizeMarks(limitMarks(), state.accounts.map((a) => a.id)), [accountId]: next } };
   saveState();
 }
 /** Tells the renderer (a hint over the project's terminals) and the system (a notification). */
@@ -3119,6 +3202,7 @@ function checkLimits() {
       if (!r) continue;
       let hit = transcriptLimit(id, r.dir, account.configDir);
       const w = ptyLimit.get(id);
+      if (!hit) hit = compactionSeen(id, r.dir, account.configDir, w, now);
       if (!hit && w?.hitAt && now - w.hitAt < 60000 && usageFull()) hit = { at: w.hitAt, resetsAt: null, type: null, text: '' };
       if (hit && !limitDone.has(`${id}|${hit.at}`)) hits.push({ id, hit });
     }
@@ -3128,7 +3212,7 @@ function checkLimits() {
 }
 function onLimit(p, account, hits, now) {
   const resets = hits.map((h) => h.hit.resetsAt).filter(Number.isFinite);
-  const mark = FB.markFor(resets.length ? Math.max(...resets) : null, now);
+  const mark = FB.limitMark({ resets, seenAt: Math.min(...hits.map((h) => h.hit.at)), now });
   setLimitMark(account.id, mark);
   const done = () => { for (const h of hits) limitDone.add(`${h.id}|${h.hit.at}`); };
   const choice = P.backupOf(p);
@@ -3251,7 +3335,7 @@ ipcMain.handle('mcp:list', (_e, projectId) => {
   } catch (e) { console.error('mcp:list', e.message); return { servers: [] }; }
 });
 /** Idle Claude Code sessions the change reaches restart in their conversation; busy ones take it at their next start. */
-const restartFor = (...scopes) => state.projects.filter((p) => P.engineOf(p) === 'claude' && scopes.flat().some((scope) => scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));   // v3.80 a scope can be a list
+const restartFor = (...scopes) => state.projects.filter((p) => P.engineOf(p) === 'claude' && scopes.flat().some((scope) => scope === 'all' || p.id === scope)).flatMap((p) => restartIdle(p));   // v3.82 a scope can be a list
 // Bundled skill packs (contract v3.45): the list (never a path), the global on/off and the per-project override.
 // A change restarts the idle Claude Code sessions it reaches in their conversation; busy ones take it at their next start.
 ipcMain.handle('skillPacks:list', (_e, projectId) => {
@@ -3343,7 +3427,7 @@ ipcMain.handle('mcp:updateFile', (_e, projectId, where, name, f) => {
   if (r.ok) checkMcp();
   return r;
 });
-// v3.80 the servers added in Agent Office (never a URL path, header, env, argument or token) and the projects each
+// v3.82 the servers added in Agent Office (never a URL path, header, env, argument or token) and the projects each
 // reaches; mcp:scope changes that set (the project popup's "Tools" list, the panel's form).
 ipcMain.handle('mcp:apps', () => ({ servers: appServers().filter((s) => !s.held).map((s) => ({ id: s.id, name: s.name, type: s.type, host: s.type === 'stdio' ? '' : MS.hostOf(s.url), scope: s.scope, hasToken: Boolean(tokens().has(s.id)) })) }));
 ipcMain.handle('mcp:scope', (_e, sid, scope) => {
@@ -3369,12 +3453,12 @@ ipcMain.handle('projects:openFolder', async (_e, id) => {
 });
 
 // Removing a project closes all its tabs; worktree folders are left untouched (like the project folder).
-// --- team: staff (contract v3.81, src/staff.js). The preset roles ship in roles/ (extraResources). With state.teamMode
+// --- team: staff (contract v3.83, src/staff.js). The preset roles ship in roles/ (extraResources). With state.teamMode
 // off the TEAM panel is hidden; the stored staff is kept. Nothing here starts a session (desks come in step 3).
 const rolesRoot = () => (app.isPackaged ? path.join(process.resourcesPath, 'roles') : path.join(__dirname, '..', 'roles'));
 let rolePresets = null;
 const builtinRoles = () => rolePresets || (rolePresets = ST.loadRoles(rolesRoot()));
-// v3.82 the presets and the person's own roles (state.customRoles: the role wizard), one list for every reader
+// v3.84 the presets and the person's own roles (state.customRoles: the role wizard), one list for every reader
 const presetRoles = () => [...builtinRoles(), ...(state.customRoles || [])];
 const staffKnown = () => ({
   projectIds: state.projects.map((p) => p.id), accountIds: state.accounts.map((a) => a.id), presetIds: presetRoles().map((d) => d.id),
@@ -3402,7 +3486,7 @@ ipcMain.handle('staff:remove', (_e, id) => {
   return { ok: true };
 });
 
-// --- the person's roles and the role wizard (contract v3.82, src/staff.js role library, src/role-wizard.js)
+// --- the person's roles and the role wizard (contract v3.84, src/staff.js role library, src/role-wizard.js)
 ipcMain.handle('roles:save', (_e, form) => {
   if (!stateWritable) return { ok: false, error: 'state' };
   const r = ST.saveCustomRole(state.customRoles || [], form && typeof form === 'object' ? form : {}, builtinRoles());
@@ -3485,7 +3569,7 @@ ipcMain.handle('roles:wizard', async (_e, req) => {
   } finally { wizardBusy = false; }
 });
 
-// --- mail (contract v3.83): accounts (state.mailAccounts, no secret), their passwords / tokens (userData/mail-secrets,
+// --- mail (contract v3.85): accounts (state.mailAccounts, no secret), their passwords / tokens (userData/mail-secrets,
 // encrypted with safeStorage; never saved where no keychain encrypts them), the outbox (userData/mail/outbox.json,
 // 0600) and an audit log (userData/mail/audit.log: who called what, never a mail's text). A desk whose member was given
 // accounts gets the `agent-office-mail` server: read only, and drafts go to the outbox. Sending is only ever the
@@ -3768,7 +3852,7 @@ ipcMain.handle('mail:retry', (_e, id) => {
   return { ok: true };
 });
 
-// --- desks (contract v3.81 step 3): a staff member's tab in a project. Its own session (account, role section,
+// --- desks (contract v3.83 step 3): a staff member's tab in a project. Its own session (account, role section,
 // conversation kept on the tab); one desk at work per project folder unless the project allows parallel work, then each
 // desk has its own worktree in userData/work (never in or next to the project folder).
 const teamOn = () => state.teamMode === true && (state.staff || []).length > 0;
@@ -3823,7 +3907,7 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
   if (start) startPty(id);
   return { ok: true, id };
 }
-/** v3.81 amendment: a member's personal workspace (tasks outside any project): a project of its own, made on first use
+/** v3.83 amendment: a member's personal workspace (tasks outside any project): a project of its own, made on first use
  *  in Documents/Agent Office/<name> - personal, on the member's account; only that member works there (`staffOwner`). */
 function ensurePersonal(m) {
   const have = ST.personalOf(state.projects, m.id);
@@ -3851,7 +3935,7 @@ function deskStateOf(projectId, staffId) {
   const id = P.tabPtyId(p.id, t.n);
   return terms.has(id) ? (tabWorkRunning(id) ? 'busy' : 'idle') : asleep.has(id) ? 'asleep' : 'off';
 }
-/** v3.81 HQ's office_dispatch with `staff`: the member's desk in the target project → { desk, staffName } | { reason }. */
+/** v3.83 HQ's office_dispatch with `staff`: the member's desk in the target project → { desk, staffName } | { reason }. */
 async function hqStaffDesk(args, remote, target) {
   if (remote) return { reason: 'staff-local-only' };   // paired devices know no staff (the link protocol is unchanged)
   if (!teamOn()) return { reason: 'no-team' };
@@ -3904,7 +3988,7 @@ ipcMain.handle('projects:remove', (_e, id) => {
     if (p) try { fs.rmSync(path.join(usageRoot(), p.accountId, `${usageKey(pid)}.json`), { force: true }); } catch {}
   }
   const next = P.removeProject(state, id);
-  commit(state.staff ? { ...next, staff: ST.dropProject(next.staff || state.staff, id) } : next);   // v3.81 it leaves the staff's projects
+  commit(state.staff ? { ...next, staff: ST.dropProject(next.staff || state.staff, id) } : next);   // v3.83 it leaves the staff's projects
 });
 // the project left in the background starts its idle time now: it was in view until this moment (src/sleep.js)
 ipcMain.handle('projects:setActive', (_e, id) => {
@@ -4103,7 +4187,7 @@ ipcMain.handle('accounts:remove', (_e, id) => {
   usages.delete(id);
   try { fs.rmSync(delegateKeyFile(id), { force: true }); } catch {}   // v3.56: its delegate key file goes too
   try { fs.rmSync(path.join(usageRoot(), id), { recursive: true, force: true }); } catch {}
-  commit(r.state.staff ? { ...r.state, staff: ST.dropAccount(r.state.staff, id) } : r.state, { accounts: true });   // v3.81 its members use their projects' accounts
+  commit(r.state.staff ? { ...r.state, staff: ST.dropAccount(r.state.staff, id) } : r.state, { accounts: true });   // v3.83 its members use their projects' accounts
   for (const pid of r.moved) moveProject(pid, from);
 });
 
@@ -4156,7 +4240,7 @@ function pickTabMode({ git: inRepo = false, staff = [] } = {}) {
     /** @type {Electron.MenuItemConstructorOptions[]} */
     const items = [{ label: T('main.tabSame'), click: () => finish('same') }];
     if (inRepo) items.push({ label: T('main.tabWorktree'), click: () => finish('worktree') });
-    // v3.81 amendment: a session with a staff member = the member's desk in this project (opened, or shown when open)
+    // v3.83 amendment: a session with a staff member = the member's desk in this project (opened, or shown when open)
     if (staff.length) items.push({ type: 'separator' }, {
       label: T('main.tabStaff'),
       submenu: staff.map((m) => ({ label: m.name, sublabel: m.role, click: () => finish({ staff: m.id }) })),
@@ -4543,10 +4627,11 @@ ipcMain.on('pty:write', (_e, id, d) => {
   if (!terms.has(id)) wake(id);
   const a = activity.get(id);
   if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); }
+  noteInput(id, d);
   agyWatch.get(id)?.watch.input(d);
   ptyOf(id)?.write(d);
 });
-// --- chat view (contract v3.78, src/chat.js): a Claude Code tab shown as a conversation, read from its transcript
+// --- chat view (contract v3.80, src/chat.js): a Claude Code tab shown as a conversation, read from its transcript
 const chatFiles = new Map();   // pty id → { sid, file }: the transcript found for the tab's session
 /** The tab's session id: the running claude's, else the sleeping tab's (null when there is none yet). */
 function chatSession(id, r, configDir) {
@@ -4554,7 +4639,7 @@ function chatSession(id, r, configDir) {
   if (t) return validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid))?.sessionId) || null;
   return validSid(asleep.get(id)?.sessionId) || null;
 }
-// v3.78 amendment: the chat input's "/" list for a Claude Code tab (src/slash-commands.js): built-ins, the project's
+// v3.80 amendment: the chat input's "/" list for a Claude Code tab (src/slash-commands.js): built-ins, the project's
 // and the account's commands and skills, enabled installed plugins, the tab's skill packs and /office. Cached 30 s.
 const slashCache = new Map();   // pty id → { at, list }
 ipcMain.handle('chat:commands', (_e, id) => {
@@ -4922,11 +5007,11 @@ function buildMenu() {
 // fallback = a project at the usage limit moves to its backup account and back after the reset (contract v3.17);
 // showAgyAccount / showCmdAccount / showOcAccount = the Antigravity / Command Code / OpenCode row in Accounts: true (added via Add account),
 // false (removed), null (the old rule: shown when installed or a project runs it) (contract v3.30);
-// chatView = Claude Code tabs can be shown as a conversation (contract v3.78); off unless set, and unset is not written
-// office3d = the office drawn in 3D (contract v3.79); off unless set, and unset is not written
-// teamMode = the TEAM panel (contract v3.81); off unless set, and unset is not written
+// chatView = Claude Code tabs can be shown as a conversation (contract v3.80); off unless set, and unset is not written
+// office3d = the office drawn in 3D (contract v3.81); off unless set, and unset is not written
+// teamMode = the TEAM panel (contract v3.83); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, office3d: state.office3d === true, teamMode: state.teamMode === true });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, office3d: state.office3d === true, teamMode: state.teamMode === true });
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
@@ -4935,9 +5020,9 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp });
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
-  if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) commit({ ...state, chatView: p.chatView });   // v3.78 chat view (the renderer switches)
-  if (p && typeof p.office3d === 'boolean' && p.office3d !== prefs().office3d) commit({ ...state, office3d: p.office3d });   // v3.79 3D office (the renderer switches)
-  if (p && typeof p.teamMode === 'boolean' && p.teamMode !== prefs().teamMode) commit({ ...state, teamMode: p.teamMode });   // v3.81 the TEAM panel
+  if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) commit({ ...state, chatView: p.chatView });   // v3.80 chat view (the renderer switches)
+  if (p && typeof p.office3d === 'boolean' && p.office3d !== prefs().office3d) commit({ ...state, office3d: p.office3d });   // v3.81 3D office (the renderer switches)
+  if (p && typeof p.teamMode === 'boolean' && p.teamMode !== prefs().teamMode) commit({ ...state, teamMode: p.teamMode });   // v3.83 the TEAM panel
   for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (p && typeof p[k] === 'boolean' && p[k] !== prefs()[k]) commit({ ...state, [k]: p[k] });
   if (p && typeof p.theme === 'string' && themeSetting(p.theme) !== prefs().theme) commit({ ...state, theme: themeSetting(p.theme) });
   // appearance (v3.74): an unknown look or mode is stored as the default
@@ -4951,6 +5036,8 @@ ipcMain.handle('prefs:set', (_e, p) => {
     // turned off: every sleeping tab starts again, as if the app had started without sleeping
     if (!p.sleepMinutes) for (const id of [...asleep.keys()]) wake(id);
   }
+  // keep computer awake (v3.78): applied at once (Off releases the block now, Always takes it now)
+  if (p && KA.KEEP_AWAKE_CHOICES.includes(p.keepAwake) && p.keepAwake !== prefs().keepAwake) { commit({ ...state, keepAwake: p.keepAwake }); syncKeepAwake(); }
   return prefs();
 });
 
@@ -5013,10 +5100,10 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
-  // v3.81 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
-  if (Array.isArray(raw.customRoles)) state = { ...state, customRoles: ST.normalizeCustomRoles(raw.customRoles) };   // v3.82, before the staff that use them
-  if (Array.isArray(raw.mailAccounts)) state = { ...state, mailAccounts: MST.normalizeAccounts(raw.mailAccounts) };   // v3.83, before the staff given them
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  // v3.83 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
+  if (Array.isArray(raw.customRoles)) state = { ...state, customRoles: ST.normalizeCustomRoles(raw.customRoles) };   // v3.84, before the staff that use them
+  if (Array.isArray(raw.mailAccounts)) state = { ...state, mailAccounts: MST.normalizeAccounts(raw.mailAccounts) };   // v3.85, before the staff given them
   if (Array.isArray(raw.staff)) state = { ...state, staff: ST.normalizeStaff(raw.staff, staffKnown()) };
   // v3.44 move the v3.43 connection tokens, retrying any a previous start could not move; drop tokens no server needs
   // — only when state.json was read whole: a missing or unreadable one lists no server, and every token would go

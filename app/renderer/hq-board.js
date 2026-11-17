@@ -4,7 +4,7 @@
 // Every text from the board is put in with textContent: report text is data, never markup.
 
 const COLS = [
-  ['queued', ['queued', 'waiting']],   // v3.77 a stage waiting for the one before it
+  ['queued', ['queued', 'waiting']],   // v3.79 a stage waiting for the one before it
   ['running', ['delivered', 'running']],
   ['needs', ['needs-approval', 'awaiting-consent']],
   ['done', ['reported', 'partial']],
@@ -58,7 +58,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   sidebar.prepend(el('div', { class: 'hq-pinned' }, row, settings, ...(api.routines ? [rtList] : [])));
   const board = el('div', { id: 'hq-board', class: 'hq-board', hidden: true });
   office?.after(board);
-  // v3.81 amendment: while HQ is selected the person picks the Board or the office (all projects' agents and desks); remembered
+  // v3.83 amendment: while HQ is selected the person picks the Board or the office (all projects' agents and desks); remembered
   let showOffice = false;
   try { showOffice = localStorage.getItem('hq.view') === 'office'; } catch { /* storage off */ }
   const viewBtn = (key, on) => el('button', { class: 'hq-view-btn', 'data-view': key, onclick: () => {
@@ -124,14 +124,14 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const tvOf = (x) => (x.kind === 'hq' ? 'hq' : x.kind === 'staff' ? 'personal' : x.kind === 'remote' ? `r:${x.pub}:${x.projectId}` : `p:${x.projectId}`);
     const remotes = rv.remotes || [];
     const gone = o.target.kind === 'remote' && !remotes.some((x) => x.pub === o.target.pub && x.id === o.target.projectId);
-    // v3.81 amendment: "outside any project" (a member's personal workspace; members' workspaces are not listed as projects)
+    // v3.83 amendment: "outside any project" (a member's personal workspace; members' workspaces are not listed as projects)
     const target = el('select', {}, el('option', { value: 'hq' }, t('routines.targetHq')),
       ...((rv.staff || []).length ? [el('option', { value: 'personal' }, t('routines.targetPersonal'))] : []),
       ...(rv.projects || []).filter((p) => !p.staffOwner).map((p) => el('option', { value: `p:${p.id}`, disabled: p.engine !== 'claude' }, p.engine === 'claude' ? p.name : `${p.name} (${t('routines.engineOnly')})`)),
       ...remotes.map((x) => el('option', { value: `r:${x.pub}:${x.id}`, class: x.online ? 'rt-remote' : 'rt-remote rt-off' }, `${x.name} · ${x.machine}${x.online ? '' : ` (${t('routines.offline')})`}`)),
       ...(gone ? [el('option', { value: tvOf(o.target), disabled: true }, t('routines.remoteGone'))] : []));
     target.value = tvOf(o.target);
-    // v3.81 amendment: who does it: nobody in particular (HQ, or the project's own session), or a staff member (their
+    // v3.83 amendment: who does it: nobody in particular (HQ, or the project's own session), or a staff member (their
     // desk). Always on show when there is staff; a member narrows the target to the projects they may work on.
     const staff = rv.staff || [];
     const keep0 = o.target.kind === 'project' || o.target.kind === 'staff' ? o.target.staffId || '' : '';
@@ -261,7 +261,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       el('span', {}, [t(`hq.wait.${w.state}`, { project: w.project, machine: w.machine || '' }), w.len > 1 ? t('hq.wait.pos', { n: w.pos, len: w.len }) : '', t('hq.wait.expires', { min })].filter(Boolean).join(' · ')),
       w.cancel === false ? null : el('button', { class: 'hq-link', title: t('hq.wait.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
   }
-  /** v3.77 a waiting stage: which task it waits for, and Cancel (the stages after it are blocked with it). */
+  /** v3.79 a waiting stage: which task it waits for, and Cancel (the stages after it are blocked with it). */
   function stageLine(x) {
     if (x.status !== 'waiting') return null;
     return el('div', { class: 'hq-task-wait' }, el('span', {}, t('hq.stage.waiting', { id: x.after || '' })),

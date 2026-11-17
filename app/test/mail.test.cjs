@@ -1,4 +1,4 @@
-// Mail (contract v3.83): the guard, MIME, the read-only IMAP client and the SMTP client against fake servers, Graph
+// Mail (contract v3.85): the guard, MIME, the read-only IMAP client and the SMTP client against fake servers, Graph
 // with a fake fetch, the account and outbox rules, the MCP tools, and main.js's wiring (by source).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');

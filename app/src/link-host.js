@@ -17,7 +17,7 @@ const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/st
 const REVIVE_STALE_MS = 10 * 60 * 1000;  // a budget untouched this long starts over
 const REVIVE_GAP_MS = 60 * 1000;          // ... and not more than once a minute
 const PUMP_MS = 1500;
-const STARTING_MS = 20 * 1000;              // v3.81 amendment: a tab 'starting' this long gets HQ's task as its first prompt
+const STARTING_MS = 20 * 1000;              // v3.83 amendment: a tab 'starting' this long gets HQ's task as its first prompt
 const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks between gone-sightings = a new gone spell
 
 /**
@@ -314,7 +314,7 @@ function setupLink(d) {
 
   // Claude Code projects only: their busy state is known (pid file) and their prompt takes a bracketed paste.
   function onCommand({ device, id, project, text, reply, report = false, ttl = 0, revive = false }) {
-    // v3.81 a staff member's desk (a tab id `<project>:<n>`) is a target for this machine's own tasks only (HQ): paired
+    // v3.83 a staff member's desk (a tab id `<project>:<n>`) is a target for this machine's own tasks only (HQ): paired
     // devices see projects, never desks (d.desk resolves it, or null)
     const p = d.projects().find((x) => x.id === project) || (device.pub === SELF ? d.desk?.(project) || null : null);
     const done = (status, reason) => { log(device.name, p?.name || project, text, `${report ? 'task:' : ''}${reason ? `${status}:${reason}` : status}`); reply(status, reason); };
@@ -382,7 +382,7 @@ function setupLink(d) {
             const isDesk = !b.n && String(project).includes(':') && Boolean(d.desk?.(project));
             if (!isDesk && now - (b.n ? b.at : b.since) < REVIVE_GAP_MS) break;
             b.n += 1; b.at = now;
-            // v3.81 amendment: started with the task as its first prompt (a fresh session takes no typing, see 'starting')
+            // v3.83 amendment: started with the task as its first prompt (a fresh session takes no typing, see 'starting')
             if (d.startWith) {
               let ok; try { ok = deliver(c, project, (text) => d.startWith(project, text)); } catch { ok = false; }
               if (ok) { q.shift(); reviveBudget.delete(project); break; }
@@ -395,7 +395,7 @@ function setupLink(d) {
         }
         if (s === 'ready') { reviveBudget.delete(project); startingSince.delete(project); }
         if (s !== 'starting') startingSince.delete(project);
-        // v3.81 amendment: a tab of this machine's own that stays 'starting' (a fresh session never takes typed text
+        // v3.83 amendment: a tab of this machine's own that stays 'starting' (a fresh session never takes typed text
         // before its first prompt) is restarted by main with the HQ task as that first prompt; main refuses when the
         // tab had a prompt, the person is typing in it, or it was already started that way (then it keeps waiting)
         if (s === 'starting' && c.revive && d.startWith) {

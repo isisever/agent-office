@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { isFreeTool, MAIL_SECTION_ID, MAIL_TEXT, mailGuardDecision } from '../hooks/mail-guard'
 
-test('mail guard (v3.83): reading, the person and the mail server run; everything else asks', () => {
+test('mail guard (v3.85): reading, the person and the mail server run; everything else asks', () => {
   for (const tool of ['Read', 'Grep', 'Glob', 'TodoWrite', 'AskUserQuestion', 'Agent', 'mcp__agent-office-mail__mail_read', 'mcp__agent-office-mail__mail_draft'])
     expect(isFreeTool(tool)).toBe(true)
   for (const tool of ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Monitor', 'mcp__canva__create-design', 'mcp__agent-office__office_dispatch', 'mcp__agent-office-mail__mail_send', 'mcp__evil__mail_read'])

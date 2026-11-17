@@ -1,4 +1,4 @@
-// Mail (contract v3.83): the guard between a mailbox and a model. Pure, no Electron; tested in test/mail.test.cjs.
+// Mail (contract v3.85): the guard between a mailbox and a model. Pure, no Electron; tested in test/mail.test.cjs.
 // An e-mail is written by whoever sent it, so everything in it is untrusted data, never instructions. Before any of it
 // reaches a session it is cleaned here: invisible and direction-changing characters removed (they hide text from the
 // person), our own markers made unforgeable, the text cut to size, and phrases that look like instructions to an AI

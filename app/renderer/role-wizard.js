@@ -1,4 +1,4 @@
-// Team: the role wizard (contract v3.82). The person describes a job; main asks Claude Code (one `claude -p` turn per
+// Team: the role wizard (contract v3.84). The person describes a job; main asks Claude Code (one `claude -p` turn per
 // message, src/role-wizard.js) and the answer comes back as a message, open questions and, once the job is clear, a
 // role draft shown as a card. "Save the role" puts it in the person's role library (roles:save); then a member can be
 // added with it. The conversation lives only in this popup.

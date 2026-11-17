@@ -1,5 +1,5 @@
 'use strict';
-// Staged HQ requests (contract v3.77).
+// Staged HQ requests (contract v3.79).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const CH = require('../src/hq-chain.js');

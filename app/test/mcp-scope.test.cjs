@@ -1,4 +1,4 @@
-// MCP servers for several projects (contract v3.80): src/mcp-servers.js scope as 'all' | id | id[].
+// MCP servers for several projects (contract v3.82): src/mcp-servers.js scope as 'all' | id | id[].
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const MS = require('../src/mcp-servers.js');

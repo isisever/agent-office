@@ -1,4 +1,4 @@
-// Mail (contract v3.83): a small RFC 5322 / MIME reader and writer, no dependencies; tested in test/mail.test.cjs.
+// Mail (contract v3.85): a small RFC 5322 / MIME reader and writer, no dependencies; tested in test/mail.test.cjs.
 // Reading: headers (unfolded, RFC 2047 words decoded), the text of a message (text/plain preferred, else text/html
 // turned into text with invisible parts dropped), and its attachments by name, type and size only (never their
 // content). Writing: a plain-text UTF-8 message for SMTP, with every header checked for line breaks.

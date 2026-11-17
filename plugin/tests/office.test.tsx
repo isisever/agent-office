@@ -1713,7 +1713,7 @@ for (const [name, env, type, expected] of [
   })
 }
 
-// team (app contract v3.81): a desk's member section (AGENT_OFFICE_ROLE file) and HQ's team section (AGENT_OFFICE_TEAM)
+// team (app contract v3.83): a desk's member section (AGENT_OFFICE_ROLE file) and HQ's team section (AGENT_OFFICE_TEAM)
 const MEMBER_FILE = '/ud/role/p1-2.json'
 const memberFile = { format: 2, member: 'Ayşe', name: 'ERP Developer (Odoo)', description: 'Builds Odoo modules.', brief: 'Never edit Odoo core.', writesCode: true, department: 'Development', project: { name: 'acme', dir: '/work/acme' }, team: [{ name: 'Mert', role: 'QA Engineer' }] }
 
@@ -1741,7 +1741,7 @@ test('team: the team env alone on a project session adds no section', async ($, 
   expect((await $.prompt.compose(mainLoop)).sections.map(s => s.id)).toEqual(['intro', 'agent-office:manager', 'agent-office:host'])
 })
 
-// mail guard (app contract v3.83): a mail session gets the mail rules and never auto-approves; the guard's decisions
+// mail guard (app contract v3.85): a mail session gets the mail rules and never auto-approves; the guard's decisions
 // themselves are tested in mail-guard.test.ts (a test raises classic.PreToolUse only through $.tool.call)
 test('mail guard: the mail section is added to a mail session only', async ($, on) => {
   const env: Record<string, string> = { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MAIL_GUARD: '1' }

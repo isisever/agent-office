@@ -406,7 +406,7 @@ let verifyOn = false
 // AGENT_OFFICE_AUTO_APPROVE=1 (the project's switch in the app, contract v3.71): permission dialogs are answered
 // "allow" for the person, except what auto-approve.ts leaves to them. Never nested, never in HQ.
 let autoApproveOn = false
-// AGENT_OFFICE_MAIL_GUARD=1 (app contract v3.83): this session can read the person's mail; every call beyond reading
+// AGENT_OFFICE_MAIL_GUARD=1 (app contract v3.85): this session can read the person's mail; every call beyond reading
 // waits for the person (mail-guard.ts), auto-approve is off, and nested sessions keep the guard (the env is inherited)
 let mailGuardOn = false
 let guardLang: 'en' | 'tr' = 'en'
@@ -843,7 +843,7 @@ async function submitTasks($: EngineInterface, raw: string) {
         : task.kind === 'request-done'
           ? doneText(task, t.requestDone)
           : task.kind === 'stage-blocked'
-            ? blockedText(task, t.stageBlocked) // v3.77
+            ? blockedText(task, t.stageBlocked) // v3.79
             : undefined
     if ((task.kind === 'report-ready' || task.kind === 'request-done' || task.kind === 'stage-blocked') && !ready) continue
     await $.prompt.submit({ asUser: true, text: ready ?? t.task(task.text ?? '') })
@@ -1414,7 +1414,7 @@ export const register: Register = on => {
     const result = await next(e)
     if (isNested || (await nestedOf($))) return result
     const sections = [...result.sections]
-    // mail (v3.83): every loop of a mail session, subagents too, gets the mail rules
+    // mail (v3.85): every loop of a mail session, subagents too, gets the mail rules
     if ((await isMailSession($)) && !sections.some(section => section.id === MAIL_SECTION_ID)) sections.push({ id: MAIL_SECTION_ID, text: MAIL_TEXT, scope: 'session' as const })
     const isLoopManager =
       (await $.env.get('AGENT_OFFICE_MANAGER')) === '1' && !e.traits.includes('teammate') && e.tools.some(tool => AGENT_TOOLS.includes(tool))
@@ -1425,7 +1425,7 @@ export const register: Register = on => {
       const pinned = pinnedModel(await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL_FORCE'), await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL'))
       sections.push({ id: MANAGER_SECTION_ID, text: managerText(pinned), scope: 'session' as const })
     }
-    // team (v3.81): HQ's team section and a desk's member section, each keyed on its own env var
+    // team (v3.83): HQ's team section and a desk's member section, each keyed on its own env var
     if (kind === 'hq' && (await $.env.get('AGENT_OFFICE_TEAM')) === '1' && !sections.some(section => section.id === TEAM_SECTION_ID))
       sections.push({ id: TEAM_SECTION_ID, text: TEAM_TEXT, scope: 'session' as const })
     const memberFile = e.traits.includes('teammate') ? undefined : await $.env.get('AGENT_OFFICE_ROLE')
@@ -1652,7 +1652,7 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // mail guard (v3.83): in a session that reads mail, every call beyond reading asks the person (or is refused where
+  // mail guard (v3.85): in a session that reads mail, every call beyond reading asks the person (or is refused where
   // the mode answers without them); a refusal another hook made stands
   on('classic.PreToolUse', async ($, e, next) => {
     if (!(await isMailSession($))) return next(e)

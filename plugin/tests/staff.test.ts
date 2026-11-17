@@ -3,7 +3,7 @@ import { memberText, parseMember, STAFF_SECTION_ID, TEAM_SECTION_ID, TEAM_TEXT }
 
 const file = { format: 2, member: 'Ayşe', name: 'ERP Developer (Odoo)', description: 'Builds Odoo modules.', brief: 'Never edit Odoo core.', writesCode: true, department: 'Development', project: { name: 'acme', dir: '/work/acme' }, team: [{ name: 'Mert', role: 'QA Engineer' }, { name: 'Deniz', role: 'DevOps Engineer' }] }
 
-test('section ids (v3.81)', () => {
+test('section ids (v3.83)', () => {
   expect(STAFF_SECTION_ID).toBe('agent-office:staff')
   expect(TEAM_SECTION_ID).toBe('agent-office:team')
 })

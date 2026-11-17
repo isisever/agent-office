@@ -1,4 +1,4 @@
-// The role wizard (contract v3.82): src/role-wizard.js prompt, conversation and reply parsing; main's IPC by source.
+// The role wizard (contract v3.84): src/role-wizard.js prompt, conversation and reply parsing; main's IPC by source.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');

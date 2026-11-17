@@ -1,4 +1,4 @@
-// Chat view menus (contract v3.78): pure, shared with the renderer; tested in test/tui-menu.test.mjs.
+// Chat view menus (contract v3.80): pure, shared with the renderer; tested in test/tui-menu.test.mjs.
 // Claude Code asks in its terminal: approvals ("Do you want to proceed? 1. Yes 2. Yes, and always … 3. No"),
 // AskUserQuestion (numbered options, "Type something", checkboxes for a multi-select, a "Review your answers" step)
 // and its other menus. They are never written to the transcript while open, so the chat view reads the open menu off
@@ -84,7 +84,7 @@ export const isFreeOption = (o) => FREE_RE.test(String(o?.label || '').replace(/
 /** A stable key for a menu (its title and labels): the card is redrawn only when the menu changes. */
 export const menuKey = (m) => (m ? JSON.stringify([m.title, m.options.map((o) => [o.label, o.checked])]) : '');
 
-// v3.78 amendment: Claude Code's live status while it works ("✻ Creating… (10s · ↓ 875 tokens · thinking)", the glyph
+// v3.80 amendment: Claude Code's live status while it works ("✻ Creating… (10s · ↓ 875 tokens · thinking)", the glyph
 // cycling), above the mode line that says "esc to interrupt" (Claude Code 2.1.286, captured in a pty, 110 columns).
 const SPIN_RE = /^\s*[·✢✳✶✻✽✦*]\s+(\S[^…\n]{0,60}….*?)\s*$/;
 const BUSY_RE = /\besc to interrupt\b/i;

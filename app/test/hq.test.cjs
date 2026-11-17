@@ -384,7 +384,7 @@ function waitHost(t, over = {}) {
   return { host, typed };
 }
 
-test('v3.81: HQ\'s task for a staff member reaches the member\'s desk tab; a paired device cannot target a desk', (t) => {
+test('v3.83: HQ\'s task for a staff member reaches the member\'s desk tab; a paired device cannot target a desk', (t) => {
   const tab = { 'p1:2': 'ready' };
   const { host, typed } = waitHost(t, {
     tabState: (id) => tab[id] || 'gone',
@@ -405,7 +405,7 @@ test('v3.81: HQ\'s task for a staff member reaches the member\'s desk tab; a pai
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'link-host.js'), 'utf8'), /\(device\.pub === SELF \? d\.desk\?\.\(project\) \|\| null : null\)/);
 });
 
-test('v3.81 amendment: a gone desk starts at once with HQ\'s task as its first prompt; a tab stuck starting gets it after 20 s', (t) => {
+test('v3.83 amendment: a gone desk starts at once with HQ\'s task as its first prompt; a tab stuck starting gets it after 20 s', (t) => {
   const real = Date.now; let clock = real(); Date.now = () => clock;
   t.after(() => { Date.now = real; });
   const tab = { 'p1:2': 'gone', p1: 'starting' };
@@ -603,7 +603,7 @@ test('HQ boss model: a listed model or a valid custom id; anything else is dropp
   assert.match(fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8'), /o\.bossModel === '' \|\| HQ\.hqBossModel\(o\.bossModel\)/); // the IPC setter leaves an invalid value out
 });
 
-test('v3.81 amendment: a task started as the first-prompt argument keeps a marker the plugin reads', () => {
+test('v3.83 amendment: a task started as the first-prompt argument keeps a marker the plugin reads', () => {
   const C = require('../src/link-core.js');
   const R = require('../src/resume.js');
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'hooks', 'reports.ts'), 'utf8');
@@ -613,7 +613,7 @@ test('v3.81 amendment: a task started as the first-prompt argument keeps a marke
   assert.equal(MARKER.exec(R.promptArg(typed))?.[1], 'edb2d4505fa1dd57', 'quotes and line breaks dropped, the id still read');
 });
 
-test('v3.81 amendment task watch: live board status, and a task whose session never reports ends with a partial report', () => {
+test('v3.83 amendment task watch: live board status, and a task whose session never reports ends with a partial report', () => {
   const TW = require('../src/task-watch.js');
   let r = TW.watchStep({ status: 'queued', live: 'idle', now: 0 });
   assert.deepEqual(r, { mem: {} }, 'not delivered yet: nothing to watch');
@@ -645,7 +645,7 @@ test('v3.81 amendment task watch: live board status, and a task whose session ne
   assert.ok(MAIN.includes("if (fs.existsSync(f)) continue;   // the plugin's own report is on its way"));
 });
 
-test('v3.81 amendment: lastAnswer reads the newest assistant text of a transcript', () => {
+test('v3.83 amendment: lastAnswer reads the newest assistant text of a transcript', () => {
   const CHAT = require('../src/chat.js');
   const f = path.join(tmp('ao-last-'), 's.jsonl');
   const line = (o) => `${JSON.stringify({ timestamp: '2026-11-17T10:00:00.000Z', uuid: String(Math.random()), ...o })}\n`;

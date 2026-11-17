@@ -1,4 +1,4 @@
-// Chat view "/" commands (contract v3.78 amendment): src/slash-commands.js (what a tab offers) and src/slash-match.mjs.
+// Chat view "/" commands (contract v3.80 amendment): src/slash-commands.js (what a tab offers) and src/slash-match.mjs.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');

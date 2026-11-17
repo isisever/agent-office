@@ -1,4 +1,4 @@
-// Mail (contract v3.83): a minimal SMTP client for the one thing main sends: a draft the person approved in the app
+// Mail (contract v3.85): a minimal SMTP client for the one thing main sends: a draft the person approved in the app
 // (and `verify`: log in and quit, to test an account before it is saved). No dependencies; tested in
 // test/mail.test.cjs against a fake server. TLS on connect (465) or STARTTLS (587, Exchange's client port; the upgrade
 // is required: no mail and no password goes out in clear), the certificate checked by net.js. The login method follows

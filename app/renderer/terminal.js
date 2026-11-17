@@ -165,7 +165,7 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
       resize();
     },
     setTheme(t) { term.options.theme = xtermTheme(t); },
-    /** The visible screen's lines (v3.78 chat view: Claude Code's open menu is read off it). */
+    /** The visible screen's lines (v3.80 chat view: Claude Code's open menu is read off it). */
     screen() {
       const b = term.buffer.active;
       const out = [];

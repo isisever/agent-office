@@ -18,7 +18,7 @@ const ROUTINE_MINT_MS = 4 * 3600 * 1000;   // v3.47 a routine run's request id (
 const HELD_MS = 12 * 3600 * 1000;   // v3.47 a held (awaiting-consent) task expires after this
 const TITLE_MAX = 80;
 const SUMMARY_MAX = REPORT2_MAX;   // v3.48 report2: the larger summary (cut with TRUNC_MARK)
-// v3.77 staged requests: 'waiting' (a stage waiting for the one before it, src/hq-chain.js) and 'blocked' (that one ended without a full report)
+// v3.79 staged requests: 'waiting' (a stage waiting for the one before it, src/hq-chain.js) and 'blocked' (that one ended without a full report)
 const STATUSES = ['queued', 'delivered', 'running', 'needs-approval', 'awaiting-consent', 'waiting', 'reported', 'partial', 'failed', 'rejected', 'expired', 'lost', 'blocked'];
 const TERMINAL = new Set(['reported', 'partial', 'failed', 'rejected', 'expired', 'lost', 'blocked']);
 const OPEN = (t) => !TERMINAL.has(t.status);
@@ -181,7 +181,7 @@ function capReason(board, request) {
 function renameTask(board, from, to, patch = {}) {
   if (!board.tasks.some((t) => t.id === from)) return board;
   return {
-    // v3.77 a stage that waited on the old id now waits on the new one
+    // v3.79 a stage that waited on the old id now waits on the new one
     tasks: board.tasks.filter((t) => t.id !== to).map((t) => (t.id === from ? { ...t, ...patch, id: to, brief: `tasks/${to}/brief.md` } : t.after === from ? { ...t, after: to } : t)),
     requests: board.requests.map((r) => ({ ...r, tasks: r.tasks.map((x) => (x === from ? to : x)) })),
   };
@@ -214,16 +214,16 @@ function createRestarter({ now = Date.now } = {}) {
   };
 }
 /** Depth 1: a project boss working on an HQ task may not dispatch further. */
-// v3.77 a waiting stage is not being worked on yet: it does not count
+// v3.79 a waiting stage is not being worked on yet: it does not count
 const depthRefused = (board, fromTab) => fromTab !== HQ_ID && board.tasks.some((t) => OPEN(t) && t.status !== 'waiting' && t.projectId === fromTab && t.machine === 'self');
 
 function addTask(board, t, now = Date.now()) {
   const task = {
     id: t.id, request: t.request || '', title: line(t.title || t.task || '', TITLE_MAX), machine: t.pub === 'self' || !t.pub ? 'self' : t.pub,
-    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}), ...(t.staff ? { staff: line(t.staff, 40) } : {}),   // v3.81 the staff member's desk
+    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}), ...(t.staff ? { staff: line(t.staff, 40) } : {}),   // v3.83 the staff member's desk
     status: STATUSES.includes(t.status) ? t.status : 'queued', ...(t.reason ? { reason: line(t.reason, 40) } : {}),
     at: now, brief: `tasks/${t.id}/brief.md`, commits: [], prs: [], read: false,
-    ...(typeof t.after === 'string' && t.after ? { after: t.after.slice(0, 64) } : {}),   // v3.77 the stage it waits for
+    ...(typeof t.after === 'string' && t.after ? { after: t.after.slice(0, 64) } : {}),   // v3.79 the stage it waits for
   };
   const tasks = [task, ...board.tasks.filter((x) => x.id !== t.id)];
   let requests = board.requests;
@@ -296,7 +296,7 @@ function expireHeld(board, now = Date.now(), ms = HELD_MS) {
 }
 /** At startup: an open task whose queue entry is gone (isKnown false) becomes lost; no automatic re-dispatch. A held
  *  card (awaiting-consent, v3.47) was never queued: it stays answerable across a restart. */
-// v3.77 a waiting stage was never queued either: it stays and is settled (released, blocked, expired) by src/hq-chain.js
+// v3.79 a waiting stage was never queued either: it stays and is settled (released, blocked, expired) by src/hq-chain.js
 const markLost = (board, isKnown, now = Date.now()) => ({ ...board, tasks: board.tasks.map((t) => (OPEN(t) && t.status !== 'awaiting-consent' && t.status !== 'waiting' && !isKnown(t) ? { ...t, status: 'lost', finishedAt: now } : t)) });
 /** 500 tasks / 90 days → { board, removed: task ids whose folders go }. */
 function prune(board, now = Date.now()) {
