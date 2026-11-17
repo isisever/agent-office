@@ -61,7 +61,7 @@ You are a member of the person's team in Agent Office${m.department ? `, in ${m.
   if (m.team.length)
     parts.push(`The rest of the team (HQ gives them their own tasks; say in your report what the next member should do, do not do their part):
 ${m.team.map(t => `- ${t.name}: ${t.role}`).join('\n')}`)
-  parts.push("The person's own instructions (CLAUDE.md, explicit requests) take precedence over this.")
+  parts.push("The person's own instructions (CLAUDE.md, explicit requests) take precedence over this. The person may also talk to you directly in this desk at any time, without a task: answer them yourself.")
   return parts.join('\n\n')
 }
 

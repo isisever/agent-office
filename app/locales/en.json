@@ -681,6 +681,8 @@
     "mailHint": "Accounts it may read and draft from. It never sends: drafts come to you in the MAIL panel. Every action of a desk that reads mail (files, commands, web, other tools) waits for you; projects with \"Skip permissions\" get no mail.",
     "mailNone": "No mail account connected; add one in the MAIL panel.",
     "personal": "Personal",
+    "talk": "Talk",
+    "talkTitle": "Talk to {name} directly: opens the member's desk and its input. This opens no task on the board.",
     "personalTitle": "The member's own workspace, for work outside any project (made on first use in Documents/Agent Office)"
   },
   "chat": {

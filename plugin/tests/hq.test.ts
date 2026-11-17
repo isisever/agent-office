@@ -26,6 +26,9 @@ test('routines (v3.47): the HQ section explains [routine <request>] prompts, OK:
   // v3.89: no amend tool; the two ways to change a running task
   expect(hqText()).toContain('A running task cannot be changed from here')
   expect(hqText()).toContain('the task stays followed')
+  // v3.90: a short remark goes to the member's desk, not to a new task
+  expect(hqText()).toContain('the Talk button on the member')
+  expect(hqText()).toContain('dispatch only when it is new work')
   expect(sectionKind({ hq: false, manager: true })).toBe('manager')   // the routine line never reaches a manager-only session
 })
 
