@@ -2179,6 +2179,10 @@ function tagRoutineRec(id, rrun) {
   const rec = id && rrun && rrun.kind !== 'hq' && ROUT.OPEN_RUN.has(rrun.status) ? loadDispatches().get(id) : null;   // never a run that already ended
   if (rec) { rec.routine = rrun.id; saveDispatches(); }
 }
+/** v3.91 a task HQ sent on its own (no dialog): the person is told right then (the same notice a held card uses). */
+function notifyInitiative(title, target) {
+  notify(T('main.hqInitiativeSent', { title: LC.cleanLine(String(title || ''), 80), target: LC.cleanLine(String(target || ''), 80) }), '', null);
+}
 /** HQ's office_dispatch: caps, consent, auto-start of a local target, 4 h queue wait, dispatcher-side pacing for devices. */
 // v3.79 waitingId: a released stage (approved at creation, src/hq-chain.js) takes over its waiting row instead of a new one
 // v3.91 sentByInitiative: a first stage HQ sent on its own (decided in hqDispatchStages); its row is marked
@@ -2219,15 +2223,29 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
   if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
-  // v3.91 the initiative setting: a local follow-up of a request the person typed needs no dialog (HQ.initiativeFor);
-  // never a member's personal workspace that would be made by it
-  const byInitiative = sentByInitiative || (consent === 'app' && !personal && HQ.initiativeFor({ initiative: state.hq?.initiative === true, remote, request, minter: hqMinter, board: loadHqBoard() }));
-  if (consent === 'app' && !byInitiative) {
+  // v3.91 the initiative setting: a local follow-up of a request the person typed needs no dialog when its target
+  // (project + member) is one the person already consented to for this request and the project does not run with
+  // Skip permissions (HQ.initiativeFor); never a member's personal workspace that would be made by it. The target is
+  // read fresh at every check.
+  const initiativeArgs = (counted) => {
+    const p = remote ? null : byName(state.projects, args.project);
+    const m = args.staff && teamOn() ? ST.findMember(state.staff, args.staff) : null;
+    return { initiative: state.hq?.initiative === true, remote, request, minter: hqMinter, counted,
+      targets: [{ projectId: p?.id || '', staffId: args.staff ? m?.id || null : '', skip: !p || P.skipPermissionsArgs(p).length > 0 }] };
+  };
+  const askPerson = async () => {
     if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
     // two dispatches can wait on dialogs at once: re-check the caps on the fresh board after the answer
     const late = HQ.capReason(loadHqBoard(), request);   // never an approved held task: approved skips the dialog
-    if (late) return { status: 'rejected', reason: late };
+    return late ? { status: 'rejected', reason: late } : null;
+  };
+  let byInitiative = sentByInitiative;
+  if (consent === 'app' && !personal) {
+    // decided and counted in one step: an overlapping dispatch sees the higher count before this task is queued
+    const took = HQ.takeInitiative(loadHqBoard(), initiativeArgs(false));
+    if (took.ok) { saveHqBoard(took.board); byInitiative = true; }
   }
+  if (consent === 'app' && !byInitiative) { const refused = await askPerson(); if (refused) return refused; }
   // v3.83 fix: only now, with consent given (or not needed), is anything made: the member's personal workspace (its
   // folder and project), the desk tab and, in a parallel project, the desk's worktree. Declined: nothing was created.
   if (args.staff) {
@@ -2243,6 +2261,14 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     if (d.reason) return { status: 'rejected', reason: d.reason, ...(d.hint ? { hint: d.hint } : {}) };
     args = { ...args, desk: d.desk, staffName: d.staffName };
   }
+  // v3.91 the rule again right before the task is queued (the desk was opened meanwhile; a first stage waited on its
+  // chain's dialogs): count, 2 h window, caps, target, Skip permissions, the setting. No longer true: the dialog.
+  if (byInitiative && !HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })) {
+    byInitiative = false;
+    const refused = await askPerson();
+    if (refused) return refused;
+  }
+  const staffId = args.staff && teamOn() ? ST.findMember(state.staff, args.staff)?.id || '' : '';
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
   const row = (r, extra) => {
     if (waitingId) {
@@ -2262,7 +2288,9 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     const startId = args.desk || p?.id;   // v3.83 a staff member's desk, else the project's boss tab
     if (startId && !terms.has(startId)) projectOp('start', startId);   // a stopped or sleeping target starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
-    if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName } : {}) });
+    if (p) row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName, ...(staffId ? { staffId } : {}) } : {}) });
+    // v3.91 no dialog was shown: the person is told at the moment it is sent
+    if (p && byInitiative && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') notifyInitiative(args.title, args.staffName ? `${args.staffName} @ ${p.name}` : p.name);
     else if (waitingId) row(r, {});   // v3.79 a released stage whose project is gone: its row is refused
     // v3.47 a routine's own project run: its report finishes the run and writes no HQ inbox row
     tagRoutineRec(/** @type {any} */ (r).id, rrun);
@@ -2343,7 +2371,7 @@ async function hqDispatchStages(args, request, rrun) {
         if (!m) return no(teamOn() ? 'unknown-staff' : 'no-team', { stage: s.n });
         const have = ST.personalOf(state.projects, m.id);
         if (have) s.project = have.id;
-        else { Object.assign(s, { staff: m.name, personalFor: m, pub: 'self', machineName: selfName(), projectName: personalFolderName(m), projectId: '' }); continue; }
+        else { Object.assign(s, { staff: m.name, staffId: m.id, personalFor: m, pub: 'self', machineName: selfName(), projectName: personalFolderName(m), projectId: '' }); continue; }
       }
       const p = byName(state.projects, s.project);
       if (!p) return no('unknown-project', { stage: s.n });
@@ -2353,6 +2381,7 @@ async function hqDispatchStages(args, request, rrun) {
         if (!m) return no(teamOn() ? 'unknown-staff' : 'no-team', { stage: s.n });
         if (!ST.mayWork(m, p)) return no('staff-not-allowed', { stage: s.n, hint: ST.NOT_ALLOWED_HINT });
         s.staff = m.name;
+        s.staffId = m.id;   // v3.91 the target check goes by the member's id
       }
       Object.assign(s, { pub: 'self', machineName: selfName(), projectName: p.name, projectId: p.id });
     } else {
@@ -2365,12 +2394,26 @@ async function hqDispatchStages(args, request, rrun) {
   const caps = () => CH.capFor(loadHqBoard(), request, stages.length, { maxOpen: HQ.MAX_OPEN, maxPerRequest: HQ.MAX_PER_REQUEST });
   if (caps()) return no(caps());
   const local = stages.filter((s) => !s.remote);
-  // v3.91 the initiative setting covers the local stages together (all of them count); a personal workspace that is not made yet always asks
+  // v3.91 the initiative setting covers the local stages together: every one of them counts and every one's target
+  // (project + member) must be one the person consented to for this request, without Skip permissions; a personal
+  // workspace that is not made yet has no project id, so it always asks
   const asks = local.length > 0 && HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote: false, request, minter: hqMinter, routineNoAsk: false }) !== 'none';
-  const byInitiative = asks && !local.some((s) => s.personalFor) && HQ.initiativeFor({ initiative: state.hq?.initiative === true, remote: false, request, minter: hqMinter, board: loadHqBoard(), n: local.length });
+  const initiativeArgs = (counted) => ({ initiative: state.hq?.initiative === true, remote: false, request, minter: hqMinter, counted,
+    targets: local.map((s) => { const p = s.personalFor || !s.projectId ? null : P.findProject(state, s.projectId); return { projectId: p?.id || '', staffId: s.staff ? s.staffId || null : '', skip: !p || P.skipPermissionsArgs(p).length > 0 }; }) });
+  let byInitiative = false;
+  if (asks) {
+    // decided and counted in one step: an overlapping dispatch sees the higher count before these stages are queued
+    const took = HQ.takeInitiative(loadHqBoard(), initiativeArgs(false));
+    if (took.ok) { saveHqBoard(took.board); byInitiative = true; }
+  }
   if (asks && !byInitiative && !(await confirmHqStages(local))) return no('declined');
-  if (byInitiative) for (const s of local) s.byInitiative = true;
   for (const s of stages.filter((x) => x.remote)) if (!(await confirmHqDispatch(s, true))) return no('declined', { stage: s.n });
+  // v3.91 the remote dialogs were open meanwhile: the rule again (count, 2 h window, caps, targets); no longer true: the dialog
+  if (byInitiative && !HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })) {
+    byInitiative = false;
+    if (!(await confirmHqStages(local))) return no('declined');
+  }
+  if (byInitiative) for (const s of local) s.byInitiative = true;
   if (caps()) return no(caps());   // dialogs can overlap: the caps again on the fresh board
   // consent given. The dialogs were open meanwhile: every member a personal stage is for must still be there and the
   // team on, else nothing is created. A workspace is made only when its stage goes: now for the first stage, at
@@ -2401,7 +2444,8 @@ async function hqDispatchStages(args, request, rrun) {
 /** A waiting stage: its board row, brief and frozen text (stage.json). → its id. */
 function hqWaitRow(s, request, after) {
   const id = `w${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
-  saveHqBoard(HQ.addTask(loadHqBoard(), { id, request, title: s.title, task: s.task, status: CH.WAITING, after, pub: s.pub, machineName: s.machineName, project: s.projectName, ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}), ...(s.byInitiative ? { byInitiative: true } : {}) }));
+  saveHqBoard(HQ.addTask(loadHqBoard(), { id, request, title: s.title, task: s.task, status: CH.WAITING, after, pub: s.pub, machineName: s.machineName, project: s.projectName, ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff, ...(s.staffId ? { staffId: s.staffId } : {}) } : {}), ...(s.byInitiative ? { byInitiative: true } : {}) }));
+  if (s.byInitiative) notifyInitiative(s.title, s.staff ? `${s.staff} @ ${s.projectName}` : s.projectName);   // v3.91 no dialog was shown
   const f = HQ.taskFile(hqDir(), id, 'brief.md');
   if (f) try {
     fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });

@@ -172,21 +172,49 @@ function consentFor({ setting, remote, request, minter, routineNoAsk = false }) 
 /**
  * v3.91 HQ's initiative (the `initiative` setting, default off): a dispatch that consentFor would ask about needs no
  * consent when ALL hold: the target is local; the request id was minted from a prompt the person typed (never a
- * routine's id, never 'adhoc'); it is younger than 2 h; the request still has a task on the board (the same piece of
- * work; removed rows are gone); the caps (8 per request counting removed rows, 12 open) leave room for the `n` tasks;
+ * routine's id, never 'adhoc'); it is younger than 2 h; EVERY target (`targets`: one per task, `{ projectId, staffId,
+ * skip }`) is one the person already consented to for this request (consentedTarget) and its project does not run
+ * with Skip permissions (`skip`); the caps (8 per request counting removed rows, 12 open) leave room for the tasks;
  * and at most MAX_INITIATIVE tasks were sent this way for the request (counted on the request record, so a removed
- * row still counts). Anything else → false: consentFor's answer stands.
+ * row still counts). `counted`: these tasks are already in that count (takeInitiative ran; the re-check after a wait).
+ * Anything else → false: consentFor's answer stands.
  */
-function initiativeFor({ initiative, remote, request, minter, board, n = 1, now = Date.now() }) {
-  if (initiative !== true || remote || !isStr(request) || request === ADHOC || !(n >= 1)) return false;
+function initiativeFor({ initiative, remote, request, minter, board, targets, counted = false, now = Date.now() }) {
+  const n = Array.isArray(targets) ? targets.length : 0;
+  if (initiative !== true || remote || !isStr(request) || request === ADHOC || n < 1) return false;
   if (minter?.isRoutine?.(request) || !typedWithin(minter, request, now)) return false;
   const mine = (board?.tasks || []).filter((t) => t.request === request);
   if (!mine.length) return false;
+  if (!targets.every((t) => t && t.skip !== true && consentedTarget(board, request, t))) return false;
   if (openTasks(board).length + n > MAX_OPEN || mine.length + removedOf(board, request) + n > MAX_PER_REQUEST) return false;
-  return initiativeSent(board, request) + n <= MAX_INITIATIVE;
+  return initiativeSent(board, request) + (counted ? 0 : n) <= MAX_INITIATIVE;
+}
+/**
+ * v3.91 a target the person consented to for this request: a local row of the SAME request that was not sent by
+ * initiative (a dialog, the live typed id, or a consented stage chain: each of its stages' rows) went to the same
+ * project id and the same staff member id (or both without a member). A member's personal workspace is a project
+ * like any other here, so it counts only after a consented row went to that workspace for that member; one that is
+ * not made yet has no project id and never counts. A row with a member but no recorded id (older rows) matches nothing.
+ */
+function consentedTarget(board, request, target) {
+  const pid = typeof target?.projectId === 'string' ? target.projectId : '';
+  const sid = target?.staffId === undefined ? '' : target.staffId;
+  if (!pid || typeof sid !== 'string') return false;
+  return (board?.tasks || []).some((t) => t.request === request && t.byInitiative !== true && t.machine === 'self' && t.projectId === pid
+    && (t.staff ? t.staffId || null : '') === sid);
 }
 /** v3.91 the tasks HQ sent on its own for a request (kept on the request record: removing a row does not lower it). */
 const initiativeSent = (board, request) => Math.max(0, Number((board?.requests || []).find((r) => r.id === request)?.initiative) || 0);
+/**
+ * v3.91 decide and count in one step: when initiativeFor holds, the request record's `initiative` goes up by the
+ * number of targets at once, so a second call that overlaps (its task not queued yet) sees the higher count. The count
+ * is not given back when the task is refused later or the re-check falls back to the dialog. → { ok, board }.
+ */
+function takeInitiative(board, o) {
+  const targets = Array.isArray(o?.targets) ? o.targets : [];
+  if (!initiativeFor({ ...o, board, targets, counted: false }) || !(board.requests || []).some((r) => r.id === o.request)) return { ok: false, board };
+  return { ok: true, board: { ...board, requests: board.requests.map((r) => (r.id === o.request ? { ...r, initiative: initiativeSent(board, o.request) + targets.length } : r)) } };
+}
 
 /** Typed-prompt detection for the HQ pty: true when this write submits a typed line (Enter after typed text). */
 const submitsTyped = (draftBefore, data) => Boolean(draftBefore) && String(data).includes('\r') && !String(data).startsWith('\u001b[200~');
@@ -252,7 +280,7 @@ const depthRefused = (board, fromTab) => fromTab !== HQ_ID && board.tasks.some((
 function addTask(board, t, now = Date.now()) {
   const task = {
     id: t.id, request: t.request || '', title: line(t.title || t.task || '', TITLE_MAX), machine: t.pub === 'self' || !t.pub ? 'self' : t.pub,
-    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}), ...(t.staff ? { staff: line(t.staff, 40) } : {}),   // v3.83 the staff member's desk
+    machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}), ...(t.staff ? { staff: line(t.staff, 40), ...(isStr(t.staffId) ? { staffId: t.staffId.slice(0, 64) } : {}) } : {}),   // v3.83 the staff member's desk (v3.91 its id: the target check)
     status: STATUSES.includes(t.status) ? t.status : 'queued', ...(t.reason ? { reason: line(t.reason, 40) } : {}),
     at: now, brief: `tasks/${t.id}/brief.md`, commits: [], prs: [], read: false,
     ...(typeof t.after === 'string' && t.after ? { after: t.after.slice(0, 64) } : {}),   // v3.79 the stage it waits for
@@ -262,8 +290,8 @@ function addTask(board, t, now = Date.now()) {
   let requests = board.requests;
   if (task.request) {
     const r = requests.find((x) => x.id === task.request);
-    requests = r ? requests.map((x) => (x === r ? { ...x, tasks: [...x.tasks, task.id], done: false, ...(task.byInitiative ? { initiative: (Number(x.initiative) || 0) + 1 } : {}) } : x))
-      : [{ id: task.request, ...(task.byInitiative ? { initiative: 1 } : {}), at: now, prompt: line(redact(t.prompt || ''), 150), tasks: [task.id], done: false, ...(t.routine ? { routine: line(t.routine, 16), run: line(t.run, 16) } : {}) }, ...requests];
+    requests = r ? requests.map((x) => (x === r ? { ...x, tasks: [...x.tasks, task.id], done: false } : x))
+      : [{ id: task.request, at: now, prompt: line(redact(t.prompt || ''), 150), tasks: [task.id], done: false, ...(t.routine ? { routine: line(t.routine, 16), run: line(t.run, 16) } : {}) }, ...requests];
   }
   return { tasks, requests };
 }
@@ -489,7 +517,7 @@ module.exports = {
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, MAX_INITIATIVE, INITIATIVE_MS, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
-  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, initiativeFor, holdsOffId, submitsTyped,
+  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, initiativeFor, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
   taskFile, requestFile, reportMd, boardView, createPacer, mergePeerCache, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
 };

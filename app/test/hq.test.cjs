@@ -762,13 +762,14 @@ test('v3.89 amendment: a report the person\'s own prompt may have shaped is mark
 });
 
 // --- v3.91 HQ's initiative: follow-up tasks of a typed request without the dialog (setting `initiative`, default off)
+const WEB = { projectId: 'p-web' };   // the target the person consented to in initiativeCase
 const initiativeCase = () => {
   const clock = { t: 1000 };
   const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
   const id = m.mint();
-  const board = HQ.addTask(HQ.emptyBoard(), { id: 't1', request: id, title: 'first', pub: 'self', project: 'web', status: 'reported' }, clock.t);
+  const board = HQ.addTask(HQ.emptyBoard(), { id: 't1', request: id, title: 'first', pub: 'self', project: 'web', projectId: 'p-web', status: 'reported' }, clock.t);
   m.clear();   // a report came in: the typed id is no longer live
-  const ask = (over = {}) => HQ.initiativeFor({ initiative: true, remote: false, request: id, minter: m, board, now: clock.t, ...over });
+  const ask = (over = {}) => HQ.initiativeFor({ initiative: true, remote: false, request: id, minter: m, board, targets: [WEB], now: clock.t, ...over });
   return { clock, m, id, board, ask };
 };
 
@@ -834,7 +835,7 @@ test('initiative: the per-request cap (removed rows count) and the open cap', ()
   let full = board;
   for (let i = 0; i < 6; i++) full = HQ.addTask(full, { id: `f${i}`, request: id, title: 'x', pub: 'self', project: 'web', status: 'reported' }, clock.t);
   assert.equal(ask({ board: full }), true);    // 7 of 8
-  assert.equal(ask({ board: full, n: 2 }), false);
+  assert.equal(ask({ board: full, targets: [WEB, WEB] }), false);
   const removed = HQ.removeTask(full, 'f0');   // 6 rows + 1 removed = 7
   assert.equal(ask({ board: removed }), true);
   const capped = HQ.addTask(removed, { id: 'f9', request: id, title: 'x', pub: 'self', project: 'web', status: 'reported' }, clock.t);   // 7 rows + 1 removed
@@ -843,41 +844,143 @@ test('initiative: the per-request cap (removed rows count) and the open cap', ()
   let open = board;
   for (let i = 0; i < 11; i++) open = HQ.addTask(open, { id: `o${i}`, request: `other${i}`, title: 'x', pub: 'self', project: 'web', status: 'running' }, clock.t);
   assert.equal(ask({ board: open }), true);    // 11 open
-  assert.equal(ask({ board: open, n: 2 }), false);
+  assert.equal(ask({ board: open, targets: [WEB, WEB] }), false);
   open = HQ.addTask(open, { id: 'o11', request: 'other11', title: 'x', pub: 'self', project: 'web', status: 'running' }, clock.t);
   assert.equal(HQ.capReason(open, id), 'open-cap');
   assert.equal(ask({ board: open }), false);
 });
 
-test('initiative: at most 4 tasks per request are sent this way, a removed one still counts; rows carry byInitiative', () => {
-  const { clock, id, board, ask } = initiativeCase();
+test('initiative: at most 4 tasks per request, counted at the decision; a removed one still counts; rows carry byInitiative', () => {
+  const { clock, m, id, board } = initiativeCase();
+  const o = (over = {}) => ({ initiative: true, remote: false, request: id, minter: m, targets: [WEB], now: clock.t, ...over });
   assert.equal(board.tasks[0].byInitiative, undefined);
   assert.equal(HQ.boardView(board)[0].byInitiative, undefined);
   let b = board;
   for (let i = 0; i < HQ.MAX_INITIATIVE; i++) {
-    assert.equal(ask({ board: b }), true, `follow-up ${i + 1}`);
-    b = HQ.addTask(b, { id: `i${i}`, request: id, title: 'x', pub: 'self', project: 'web', status: 'reported', byInitiative: true }, clock.t);
+    const took = HQ.takeInitiative(b, o());
+    assert.equal(took.ok, true, `follow-up ${i + 1}`);
+    assert.equal(HQ.initiativeSent(took.board, id), i + 1);   // the count goes up at the decision, before any row
+    assert.equal(took.board.tasks.length, b.tasks.length);
+    b = HQ.addTask(took.board, { id: `i${i}`, request: id, title: 'x', pub: 'self', project: 'web', projectId: 'p-web', status: 'reported', byInitiative: true }, clock.t);
+    assert.equal(HQ.initiativeSent(b, id), i + 1);            // the row itself does not count again
   }
-  assert.equal(b.requests.find((r) => r.id === id).initiative, 4);
   assert.equal(b.tasks.find((t) => t.id === 'i0').byInitiative, true);
   assert.equal(HQ.boardView(b).find((t) => t.id === 'i0').byInitiative, true);
-  assert.equal(ask({ board: b }), false);   // the fifth asks
-  assert.equal(ask({ board: HQ.removeTask(b, 'i0') }), false);   // removing one does not give it back
-  const three = HQ.addTask(HQ.addTask(HQ.addTask(board, { id: 'a', request: id, byInitiative: true }, clock.t), { id: 'b', request: id, byInitiative: true }, clock.t), { id: 'c', request: id, byInitiative: true }, clock.t);
-  assert.equal(ask({ board: three, n: 1 }), true);
-  assert.equal(ask({ board: three, n: 2 }), false);   // a `then` chain counts every local stage
-  assert.equal(ask({ board, n: 0 }), false);
+  const fifth = HQ.takeInitiative(b, o());
+  assert.equal(fifth.ok, false);   // the fifth asks
+  assert.equal(fifth.board, b);    // and nothing is counted
+  assert.equal(HQ.takeInitiative(HQ.removeTask(b, 'i0'), o()).ok, false);   // removing one does not give it back
+  assert.equal(HQ.takeInitiative(board, o({ targets: [] })).ok, false);
+  assert.equal(HQ.takeInitiative(board, o({ targets: undefined })).ok, false);
 });
 
-test('initiative wiring: beside consentFor in both dispatch paths, remote stages still ask, the minter is not weakened', () => {
+test('initiative: two overlapping calls cannot both pass; a chain counts every local stage; the re-check does not count twice', () => {
+  const { clock, m, id, board } = initiativeCase();
+  const o = (over = {}) => ({ initiative: true, remote: false, request: id, minter: m, targets: [WEB], now: clock.t, ...over });
+  const three = HQ.takeInitiative(board, o({ targets: [WEB, WEB, WEB] }));   // a `then` chain of three local stages
+  assert.equal(three.ok, true);
+  assert.equal(HQ.initiativeSent(three.board, id), 3);
+  assert.equal(HQ.takeInitiative(three.board, o({ targets: [WEB, WEB] })).ok, false);
+  const first = HQ.takeInitiative(three.board, o());    // call A decides; its task is not queued yet (it awaits a desk)
+  assert.equal(first.ok, true);
+  assert.equal(first.board.tasks.length, board.tasks.length);
+  const second = HQ.takeInitiative(first.board, o());   // call B overlaps: it sees A's count
+  assert.equal(second.ok, false);
+  assert.equal(HQ.initiativeSent(second.board, id), 4);
+  // A's re-check right before queueing: its own task is already counted
+  assert.equal(HQ.initiativeFor({ ...o(), board: first.board, counted: true }), true);
+  assert.equal(HQ.initiativeFor({ ...o(), board: first.board }), false);
+  // the re-check sees what changed while it waited: the 2 h window, the setting, the consented row
+  assert.equal(HQ.initiativeFor({ ...o({ now: 1000 + HQ.INITIATIVE_MS }), board: first.board, counted: true }), false);
+  assert.equal(HQ.initiativeFor({ ...o({ initiative: false }), board: first.board, counted: true }), false);
+  assert.equal(HQ.initiativeFor({ ...o(), board: HQ.removeTask(first.board, 't1'), counted: true }), false);
+});
+
+test('initiative target: only a project the person consented to for this request', () => {
+  const { clock, id, board, ask } = initiativeCase();
+  assert.equal(ask({ targets: [{ projectId: 'p-web' }] }), true);
+  assert.equal(ask({ targets: [{ projectId: 'p-infra' }] }), false);          // another project: the dialog
+  assert.equal(ask({ targets: [{ projectId: '' }] }), false);
+  assert.equal(ask({ targets: [{}] }), false);
+  assert.equal(ask({ targets: [null] }), false);
+  assert.equal(ask({ targets: [WEB, { projectId: 'p-infra' }] }), false);     // a chain: every local stage's target
+  // a row of ANOTHER request to that project does not help
+  const other = HQ.addTask(board, { id: 'o1', request: 'rother', title: 'x', pub: 'self', project: 'infra', projectId: 'p-infra' }, clock.t);
+  assert.equal(ask({ board: other, targets: [{ projectId: 'p-infra' }] }), false);
+  // a remote row with the same project id is not a local target
+  const remote = HQ.addTask(board, { id: 'r1', request: id, title: 'x', pub: 'devpub', project: 'infra', projectId: 'p-infra' }, clock.t);
+  assert.equal(ask({ board: remote, targets: [{ projectId: 'p-infra' }] }), false);
+  // a consented chain: each of its stages' targets counts, waiting rows too
+  const chain = HQ.addTask(board, { id: 'w1', request: id, title: 'x', pub: 'self', project: 'infra', projectId: 'p-infra', status: 'waiting', after: 't1' }, clock.t);
+  assert.equal(ask({ board: chain, targets: [{ projectId: 'p-infra' }] }), true);
+  assert.equal(HQ.consentedTarget(chain, id, { projectId: 'p-infra' }), true);
+  assert.equal(HQ.consentedTarget(chain, 'rother', { projectId: 'p-infra' }), false);
+});
+
+test('initiative target: a row sent by initiative does not make its target eligible', () => {
+  const { clock, id, board, ask } = initiativeCase();
+  const b = HQ.addTask(board, { id: 'i1', request: id, title: 'x', pub: 'self', project: 'infra', projectId: 'p-infra', byInitiative: true }, clock.t);
+  assert.equal(ask({ board: b, targets: [{ projectId: 'p-infra' }] }), false);
+  assert.equal(ask({ board: b }), true);   // the consented target still is
+});
+
+test('initiative target: the same project with another member, or with / without a member, asks', () => {
+  const { clock, id, board, ask } = initiativeCase();
+  assert.equal(ask({ targets: [{ projectId: 'p-web', staffId: 's-ada' }] }), false);   // the boss was consented, not the member
+  const b = HQ.addTask(board, { id: 't2', request: id, title: 'x', pub: 'self', project: 'api', projectId: 'p-api', staff: 'Ada', staffId: 's-ada' }, clock.t);
+  assert.equal(b.tasks[0].staffId, 's-ada');
+  assert.equal(HQ.boardView(b)[0].staffId, undefined);   // the id stays in the app
+  assert.equal(ask({ board: b, targets: [{ projectId: 'p-api', staffId: 's-ada' }] }), true);
+  assert.equal(ask({ board: b, targets: [{ projectId: 'p-api', staffId: 's-bob' }] }), false);   // same project, other member
+  assert.equal(ask({ board: b, targets: [{ projectId: 'p-api' }] }), false);                     // same project, its boss
+  assert.equal(ask({ board: b, targets: [{ projectId: 'p-api', staffId: '' }] }), false);
+  assert.equal(ask({ board: b, targets: [{ projectId: 'p-api', staffId: null }] }), false);      // a member the app could not resolve
+  assert.equal(ask({ board: b, targets: [{ projectId: 'p-web', staffId: 's-ada' }] }), false);   // same member, other project
+  // an older row that names a member without an id matches nothing (not the boss either)
+  const old = HQ.addTask(board, { id: 't3', request: id, title: 'x', pub: 'self', project: 'api', projectId: 'p-api', staff: 'Ada' }, clock.t);
+  assert.equal(ask({ board: old, targets: [{ projectId: 'p-api', staffId: 's-ada' }] }), false);
+  assert.equal(ask({ board: old, targets: [{ projectId: 'p-api' }] }), false);
+});
+
+test('initiative target: a member\'s personal workspace only after a consented row of this request went there', () => {
+  const { clock, id, board, ask } = initiativeCase();
+  const own = { projectId: 'p-ada-own', staffId: 's-ada' };   // Ada's personal workspace is a project of its own
+  assert.equal(ask({ targets: [own] }), false);
+  // Ada worked in the web project with consent: her personal workspace is still another target
+  const inWeb = HQ.addTask(board, { id: 't2', request: id, title: 'x', pub: 'self', project: 'web', projectId: 'p-web', staff: 'Ada', staffId: 's-ada' }, clock.t);
+  assert.equal(ask({ board: inWeb, targets: [own] }), false);
+  // a workspace that is not made yet has no project id: its waiting row makes nothing eligible
+  const unmade = HQ.addTask(board, { id: 'w1', request: id, title: 'x', pub: 'self', project: 'Ada', staff: 'Ada', staffId: 's-ada', status: 'waiting', after: 't1' }, clock.t);
+  assert.equal(ask({ board: unmade, targets: [{ projectId: '', staffId: 's-ada' }] }), false);
+  assert.equal(ask({ board: unmade, targets: [own] }), false);
+  const byHq = HQ.addTask(board, { id: 'i1', request: id, title: 'x', pub: 'self', project: 'Ada', projectId: 'p-ada-own', staff: 'Ada', staffId: 's-ada', byInitiative: true }, clock.t);
+  assert.equal(ask({ board: byHq, targets: [own] }), false);
+  const consented = HQ.addTask(board, { id: 't4', request: id, title: 'x', pub: 'self', project: 'Ada', projectId: 'p-ada-own', staff: 'Ada', staffId: 's-ada' }, clock.t);
+  assert.equal(ask({ board: consented, targets: [own] }), true);
+  assert.equal(ask({ board: consented, targets: [{ projectId: 'p-ada-own', staffId: 's-bob' }] }), false);
+});
+
+test('initiative target: a project with Skip permissions always asks', () => {
+  const { m, id, board, ask } = initiativeCase();
+  assert.equal(ask({ targets: [{ projectId: 'p-web', skip: true }] }), false);
+  assert.equal(ask({ targets: [{ projectId: 'p-web', skip: false }] }), true);
+  assert.equal(ask({ targets: [WEB, { projectId: 'p-web', skip: true }] }), false);   // one stage is enough
+  assert.equal(HQ.takeInitiative(board, { initiative: true, remote: false, request: id, minter: m, targets: [{ projectId: 'p-web', skip: true }], now: 1000 }).ok, false);
+});
+
+test('initiative wiring: decided and counted by HQ.takeInitiative, checked again before queueing, the person is told', () => {
   const d = fnBody('hqDispatch');
-  assert.match(d, /consent === 'app' && !personal && HQ\.initiativeFor\(\{ initiative: state\.hq\?\.initiative === true, remote, request/);
-  assert.match(d, /if \(consent === 'app' && !byInitiative\) \{/);
+  assert.equal((d.match(/HQ\.takeInitiative\(loadHqBoard\(\), initiativeArgs\(false\)\)/g) || []).length, 1);
+  assert.ok(d.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') > d.lastIndexOf('await hqStaffDesk('));   // after the last wait
+  assert.ok(d.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') < d.indexOf('officeDispatch(HQ.HQ_ID'));  // before queueing
+  assert.match(d, /skip: !p \|\| P\.skipPermissionsArgs\(p\)\.length > 0/);
   assert.match(d, /consent === 'held' \|\| HQ\.holdsOffId/);   // a routine's hold comes first, unchanged
-  assert.match(d, /byInitiative && !remote \? \{ byInitiative: true \}/);
+  assert.match(d, /notifyInitiative\(args\.title/);
   const s = fnBody('hqDispatchStages');
-  assert.match(s, /HQ\.initiativeFor\(\{ initiative: state\.hq\?\.initiative === true, remote: false, request, minter: hqMinter, board: loadHqBoard\(\), n: local\.length \}\)/);
+  assert.equal((s.match(/HQ\.takeInitiative\(loadHqBoard\(\), initiativeArgs\(false\)\)/g) || []).length, 1);
+  assert.ok(s.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') > s.indexOf('await confirmHqDispatch(s, true)'));   // after the remote dialogs
   assert.match(s, /for \(const s of stages\.filter\(\(x\) => x\.remote\)\) if \(!\(await confirmHqDispatch\(s, true\)\)\) return no\('declined'/);
+  assert.match(fnBody('notifyInitiative'), /notify\(T\('main\.hqInitiativeSent'/);
   assert.match(fnBody('inboxRow'), /hqMinter\.clear\(\)/);
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'hq.js'), 'utf8'), /isLive\(id\) \{ return Boolean\(current\) && current\.id === id && now\(\) - current\.at <= MINT_MS; \}/);
 });

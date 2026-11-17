@@ -118,18 +118,18 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const MAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-function stageHarness({ noAsk = false, allow = true } = {}) {
+function stageHarness({ noAsk = false, allow = true, initiative = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-chain-'));
-  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec'];
+  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative'];
   const lines = ['const isHere', 'const byName', 'const officeName', 'const routineRunOfRequest', 'const openHqRoutineRequest', 'const routineById', 'const readJson'];
   const src = [
     ...lines.map((l) => { const x = MAIN_SRC.split('\n').find((y) => y.startsWith(l)); assert.ok(x, l); return x; }),
     ...names.map((n) => { const i = MAIN_SRC.search(new RegExp(`^(async )?function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return MAIN_SRC.slice(i, MAIN_SRC.indexOf('\n}\n', i) + 2); }),
   ].join('\n');
-  const env = { board: HQ.emptyBoard(), sent: [], dialogs: [], remoteDialogs: 0, rows: [], n: 0, allow, dir,
-    state: { projects: [{ id: 'pa', name: 'office', dir: '/w/office' }, { id: 'pb', name: 'erp', dir: '/w/erp' }], hq: { enabled: true, dispatchWithoutAsking: noAsk }, routines: [] } };
+  const env = { board: HQ.emptyBoard(), sent: [], dialogs: [], remoteDialogs: 0, rows: [], notices: [], n: 0, allow, dir,
+    state: { projects: [{ id: 'pa', name: 'office', dir: '/w/office' }, { id: 'pb', name: 'erp', dir: '/w/erp' }], hq: { enabled: true, dispatchWithoutAsking: noAsk, ...(initiative ? { initiative: true } : {}) }, routines: [] } };
   const prelude = `
-    const { HQ, CH, LC, SF, fs, path, crypto } = env.mods; const state = env.state; const OM = { TASK_MAX: 8192 };
+    const { HQ, CH, LC, SF, P, fs, path, crypto } = env.mods; const state = env.state; const OM = { TASK_MAX: 8192 };
     const hqMinter = HQ.createMinter(); env.minter = hqMinter; const hqPacer = HQ.createPacer();
     const win = { isFocused: () => true, isDestroyed: () => false }; const T = (k, v) => k + (v ? JSON.stringify(v) : '');
     const dialog = { showMessageBox: async (_w, o) => { env.dialogs.push(o); return { response: env.allow ? 0 : 1 }; } };
@@ -137,13 +137,13 @@ function stageHarness({ noAsk = false, allow = true } = {}) {
     const rt = () => ({ runs: [] }); const saveRt = () => {}; const hqDir = () => env.dir;
     const loadHqBoard = () => env.board; const saveHqBoard = (b) => { env.board = b; };
     const loadDispatches = () => new Map(); const saveDispatches = () => {};
-    const selfName = () => 'Mac1'; const peerCache = () => ({}); const notify = () => {}; const routinesOnDone = (d) => d;
+    const selfName = () => 'Mac1'; const peerCache = () => ({}); const notify = (title) => { env.notices.push(title); }; const routinesOnDone = (d) => d;
     const holdDispatch = () => ({ status: 'held' }); const projectOp = () => {}; const terms = new Map([['pa', {}], ['pb', {}]]);
     const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
     const linkHost = { link: () => ({ devices: [], conns: new Set(), remotes: new Map(), outgoing: [] }) };
     const officeDispatch = (tab, args) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task }); return { id, status: 'queued' }; };
   `;
-  env.mods = { HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), fs, path, crypto: require('crypto') };
+  env.mods = { HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
   const api = new Function('env', `${prelude}\n${src}\nreturn { hqDispatch, hqChainSweep, hqStatus };`)(env);
   return { env, api };
 }
@@ -321,4 +321,60 @@ test('v3.89 amendment: a report written after the person typed in that session n
     assert.equal(real.tasks[0].personPrompted, undefined);
     assert.deepEqual(CH.settle(real, 2000), { release: [{ id: 'b', after: 'a' }], block: [] });
   }
+});
+
+// --- v3.91 HQ's initiative through the real hqDispatch / hqDispatchStages (the single dialog is the confirmHqDispatch stub)
+test('initiative end to end: only a consented target of the same request goes without a dialog, counted and announced', async () => {
+  const { env, api } = stageHarness({ noAsk: true, initiative: true });
+  const request = env.minter.mint();
+  await api.hqDispatch({ project: 'office', task: 'first', title: 'First', request });   // the live typed id: consented
+  assert.equal(env.remoteDialogs, 0);
+  env.minter.clear();                                                                     // a report came in
+  const a = await api.hqDispatch({ project: 'office', task: 'fix the failed check', title: 'Fix', request });
+  assert.equal(a.status, 'queued');
+  assert.equal(env.remoteDialogs, 0);                                                     // same project: no dialog
+  assert.equal(env.board.tasks.find((t) => t.id === a.id).byInitiative, true);
+  assert.equal(HQ.initiativeSent(env.board, request), 1);
+  assert.equal(env.notices.length, 1);                                                    // the person is told right then
+  assert.match(env.notices[0], /^main\.hqInitiativeSent\{"title":"Fix","target":"office"\}$/);
+  const b = await api.hqDispatch({ project: 'erp', task: 'clean up', title: 'Other', request });
+  assert.equal(env.remoteDialogs, 1);                                                     // another project: the dialog
+  assert.equal(env.board.tasks.find((t) => t.id === b.id).byInitiative, undefined);
+  assert.equal(HQ.initiativeSent(env.board, request), 1);
+  assert.equal(env.notices.length, 1);
+  await api.hqDispatch({ project: 'erp', task: 'again', title: 'Again', request });       // erp was consented by that dialog
+  assert.equal(env.remoteDialogs, 1);
+  assert.equal(HQ.initiativeSent(env.board, request), 2);
+  env.state.projects[0].skipPermissions = true;                                           // office now runs with Skip permissions
+  const c = await api.hqDispatch({ project: 'office', task: 'more', title: 'More', request });
+  assert.equal(env.remoteDialogs, 2);                                                     // always the dialog
+  assert.equal(env.board.tasks.find((t) => t.id === c.id).byInitiative, undefined);
+  assert.equal(HQ.initiativeSent(env.board, request), 2);
+  env.state.projects[0].skipPermissions = false;
+  const chain = await api.hqDispatch({ project: 'office', task: 's1', title: 'S1', request, then: [{ project: 'erp', task: 's2', title: 'S2' }] });
+  assert.equal(env.dialogs.length, 0);                                                    // both stages' targets were consented
+  assert.equal(HQ.initiativeSent(env.board, request), 4);                                 // every local stage counts
+  assert.deepEqual(chain.stages.map((id) => env.board.tasks.find((t) => t.id === id).byInitiative), [true, true]);
+  assert.equal(env.notices.length, 4);
+  await api.hqDispatch({ project: 'office', task: 'fifth', title: 'Fifth', request });
+  assert.equal(env.remoteDialogs, 3);                                                     // past 4: the dialog
+  assert.equal(HQ.initiativeSent(env.board, request), 4);
+});
+
+test('initiative end to end: a chain with one stage outside the consented targets asks for all of it; setting off asks', async () => {
+  const { env, api } = stageHarness({ noAsk: true, initiative: true });
+  const request = env.minter.mint();
+  await api.hqDispatch({ project: 'office', task: 'first', request });
+  env.minter.clear();
+  await api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });   // erp never consented
+  assert.equal(env.dialogs.length, 1);
+  assert.equal(HQ.initiativeSent(env.board, request), 0);
+  assert.equal(env.board.tasks.some((t) => t.byInitiative), false);
+  assert.equal(env.notices.length, 0);
+  const off = stageHarness({ noAsk: true });
+  const r2 = off.env.minter.mint();
+  await off.api.hqDispatch({ project: 'office', task: 'first', request: r2 });
+  off.env.minter.clear();
+  await off.api.hqDispatch({ project: 'office', task: 'follow', request: r2 });
+  assert.equal(off.env.remoteDialogs, 1);
 });

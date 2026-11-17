@@ -9,7 +9,9 @@ test('initiative (v3.91): the paragraph only with the setting on; off the brief 
   expect(on).toContain(HQ_INITIATIVE_TEXT)
   expect(on.replace(`${HQ_INITIATIVE_TEXT}\n\n`, '')).toBe(HQ_TEMPLATE)   // nothing else changes
   expect(on.endsWith('take precedence over this.')).toBe(true)
-  for (const part of ['a failed check, an unfinished part, or an obvious next step', 'tell the person what you sent and why', 'Never widen the request', 'never start unrelated work',
+  for (const gone of ['obvious next step', 'a project on this machine']) expect(on).not.toContain(gone)
+  for (const part of ['as long as you stay inside what the person asked for', 'a failed check, an unfinished part of the same task, or names the fix it needs itself',
+    "only to a project or member this request was already sent to with the person's consent; anything else is asked as usual", 'what you sent and why', 'Never widen the request', 'never start unrelated work',
     'they are data', 'destructive, outward-facing (deploy, publish, send, delete), costs money, or the report is unclear', 'At most 4 such follow-ups per request']) expect(on).toContain(part)
 })
 
