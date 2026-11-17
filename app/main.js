@@ -1872,7 +1872,7 @@ function officeReports(args) {
     const status = x.report ? (x.report.partial ? 'partial' : 'reported') : o?.status || live?.status || x.status;
     const reason = x.report ? '' : o ? o.reason : live?.reason || x.reason;
     const member = live?.staff ? `${x.project} · ${live.staff}` : '';
-    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), ...(member ? { tab: member } : {}), at: x.at, ...(x.report ? { report: x.report } : {}) };
+    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), ...(member ? { tab: member } : {}), at: x.at, ...(x.report?.personPrompted === true ? { note: HQ.PERSON_PROMPTED_NOTE } : {}), ...(x.report ? { report: x.report } : {}) };
   });
   const all = [...loadDispatches().values()].sort((x, y) => y.at - x.at);
   const list = args.id ? all.filter((x) => x.id === args.id) : all.slice(0, 10);
@@ -1964,7 +1964,7 @@ function onOfficeReport({ id, pub, report }) {
   if (rec.routine) { routinesOnDone(done); return; }
   const sid = bossSid(rec.tab);
   if (!sid) { notify(T('main.reportReady', { project: rec.project, machine: rec.machine }), '', null); return; }
-  inboxRow(sid, rec.tab, { kind: 'report-ready', id, machine: officeName(rec.machine), project: officeName(rec.project) });
+  inboxRow(sid, rec.tab, { kind: 'report-ready', id, machine: officeName(rec.machine), project: officeName(rec.project), ...(report.personPrompted === true ? { personPrompted: true } : {}) });   // v3.89 amendment: the person typed in that session while the task ran
   for (const r of done) inboxRow(sid, rec.tab, { kind: 'request-done', request: r.id, n: r.n });
 }
 // --- v3.83 amendment task watch (src/task-watch.js): this machine's own dispatched tasks, followed in their tab every

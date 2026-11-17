@@ -1,11 +1,13 @@
 // "One boss" (app contract v3.35), the side of the machine that runs a dispatched task: the app types the task as
 // `[Agent Office: remote task #<id> from "<machine>"] <text>`; this module notes the id at prompt.submit and, on a
 // main turn.complete with no worker of this session still running, writes <data dir>/reports/<id>.json (the answer,
-// redacted and cut to 40 KB (v3.48; the app cuts it further, with a marker, for an older dispatcher), PR links found in it, and the commits made since the task arrived). The app sends it to the dispatcher and
+// (the session's LAST non-empty answer, not every answer since the task started) redacted and cut to 40 KB (v3.48; the app cuts it further, with a marker, for an older dispatcher), PR links found in it, and the commits made since the task arrived). The app sends it to the dispatcher and
 // deletes the file. A new marked task (another id) closes a still open one as partial; so does a wait of more than
 // TASK_MAX_MS, measured from the task's start. A prompt the person types into the tab themselves (no marker), or the
 // same task typed again, keeps the task open and followed (v3.89): it still reports at the next main turn end with no
-// worker running, and no prompt restarts the TASK_MAX_MS clock. Before typing, the app also writes <data dir>/tasks/<session>.json { id, at }
+// worker running, and no prompt restarts the TASK_MAX_MS clock. Such a report carries personPrompted: true: it may
+// answer the person rather than the task, so the dispatcher never releases a waiting stage on it. A task never
+// crosses into another conversation: a new session id (/clear, a new session) closes it as partial (`session`). Before typing, the app also writes <data dir>/tasks/<session>.json { id, at }
 // (typedTaskId), so the task is known even if the engine hands the hook a prompt without the marker (a collapsed paste). On the dispatcher's side the boss gets only
 // a fixed "report ready" row (readyText); the report itself is read through the office_reports tool.
 import { clip, commitsSince, placeOfDir, redact } from './journal'
@@ -23,8 +25,10 @@ const ID = /^[A-Za-z0-9_.:-]{1,64}$/
 // app's promptArg drops `"` for Windows' cmd.exe, v3.83 amendment), so an unquoted name is a marker too
 const MARKER = /^\[Agent Office: remote task #([A-Za-z0-9_.:-]{1,64}) from (?:"[^"\n]{0,64}"|[^"\]\n]{0,64})\] /
 
-export type PendingTask = { id: string; sinceMs: number; answer: string }
-export type TaskReport = { ok: boolean; partial: boolean; summary: string; commits: JournalCommit[]; at: number; truncated?: boolean; prs?: string[] }
+// answer: the last non-empty main-turn answer; personPrompted: the person typed into the session while the task was
+// open; sid: the session the task was opened in ('' or absent: not known yet)
+export type PendingTask = { id: string; sinceMs: number; answer: string; personPrompted?: boolean; sid?: string }
+export type TaskReport = { ok: boolean; partial: boolean; summary: string; commits: JournalCommit[]; at: number; truncated?: boolean; prs?: string[]; personPrompted?: boolean }
 
 /** The task id of a prompt the app typed for a dispatched task, or undefined. */
 export function taskIdOf(text: string): string | undefined {
@@ -38,15 +42,36 @@ export class ReportTracker {
   /**
    * A prompt of the person or the app arrived (not an engine notification): a marked one (or one the app recorded as
    * typed, `typedId`) opens a task. → the previous task when it was still open under another id (the caller reports
-   * it as partial, with the answers so far). The person's own prompt (no id) and the open task's own id change
-   * nothing (v3.89): the task stays open, with its start time and its answers so far.
+   * it as partial, with its latest answer). The person's own prompt (no id) and the open task's own id keep the
+   * task open, with its start time and its latest answer (v3.89); the person's own prompt marks it personPrompted.
+   * `sid` is the session the prompt arrived in, remembered for `session`.
    */
-  prompt(text: string, now: number, typedId?: string): PendingTask | undefined {
+  prompt(text: string, now: number, typedId?: string, sid?: string): PendingTask | undefined {
     const id = taskIdOf(text) ?? (typedId && ID.test(typedId) ? typedId : undefined)
     const before = this.pending
-    if (!id || before?.id === id) return undefined
-    this.pending = { id, sinceMs: now, answer: '' }
+    if (!id) {
+      if (before) before.personPrompted = true
+      return undefined
+    }
+    if (before?.id === id) return undefined
+    this.pending = { id, sinceMs: now, answer: '', ...(sid ? { sid } : {}) }
     return before
+  }
+
+  /**
+   * The session id is known (session.start). → the open task when it was opened in another session (/clear, a new
+   * session in the same process): the caller reports it as partial, it is never carried into the new conversation.
+   */
+  session(sid: string): PendingTask | undefined {
+    const task = this.pending
+    if (!task || !sid) return undefined
+    if (!task.sid) {
+      task.sid = sid
+      return undefined
+    }
+    if (task.sid === sid) return undefined
+    this.pending = undefined
+    return task
   }
 
   /** → the open task when it has waited longer than TASK_MAX_MS (report it as partial), else undefined. */
@@ -73,7 +98,7 @@ export function reportOf(task: PendingTask, commits: JournalCommit[], now: numbe
   const full = redact(task.answer.trim())
   const summary = clip(full, REPORT_MAX) || '(the session gave no answer)'
   const prs = [...new Set(full.match(PR_RE) || [])].slice(0, 10)
-  return { ok: true, partial, summary, commits: commits.slice(0, REPORT_COMMITS), at: now, ...(full.length > REPORT_MAX ? { truncated: true } : {}), ...(prs.length ? { prs } : {}) }
+  return { ok: true, partial, summary, commits: commits.slice(0, REPORT_COMMITS), at: now, ...(full.length > REPORT_MAX ? { truncated: true } : {}), ...(prs.length ? { prs } : {}), ...(task.personPrompted ? { personPrompted: true } : {}) }
 }
 
 /** Writes <root>/reports/<id>.json for the app (never throws). */
@@ -114,11 +139,12 @@ const cleanName = (value: unknown, max = 64) =>
 
 /**
  * The prompt for an inbox row of kind 'report-ready' (the app writes { at, kind, id, machine, project }, never report
- * text): a fixed notice, not a task. undefined for any other row.
+ * text; plus personPrompted: true when the person typed in that session while the task ran): a fixed notice, not a
+ * task. undefined for any other row.
  */
-export function readyText(row: unknown, wrap: (id: string, project: string, machine: string) => string): string | undefined {
+export function readyText(row: unknown, wrap: (id: string, project: string, machine: string, personPrompted: boolean) => string): string | undefined {
   if (row === null || typeof row !== 'object') return undefined
   const r = row as Record<string, unknown>
   if (r.kind !== 'report-ready' || typeof r.id !== 'string' || !/^[A-Za-z0-9_.:-]{1,64}$/.test(r.id)) return undefined
-  return wrap(r.id, cleanName(r.project) || '?', cleanName(r.machine) || '?')
+  return wrap(r.id, cleanName(r.project) || '?', cleanName(r.machine) || '?', r.personPrompted === true)
 }

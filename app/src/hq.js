@@ -266,6 +266,7 @@ function applyReport(board, id, report, now = Date.now()) {
     ...t, status: report?.partial ? 'partial' : 'reported', finishedAt: now, report: `tasks/${id}/report.md`, read: false,
     commits: (report?.commits || []).slice(0, REPORT2_COMMITS).map((c) => ({ hash: line(c.hash, 40), subject: line(c.subject, 200) })), prs: [...new Set([...(Array.isArray(report?.prs) ? report.prs.filter((u) => typeof u === 'string' && /^https:\/\/\S+$/.test(u)) : []), ...extractPrs(report?.summary)])].slice(0, 10),
     ...(report?.transcriptRef ? { transcript: line(report.transcriptRef, 64) } : {}), ...(report?.truncated ? { truncated: true } : {}),
+    ...(report?.personPrompted === true ? { personPrompted: true } : {}),   // v3.89 amendment: the person typed in that session while the task ran
   })) };
 }
 /**
@@ -323,8 +324,9 @@ const safeId = (id) => /^[A-Za-z0-9_-]{1,64}$/.test(String(id));
 /** tasks/<id>/<name> under the HQ folder; any other id → null. */
 const taskFile = (dir, id, name) => (safeId(id) ? path.join(dir, 'tasks', id, name) : null);
 const requestFile = (dir, id) => (safeId(id) ? path.join(dir, 'requests', `${id}.md`) : null);
+const PERSON_PROMPTED_NOTE = 'The person typed in that session while the task ran: the report may answer the person rather than the task.';
 function reportMd(task, report) {
-  const out = [`# ${line(task.title, TITLE_MAX) || task.id}`, '', `Project: ${task.project} (${task.machine === 'self' ? 'this machine' : task.machineName || task.machine})`, `Status: ${task.status}`, ''];
+  const out = [`# ${line(task.title, TITLE_MAX) || task.id}`, '', `Project: ${task.project} (${task.machine === 'self' ? 'this machine' : task.machineName || task.machine})`, `Status: ${task.status}`, ...(task.personPrompted ? [`Note: ${PERSON_PROMPTED_NOTE}`] : []), ''];
   let summary = String(report?.summary || '').replace(ESCAPES, '').replace(CONTROLS, ' ');
   if (summary.length > SUMMARY_MAX) summary = summary.slice(0, SUMMARY_MAX - TRUNC_MARK.length) + TRUNC_MARK;
   // fenced: the summary is the remote agent's text, data in report.md (a fence longer than any backtick run inside)
@@ -343,7 +345,7 @@ const waitState = (tab, isAsleep) => (tab === 'ready' || tab === 'busy' || tab =
 /** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string }} [o] */
 const boardView = (board, { request = '', status = '' } = {}) => board.tasks
   .filter((t) => (!request || t.request === request) && (!status || t.status === status)).slice(0, 50)
-  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
+  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), ...(t.personPrompted ? { personPrompted: true, note: PERSON_PROMPTED_NOTE } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
 
 // --- paired devices: dispatcher-side pacing (the receiver allows a burst of 3, one per 10 s) and the peer cache
 function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {
@@ -449,6 +451,7 @@ function removeTask(board, id) {
 const retitleTask = (board, id, title) => ({ ...board, tasks: board.tasks.map((t) => (t.id === id && line(title, TITLE_MAX) ? { ...t, title: line(title, TITLE_MAX) } : t)) });
 
 module.exports = {
+  PERSON_PROMPTED_NOTE,
   TASK_OPS, taskOpPlan, removeTask, retitleTask, closeByHq, removedOf,
   hqBossModel, boardOfRemote, remoteOpen,
   waitState, WAIT_STATES,

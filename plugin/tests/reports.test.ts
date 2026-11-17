@@ -39,7 +39,7 @@ test('waits for workers: no report while agents of the session still run', async
   expect(tr.complete('later turn', 0)).toBe(undefined)
 })
 
-test('redaction and size: secrets out, summary cut to 16 KB', async () => {
+test('redaction and size: secrets out, summary cut to REPORT_MAX (40 KB)', async () => {
   const r = reportOf({ id: 'x1', sinceMs: 0, answer: `Deployed with token sk-ant-abcdefghijklmnop and ${'y'.repeat(20000)}` }, [], 7)
   expect(r.summary.includes('sk-ant-abcdefghijklmnop')).toBe(false)
   expect(r.summary.includes('[redacted]')).toBe(true)
@@ -88,9 +88,58 @@ test('the person\'s own prompt keeps the open task: it reports at the next turn 
   expect(task?.id).toBe('a1b2c3d4e5f60718')
   expect(task?.answer).toBe('All three finished; tests pass.')
   expect(reportOf(task!, [], 6).partial).toBe(false)
+  // the report says the person typed in that session: it may answer the person rather than the task
+  expect(reportOf(task!, [], 6).personPrompted).toBe(true)
   expect(tr.pending).toBe(undefined)
   expect(tr.prompt('another plain prompt', 7)).toBe(undefined)
   expect(tr.pending).toBe(undefined)
+})
+
+test('personPrompted: only the person\'s own prompt marks the report; the notice says so', async () => {
+  const tr = new ReportTracker()
+  tr.prompt(MARKED, 1)
+  // the same task typed again by the app is not the person's prompt
+  tr.prompt(MARKED, 2)
+  const plain = reportOf(tr.complete('Done.', 0)!, [], 3)
+  expect('personPrompted' in plain).toBe(false)
+  // a prompt before any task marks nothing
+  tr.prompt('hello', 4)
+  tr.prompt(MARKED, 5)
+  expect(tr.pending?.personPrompted).toBe(undefined)
+  tr.prompt('what time is the meeting?', 6)
+  expect(tr.pending?.personPrompted).toBe(true)
+  // closed as partial by another task: the mark stays on the report
+  const closed = tr.prompt('[Agent Office: remote task #ffff000011112222 from "Studio"] next', 7)
+  expect(reportOf(closed!, [], 8, true).personPrompted).toBe(true)
+  expect(tr.pending?.personPrompted).toBe(undefined)
+  const say = (id: string, project: string, machine: string, personPrompted: boolean) => `${id} ${project}@${machine}${personPrompted ? ' person-prompted' : ''}`
+  expect(readyText({ at: 1, kind: 'report-ready', id: 'a1', machine: 'L', project: 'p', personPrompted: true }, say)).toBe('a1 p@L person-prompted')
+  expect(readyText({ at: 1, kind: 'report-ready', id: 'a1', machine: 'L', project: 'p' }, say)).toBe('a1 p@L')
+  expect(readyText({ at: 1, kind: 'report-ready', id: 'a1', machine: 'L', project: 'p', personPrompted: 'true' }, say)).toBe('a1 p@L')
+})
+
+test('a task never crosses into another session: a new session id (/clear) closes it as partial', async () => {
+  const tr = new ReportTracker()
+  expect(tr.session('s1')).toBe(undefined)
+  tr.prompt(MARKED, 1, undefined, 's1')
+  expect(tr.pending?.sid).toBe('s1')
+  tr.complete('Half done; waiting on one agent.', 1)
+  // the same session starting again (a reload) keeps it
+  expect(tr.session('s1')).toBe(undefined)
+  expect(tr.session('')).toBe(undefined)
+  expect(tr.pending?.id).toBe('a1b2c3d4e5f60718')
+  const stale = tr.session('s2')
+  expect(stale?.id).toBe('a1b2c3d4e5f60718')
+  expect(tr.pending).toBe(undefined)
+  expect(reportOf(stale!, [], 9, true).partial).toBe(true)
+  expect(reportOf(stale!, [], 9, true).summary).toBe('Half done; waiting on one agent.')
+  // nothing left for the new conversation to report
+  expect(tr.complete('An answer in the cleared conversation.', 0)).toBe(undefined)
+  // a task opened before the session id was known adopts the first id it sees, then follows the same rule
+  tr.prompt(MARKED, 10)
+  expect(tr.session('s2')).toBe(undefined)
+  expect(tr.pending?.sid).toBe('s2')
+  expect(tr.session('s3')?.id).toBe('a1b2c3d4e5f60718')
 })
 
 test('the same task typed again does not close or restart it; another id closes it as partial (v3.89)', async () => {

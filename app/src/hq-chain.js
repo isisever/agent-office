@@ -6,7 +6,9 @@
 // (status 'reported'), the app sends it through the normal dispatch path with only the previous report appended,
 // bounded and marked as data. Anything else ending the previous stage (partial, failed, rejected, expired, lost,
 // blocked) blocks it, and so does a task HQ itself closed on the person's word (office_task done, closedByHq: the
-// session never reported); nothing is ever sent without the consent given when it was created.
+// session never reported) and a report written after the person typed into that session themselves (personPrompted,
+// v3.89 amendment: it may answer the person, not the task); nothing is ever sent without the consent given when it
+// was created.
 const ADHOC = 'adhoc';
 const WAITING = 'waiting';
 const BLOCKED = 'blocked';
@@ -53,7 +55,8 @@ function afterRefused(board, request, after, selfId = '') {
 /** The previous stage's state for the one waiting on it: 'wait' (still open), 'go' (fully reported) or 'block'. */
 function stageState(pre) {
   if (!pre) return 'block';
-  if (pre.status === 'reported') return pre.closedByHq ? 'block' : 'go';   // v3.87 fix: closed by HQ is not a full report
+  // v3.87 fix: closed by HQ is not a full report; v3.89 amendment: neither is one the person's own prompt may have shaped
+  if (pre.status === 'reported') return pre.closedByHq || pre.personPrompted ? 'block' : 'go';
   return ['partial', 'failed', 'rejected', 'expired', 'lost', BLOCKED].includes(pre.status) ? 'block' : 'wait';
 }
 
@@ -69,7 +72,7 @@ function settle(board, now = Date.now(), waitMs = WAIT_MS) {
     const pre = board.tasks.find((x) => x.id === t.after);
     const st = stageState(pre);
     if (st === 'go') release.push({ id: t.id, after: t.after });
-    else if (st === 'block') block.push({ id: t.id, status: BLOCKED, reason: !pre ? 'after-lost' : pre.closedByHq ? 'after-closed-by-hq' : `after-${pre.status}` });
+    else if (st === 'block') block.push({ id: t.id, status: BLOCKED, reason: !pre ? 'after-lost' : pre.closedByHq ? 'after-closed-by-hq' : pre.status === 'reported' && pre.personPrompted ? 'after-person-prompted' : `after-${pre.status}` });
     else if (now - t.at > waitMs) block.push({ id: t.id, status: 'expired', reason: 'after-timeout' });
   }
   return { release, block };

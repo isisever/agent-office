@@ -76,7 +76,8 @@ const STRINGS = {
     failedSplit: (manual: string) => `Could not open the split. Manually: split the window, then ${manual}`,
     noNode: 'Node.js was not found on PATH; the office viewer needs it. Install Node.js 18+ and try again.',
     task: (text: string) => `Task from Agent Office: ${text}\n\nIf it fits, split the work across subagents and run them in parallel.`,
-    reportReady: (id: string, project: string, machine: string) => `Remote task #${id} on ${project}@${machine} finished; read it with office_reports.`,
+    reportReady: (id: string, project: string, machine: string, personPrompted = false) =>
+      `Remote task #${id} on ${project}@${machine} finished; read it with office_reports.${personPrompted ? ' The person typed in that session while the task ran, so the report may answer the person rather than the task: check it against the task before relying on it. Stages waiting on it were not started.' : ''}`,
     requestDone: (request: string, n: number) => `Request #${request} finished (${n} tasks); read them with office_board and office_reports, save the summary with office_summary and answer.`,
     stageBlocked: (id: string, reason: string) => `Stage #${id} will not start (${reason}): the stage before it did not fully report. Check office_board and tell the person; do not re-dispatch on your own.`,
     stats: {
@@ -115,7 +116,8 @@ const STRINGS = {
     failedSplit: (manual: string) => `Bölme açılamadı. Elle: pencereyi böl, sonra ${manual}`,
     noNode: "Node.js PATH'te bulunamadı; ofis görüntüleyicisi buna ihtiyaç duyar. Node.js 18+ kurup yeniden dene.",
     task: (text: string) => `Agent Ofis'ten görev: ${text}\n\nUygunsa işi alt agent'lara bölerek paralel yürüt.`,
-    reportReady: (id: string, project: string, machine: string) => `Uzak görev #${id} (${project}@${machine}) bitti; office_reports ile oku.`,
+    reportReady: (id: string, project: string, machine: string, personPrompted = false) =>
+      `Uzak görev #${id} (${project}@${machine}) bitti; office_reports ile oku.${personPrompted ? ' Görev sürerken kişi o oturuma kendisi yazdı; rapor görevin değil kişinin sorusunun yanıtı olabilir: güvenmeden önce görevle karşılaştır. Onu bekleyen aşamalar başlatılmadı.' : ''}`,
     requestDone: (request: string, n: number) => `İstek #${request} bitti (${n} görev); office_board ve office_reports ile oku, özeti office_summary ile kaydet ve yanıtla.`,
     stageBlocked: (id: string, reason: string) => `Aşama #${id} başlamayacak (${reason}): ondan önceki aşama tam rapor vermedi. office_board'a bak ve kişiye söyle; kendiliğinden yeniden dağıtma.`,
     stats: {
@@ -1388,6 +1390,10 @@ export const register: Register = on => {
     project = sessionRoot.split(/[\\/]/).pop() ?? ''
     sessionCwd = (await $.session.cwd().catch(() => '')) || sessionRoot
     sessionId = id
+    // a task opened in another conversation (/clear, a new session in this process) is closed as partial, never
+    // carried into this one, where its report would be the answer to a prompt that does not even contain the task
+    const stale = isInApp && !isNested ? reports.session(id) : undefined
+    if (stale && root) await writeReport(hostOf($), root, sessionCwd, stale, Date.now(), true, isWindows)
     stateFile = isNested ? '' : `${root}/sessions/${id}.json`
     viewerFile = `${$.plugin.root}/viewer/office.mjs`
     inboxFile = `${root}/inbox/${id}.jsonl`
@@ -1603,7 +1609,7 @@ export const register: Register = on => {
         const typed = await typedTaskId(hostOf($), rootDir, sessionId, Date.now()).catch(() => undefined)
         const late = reports.expired(Date.now())
         if (late && rootDir) await writeReport(hostOf($), rootDir, sessionCwd, late, Date.now(), true, isWindows)
-        const closed = reports.prompt(e.text, Date.now(), typed)
+        const closed = reports.prompt(e.text, Date.now(), typed, sessionId)
         if (closed && rootDir) await writeReport(hostOf($), rootDir, sessionCwd, closed, Date.now(), true, isWindows)
       }
     } else {

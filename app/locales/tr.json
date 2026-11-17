@@ -1166,6 +1166,7 @@
     "empty": "Henüz görev yok. Müdür'e bir istek yaz.",
     "here": "bu makine",
     "noReport": "Henüz rapor yok.",
+    "personPrompted": "görev sürerken o oturuma sen yazdın: rapor görevin değil senin sorunun yanıtı olabilir",
     "remote": "uzak",
     "remoteTip": "Bu patrona komut göndermek için tıkla",
     "remoteTitle": "Diğer makinelerinizden birindeki proje",

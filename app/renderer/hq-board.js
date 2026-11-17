@@ -243,7 +243,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
         el('h3', {}, t(`hq.col.${key}`)),
         ...tasks.filter((x) => sts.includes(x.status)).map((x) => el('div', { class: `hq-task${x.read ? '' : ' unread'}`, onclick: () => showReport(x) },
           el('div', { class: 'hq-task-title' }, x.title || x.id),
-          el('div', { class: 'hq-task-meta' }, `${x.staff ? `${x.staff} @ ` : ''}${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.status}${x.reason ? ` (${x.reason})` : ''}`),
+          el('div', { class: 'hq-task-meta' }, `${x.staff ? `${x.staff} @ ` : ''}${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.status}${x.reason ? ` (${x.reason})` : ''}${x.personPrompted ? ` · ${t('hq.personPrompted')}` : ''}`),
           waitLine(x),
           stageLine(x),
           x.status === 'awaiting-consent' && api.routines ? el('div', { class: 'rt-actions' },
