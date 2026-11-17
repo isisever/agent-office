@@ -663,3 +663,12 @@ test('restart while a remote send is paced → the run ends failed: lost; the pa
   api.setupRoutines();   // the pacer is in memory only: after a restart nothing calls env.paced
   assert.deepEqual([run.status, run.reason, env.sent.length], ['failed', 'lost', 0]);
 });
+
+test('v3.81 amendment: a project routine may name a staff member; main checks the member and dispatches to the desk', () => {
+  assert.deepEqual(rt({ target: { kind: 'project', projectId: 'p1', staffId: 'st_ab12' } }).target, { kind: 'project', projectId: 'p1', staffId: 'st_ab12' });
+  assert.deepEqual(rt({ target: { kind: 'project', projectId: 'p1', staffId: '../x' } }).target, { kind: 'project', projectId: 'p1' });
+  assert.deepEqual(rt({ target: { kind: 'hq', staffId: 'st_ab12' } }).target, { kind: 'hq' });
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /if \(!m\) return teamOn\(\) \? 'staff-gone' : 'no-team';\s+if \(!ST\.mayWork\(m, p\.id\)\) return 'staff-not-allowed';/);
+  assert.match(MAIN, /hqDispatch\(\{ project, title: routine\.name, task: text, request: run\.request, \.\.\.\(member \? \{ staff: member\.name \} : \{\}\) \}\)/);
+});

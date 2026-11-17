@@ -1263,7 +1263,10 @@
       "delivered": "teslim edildi",
       "running": "cihazda çalışıyor",
       "needs-approval": "cihazda onay bekliyor"
-    }
+    },
+    "staff": "Kim yapsın",
+    "staffNone": "Projenin kendi oturumu",
+    "staffGone": "(personel silinmiş ya da yetkisi yok)"
   },
   "mail": {
     "title": "MAİL",

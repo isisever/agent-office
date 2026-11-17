@@ -129,6 +129,19 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       ...remotes.map((x) => el('option', { value: `r:${x.pub}:${x.id}`, class: x.online ? 'rt-remote' : 'rt-remote rt-off' }, `${x.name} · ${x.machine}${x.online ? '' : ` (${t('routines.offline')})`}`)),
       ...(gone ? [el('option', { value: tvOf(o.target), disabled: true }, t('routines.remoteGone'))] : []));
     target.value = tvOf(o.target);
+    // v3.81 amendment: for a project, who does it: the project's own session, or a staff member allowed there (their desk)
+    const staffSel = el('select', {});
+    const fStaff = field(t('routines.staff'), staffSel);
+    const fillStaff = () => {
+      const pid = target.value.startsWith('p:') ? target.value.slice(2) : '';
+      const list = pid ? (rv.staff || []).filter((m) => m.projects.includes(pid)) : [];
+      const keep = staffSel.value || (o.target.kind === 'project' && o.target.projectId === pid ? o.target.staffId || '' : '');
+      const missing = keep && !list.some((m) => m.id === keep);
+      staffSel.replaceChildren(el('option', { value: '' }, t('routines.staffNone')), ...list.map((m) => el('option', { value: m.id }, m.name)),
+        ...(missing ? [el('option', { value: keep, disabled: true }, t('routines.staffGone'))] : []));
+      staffSel.value = keep;
+      fStaff.hidden = !list.length && !missing;
+    };
     const kind = el('select', {}, ...['daily', 'weekdays', 'weekly', 'hours'].map((k) => el('option', { value: k }, t(`routines.${k}`))));
     kind.value = sc.kind;
     const at = el('input', { type: 'time', value: sc.at || '09:00' });
@@ -153,13 +166,13 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       const next = await api.routines.preview(schedule());
       preview.textContent = `${t('routines.nextRuns')}: ${(next || []).map(friendly).join(' · ')}`;
     };
-    const syncTarget = () => { const rem = target.value.startsWith('r:'); noAsk.disabled = rem; noAsk.closest('label')?.setAttribute('title', t(rem ? 'routines.noAskRemote' : 'routines.noAskHint')); };
+    const syncTarget = () => { fillStaff(); const rem = target.value.startsWith('r:'); noAsk.disabled = rem; noAsk.closest('label')?.setAttribute('title', t(rem ? 'routines.noAskRemote' : 'routines.noAskHint')); };
     target.addEventListener('change', syncTarget);
     for (const x of [prompt, kind, at, day, every, from, to]) x.addEventListener('input', sync);
     const save = async () => {
       const tv = target.value;
       const rest = tv.slice(2); const cut = rest.lastIndexOf(':');
-      const tg = tv === 'hq' ? { kind: 'hq' } : tv.startsWith('r:') ? { kind: 'remote', pub: rest.slice(0, cut), projectId: rest.slice(cut + 1) } : { kind: 'project', projectId: rest };
+      const tg = tv === 'hq' ? { kind: 'hq' } : tv.startsWith('r:') ? { kind: 'remote', pub: rest.slice(0, cut), projectId: rest.slice(cut + 1) } : { kind: 'project', projectId: rest, ...(staffSel.value ? { staffId: staffSel.value } : {}) };
       const res = await api.routines.save({ id: r?.id, name: name.value, prompt: prompt.value, target: tg,
         schedule: schedule(), missed: missedSkip.checked ? 'skip' : 'once', maxPerDay: Number(maxPerDay.value), noAsk: noAsk.checked });
       if (!res?.ok) { note.textContent = t(res?.reason === 'too-many' ? 'routines.tooMany' : 'routines.invalid'); return; }
@@ -167,7 +180,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     };
     sync();
     const ed = el('div', { class: 'rt-editor' },
-      field(t('routines.name'), name), field(t('routines.prompt'), prompt), counter, field(t('routines.target'), target),
+      field(t('routines.name'), name), field(t('routines.prompt'), prompt), counter, field(t('routines.target'), target), fStaff,
       field(t('routines.schedule'), kind), fAt, fDay, fEvery, fWin,
       el('div', {}, t('routines.missed'), el('label', { class: 'inline' }, missedOnce, t('routines.missedOnce')), el('label', { class: 'inline' }, missedSkip, t('routines.missedSkip'))),
       field(t('routines.maxPerDay'), maxPerDay), el('label', { class: 'inline', title: t('routines.noAskHint') }, noAsk, t('routines.noAsk')), preview, note,

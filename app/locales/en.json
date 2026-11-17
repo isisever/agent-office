@@ -1291,7 +1291,10 @@
       "delivered": "delivered",
       "running": "running on the device",
       "needs-approval": "needs approval on the device"
-    }
+    },
+    "staff": "Who does it",
+    "staffNone": "The project's own session",
+    "staffGone": "(member removed or not allowed)"
   },
   "mail": {
     "title": "MAIL",

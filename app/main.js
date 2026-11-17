@@ -2340,7 +2340,14 @@ function routineProblem(r) {
   if (r.target.kind === 'remote') return ROUT.remoteProblem(r.target, { paired: (linkHost?.link()?.devices || []).map((d) => d.pub), cache: peerCache() });
   const p = P.findProject(state, r.target.projectId);
   if (!p) return 'target-gone';
-  return P.engineOf(p) === 'claude' ? '' : 'engine';
+  if (P.engineOf(p) !== 'claude') return 'engine';
+  // v3.81 amendment: a routine for a staff member needs team mode, the member, and the member's right to work there
+  if (r.target.staffId) {
+    const m = teamOn() ? memberById(r.target.staffId) : null;
+    if (!m) return teamOn() ? 'staff-gone' : 'no-team';
+    if (!ST.mayWork(m, p.id)) return 'staff-not-allowed';
+  }
+  return '';
 }
 function addRun(a, routine, now) {
   const run = { id: `ru${crypto.randomBytes(4).toString('hex')}`, routine: routine.id, name: routine.name, kind: routine.target.kind, slotAt: a.slotAt, at: now,
@@ -2465,7 +2472,8 @@ async function deliverRun(run, now) {
     Object.assign(run, { status: 'running', typedAt: now });
     saveRt();
     const text = ROUT.wrapText({ routine, request: run.request, slotAt: run.slotAt, t: T });
-    const r = await hqDispatch({ project, title: routine.name, task: text, request: run.request });
+    const member = tg.kind === 'project' && tg.staffId ? memberById(tg.staffId) : null;   // checked by routineProblem
+    const r = await hqDispatch({ project, title: routine.name, task: text, request: run.request, ...(member ? { staff: member.name } : {}) });
     hqMinter.endLive(run.request);   // the dispatch is done: HQ cannot borrow this id (office_board shows it) for no-ask
     if (r.status === 'rejected') {
       hqMinter.endRun(run.request);
@@ -2549,6 +2557,8 @@ function routinesView() {
     problems: Object.fromEntries((state.routines || []).map((r) => [r.id, routineProblem(r)])),
     held: board.tasks.filter((t) => t.status === 'awaiting-consent').map((t) => t.id),
     projects: state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p) })),
+    // v3.81 amendment: the staff a project routine may name (team mode), with the projects each may work on
+    staff: teamOn() ? state.staff.map((m) => ({ id: m.id, name: m.name, projects: state.projects.filter((p) => ST.mayWork(m, p.id)).map((p) => p.id) })) : [],
     // v3.49 remote targets: paired devices' projects (last-known list), with the machine and whether it is online
     remotes: HQ.remoteRows(peerCache(), liveRemotes()).map((r) => ({ pub: HQ.parseRemoteKey(r.key)?.pub || '', id: r.id, name: r.name, machine: r.machine, online: r.online })).filter((r) => r.pub),
   };
