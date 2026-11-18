@@ -741,6 +741,15 @@ test('v3.101 pause: a paired device is taken everywhere, a paused one nowhere; i
   assert.match(src('main.js'), /confirmPair: async \(device\) => \(await dialog\.showMessageBox\(win, \{ type: 'warning', buttons: \[T\('main\.pairGo'\), T\('main\.cancel'\)\], defaultId: 1, cancelId: 1/);
 });
 
+/** v3.102 a sealed link file: the header of its purpose, then the JSON (the fake safeStorage here does not encrypt). */
+function unsealed(file, purpose) {
+  const text = fs.readFileSync(file, 'utf8'), head = `ao1:${purpose}\n`;
+  assert.ok(text.startsWith(head), `${path.basename(file)} carries the ${purpose} header`);
+  return JSON.parse(text.slice(head.length));
+}
+/** The files of a version before v3.102 have no purpose header and no migration marker. */
+const dropSealMarkers = (dir) => { for (const f of ['keys.bin.ao1', 'own.bin.ao1']) fs.rmSync(path.join(dir, 'link', f), { force: true }); };
+
 test('v3.101 migration: devices paired before become own exactly once, logged and announced; a hand-edited devices.json gains nothing', async (t) => {
   const { setupLink } = require('../src/link-host.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-own-'));
@@ -762,7 +771,7 @@ test('v3.101 migration: devices paired before become own exactly once, logged an
   };
   const keysFile = path.join(dir, 'link', 'keys.bin');
   const devFile = path.join(dir, 'link', 'devices.json');
-  const keys = () => JSON.parse(fs.readFileSync(keysFile, 'utf8'));
+  const keys = () => unsealed(keysFile, 'link-keys');
   const moved = () => (fs.existsSync(path.join(dir, 'link', 'commands.log')) ? fs.readFileSync(path.join(dir, 'link', 'commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.event === 'own-migration') : []);
   const gates = (w, pub) => ['mayCommand', 'mayRunUnattended', 'mayManage', 'maySessions'].map((g) => C[g](w.link.devices, w.link.secrets, pub));
   // a fresh install seals the marker at once: nothing is ever migrated there
@@ -773,6 +782,7 @@ test('v3.101 migration: devices paired before become own exactly once, logged an
   const old = keys();
   delete old.own; delete old.ownV;
   fs.rmSync(path.join(dir, 'link', 'own.bin'));   // an older version never wrote the own record either
+  dropSealMarkers(dir);
   fs.writeFileSync(keysFile, JSON.stringify({ ...old, secrets: { [PA]: 'cd'.repeat(32) }, trusted: [] }));
   fs.writeFileSync(devFile, JSON.stringify({ name: 'Me', devices: [{ pub: PA, name: 'Studio', addedAt: 1, allowCommands: false, allowManage: false, allowSessions: false, trusted: false },
     { pub: PB, name: 'Ghost', addedAt: 1, allowCommands: true, trusted: true }] }));
@@ -824,8 +834,8 @@ test('v3.101 the own record (own.bin): a keys.bin that lost its marker restores 
   const ownFile = path.join(dir, 'link', 'own.bin');
   const devFile = path.join(dir, 'link', 'devices.json');
   const PX = 'e1'.repeat(32);
-  const keys = () => JSON.parse(fs.readFileSync(keysFile, 'utf8'));
-  const rec = () => JSON.parse(fs.readFileSync(ownFile, 'utf8'));
+  const keys = () => unsealed(keysFile, 'link-keys');
+  const rec = () => unsealed(ownFile, 'link-own');
   const events = (name) => (fs.existsSync(path.join(dir, 'link', 'commands.log')) ? fs.readFileSync(path.join(dir, 'link', 'commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.event === name) : []);
   const own = (w) => [PA, PB, PX].map((p) => C.isOwn(w.link.devices, w.link.secrets, p));
   // both files missing = a fresh install: nothing migrates, both carry the marker
@@ -840,6 +850,7 @@ test('v3.101 the own record (own.bin): a keys.bin that lost its marker restores 
   fs.writeFileSync(keysFile, JSON.stringify({ ...base, secrets, trusted: [PA, PB] }));
   fs.writeFileSync(devFile, JSON.stringify({ name: 'Me', devices: oldDevices }));
   fs.rmSync(ownFile);
+  dropSealMarkers(dir);
   w = boot();
   assert.deepEqual([own(w), events('own-migration').length, w.notices.length], [[true, true, false], 1, 1]);
   const copy = fs.readFileSync(keysFile);   // a copy of keys.bin from while Studio was still own (it has the marker)
@@ -855,6 +866,11 @@ test('v3.101 the own record (own.bin): a keys.bin that lost its marker restores 
   //    and paired one more device meanwhile, which the record does not know
   fs.writeFileSync(keysFile, JSON.stringify({ ...base, secrets: { ...secrets, [PX]: '12'.repeat(32) }, trusted: [PA, PB, PX] }));
   fs.writeFileSync(devFile, JSON.stringify({ name: 'Me', devices: [...oldDevices, { pub: PX, name: 'New', addedAt: 2, allowCommands: true, trusted: true }] }));
+  // v3.102 a keys file without the purpose header is refused once this folder was migrated: the link fails closed
+  w = boot();
+  assert.equal(w.link, null);
+  await w.host.destroy();
+  fs.rmSync(`${keysFile}.ao1`);   // only without the marker (the folder as it was before v3.102) does the headerless file count
   w = boot();
   assert.deepEqual([own(w), w.notices, events('own-migration').length], [[false, true, false], [], 1]);   // paused stays paused, the unknown one is never auto-owned
   assert.deepEqual(events('own-restored').map((x) => x.devices), [['Mini']]);
@@ -869,6 +885,7 @@ test('v3.101 the own record (own.bin): a keys.bin that lost its marker restores 
   await w.host.destroy();
   // 4. unreadable record AND a keys.bin without the marker: still no migration, all paused
   fs.writeFileSync(keysFile, JSON.stringify({ ...base, secrets, trusted: [PA, PB] }));
+  fs.rmSync(`${keysFile}.ao1`);
   fs.writeFileSync(ownFile, JSON.stringify({ v: C.OWN_VERSION, own: 'all' }));
   w = boot();
   assert.deepEqual([own(w), events('own-record-unreadable').length, events('own-migration').length, w.notices], [[false, false, false], 2, 1, []]);

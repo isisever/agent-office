@@ -93,7 +93,7 @@ test('MCP: precedence — Claude Code\'s own servers and the boss server win by 
 
 test('MCP: migration — a v3.43 connection stays a normal project, its server is scoped to it and its token moves', () => {
   const ud = tmp();
-  const oldS = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe), newS = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
+  const oldS = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe, 'connector-token'), newS = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe, 'mcp-token');
   assert.ok(oldS.save('p1', SECRET));
   const raw = { projects: [{ id: 'p1', dir: '/c/notion', mcp: { label: 'My Notion', url: 'https://mcp.notion.com/mcp' } }, { id: 'p2', dir: '/c/plain' }] };
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
@@ -116,7 +116,7 @@ test('MCP: migration — a v3.43 connection stays a normal project, its server i
 
 test('MCP: the token is never in state.json or the renderer payload; Claude Code only (engine caps, en+tr)', async () => {
   const ud = tmp(), home = tmp();
-  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
+  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe, 'mcp-token');
   const r = MS.addServer([], { name: 'n', url: 'https://n.io/mcp', type: 'http', scope: 'all' }, 's1');
   assert.ok(store.save(r.server.id, MS.cleanToken(`Bearer ${SECRET}`)));
   // a token smuggled into the state (an old file, a bug) is still never written: the real state.json writer
@@ -180,7 +180,7 @@ test('MCP: handoff keeps the servers and tokens here, held for the folder; remov
   assert.equal(H.refusal({ engine: 'claude', git: true, online: true }), null);
   assert.ok(!src('../src/link-host.js').includes('info.connection'));
   const ud = tmp();
-  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe), old = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe);
+  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe, 'mcp-token'), old = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe, 'connector-token');
   let servers = [{ id: 'own', name: 'flow', type: 'http', url: 'https://f.io', scope: 'p1' }, { id: 'all', name: 'n', type: 'http', url: 'https://n.io', scope: 'all' }];
   store.save('own', SECRET); store.save('all', SECRET);
   // release: handed off, the project leaves the state, its server waits for its folder
@@ -202,7 +202,7 @@ test('MCP: handoff keeps the servers and tokens here, held for the folder; remov
 
 test('MCP: a token move that failed is retried at the next start; orphaned tokens are swept', () => {
   const ud = tmp();
-  const old = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
+  const old = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe, 'connector-token'), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe, 'mcp-token');
   old.save('p1', SECRET); old.save('pbad', 'tok-bad'); old.save('pgone', 'tok-gone');
   const raw = { projects: [{ id: 'p1', dir: '/a', mcp: { label: 'Notion', url: 'https://n.io/mcp' } }, { id: 'pbad', dir: '/b', mcp: { label: 'x', url: 'not a url' } }] };
   // first start: the new store cannot write
@@ -250,7 +250,7 @@ test('MCP: the add form refuses plain http to another host and keys in the addre
 test('MCP: a corrupt or missing state.json never sweeps the tokens; state.json is written atomically', () => {
   const SF = require('../src/state-file.js');
   const ud = tmp(), file = path.join(ud, 'state.json');
-  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe), old = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe);
+  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe, 'mcp-token'), old = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe, 'connector-token');
   store.save('m-1', SECRET); old.save('p1', SECRET);
   // the start, as main runs it: settle with sweep only when the state was read whole
   const start = () => {
@@ -332,9 +332,9 @@ test('MCP: adopting does not re-scope a held server whose name the project alrea
 test('MCP: a v3.43 token that does not decrypt now is kept and retried; one stored empty is dropped', () => {
   const ud = tmp();
   const lockedSafe = { ...fakeSafe, decryptString: () => { throw new Error('no key'); } };
-  const oldW = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe);
+  const oldW = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe, 'connector-token');
   oldW.save('p1', SECRET);
-  const old = MS.tokenStore(path.join(ud, 'connector-tokens'), lockedSafe), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
+  const old = MS.tokenStore(path.join(ud, 'connector-tokens'), lockedSafe, 'connector-token'), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe, 'mcp-token');
   const servers = [{ id: 'c-p1', name: 'notion', type: 'http', url: 'https://n.io', scope: 'p1' }];
   assert.deepEqual(old.read('p1'), { token: '', failed: true });
   assert.deepEqual(MS.pendingMoves(servers, old, good), [{ from: 'p1', to: 'c-p1' }]);
@@ -344,7 +344,7 @@ test('MCP: a v3.43 token that does not decrypt now is kept and retried; one stor
   assert.deepEqual(MS.settleTokens(servers, old, good), { moved: 0, failed: 1, dropped: 0, removed: 0 });
   assert.equal(old.has('p1'), true);
   // the keychain is open again at a later start: it moves
-  const back = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe);
+  const back = MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe, 'connector-token');
   assert.deepEqual(MS.settleTokens(servers, back, good), { moved: 1, failed: 0, dropped: 0, removed: 0 });
   assert.equal(good.load('c-p1'), SECRET); assert.equal(back.has('p1'), false);
   const main = src('../main.js').split('\n');
@@ -358,7 +358,7 @@ test('MCP: a v3.43 token that does not decrypt now is kept and retried; one stor
 test('MCP: a v3.43 token stored empty is dropped, not retried forever', () => {
   const ud = tmp(), dir = path.join(ud, 'connector-tokens');
   fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'p1.bin'), '');
-  const old = MS.tokenStore(dir, fakeSafe), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe);
+  const old = MS.tokenStore(dir, fakeSafe, 'connector-token'), good = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe, 'mcp-token');
   const servers = [{ id: 'c-p1', name: 'notion', type: 'http', url: 'https://n.io', scope: 'p1' }];
   assert.deepEqual(old.read('p1'), { token: '', failed: false });
   assert.deepEqual(MS.settleTokens(servers, old, good, { sweep: false }), { moved: 0, failed: 0, dropped: 1, removed: 0 });
@@ -369,7 +369,7 @@ test('MCP: a v3.43 token stored empty is dropped, not retried forever', () => {
 test('MCP: an empty .bin next to a real .txt still reads the .txt; adding is refused while state.json cannot be saved', () => {
   const ud = tmp(), dir = path.join(ud, 'connector-tokens');
   fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'p1.bin'), ''); fs.writeFileSync(path.join(dir, 'p1.txt'), SECRET);
-  assert.deepEqual(MS.tokenStore(dir, fakeSafe).read('p1'), { token: SECRET, failed: false });
+  assert.deepEqual(MS.tokenStore(dir, fakeSafe, 'connector-token').read('p1'), { token: SECRET, failed: false });
   const main = src('../main.js');
   const add = main.slice(main.indexOf("ipcMain.handle('mcp:add'"), main.indexOf("ipcMain.handle('mcp:remove'"));
   assert.ok(add.indexOf("if (!stateWritable) return { ok: false, error: 'state' }") < add.indexOf('tokens().save('));
@@ -380,13 +380,13 @@ test('MCP: a state.json that is there but cannot be read is not saved over and n
   const SF = require('../src/state-file.js');
   const ud = tmp(), file = path.join(ud, 'state.json');
   fs.writeFileSync(file, JSON.stringify({ mcpServers: [{ id: 'm-1', name: 'a', type: 'http', url: 'https://a.io', scope: 'all' }] }));
-  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe); store.save('m-1', SECRET);
+  const store = MS.tokenStore(path.join(ud, 'mcp-tokens'), fakeSafe, 'mcp-token'); store.save('m-1', SECRET);
   for (const code of ['EACCES', 'EBUSY', 'EIO']) {
     const busy = { ...fs, readFileSync: (f, ...a) => { if (f === file) throw Object.assign(new Error(code), { code }); return fs.readFileSync(f, ...a); } };
     const r = SF.readState(file, busy);
     assert.deepEqual(r, { raw: {}, ok: false, corrupt: false, unreadable: true });
     assert.equal(SF.trusted(r, file, busy), false);
-    assert.deepEqual(MS.settleTokens([], MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe), store, { sweep: SF.trusted(r, file, busy) }).removed, 0);
+    assert.deepEqual(MS.settleTokens([], MS.tokenStore(path.join(ud, 'connector-tokens'), fakeSafe, 'connector-token'), store, { sweep: SF.trusted(r, file, busy) }).removed, 0);
     assert.equal(fs.existsSync(SF.corruptPath(file)), false);
   }
   assert.equal(store.load('m-1'), SECRET);

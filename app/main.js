@@ -6,6 +6,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const P = require('./src/projects.js');
 const MS = require('./src/mcp-servers.js');
+const SEALED = require('./src/sealed.js');
 const MF = require('./src/mcp-files.js');
 const SF = require('./src/state-file.js');
 const A = require('./src/accounts.js');
@@ -327,8 +328,8 @@ const directoryDir = () => path.join(app.getPath('userData'), 'directory');
 // --- MCP servers added in Agent Office (contract v3.44, src/mcp-servers.js): state.mcpServers holds no token; each
 // token is kept per server id in userData/mcp-tokens, encrypted with safeStorage (a 0600 plain file only where the OS
 // has no keyring). It reaches claude only inside the tab's 0600 MCP file (userData/mcp), removed when that claude ends.
-const tokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'mcp-tokens'), safeStorage);
-const oldTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'connector-tokens'), safeStorage); // v3.43, migration only
+const tokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'mcp-tokens'), safeStorage, SEALED.PURPOSE.MCP_TOKEN);
+const oldTokens = () => MS.tokenStore(path.join(app.getPath('userData'), 'connector-tokens'), safeStorage, SEALED.PURPOSE.CONNECTOR_TOKEN); // v3.43, migration only
 const appServers = () => state.mcpServers || [];
 
 // --- account delegate (contract v3.56, src/delegate.js + src/delegate-cli.js). A claude boss with `delegates` runs the
@@ -2501,7 +2502,8 @@ async function hqDispatchStages(args, request, rrun) {
       const p = s.personalFor || !s.projectId ? null : P.findProject(state, s.projectId);
       return { projectId: p?.id || '', staffId: s.staff ? s.staffId || null : '', skip: hqTargetSkips(p, s.staff ? s.staffId || '' : '') };
     }) });
-  // v3.94 the third button changes only this machine's two settings: never offered when the dialog names a paired machine
+  // v3.94 the third button changes only this machine's two settings; since v3.101 it is offered when the dialog names a
+  // paired machine too, and what it turns on covers targets on paired machines
   const askStages = () => confirmHqStages(asked, { request });
   let byInitiative = false;
   if (asks) {
@@ -3896,7 +3898,7 @@ let mailSock = null;
 let mailScript = '';
 const mailRead = new Map();   // tab → Map(mail id → the mail it read: from, to, cc, subject, messageId, flags) for replies
 const mailDir = () => path.join(app.getPath('userData'), 'mail');
-const mailSecrets = () => MS.tokenStore(path.join(app.getPath('userData'), 'mail-secrets'), safeStorage);
+const mailSecrets = () => MS.tokenStore(path.join(app.getPath('userData'), 'mail-secrets'), safeStorage, SEALED.PURPOSE.MAIL_SECRET);
 const mailAccounts = () => state.mailAccounts || [];
 const mailToken = new Map();  // m365 account id → { accessToken, expiresAt } (memory only)
 let outbox = null;

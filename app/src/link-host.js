@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const C = require('./link-core.js');
+const S = require('./sealed.js');
 const CHAT = require('./chat.js');
 const H = require('./handoff.js');
 const { createLoginRelay } = require('./login-relay.js');
@@ -79,37 +80,50 @@ function setupLink(d) {
     try { if (process.platform === 'linux' && d.safeStorage.getSelectedStorageBackend() === 'basic_text') return false; } catch { /* older Electron */ }
     return true;
   }
+  // v3.102 purpose binding (src/sealed.js): keys.bin and own.bin each carry the header of their own purpose. A file
+  // sealed for anything else (a token store's file moved here) is refused: keys.bin then fails the link closed, own.bin
+  // reads as 'bad' (every device paused). A headerless file counts once, when it parses to its schema; it is written
+  // again with the header and its marker (`<file>.ao1`) at that start, and refused without the header from then on.
+  const sealer = S.sealer(d.safeStorage);
   function loadKeys() {
-    if (!fs.existsSync(keysFile)) {
+    if (!S.plainDir(dir)) throw new Error('the link folder is not a plain folder');
+    if (!S.present(keysFile)) {
       const kp = require('hyperdht').keyPair();
       return { publicKey: kp.publicKey, secretKey: kp.secretKey, secrets: {}, own: [], ownV: C.OWN_VERSION, fresh: true };
     }
-    const k = JSON.parse(d.safeStorage.decryptString(fs.readFileSync(keysFile)));
-    return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {}, own: k.own, ownV: k.ownV };
+    const got = sealer.openFile(keysFile, S.PURPOSE.LINK_KEYS, S.linkKeysText);
+    if (!got) throw new Error('the keys file is not a link keys file');
+    const k = JSON.parse(got.payload);
+    if (!S.isLinkKeys(k)) throw new Error('the keys file is malformed');
+    return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {}, own: k.own, ownV: k.ownV, legacy: got.legacy };
   }
   /**
    * v3.101 The own record (own.bin, keychain-encrypted like keys.bin): the migration marker with the current own and
    * paused sets. An older app rewrites keys.bin without the marker and knows nothing of this file, so it is what tells
    * a rolled-back keys.bin from a first upgrade. → state 'none' (no file), 'bad' (unreadable or malformed) or 'ok'.
-   * @returns {{ state: 'none' | 'bad' | 'ok', own: string[] }} own: the keys the record lists as own (empty unless 'ok')
+   * v3.102: a record without the header of its purpose (or with another one's) is 'bad'; `legacy`: it had no header yet.
+   * @returns {{ state: 'none' | 'bad' | 'ok', own: string[], legacy?: boolean }} own: the keys the record lists as own (empty unless 'ok')
    */
   function loadOwnRecord() {
-    if (!fs.existsSync(ownFile)) return { state: 'none', own: [] };
+    if (!S.present(ownFile)) return { state: 'none', own: [] };
     try {
-      const r = JSON.parse(d.safeStorage.decryptString(fs.readFileSync(ownFile)));
-      if (!r || r.v !== C.OWN_VERSION || !Array.isArray(r.own) || !Array.isArray(r.paused)) return { state: 'bad', own: [] };
-      return { state: 'ok', own: r.own.filter((k) => C.isHex(k, 32)) };
+      const got = sealer.openFile(ownFile, S.PURPOSE.LINK_OWN, S.ownRecordText);
+      if (!got) return { state: 'bad', own: [] };
+      const r = JSON.parse(got.payload);
+      if (!S.isOwnRecord(r) || r.v !== C.OWN_VERSION) return { state: 'bad', own: [] };
+      return { state: 'ok', own: r.own.filter((k) => C.isHex(k, 32)), legacy: got.legacy };
     } catch { return { state: 'bad', own: [] }; }
   }
   function save({ name, devices, secrets }) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (!S.plainDir(dir)) throw new Error('the link folder is not a plain folder');
     // the own record first: were the two files ever to disagree, the device reads as paused (start() takes what both say)
     const record = { v: C.OWN_VERSION, own: C.ownKeys(devices), paused: devices.filter((x) => x.own !== true).map((x) => x.pub) };
-    fs.writeFileSync(ownFile, d.safeStorage.encryptString(JSON.stringify(record)), { mode: 0o600 });
+    sealer.writeFile(ownFile, S.PURPOSE.LINK_OWN, JSON.stringify(record));
     // v3.101 (the v3.97 sealing) the keys of the devices that are `own` are sealed here with the migration marker:
     // devices.json alone (a plain file) can neither resume a paused device nor run the migration again
     const keys = { publicKey: link.pub, secretKey: C.hex(link.keyPair.secretKey), secrets, own: C.ownKeys(devices), ownV: C.OWN_VERSION };
-    fs.writeFileSync(keysFile, d.safeStorage.encryptString(JSON.stringify(keys)), { mode: 0o600 });
+    sealer.writeFile(keysFile, S.PURPOSE.LINK_KEYS, JSON.stringify(keys));
     fs.writeFileSync(devicesFile, JSON.stringify({ name, devices }, null, 2), { mode: 0o600 });
   }
 
@@ -123,7 +137,7 @@ function setupLink(d) {
       // my own computer": every device paired then becomes `own` once, here, and both markers are sealed right away.
       // keys.bin alone losing its marker (an older copy put back, or an older app that rewrote it) is NOT that: the own
       // record then decides, and a device it does not list as own stays paused. An unreadable record pauses them all.
-      const rec = keys.fresh ? { state: 'none', own: [] } : loadOwnRecord();
+      const rec = keys.fresh ? { state: 'none', own: [], legacy: false } : loadOwnRecord();
       const marked = keys.ownV === C.OWN_VERSION;
       const migrate = !keys.fresh && !marked && rec.state === 'none';
       const moved = migrate ? C.migrateOwn(saved.devices, keys.secrets) : null;
@@ -133,7 +147,8 @@ function setupLink(d) {
       link.confirmPair = async (name) => (d.confirmPair ? (await d.confirmPair(name)) === true : false);   // no dialog wired = no pairing
       link.on('persist', save);
       link.on('own', () => pump());   // v3.101 a paused device's queued entries are refused now
-      if (keys.fresh || !marked || rec.state !== 'ok') link.persist();   // both files carry the marker and the same sets from here on
+      // both files carry the marker and the same sets from here on (v3.102: and the header of their purpose)
+      if (keys.fresh || !marked || rec.state !== 'ok' || keys.legacy || rec.legacy) link.persist();
       const ownLog = (event, more = {}) => { try { fs.appendFileSync(logFile, `${JSON.stringify({ at: new Date().toISOString(), event, ...more })}\n`, { mode: 0o600 }); } catch { /* best effort */ } };
       if (rec.state === 'bad') { console.error('link: the own record (own.bin) is unreadable, every device is paused'); ownLog('own-record-unreadable'); }
       else if (!keys.fresh && !marked && !migrate) ownLog('own-restored', { devices: link.devices.filter((x) => C.isOwn(link.devices, link.secrets, x.pub)).map((x) => x.name) });
@@ -328,8 +343,11 @@ function setupLink(d) {
     // the sender's path is used only when it is free or the same repository; any other folder is the person's choice
     const folder = targetFor(id) || await d.handoff?.pickFolder(h.offer.dir);
     if (!folder || !path.isAbsolute(folder)) { l.answerHandoff(id, false, 'cancelled'); return; }
+    // the offer ended while the folder picker was open (its device was paused or removed, it failed, the link stopped):
+    // nothing is kept for it, so no folder waits for an offer that is gone
+    if (l !== link || l.handoffsIn.get(id) !== h || h.stage !== 'asking') { targets.delete(id); defaults.delete(id); answered.delete(id); push(); return; }
     targets.set(id, folder);
-    l.answerHandoff(id, true);
+    if (!l.answerHandoff(id, true)) targets.delete(id);   // refused after all (paused meanwhile): the folder is not kept
   }
   async function applyHandoff({ device, offer, parts, done, alive = () => true }) {
     const folder = targets.get(offer.id);
