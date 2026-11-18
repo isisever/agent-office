@@ -2083,6 +2083,12 @@ At start:
 
 After any row but "marker + readable" both files are written again at once. Limit: someone who can delete `own.bin`
 AND put back a keys file from before v3.101 gets the migration again (nothing on disk then says it ever ran).
+Putting back older copies of BOTH `own.bin` and `keys.bin` (from a backup, for example) brings back the own and
+paused state of that time, and it can bring back a device that was removed since, because that device's secret is in
+the older keys file (its entry in the plain `devices.json` has to be there again as well). Without such a backup a
+removed device cannot come back: its secret is gone from the keys file, and neither `devices.json` nor one of the two
+sealed files alone restores it. A save writes `own.bin` first and `keys.bin` second; when only one of the two was
+written (a crash in between), the device whose state was being changed reads as paused, whichever file is the newer.
 
 **Migration.** At the first start of this version (a keys file without `ownV` and no own record) every device
 paired before becomes `own`, whatever its old switches said, and the set and the marker are sealed right away in
@@ -2118,3 +2124,58 @@ not paused".
 
 **Non-goals.** Answering a remote permission prompt; sharing the task board; any transfer of credentials or logins;
 changes to handoff; a pairing meant for another person's computer.
+
+## Sealed files are bound to their purpose (v3.102)
+
+Electron `safeStorage` has one key for the whole app: a file it encrypted for one use decrypts just as well where
+another use reads it. Before this version a copy of `link/keys.bin` placed in `mcp-tokens/` was decrypted and sent
+out as a bearer token, and a text stored through a token store could be copied over `link/own.bin` or
+`link/keys.bin`. Now every `safeStorage` plaintext says what it is for (`src/sealed.js`, the only module that calls
+`encryptString` / `decryptString` on a file's content).
+
+**Header.** The plaintext that is encrypted is `ao1:<purpose>\n<payload>`. `<purpose>` matches `[a-z0-9-]{1,40}`.
+A reader passes its own purpose and gets the payload only when the header names exactly that purpose; another
+purpose, or no header, is refused the way an unreadable file is. A file that does not decrypt at all (a locked
+keychain, another build) is not refused but kept, as before.
+
+| File | Purpose | When refused |
+| --- | --- | --- |
+| `link/keys.bin` | `link-keys` | the link does not start (error `keys`); nothing is written over the file |
+| `link/own.bin` | `link-own` | the own record is "unreadable or malformed" (v3.101 table): every device is paused |
+| `mcp-tokens/<id>.bin` | `mcp-token` | no token: `read` → `{ token: '', failed: true }`, the server gets no `Authorization` header |
+| `connector-tokens/<id>.bin` (v3.43, migration only) | `connector-token` | the move to `mcp-tokens` fails and is retried at the next start |
+| `mail-secrets/<id>.bin` | `mail-secret` | no password / refresh token for that mail account |
+
+These are all the `safeStorage` uses of the app. A new one gets a new purpose, never one of these.
+
+**Payload shape.** Independent of the header:
+- A token or secret (the three stores) is one line: no control characters (so no line break), at most 8192
+  characters, and not a JSON object or array. Anything else is not saved (`save` → false) and not handed out, whether
+  it comes from a sealed file or from the plain `.txt` a store uses where the OS has no keyring. So neither the keys
+  file nor the own record can ever be emitted as a bearer token, and a JSON text placed in a plain token file is never
+  sealed.
+- The keys file must parse to `{ publicKey: 64 hex, secretKey: 128 hex, secrets?: object, own?: array }`, the own
+  record to `{ v, own: array, paused: array }` with the current `v` (v3.101).
+
+**Migration, once per kind.** Files written before this version have no header.
+- A token store: at its first use every headerless `.bin` that decrypts to the shape of a token is rewritten with the
+  header, then the marker file `.ao1` is written in the store's folder. If a file could not be decrypted then, no
+  marker is written and the next use tries again. A headerless file that is not a token is left as it is and refused.
+- `keys.bin` and `own.bin`: at the first start a headerless file that parses to its own schema is taken, both files
+  are written again with their headers, and the markers `keys.bin.ao1` and `own.bin.ao1` are written next to them.
+- Once a kind's marker exists, a headerless file of that kind is refused.
+- An Agent Office older than this version cannot read the files with a header: there its link does not start and its
+  tokens are not usable until the newer version runs again. It does not rewrite or delete them.
+
+**Paths.** A store's file name is its id with every character outside `[A-Za-z0-9_-]` replaced by `_`: one segment
+under the store's own folder. Sealed files are read only when they are regular files and written through a new temp
+file and a rename, so a symbolic link at a file's path is never followed (it is replaced by the write). A store whose
+folder is itself a symbolic link does nothing (no read, save, listing or removal: the start sweep cannot delete
+another folder's files through it), and the link does not start when `link/` is one.
+
+**Limits.** This stops moving and copying files between the app's stores; it is not a sandbox. A process running as
+the same user can still run the app's own binary, or read the keychain item if macOS lets it, and then decrypt and
+encrypt anything. The markers are plain files: with a marker deleted, a headerless file is taken once more, but only
+with the shape of its own kind, and the app no longer writes headerless files, so such a file has to come from a
+version before this one. The check covers the store folder and the file, not a symbolic link higher up the path.
+Purpose binding does not tell an older copy of the right file from the current one (v3.101 "Limit").
