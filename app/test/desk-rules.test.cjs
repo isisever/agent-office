@@ -314,7 +314,7 @@ test('v3.94 readSettings follows a symlink only when asked (an account\'s settin
   assert.match(fn, /DR\.accountRulesWanted\(\{ project: own, tab: r\.tab, hasMail, projectConfigDir: from\.configDir, deskConfigDir: account\.configDir \}\)/);
   assert.match(fn, /DR\.readSettings\(accountSettingsFile\(from\), \{ follow: true \}\)/);
   assert.equal(/writeFile|writeJson|rename|mkdir/.test(fn), false, 'nothing is written for this');
-  assert.match(src, /guarded && \(IS_WIN \|\| guarded\.length > DR\.MAX_ARG_CHARS\) \? settingsFile\(usageKey\(id\), guarded\) : guarded/);
+  assert.match(src, /if \(guarded && \(IS_WIN \|\| guarded\.length > DR\.MAX_ARG_CHARS\)\) \{\n\s+settingsArg = settingsFile\(usageKey\(id\), guarded\);/);
 });
 
 test('v3.94 the desk\'s rules are synced on every app-triggered start, whatever `start` says', () => {
