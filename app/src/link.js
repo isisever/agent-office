@@ -61,6 +61,7 @@ class Link extends EventEmitter {
     this.sentRes = new Map();     // pub → json of the res last sent
     this.sentCatalog = new Map(); // pub → json of the catalog last sent ('off' after a "not shared any more")
     this.peerRes = new Map();     // pub → res received
+    this.peerTrusts = new Map();  // v3.97 pub → does that machine run our tasks unattended (absent: an older peer, unknown)
     this.peerCatalog = new Map(); // pub → catalog received
     // v3.34 login relay (cap 'accounts'): this machine's account list, what peers allowed us to see, our relays there
     this.accounts = null;         // [{ id, label, state, email? }] (publishAccounts)
@@ -212,7 +213,7 @@ class Link extends EventEmitter {
   }
 
   addDevice(pub, name, secret) {
-    const device = { pub, name: C.deviceName(name), addedAt: this.now(), allowCommands: false, allowHandoff: false, allowManage: false, allowAccounts: false };   // all OFF by default
+    const device = { pub, name: C.deviceName(name), addedAt: this.now(), allowCommands: false, allowHandoff: false, allowManage: false, allowAccounts: false, trusted: false };   // all OFF by default (a re-paired device starts untrusted again)
     this.devices = [...this.devices.filter((d) => d.pub !== pub), device];
     this.secrets[pub] = secret;
     this.swarm?.join(C.pairTopic(secret), { server: true, client: true });
@@ -291,6 +292,7 @@ class Link extends EventEmitter {
       this.emit('change');
     } else if (m.t === 'res') {
       this.peerRes.set(d.pub, m.res);
+      if (typeof m.trusted === 'boolean') this.peerTrusts.set(d.pub, m.trusted); else this.peerTrusts.delete(d.pub);   // v3.97 display only
       this.emit('change');
     } else if (m.t === 'catalog') {
       if (m.catalog.shared) this.peerCatalog.set(d.pub, m.catalog.projects); else this.peerCatalog.delete(d.pub);
@@ -885,7 +887,7 @@ class Link extends EventEmitter {
   /** Did this peer's hello (on the current connection) name the capability? A v1 peer names none. */
   peerHas(pub, cap) { return Boolean(this.peers.get(pub)?.caps.includes(cap)); }
   forgetPeer(pub) {
-    for (const m of [this.peers, this.sentRes, this.sentCatalog, this.peerRes, this.peerCatalog, this.sentAccounts, this.peerAccounts]) m.delete(pub);
+    for (const m of [this.peers, this.sentRes, this.sentCatalog, this.peerRes, this.peerTrusts, this.peerCatalog, this.sentAccounts, this.peerAccounts]) m.delete(pub);
   }
   /** This machine's resources: sent to peers with 'res' when it changed enough (C.resChanged). */
   publishRes(res) {
@@ -895,10 +897,12 @@ class Link extends EventEmitter {
   }
   flushRes(pub, conn) {
     if (!this.res || !this.peerHas(pub, 'res')) return;
-    const json = JSON.stringify(this.res);
+    // v3.97 the same message tells that device whether its tasks run unattended here (an optional field older peers drop)
+    const own = C.mayRunUnattended(this.devices, this.secrets, pub);
+    const json = `${own ? 1 : 0}${JSON.stringify(this.res)}`;
     if (this.sentRes.get(pub) === json) return;
     this.sentRes.set(pub, json);
-    this.write(conn, { t: 'res', res: this.res });
+    this.write(conn, { t: 'res', res: this.res, trusted: own });
   }
   /** This machine's project catalog (display only): sent only to peers with 'catalog' that we allow to manage. */
   publishCatalog(catalog) {
@@ -1026,7 +1030,11 @@ class Link extends EventEmitter {
   // --- the trust list
 
   rename(pub, name) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, name: C.deviceName(name, d.name) } : d)); this.persist(); this.emit('change'); }
-  setAllow(pub, on) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowCommands: on === true } : d)); this.persist(); this.emit('change'); }
+  setAllow(pub, on) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowCommands: on === true } : d)); this.persist(); this.tellTrust(pub); this.emit('change'); }
+  /** v3.97 "This is my own computer". Called only by the link:setTrusted IPC handler (this machine's own Devices UI, after
+   *  its confirmation dialog): no link message and no office MCP tool reaches it. */
+  setTrusted(pub, on) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, trusted: on === true } : d)); this.persist(); this.tellTrust(pub); this.emit('change'); }
+  tellTrust(pub) { const conn = this.conns.get(pub); if (conn) this.flushRes(pub, conn); }
   setAllowHandoff(pub, on) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowHandoff: on === true } : d)); this.persist(); this.emit('change'); }
   /** v3.31 "Allow managing projects": the catalog goes to that device (and stops at once when turned off). */
   setAllowManage(pub, on) {
@@ -1077,7 +1085,8 @@ class Link extends EventEmitter {
       pairing: this.pairing ? { role: this.pairing.role, code: this.pairing.role === 'inviter' ? this.pairing.code : null, expiresAt: this.pairing.expiresAt } : null,
       devices: this.devices.map((d) => {
         const peer = this.peers.get(d.pub);
-        return { id: d.pub, name: d.name, addedAt: d.addedAt, allowCommands: d.allowCommands, allowHandoff: d.allowHandoff, allowManage: d.allowManage, allowAccounts: d.allowAccounts, online: this.conns.has(d.pub),
+        return { id: d.pub, name: d.name, addedAt: d.addedAt, allowCommands: d.allowCommands, allowHandoff: d.allowHandoff, allowManage: d.allowManage, allowAccounts: d.allowAccounts, trusted: d.trusted === true, online: this.conns.has(d.pub),
+          trustsUs: this.peerTrusts.has(d.pub) ? this.peerTrusts.get(d.pub) : null,   // v3.97 null = unknown (offline, or an older Agent Office there)
           // v3.31/v3.32: null = no hello yet; v 1 = an older Agent Office there (no caps)
           v: peer ? peer.v : null, app: peer?.app || '', caps: peer?.caps || [], res: this.peerRes.get(d.pub) || null, catalog: this.peerCatalog.get(d.pub) || null, accounts: this.peerAccounts.get(d.pub) || null };
       }),

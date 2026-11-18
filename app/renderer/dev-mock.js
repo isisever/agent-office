@@ -864,7 +864,7 @@ if (q.has('machines')) {
   window.agentOffice.link = {
     get: ok, invite: ok, join: () => Promise.resolve({ ok: false, error: 'bad-code', view: view() }), cancel: ok,
     setName: (name) => { lv.name = name; return ok(); }, rename: (id, name) => setDev(id, 'name', name),
-    setAllow: (id, on) => setDev(id, 'allowCommands', on), setAllowHandoff: (id, on) => setDev(id, 'allowHandoff', on),
+    setAllow: (id, on) => setDev(id, 'allowCommands', on), setTrusted: (id, on) => setDev(id, 'trusted', on), setAllowHandoff: (id, on) => setDev(id, 'allowHandoff', on),
     setAllowManage: (id, on) => setDev(id, 'allowManage', on), setAllowAccounts: (id, on) => setDev(id, 'allowAccounts', on),
     remove: (id) => { lv.devices = lv.devices.filter((d) => d.id !== id); return ok(); },
     handoffAnswer: ok, handoffAsk: ok, handoffKeep: ok, send: ok, handOff: () => Promise.resolve(true),
@@ -893,7 +893,7 @@ if (q.has('remotes')) {
   const ok = () => Promise.resolve(structuredClone(lv));
   window.agentOffice.link = {
     get: ok, invite: ok, join: () => Promise.resolve({ ok: false, error: 'bad-code', view: structuredClone(lv) }), cancel: ok,
-    setName: ok, rename: ok, setAllow: ok, setAllowHandoff: ok, setAllowManage: ok, setAllowAccounts: ok, remove: ok,
+    setName: ok, rename: ok, setAllow: ok, setTrusted: ok, setAllowHandoff: ok, setAllowManage: ok, setAllowAccounts: ok, remove: ok,
     handoffAnswer: ok, handoffAsk: ok, handoffKeep: ok, send: ok, handOff: () => Promise.resolve(true), onChange: listeners().add,
   };
   const base = ['watch', 'board', 'reports', 'dispatch'];

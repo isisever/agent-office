@@ -60,10 +60,39 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
       ['allow', 'allowCommands', 'setAllow', ''], ['allowHandoff', 'allowHandoff', 'setAllowHandoff', 'sb-dev-handoff'],
       ['allowManage', 'allowManage', 'setAllowManage', 'sb-dev-manage'], ['allowAccounts', 'allowAccounts', 'setAllowAccounts', 'sb-dev-accounts'],
     ].map(([label, field, call, cls]) => ({ label, field, call, cls, on: Boolean(d[field]) }));
-    const openPerms = (/** @type {any} */ d) => popup(t('devices.permissions', { name: d.name }),
-      perms(d).map((x) => h('label', { class: 'sb-botcolor sb-langrow' },
-        h('span', {}, t(`devices.${x.label}`)),
-        h('input', { type: 'checkbox', class: 'sb-check ' + x.cls, checked: x.on, onchange: (/** @type {Event} */ e) => apply(api.link[x.call](d.id, /** @type {HTMLInputElement} */ (e.target).checked)) }))));
+    // v3.97 "This is my own computer": main asks before it turns on, so the box follows what main answered (not the click)
+    const setTrusted = (/** @type {any} */ d, /** @type {HTMLInputElement} */ box) => api.link.setTrusted(d.id, box.checked).then((/** @type {any} */ v) => {
+      if (!v) { box.checked = false; return; }
+      view = v;
+      render();
+      box.checked = Boolean(v.devices.find((/** @type {any} */ x) => x.id === d.id)?.trusted);
+    }).catch((/** @type {any} */ e) => { box.checked = false; console.error(e); });
+    const openPerms = (/** @type {any} */ d) => {
+      // The flag does nothing without "Allow commands": then the row is greyed and says so, and it cannot be turned on
+      // (a box that is still on stays clickable, to turn it off). It follows the "Allow commands" box of this popup.
+      const name = h('span', {});
+      const box = /** @type {HTMLInputElement} */ (h('input', { type: 'checkbox', class: 'sb-check sb-dev-trusted', checked: Boolean(d.trusted), onchange: (/** @type {Event} */ e) => setTrusted(d, /** @type {HTMLInputElement} */ (e.target)).then(() => needsAllow(allowOn)) }));
+      const row = h('label', { class: 'sb-botcolor sb-langrow' }, name, box);
+      let allowOn = Boolean(d.allowCommands);
+      const needsAllow = (/** @type {boolean} */ on) => {
+        allowOn = on;
+        name.textContent = on ? t('devices.trusted') : `${t('devices.trusted')} ${t('devices.trustedNeedsAllow')}`;
+        box.disabled = !on && !box.checked;
+        row.style.opacity = on ? '' : '.55';
+      };
+      needsAllow(allowOn);
+      popup(t('devices.permissions', { name: d.name }), [
+        ...perms(d).map((x) => h('label', { class: 'sb-botcolor sb-langrow' },
+          h('span', {}, t(`devices.${x.label}`)),
+          h('input', { type: 'checkbox', class: 'sb-check ' + x.cls, checked: x.on, onchange: (/** @type {Event} */ e) => {
+            const on = /** @type {HTMLInputElement} */ (e.target).checked;
+            if (x.field === 'allowCommands') needsAllow(on);
+            apply(api.link[x.call](d.id, on));
+          } }))),
+        row,
+        h('div', { class: 'sb-note' }, t('devices.trustedHint')),
+      ]);
+    };
     const list = view.devices.map((/** @type {any} */ d) => h('li', { class: 'sb-dev' + (d.online ? ' online' : '') },
       h('div', { class: 'sb-dev-top' },
         h('span', { class: 'sb-adot', title: t(d.online ? 'devices.online' : 'devices.offline') }),
@@ -74,7 +103,9 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
         h('button', { class: 'sb-x', title: t('devices.rename'), onclick: () => { editing = d.id; render(); } }, '✎'),
         h('button', { class: 'sb-x', title: t('devices.remove'), onclick: () => { if (confirm(t('devices.removeConfirm', { name: d.name }))) apply(api.link.remove(d.id)); } }, '×'),
       ),
-      h('div', { class: 'sb-dev-sub' }, t(d.online ? 'devices.online' : 'devices.offline'), ' · ', t('devices.permCount', { n: perms(d).filter((x) => x.on).length, total: 4 })),
+      h('div', { class: 'sb-dev-sub' }, t(d.online ? 'devices.online' : 'devices.offline'), ' · ', t('devices.permCount', { n: perms(d).filter((x) => x.on).length, total: 4 }), d.trusted && d.allowCommands ? ` · ${t('devices.trusted')}` : ''),   // named only while it has an effect
+      // v3.97 what that machine says about tasks sent from here (nothing for an older Agent Office there)
+      d.online && typeof d.trustsUs === 'boolean' ? h('div', { class: 'sb-note' }, t(d.trustsUs ? 'devices.trustsUsOn' : 'devices.trustsUsOff')) : null,
       d.online && d.v === 1 ? h('div', { class: 'sb-note warn' }, t('devices.updateThere', { device: d.name })) : null,
     ));
     // v3.29 handoffs: offers waiting for an answer, transfers in progress, projects handed off from here
