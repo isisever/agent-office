@@ -2105,9 +2105,9 @@ function hqWaits() {
     if (t.status !== 'queued' || t.machine !== 'self') continue;
     const w = linkHost.waitInfo(t.id);
     if (!w) continue;
-    const ts = terms.has(w.project) ? tabStateOf(w.project) : 'gone';
-    const st = HQ.waitState(ts, asleep.has(w.project));
-    const blockedBy = st !== 'busy' ? '' : attention.get(w.project) === 'permission' ? 'permission' : activity.get(w.project)?.draft ? 'draft' : '';
+    // v3.93 the pump's own view (linkTabState): a staff desk that waits on its project's lock reads 'busy', not 'ready'
+    const ts = terms.has(w.project) ? linkTabState(w.project) : 'gone';
+    const { state: st, blockedBy } = HQ.waitEntry(ts, asleep.has(w.project), attention.get(w.project) === 'permission', Boolean(activity.get(w.project)?.draft));
     out[t.id] = { state: st, project: t.project, pos: w.pos, len: w.len, expiresAt: w.expiresAt, tab: t.staff ? `${t.project} · ${t.staff}` : t.project, ...(blockedBy ? { blockedBy } : {}) };
   }
   // v3.48 a remote task: held in the outbox (machine offline), or why it waits there (task-status)

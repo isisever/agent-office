@@ -413,6 +413,11 @@ const waitState = (tab, isAsleep) => (tab === 'ready' || tab === 'busy' || tab =
  *  the person can clear the wait (WAIT_BLOCKS: a permission prompt in that tab, unsent text in its input) and one
  *  sentence. `w` is an entry of main's hqWaits(); an entry without `tab` (a task on a paired device) or none → {}. */
 const WAIT_BLOCKS = ['permission', 'draft'];
+/** v3.93 the wait state plus, when busy, what only the person can clear (permission first). Pure; `tab` is the pump's view. */
+const waitEntry = (tab, isAsleep, permission, draft) => {
+  const state = waitState(tab, isAsleep);
+  return { state, blockedBy: state !== 'busy' ? '' : permission ? 'permission' : draft ? 'draft' : '' };
+};
 const WAIT_WHEN = {
   ready: 'in a moment',
   busy: 'when that tab is free (it is in a turn, has agents running or is still loading)',
@@ -422,11 +427,11 @@ const WAIT_WHEN = {
 };
 const WAIT_ASK = {
   permission: 'shows a permission prompt that only the person can answer: ask them to answer it in that tab',
-  draft: 'has unsent text in its input that only the person can send or clear: ask them to do that in that tab',
+  draft: 'has unsent text in its input, which may be queued behind a running turn: ask them to clear it in that tab, or to send it once that session is done',
 };
 function waitFields(w) {
   if (!w || !w.tab || !WAIT_STATES.includes(w.state)) return {};
-  const tab = line(w.tab, 96);
+  const tab = line(w.tab, 96).replace(/["`]/g, '');
   const ahead = w.pos > 1 ? ` ${w.pos - 1} earlier task(s) in that tab's queue go first.` : '';
   const blockedBy = w.state === 'busy' && WAIT_BLOCKS.includes(w.blockedBy) ? w.blockedBy : '';
   if (blockedBy) return { waiting: w.state, blockedBy, note: `Accepted. The "${tab}" tab ${WAIT_ASK[blockedBy]}. The app then types the task by itself; the person must not type or fetch the task.${ahead}` };
@@ -545,7 +550,7 @@ module.exports = {
   PERSON_PROMPTED_NOTE,
   TASK_OPS, taskOpPlan, removeTask, retitleTask, closeByHq, removedOf,
   hqBossModel, boardOfRemote, remoteOpen,
-  waitState, WAIT_STATES, WAIT_BLOCKS, waitFields,
+  waitState, waitEntry, WAIT_STATES, WAIT_BLOCKS, waitFields,
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, MAX_INITIATIVE, INITIATIVE_MS, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
