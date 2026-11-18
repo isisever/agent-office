@@ -1216,6 +1216,16 @@ label.sb-langrow { cursor: pointer; }
 .sb-rrow.offline { opacity: .45; }
 .sb-rrow.offline .sb-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--status-text); }
 .sb-rrow.st-approval .sb-name { color: var(--approval); }
+/* v3.98 remote rows grouped by machine: the header follows the v3.86 project groups, with an online dot */
+.sb-mgroup { cursor: default; }
+.sb-mgroup .sb-dot { flex-shrink: 0; width: 8px; height: 8px; background: var(--accent); opacity: 1; }
+.sb-mgroup.offline .sb-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--status-text); opacity: .6; }
+.sb-mgroup.offline .sb-group-name { opacity: .7; }
+.sb-mgroup .hq-badge { font-weight: 400; border-style: dashed; }
+.sb-mgroup .sb-group-count { flex-shrink: 0; white-space: nowrap; }
+.sb-rrow.is-stopped .sb-name, .sb-rrow.is-asleep .sb-name { opacity: .7; }
+.sb-rrow.is-stopped .sb-stats, .sb-rrow.is-asleep .sb-stats { font-style: italic; }
+.sb-rrow.offline .sb-stats { font-style: italic; }
 .sb-rbox { grid-column: 1 / -1; min-width: 0; cursor: default; }
 .sb-rbox .sb-rcmd { margin: 0; }
 .sb-rbox .sb-note { font-size: 10px; opacity: .8; overflow-wrap: anywhere; }

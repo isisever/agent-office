@@ -1181,6 +1181,13 @@
     "offline": "Çevrim dışı: bilinen son projeler",
     "start": "Başlat veya uyandır",
     "sleep": "Uyut",
+    "restart": "Yeniden başlat",
+    "lastSeen": "son görülme: {time}",
+    "lastKnown": "son bilinen",
+    "state": {
+      "stopped": "durduruldu",
+      "asleep": "uykuda"
+    },
     "col": {
       "queued": "Sırada",
       "running": "Çalışıyor",

@@ -1198,8 +1198,8 @@ test('v3.96 peer cache: last-known state, status, engine, account label and asOf
   // bounded: 100 projects per device
   const many = Array.from({ length: 150 }, (_, i) => ({ id: `p${i}`, name: `n${i}`, status: 'idle' }));
   assert.equal(HQ.mergePeerCache({}, [{ pub, name: 'm', online: true, projects: many }], 1)[pub].projects.length, 100);
-  // remote PROJECTS rows are unchanged by the richer cache
-  assert.deepEqual(Object.keys(HQ.remoteRows(cache, { [pub]: { online: false } })[0]).sort(), ['actions', 'id', 'key', 'lastSeen', 'machine', 'name', 'online', 'remote']);
+  // v3.98 remote PROJECTS rows carry the cache's last-known fields
+  assert.deepEqual(Object.keys(HQ.remoteRows(cache, { [pub]: { online: false } })[0]).sort(), ['account', 'actions', 'asOf', 'buttons', 'engine', 'id', 'key', 'lastSeen', 'machine', 'name', 'online', 'remote', 'state', 'status']);
 });
 
 test('v3.96 office_machines rows: online from snapshot + catalog, offline last-known, openTasks from this board', () => {
@@ -1312,4 +1312,72 @@ test('v3.96 review: openTasks counts a waiting remote stage addressed by name (e
   const r = HQ.remoteProjects({ pub, online: true, live, catalog: null, at: 1, tasks, now: 2 });
   assert.equal(r[0].openTasks, 1);
   assert.equal(r[1].openTasks, 1);
+});
+
+test('v3.98 remote rows: state, engine, account label, asOf, online and lastSeen; buttons per state and permission', () => {
+  const pub = 'ab'.repeat(32);
+  const projects = [
+    { id: 'p1', name: 'site', status: 'idle', engine: 'claude' },
+    { id: 'p2', name: 'api', status: 'working', engine: 'claude' },
+    { id: 'p3', name: 'docs', status: 'idle', engine: 'claude' },
+    { id: 'p4', name: 'old', status: 'idle', engine: 'agy' },
+    { id: 'p5', name: 'gem', status: 'idle', engine: 'agy' },
+  ];
+  const catalog = [
+    { id: 'p1', state: 'running', engine: 'claude', accountLabel: 'Work' },
+    { id: 'p2', state: 'running', engine: 'claude' },
+    { id: 'p3', state: 'asleep', engine: 'claude' },
+    { id: 'p4', state: 'stopped', engine: 'agy', accountLabel: 'Home' },
+    { id: 'p5', state: 'running', engine: 'agy' },
+  ];
+  const cacheOf = (manage, cat = catalog) => HQ.mergePeerCache({}, [{ pub, name: 'mini', online: true, manage, projects, catalog: cat, at: 100 }], 120);
+  const live = { [pub]: { online: true, status: { p1: 'idle', p2: 'approval', p3: 'idle', p4: 'idle', p5: 'idle' } } };
+  const rows = HQ.remoteRows(cacheOf(true), live);
+  assert.deepEqual(rows[0], { key: `${pub}:p1`, id: 'p1', name: 'site', machine: 'mini', online: true, lastSeen: 120, remote: true, state: 'running', status: 'idle', engine: 'claude', account: 'Work', asOf: 100,
+    actions: ['watch', 'board', 'reports', 'dispatch', 'start', 'wake', 'sleep', 'stop'], buttons: ['sleep', 'restart', 'stop'] });
+  // running and busy: the live status wins over the cache; no sleep, restart and stop are refused over there while busy
+  assert.equal(rows[1].status, 'approval');
+  assert.deepEqual(rows[1].buttons, ['restart', 'stop']);
+  // asleep and stopped: no snapshot status (it says idle for a tab that is not running)
+  assert.deepEqual([rows[2].state, rows[2].status, rows[2].buttons], ['asleep', undefined, ['wake', 'stop']]);
+  assert.deepEqual([rows[3].state, rows[3].status, rows[3].account, rows[3].buttons], ['stopped', undefined, 'Home', ['start']]);
+  // sleep is a Claude Code thing: not offered for another engine
+  assert.deepEqual(rows[4].buttons, ['restart', 'stop']);
+  // no manage permission: the state still shows when the catalog is there, never a button, never a manage action
+  for (const r of HQ.remoteRows(cacheOf(false), live)) { assert.deepEqual(r.buttons, []); assert.deepEqual(r.actions, ['watch', 'board', 'reports', 'dispatch']); }
+  // manage without a catalog: the state is not known, the two buttons of v3.46 stay
+  const blind = HQ.remoteRows(cacheOf(true, null), live)[0];
+  assert.deepEqual([blind.state, blind.account, blind.status, blind.buttons], [undefined, undefined, 'idle', ['wake', 'sleep']]);
+  // offline: the last-known rows with their asOf and the machine's lastSeen, and no button at all
+  const cache = HQ.mergePeerCache(cacheOf(true), [{ pub, name: 'mini', online: false, manage: true, projects: null }], 900);
+  const off = HQ.remoteRows(cache, { [pub]: { online: false, status: { p2: 'idle' } } });
+  assert.equal(off.length, 5);
+  for (const r of off) { assert.equal(r.online, false); assert.equal(r.lastSeen, 120); assert.equal(r.asOf, 100); assert.deepEqual(r.buttons, []); }
+  assert.deepEqual([off[1].state, off[1].status, off[3].state, off[3].account], ['running', 'working', 'stopped', 'Home']);   // the cache's status, not a stale live one
+  // a tampered cache file: unknown values never reach a row
+  const bad = HQ.remoteRows({ [pub]: { name: 'mini', lastSeen: 7, manage: true, projects: [{ id: 'p1', name: 'x', state: 'weird', status: 'rm -rf', engine: 7, account: 'a'.repeat(200) }] }, junk: 'x' }, live)[0];
+  assert.deepEqual([bad.state, bad.engine, bad.asOf, bad.account.length], [undefined, undefined, 7, 40]);
+  assert.deepEqual(HQ.remoteButtons(), []);
+});
+
+test('v3.98 remote row operations: one allow-list, restart is stop then start', () => {
+  const pub = 'ab'.repeat(32);
+  const row = (manage) => HQ.remoteRows(HQ.mergePeerCache({}, [{ pub, name: 'mini', online: true, manage, projects: [{ id: 'p1', name: 'site' }] }]), { [pub]: { online: true } })[0];
+  assert.deepEqual(HQ.MANAGE_ACTIONS, ['start', 'wake', 'sleep', 'stop']);   // restart is not an op of the link
+  for (const op of HQ.MANAGE_ACTIONS) assert.deepEqual(HQ.remoteOpSteps(row(true), op), [op]);
+  assert.deepEqual(HQ.remoteOpSteps(row(true), 'restart'), ['stop', 'start']);
+  for (const op of [...HQ.MANAGE_ACTIONS, 'restart']) assert.equal(HQ.remoteOpSteps(row(false), op), null);
+  for (const op of ['watch', 'dispatch', 'remove', 'handoff', 'constructor', '__proto__', '', null, undefined, ['stop']]) assert.equal(HQ.remoteOpSteps(row(true), op), null);
+  assert.equal(HQ.remoteOpSteps(undefined, 'stop'), null);
+  // main: every step goes through the existing proj-op, and a refused step (busy) ends the operation
+  const i = MAIN.indexOf("ipcMain.handle('hq:remoteOp'");
+  const body = MAIN.slice(i, MAIN.indexOf('\n});', i));
+  assert.match(body, /HQ\.remoteOpSteps\(row, op\)/);
+  assert.match(body, /r = await linkHost\.projOp\(k\.pub, k\.id, step\);\s+if \(!r\?\.ok\) break;/);
+  assert.doesNotMatch(body, /sendProjOp|manage\(/);
+  // renderer: buttons only from the row's list and only while online; a header per machine
+  const board = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'hq-board.js'), 'utf8');
+  assert.match(board, /const buttons = online \? \(r\.buttons \|\| \[\]\)\.filter\(\(b\) => ROP\[b\]\) : \[\];/);
+  assert.match(board, /flatMap\(\(g\) => \[machineHead\(g\[0\]\), \.\.\.g\.map\(remoteRow\)\]\)/);
+  for (const k of ['hq.lastSeen', 'hq.lastKnown', 'hq.restart', 'hq.state.']) assert.ok(board.includes(k), k);
 });
