@@ -1200,6 +1200,7 @@ const RESUME_GRACE_MS = 8000; // if --continue ends with an error within this ti
 function startPty(id, { resume = false, sessionId = null, imported = false, prompt = '', forcePrompt = false } = {}) {
   // every start of a personal desk (open, restore, wake, restart on another account): its folder is trusted in the account it runs on
   trustPersonalDesk(id);
+  trustDeskWorktree(id);   // v3.94 the same for a desk's worktree the app made
   killPty(id);
   const r = P.resolvePty(state, id);
   if (!r || !win || !isLoaded) return broadcast();
@@ -1212,6 +1213,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const account = A.accountOf(state, project);
   const { configDir } = account;
   if (configDir) try { fs.mkdirSync(configDir, { recursive: true }); } catch {}
+  // v3.94 every start of a worktree desk the app makes (HQ's start, the pump's revive, wake, restore) brings the
+  // project's local rules (v3.92) up to date. Not awaited here: openDesk awaits its own sync before it starts a desk.
+  if (tab?.staffId && tab.worktree) syncDeskRules(P.findProject(state, project.id) || project, tab, memberById(tab.staffId)).catch(() => {});
   // Drain any /model-written account default into the launching project's own settings.json so it cannot leak to sibling
   // Auto projects (contract: per-project persistent main model). Only the focused/active project claims it so a background
   // restart cannot steal the account model; claude engine only. The --model arg below (bossModelArgs) is unchanged.
@@ -1257,8 +1261,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // v3.85 a mail session: Claude Code itself asks the person for every action beyond reading (ask rules for the
   // built-in tools and every other MCP server of its file, bypass and auto mode off) and loads only the servers of
   // its --mcp-config file (no claude.ai connectors, no account servers: none of them could send mail behind the outbox)
-  const guarded = mailMcp ? MG.guardSettings(settings, Object.keys(readJson(prepared.mcpConfig || '')?.mcpServers || {}).filter((n) => n !== MMCP.SERVER_NAME)) : settings;
-  const settingsArg = IS_WIN && guarded ? settingsFile(usageKey(id), guarded) : guarded;
+  const guarded = mailMcp ? MG.guardSettings(settings, Object.keys(readJson(prepared.mcpConfig || '')?.mcpServers || {}).filter((n) => n !== MMCP.SERVER_NAME)) : deskAccountRules(r, account, settings);
+  // v3.94 a long rule list goes through the settings file too: one command line argument has a size limit
+  const settingsArg = guarded && (IS_WIN || guarded.length > DR.MAX_ARG_CHARS) ? settingsFile(usageKey(id), guarded) : guarded;
   const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(mailMcp ? ['--strict-mcp-config'] : []), ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
@@ -2176,11 +2181,19 @@ function hqSummary(args) {
   return { ok: true, file: f };
 }
 const isHere = (machine) => !machine || machine.toLowerCase() === selfName().toLowerCase() || /^(this|local|here)( machine)?$/i.test(machine);
-async function confirmHqDispatch(args, remote) {
-
+/** v3.94 the third button was pressed: both HQ settings on, kept like hq:setSettings keeps them; the Board shows them.
+ *  HQ's own session reads them at its next start, as with the checkboxes (HQ is not restarted). */
+function hqAllowAlways() {
+  commit({ ...state, hq: HQ.allowAlways(state.hq) });
+  send('hq:board', hqView());
+}
+/** v3.94 `request`: the dispatch's request id, passed only where the third button may be offered (HQ.offersAlways). */
+async function confirmHqDispatch(args, remote, { request = '' } = {}) {
   if (!win || win.isDestroyed()) return false;
-  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
-    message: args.staffName ? T('main.hqAskStaff', { staff: args.staffName, project: officeName(args.targetName || args.project) }) : T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: LC.cleanLine(HQ.redact(String(args.task || '')), 300) });
+  const always = HQ.offersAlways({ remote, request, minter: hqMinter });
+  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny'), ...(always ? [T('main.hqAllowAlways')] : [])], defaultId: 1, cancelId: 1,
+    message: args.staffName ? T('main.hqAskStaff', { staff: args.staffName, project: officeName(args.targetName || args.project) }) : T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: `${LC.cleanLine(HQ.redact(String(args.task || '')), 300)}${always ? `\n\n${T('main.hqAllowAlwaysNote')}` : ''}` });
+  if (always && r.response === 2) { hqAllowAlways(); return true; }
   return r.response === 0;
 }
 /** v3.47/v3.49 a routine's own project or remote run: its dispatch record names the run, so the report ends the run
@@ -2254,7 +2267,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
       targets: [{ projectId: p?.id || '', staffId: args.staff ? m?.id || null : '', skip: hqTargetSkips(p, args.staff ? m?.id || '' : '') }] };
   };
   const askPerson = async () => {
-    if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
+    if (!(await confirmHqDispatch(args, remote, { request }))) return { status: 'rejected', reason: 'declined' };
     // two dispatches can wait on dialogs at once: re-check the caps on the fresh board after the answer
     const late = HQ.capReason(loadHqBoard(), request);   // never an approved held task: approved skips the dialog
     return late ? { status: 'rejected', reason: late } : null;
@@ -2371,10 +2384,12 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
 // --- v3.79 staged requests (src/hq-chain.js): `then` / `after` on HQ's office_dispatch. Consent is asked when HQ
 // dispatches (today's rule; local stages of one call in one dialog, every remote stage its own); a waiting stage's text
 // is frozen in tasks/<id>/stage.json then and released unchanged except for the previous report, appended as marked data.
-async function confirmHqStages(stages) {
+async function confirmHqStages(stages, { request = '' } = {}) {
   if (!win || win.isDestroyed()) return false;
-  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
-    message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.projectName || s.project)}` : officeName(s.project), machine: '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}` });
+  const always = HQ.offersAlways({ remote: false, request, minter: hqMinter });
+  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny'), ...(always ? [T('main.hqAllowAlways')] : [])], defaultId: 1, cancelId: 1,
+    message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.projectName || s.project)}` : officeName(s.project), machine: '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}${always ? `\n\n${T('main.hqAllowAlwaysNote')}` : ''}` });
+  if (always && r.response === 2) { hqAllowAlways(); return true; }
   return r.response === 0;
 }
 async function hqDispatchStages(args, request, rrun) {
@@ -2435,12 +2450,12 @@ async function hqDispatchStages(args, request, rrun) {
     const took = HQ.takeInitiative(loadHqBoard(), initiativeArgs(false));
     if (took.ok) { saveHqBoard(took.board); byInitiative = true; }
   }
-  if (asks && !byInitiative && !(await confirmHqStages(local))) return no('declined');
+  if (asks && !byInitiative && !(await confirmHqStages(local, { request }))) return no('declined');
   for (const s of stages.filter((x) => x.remote)) if (!(await confirmHqDispatch(s, true))) return no('declined', { stage: s.n });
   // v3.91 the remote dialogs were open meanwhile: the rule again (count, 2 h window, caps, targets); no longer true: the dialog
   if (byInitiative && !HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })) {
     byInitiative = false;
-    if (!(await confirmHqStages(local))) return no('declined');
+    if (!(await confirmHqStages(local, { request }))) return no('declined');
   }
   if (byInitiative) for (const s of local) s.byInitiative = true;
   else for (const s of local) s.consented = true;   // v3.91 fix: the dialog was accepted, or consentFor needed none: these rows are consented
@@ -4099,6 +4114,21 @@ function writeDeskRole(id, project, staffId) {
   } catch (e) { console.error('desk role:', e.message); return null; }
 }
 /**
+ * v3.94 a staff desk of a project that runs on another account than the project's gets the PROJECT account's
+ * user-level rules in its `--settings` JSON: only `permissions.allow` / `deny` / `ask` of that account's settings.json
+ * (DR.withAccountRules), read only. Never a mail session, a personal workspace or HQ. → the settings JSON to pass
+ */
+function deskAccountRules(r, account, settings) {
+  try {
+    const own = P.findProject(state, r.project.id);   // as stored: with the project's account, not the member's
+    if (!own) return settings;
+    const from = A.accountOf(state, own);
+    const hasMail = mailIdsOf(memberById(r.tab?.staffId || '')).length > 0;
+    if (!DR.accountRulesWanted({ project: own, tab: r.tab, hasMail, projectConfigDir: from.configDir, deskConfigDir: account.configDir })) return settings;
+    return DR.withAccountRules(settings, DR.readSettings(accountSettingsFile(from), { follow: true }));   // read only
+  } catch (e) { console.error('desk account rules:', e.message); return settings; }
+}
+/**
  * v3.92 a desk's worktree gets the rules of the project's untracked `.claude/settings.local.json` (src/desk-rules.js):
  * only `permissions.allow` / `deny` / `ask`, merged into the desk's own file; never over a file git tracks there, and
  * only where git reports the file ignored (already, or after one line in the repository's shared info/exclude). Not
@@ -4125,10 +4155,10 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
   if (have) {
     const id = P.tabPtyId(p.id, have.n);
     trustPersonalDesk(id);
-    if (start && !terms.has(id)) {
-      await syncDeskRules(p, have, m);   // v3.92 the project's local rules, when the desk's file does not hold them yet
-      if (!terms.has(id)) { if (asleep.has(id)) wake(id); else startPty(id, { resume: true }); }
-    }
+    // v3.92 the project's local rules, when the desk's file does not hold them yet. v3.94: whenever the desk is not
+    // running, whatever `start` says (HQ opens with start: false and starts the desk itself)
+    if (!terms.has(id)) await syncDeskRules(p, have, m);
+    if (start && !terms.has(id)) { if (asleep.has(id)) wake(id); else startPty(id, { resume: true }); }
     return { ok: true, id };
   }
   const tab = { n: P.nextTabNumber(p), staffId: m.id };
@@ -4192,6 +4222,24 @@ function trustPersonalDesk(id) {
   const r = P.resolvePty(state, id);
   if (!r?.tab?.staffId || !r.project.staffOwner || r.project.appMade !== true || r.dir !== r.project.dir) return;
   try { PD.trustFolder(A.accountOf(state, r.project).configDir, app.getPath('home'), r.dir); } catch (e) { console.error('personal trust:', e.message); }
+}
+/**
+ * v3.94 a parallel desk's worktree the app made (userData/work/<project>/<member>, ST.appMadeWorktree; never a folder
+ * the person picked) is trusted in the account the desk runs on, so the desk does not wait behind Claude Code's trust
+ * dialog. Only when the person has trusted the project's own folder in the project's account: the worktree holds the
+ * same repository. Applied on every start of the desk's pty (startPty).
+ */
+function trustDeskWorktree(id) {
+  const r = P.resolvePty(state, id);
+  const root = r ? ST.appMadeWorktree(app.getPath('userData'), r.project.id, r.tab) : null;
+  const own = root ? P.findProject(state, r.project.id) : null;
+  if (!own) return;
+  try {
+    const home = app.getPath('home');
+    const given = readJson(PD.claudeJson(A.accountOf(state, own).configDir, home))?.projects;
+    if (!PD.projectPaths([own.dir]).some((d) => PD.trustedIn(given, d))) return;   // not trusted by the person: Claude Code asks
+    PD.trustFolder(A.accountOf(state, r.project).configDir, home, root);
+  } catch (e) { console.error('desk trust:', e.message); }
 }
 ipcMain.handle('staff:personal', async (_e, staffId) => {
   const m = teamOn() ? memberById(String(staffId || '')) : null;
