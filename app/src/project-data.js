@@ -186,6 +186,9 @@ function trustedIn(projects, dir) {
   }
 }
 
+/** Whether the person trusted a project's folder (as given or as its real path) under this projects map. */
+const folderTrusted = (projects, dir) => projectPaths([dir]).some((d) => trustedIn(projects, d));
+
 /**
  * The new account's .claude.json object with the old account's projects[dir] entries merged in, for dirs only.
  * A folder the old account trusts through a parent folder's entry gets the trust on its own entry (v3.76); the
@@ -427,5 +430,5 @@ function restartAfterMove({ sessionId = null, continues = false, busy = false } 
 
 module.exports = {
   restartAfterMove, claudeRoot, claudeJson, projectPaths, mergeJsonl, mergeFile, mergeTree, mergeEntry, mergeProjectEntries, mergeClaudeJson,
-  historyLines, mergeHistory, trustedIn, trustFolder, appMadeFolder, bypassAccepted, carryBypassAcceptance, moveProjectData,
+  historyLines, mergeHistory, trustedIn, folderTrusted, trustFolder, appMadeFolder, bypassAccepted, carryBypassAcceptance, moveProjectData,
 };

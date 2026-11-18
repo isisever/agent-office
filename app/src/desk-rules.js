@@ -37,7 +37,7 @@ function readSettings(file, { follow = false } = {}) {
   if (!st || !st.isFile() || st.size > MAX_BYTES) return null;
   let fd = null;
   try {
-    fd = fs.openSync(file, fs.constants.O_RDONLY | (follow ? 0 : fs.constants.O_NOFOLLOW || 0));
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (follow ? 0 : fs.constants.O_NOFOLLOW || 0))   // never block on a FIFO swapped in after the check;
     const now = fs.fstatSync(fd);
     if (!now.isFile() || now.size > MAX_BYTES) return null;
     const data = fs.readFileSync(fd);
