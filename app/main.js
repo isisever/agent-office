@@ -3153,6 +3153,7 @@ function startLink() {
     reportsDir: path.join(app.getPath('home'), '.claude', 'agent-office', 'reports'),
     onReport: onOfficeReport,
     manage: projectOp,   // v3.33 proj-op from a device allowed to manage
+    sessionOf: linkSessionOf,   // v3.100 the transcript a device allowed to read sessions gets (main tab only)
     stoppedHere: (id) => stoppedHere.get(String(id)) || 0,   // v3.99 the person's own stop: no remote revive for 10 minutes
     handoff: handoffDeps(),
     loginRelay: {
@@ -5079,6 +5080,29 @@ ipcMain.handle('chat:commands', (_e, id) => {
   slashCache.set(id, { at: Date.now(), list });
   return list;
 });
+/**
+ * v3.100 the transcript a paired device may read (src/link-host.js, "Allow reading sessions from this device"): a
+ * project's MAIN tab only → { file } | { reason }. Never HQ's session, a staff desk, an extra tab or a personal workspace.
+ */
+function linkSessionOf(id) {
+  id = String(id);
+  const p = state.projects.find((x) => x.id === id);
+  if (!p || p.hq || p.staffOwner || id === HQ.HQ_ID) return { reason: 'unknown-project' };
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab || r.project.id !== p.id) return { reason: 'unknown-project' };
+  if (P.engineOf(p) !== 'claude') return { reason: 'engine' };
+  const { configDir } = A.accountOf(state, p);
+  const sid = chatSession(id, r, configDir);
+  if (!sid) return { reason: 'no-session' };
+  let known = chatFiles.get(id);
+  if (!known || known.sid !== sid || !fs.existsSync(known.file)) {
+    const f = TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file;
+    if (!f) return { reason: 'no-session' };
+    known = { sid, file: f };
+    chatFiles.set(id, known);
+  }
+  return { file: known.file };
+}
 ipcMain.handle('chat:read', (_e, id, cursor) => {
   id = String(id);
   const r = P.resolvePty(state, id);

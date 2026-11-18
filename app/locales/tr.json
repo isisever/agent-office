@@ -913,6 +913,7 @@
     "handoffKeepDetail": "{device} projeyi devralmış olabilir. Devraldıysa iki bilgisayar da sahip olur ve çalışmalar ayrışabilir. Bunu yalnızca {device} yanıt veremiyorsa kullanın.",
     "handoffStillUnknown": "{device}, {project} projesini devralıp almadığını bilmiyor",
     "reportReady": "Rapor hazır: {project} ({machine})",
+    "sessionViewed": "{device}, {project} oturumunu okuyor.",
     "officeUnavailable": "Boss sekmeleri için Agent Office araçları kapalı: ofis soketi açılamadı",
     "projOpNotice": "{device}: {project} → {op}",
     "loginRelayTitle": "Uzaktan giriş",
@@ -1114,6 +1115,9 @@
     },
     "handedOffUnknown": "Devir sonucu bilinmiyor: {project} → {device}",
     "allowManage": "Projeleri yönetmeye izin ver (proje listesini paylaşır)",
+    "allowSessions": "Bu cihazın oturumları okumasına izin ver",
+    "allowSessionsHint": "Oturum okuma: buradaki bir projenin oturumunda söylenen her şey (yazılanlar ve asistanın yanıtları) o cihaza gönderilir. Gizli bilgiler yalnızca elden geldiğince ayıklanır; bazıları geçebilir.",
+    "sessionRead": "{device} okuyor",
     "allowAccounts": "Hesap girişine izin ver",
     "trusted": "Bu benim kendi bilgisayarım",
     "trustedHint": "Bu cihazdan gelen görevler, Otomatik onay ya da İzinleri atla açık projelerde de çalışır; böylece onay için bu bilgisayarın başında kimsenin olması gerekmez. Yalnızca \"Bu cihazdan komutlara izin ver\" açıkken işe yarar. Yalnızca size ait bir bilgisayar için açın.",
@@ -1196,6 +1200,21 @@
     "machineTitle": "Diğer makinelerinizden biri",
     "restartStopped": "{machine} üzerinde durduruldu; yeniden açmak için Başlat'a basın.",
     "lastSeen": "son görülme: {time}",
+    "remoteView": {
+      "off": "{machine} bu bilgisayarla oturum paylaşmıyor. Orada Cihazlar bölümünden açın.",
+      "approval": "{machine} makinesinde onay bekliyor; orada yanıtlanır.",
+      "asOf": "{time} itibarıyla",
+      "close": "Kapat",
+      "reason": {
+        "unknown-project": "Bu proje {machine} makinesinde yok.",
+        "engine": "Yalnızca Claude Code oturumları okunabilir.",
+        "no-session": "{machine} makinesinde bu projenin henüz oturumu yok.",
+        "rate-limited": "Çok fazla istek. Bir dakika sonra yeniden deneyin.",
+        "limit": "{machine} görünümü kapattı: aynı anda iki görünüm açık olabilir ve 10 dakika dokunulmayan görünüm sona erer.",
+        "offline": "{machine} çevrimdışı.",
+        "other": "Oturum açılamadı."
+      }
+    },
     "lastKnown": "son bilinen",
     "state": {
       "stopped": "durduruldu",

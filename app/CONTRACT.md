@@ -853,7 +853,7 @@ agentOffice.link.onChange(cb: (v: LinkView) => void)   // 'link:changed'
 - **Keys.** `userData/link/keys.bin` = Electron `safeStorage.encryptString` of `{ publicKey, secretKey, secrets: { [devicePub]: pairSecret } }` (Keychain / DPAPI / libsecret). Without a keychain (`isEncryptionAvailable()` false, or Linux `basic_text`) the link stays off (`error: 'no-keychain'`), never plain JSON. `userData/link/devices.json` holds only the name and the device list. No login, token or Claude credential is ever sent.
 - **Trust.** The swarm's firewall refuses every key that is not trusted (a device in the list with a stored secret), except while a pairing code is open, and then only the code's proof completes. Every message is checked against the list again, so **removing a device revokes it at once**: its connection is closed, its topic left, and its key refused afterwards. Rename only changes the local label.
 - **Protocol** (`link-core.js`; one JSON object per line, ≤ 64 KB per line, a longer one closes the connection; unknown types and malformed fields are dropped, more than 20 bad messages close the connection): `pair-hello { name, proof }`, `pair-ok { name, secret, proof }` (pairing only); `hello { v: 1, name }`, `ping {}` (every 5 s, `HEARTBEAT_MS`; a session with no data for 3 of them (`HEARTBEAT_MISSES`, 15 s) is closed, so a peer that crashed or lost its network shows offline within ~15 s; on quit `will-quit` waits up to 1 s for `Link.destroy()`, so a quitting peer shows offline at once; the same wait, under the same 1 s cap, also covers the ptys killed while quitting until they are reaped, so node-pty's exit callbacks do not fire into a torn-down environment), `state { seq, snap: { projects: RemoteProject[], workers: RemoteWorker[], delivered } }`, `cmd { id, project, text }`, `cmd-status { id, status: 'queued' | 'delivered' | 'rejected', reason? }`. Every received string is cleaned (`cleanLine`: no escapes or control characters, length caps).
-- **Mirror.** Main builds the snapshot from the same `readOffice` result the office draws (`snapshotOf`): per project name, engine, status (`approval` when it has an open dialog, `working` when its boss or an agent works), counts and attention; per worker only type, description, tool and times. No prompts, results, details, transcripts, code or terminal output. Sent only when it changed, at most once a second. The renderer merges remote projects into the office data as `<device> · <project>` desks with their workers (`mergeRemote`; the boss sign stays local) and lists them as rows in PROJECTS (v3.46, `renderer/hq-board.js`; the old separate Remote projects group is gone). A remote project going to `approval` raises a local notification (`main.linkApproval`).
+- **Mirror.** Main builds the snapshot from the same `readOffice` result the office draws (`snapshotOf`): per project name, engine, status (`approval` when it has an open dialog, `working` when its boss or an agent works), counts and attention; per worker only type, description, tool and times. No prompts, results, details, transcripts, code or terminal output. Sent only when it changed, at most once a second. The renderer merges remote projects into the office data as `<device> · <project>` desks with their workers (`mergeRemote`; the boss sign stays local) and lists them as rows in PROJECTS (v3.46, `renderer/hq-board.js`; the old separate Remote projects group is gone). A remote project going to `approval` raises a local notification (`main.linkApproval`). *(Amended by v3.100: this holds for every device unless "Allow reading sessions from this device" (`allowSessions`) is on for it; then the chat items of v3.100, and nothing else, cross.)*
 - **Remote commands.** Off per device until **Allow commands from this device** / **Bu cihazdan komutlara izin ver** is ticked on the owning computer. Only Claude Code projects: their busy state is known (pid file) and their prompt takes a bracketed paste; Antigravity and Command Code show *Commands go to Claude Code projects only*. The text must be a string ≤ 8 KB (UTF-8; refused, never cut); escape sequences, C0/C1 controls and bidi/zero-width characters are removed and newlines become spaces (`sanitizeCommand`), then it is typed into the project's **main tab** with `typedPrompt` (bracketed paste, then Enter) as `[Agent Office: remote command from <device>] <text>` (`promptArg` drops the quotes around the name): never run by a shell. Rate limit per device: a burst of 3, then one every 10 s. Every received command is appended to `userData/link/commands.log` (time, device, project, first line ≤ 120 chars, outcome). **Busy tab: queued.** A command waits until the main tab is idle (pid file `idle` or `shell`, no unsent draft, no open permission dialog), at most 5 per project and 30 minutes; the sender sees `queued`, then `delivered`, or `rejected` with the reason (`not-allowed`, `unknown-project`, `engine`, `not-running` (no running main tab, e.g. asleep), `too-large`, `empty`, `rate-limited`, `queue-full`, `expired`). If the connection drops before the answer, the sender marks a `sent` or `queued` command `unknown` (*connection lost, outcome unknown*): answers travel on the connection the command came on, and the owner's queue does not outlive a restart.
 - **UI.** **Devices** / **Cihazlar** under Accounts (collapsible): this device's name (editable; default the host name), each paired device with an online dot, ✎ rename, × remove (confirm) and the allow toggle, **+ Add device** with the code and its minutes left, and the code box with **Pair**. Strings in the `devices` namespace.
 - **Dev.** `AGENT_OFFICE_USER_DATA=<dir> npm start` uses a throwaway profile (unpackaged app only; Electron's home then follows `$HOME`, which macOS otherwise ignores, so a throwaway `HOME` keeps it off `~/.claude`; add `--use-mock-keychain` to skip the Keychain prompt), so two instances can pair on one machine. `app/test/link.test.cjs` pairs two `Link`s on a local `hyperdht/testnet`.
@@ -1943,3 +1943,70 @@ reported as `needs-approval`; the task is typed with the remote-task marker; `co
 
 **HQ's information.** `office_machines` gives `trustsUs` per paired machine (true / false / null, from v3.97
 `res.trusted`); HQ's brief tells it to prefer projects that will not stall.
+
+## Reading a remote project's session (v3.100)
+
+From any of the person's machines, a project that lives on another machine can be opened and its session read. Reading
+only: typing stays the row's command box (`link:send`, v3.28 / v3.46), unchanged.
+
+**Amends v3.28.** The promise that no prompts, transcripts or terminal output cross the link now holds **unless
+`allowSessions` is on for that device**. With it off (the default) nothing of this section is ever sent.
+
+**The permission.** A per-device flag on the owning machine, `allowSessions`, "Allow reading sessions from this
+device", in the Devices popup next to the other opt-ins; stored in `devices.json` (`normalizeDevices`), set by
+`link:setAllowSessions` -> `Link.setAllowSessions`, checked by `maySessions`. Off by default, and implied by nothing
+else: not by `trusted`, `allowManage` or `allowCommands`. Its hint says what it means: everything said in that
+project's session is sent to that device, and secrets are removed on a best-effort basis only.
+
+**What crosses.** Chat items built in the main process of the owning machine from the transcript, by the reader of
+v3.80 (`src/chat.js` `readChat` / `chatItems`) and then `linkItems`:
+- user, assistant, error and slash-command **text**, and the notes (compact, task, interrupted, message);
+- a tool row with the tool's **name** only, and later whether that call ended or failed (a flag).
+Each item is `{ key, at, kind, ... }`. Only the project's **main tab** is read (`linkSessionOf` in main).
+
+**What never crosses.** Thinking; tool input (no detail line, command, prompt or path) and tool results; images (not
+even their count); raw terminal bytes or the screen; HQ's own session, staff desks, personal workspaces and extra
+tabs; anything of a project whose engine is not Claude Code. A tool's detail line would need a second opt-in that is
+not built (`LINK_TOOL_DETAIL` in `src/chat.js` stays `false`; there is no UI for it).
+
+**Redaction is best effort.** Every text passes `HQ.redact` before it is sent. v3.100 adds to its patterns a PEM
+private-key block (also one cut off before its END line) and shell assignments (`NAME=value` where the name says
+secret, such as `API_KEY_PROD=...` or `export DB_PASSWORD="..."`, and `export NAME=value` whose value looks random).
+The patterns catch obvious secrets only: a secret in another shape crosses with the text. Turning the flag on means
+trusting that device with what is said in the session.
+
+**Wire** (capability `sess`, in `CAPS` / `OUR_CAPS`). The reader sends `sess-open { id, project }`, `sess-keep { id }`
+and `sess-close { id }`; the owner sends `sess-items { id, seq, items, reset? }` and `sess-end { id, reason }`, with
+reason one of `not-allowed`, `unknown-project`, `engine`, `no-session`, `rate-limited`, `limit`. `reset` starts the
+view over (the first frame, a new session file). The validators rebuild every message and every item field by field
+and bound each field; an item of an unknown kind is dropped, a frame with more than 200 items is refused.
+
+**Bounds.**
+- A new subscription starts with the last 200 items of the transcript's tail, at most 256 KB of them.
+- A frame is measured in **bytes after `JSON.stringify`** (multi-byte text, JSON escapes) and is at most 48 KB, under
+  the link's 64 KB frame limit; long batches are split over frames and a single long message is cut and marked.
+- At most 4 frames per second per subscription; more than 32 frames waiting ends it (`rate-limited`), as do more
+  than 12 `sess-open` messages a minute from one device.
+- At most 2 subscriptions per device (`limit`). The reading side closes its oldest view before opening a third.
+- A subscription ends: with its connection; on `sess-close`; **at once** when the flag is turned off (frames still
+  waiting are dropped; the permission is also read again before every frame); when the device is removed; after
+  10 minutes without `sess-keep` (`limit`). The reading view sends `sess-keep` every 2 minutes while it is open.
+
+**Visible on the owning machine.** `userData/link/sessions.log` (0600) gets one line per open and per close:
+time, device, project, event, why it closed; never content. A notice says "{device} is reading {project}."
+(`main.sessionViewed`) and, while a subscription is live, that project's row in PROJECTS says "read from {device}"
+(`link:get` `sessReaders`).
+
+**The reading side.** Clicking a remote project row (v3.98) opens, next to its command box, a read-only chat view:
+the chat rendering of v3.80 (`renderer/chat.js`, `mountChat` with a `source`) fed by `link:sess` events through
+`renderer/remote-view.js`; no input, no menu buttons, no reply. Its header shows machine, project and "as of". When
+that machine does not share sessions with this computer (flag off, or an older app without the capability):
+"{machine} does not share sessions with this computer. Turn it on there under Devices." While the remote status is
+`approval`: "Waiting for an approval on {machine}; it is answered there."
+
+**Compatibility.** The five messages are sent only to a peer whose hello named `sess`: an older app never receives
+a message type it does not know (more than 20 of those would close its connection), and a `sess-open` from a peer
+that did not name the capability gets no answer. A device record without the field reads as off.
+
+**Non-goals.** Typing into the remote session beyond the existing command box; answering a remote permission prompt;
+the tool-detail opt-in; sharing the task board; any change to consent or to `trusted`.

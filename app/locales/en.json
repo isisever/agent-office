@@ -932,6 +932,7 @@
     "handoffKeepDetail": "{device} may have taken over the project already. If it did, both computers will own it and work can diverge. Use this only when {device} cannot answer.",
     "handoffStillUnknown": "{device} does not know whether it took over {project}",
     "reportReady": "Report ready: {project} on {machine}",
+    "sessionViewed": "{device} is reading {project}.",
     "officeUnavailable": "Agent Office tools are off for boss tabs: the office socket could not be opened",
     "projOpNotice": "{device}: {op} {project}",
     "loginRelayTitle": "Remote login",
@@ -1142,6 +1143,9 @@
     },
     "handedOffUnknown": "Handoff outcome unknown: {project} → {device}",
     "allowManage": "Allow managing projects (shares the project list)",
+    "allowSessions": "Allow reading sessions from this device",
+    "allowSessionsHint": "Reading sessions: everything said in a project's session here (what is typed and what the assistant answers) is sent to that device. Secrets are removed on a best-effort basis only, so some may get through.",
+    "sessionRead": "read from {device}",
     "allowAccounts": "Allow account sign-in",
     "trusted": "This is my own computer",
     "trustedHint": "Tasks sent from it also run in projects with Auto-approve or Skip permissions on, so nobody has to be at this computer to approve. It works only while \"Allow commands from this device\" is on. Turn it on only for a computer that is yours.",
@@ -1224,6 +1228,21 @@
     "machineTitle": "One of your other machines",
     "restartStopped": "Stopped on {machine}; press Start to bring it back.",
     "lastSeen": "last seen {time}",
+    "remoteView": {
+      "off": "{machine} does not share sessions with this computer. Turn it on there under Devices.",
+      "approval": "Waiting for an approval on {machine}; it is answered there.",
+      "asOf": "as of {time}",
+      "close": "Close",
+      "reason": {
+        "unknown-project": "This project is not available on {machine}.",
+        "engine": "Only Claude Code sessions can be read.",
+        "no-session": "{machine} has no session for this project yet.",
+        "rate-limited": "Too many requests. Try again in a minute.",
+        "limit": "{machine} closed the view: two can be open at a time, and a view left alone for 10 minutes ends.",
+        "offline": "{machine} is offline.",
+        "other": "The session could not be opened."
+      }
+    },
     "lastKnown": "last known",
     "state": {
       "stopped": "stopped",

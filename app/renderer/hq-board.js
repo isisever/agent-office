@@ -27,6 +27,8 @@ function el(tag, attrs = {}, ...kids) {
 }
 
 // engine names on a remote row's status line (brand names, not translated)
+import { mountRemoteView } from './remote-view.js';
+
 const ENGINE_NAMES = { claude: 'Claude Code', agy: 'Antigravity', commandcode: 'Command Code', opencode: 'OpenCode' };
 
 /** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void } }} o */
@@ -78,6 +80,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   // remote rows sit right under the local rows of PROJECTS, with the local rows' look (.sb-proj)
   const remoteList = el('ul', { class: 'sb-list sb-rlist', id: 'sb-rprojects' });
   let openKey = '';                 // the remote row showing its command box
+  // v3.100 the open row's session, read-only (renderer/remote-view.js); typing stays in the row's command box
+  const rview = api.link?.sessOpen ? mountRemoteView({ api, t }) : null;
   const drafts = new Map();         // typed commands per row, kept across live updates
   const placeRemote = () => { const pl = document.getElementById('sb-projects'); if (pl && remoteList.parentElement !== pl.parentElement) pl.after(remoteList); };
 
@@ -347,6 +351,14 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const known = r.state === 'asleep' || r.state === 'stopped' ? r.state : '';
     const st = !online ? 'offline' : known || p?.status || r.status || 'idle';
     const open = openKey === r.key;
+    // v3.100 opening a row also opens its session (only while that machine is online); the view follows the row's status
+    const toggle = () => {
+      openKey = open ? '' : r.key;
+      if (open) rview?.close();
+      else if (online) rview?.open({ key: r.key, pub, project: r.id, name: r.name, machine: r.machine, status: st });
+      renderRemote();
+    };
+    if (open && rview?.isOpen(r.key)) rview.update(st);
     const busy = remoteBusy.has(r.key);
     const op = (action) => (e) => {
       e.stopPropagation();
@@ -374,8 +386,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       class: `sb-proj sb-rrow st-${st}${known ? ` is-${known}` : ''}${open ? ' open' : ''}${r.online ? '' : ' offline'}`, 'data-key': r.key,
       title: `${r.name} · ${r.machine}\n${r.online ? t('hq.remoteTip') : `${t('hq.offline')}${r.asOf ? ` (${t('hq.lastKnown')} · ${when(r.asOf)})` : ''}`}`,
       tabindex: '0', role: 'button', 'aria-expanded': String(open),
-      onclick: () => { openKey = open ? '' : r.key; renderRemote(); },
-      onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); openKey = open ? '' : r.key; renderRemote(); } },
+      onclick: () => toggle(),
+      onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); toggle(); } },
     },
     el('span', { class: `sb-dot${st === 'working' || st === 'approval' ? ' live' : known === 'asleep' ? ' asleep' : ''}` }),
     el('span', { class: 'sb-rname' }, el('span', { class: 'sb-name' }, r.name), el('span', { class: 'hq-badge', title: t('hq.remoteTitle') }, t('hq.remote'))),
@@ -398,7 +410,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const focused = document.activeElement;
     if (focused && remoteList.contains(focused) && focused.tagName === 'INPUT') return;
     const rows = view.remotes || [];
-    if (openKey && !rows.some((r) => r.key === openKey)) openKey = '';
+    if (openKey && !rows.some((r) => r.key === openKey)) { openKey = ''; rview?.close(); }
     remoteList.hidden = !rows.length;
     // v3.98 grouped by machine: one header per paired device, then its rows
     // the group is the row's own `pub` (a project id may hold ':', so the key is never split from the right)

@@ -183,6 +183,11 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setAllowHandoff: (id, on) => ipcRenderer.invoke('link:setAllowHandoff', id, on),   // v3.29
     setAllowManage: (id, on) => ipcRenderer.invoke('link:setAllowManage', id, on),     // v3.31: catalog, later project actions
     setAllowAccounts: (id, on) => ipcRenderer.invoke('link:setAllowAccounts', id, on), // v3.31: later account sign-in
+    setAllowSessions: (id, on) => ipcRenderer.invoke('link:setAllowSessions', id, on), // v3.100: that device may read sessions here
+    sessOpen: (id, project) => ipcRenderer.invoke('link:sessOpen', id, project),       // v3.100 → { ok, id?, reason? }
+    sessKeep: (sessId) => ipcRenderer.invoke('link:sessKeep', sessId),
+    sessClose: (sessId) => ipcRenderer.invoke('link:sessClose', sessId),
+    onSess: listen('link:sess'),   // { id, pub, project, seq, items, reset } | { id, pub, project, reason, end: true }
     handoffAnswer: (id, accept) => ipcRenderer.invoke('link:handoffAnswer', id, accept),
     handoffAsk: (dir) => ipcRenderer.invoke('link:handoffAsk', dir),     // outcome unknown: ask the receiver again
     handoffKeep: (dir) => ipcRenderer.invoke('link:handoffKeep', dir),   // outcome unknown: keep it here (confirm dialog)

@@ -1571,3 +1571,14 @@ select option.rt-off { color: #888; }
 .sb-group-head .sb-group-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-group-head .sb-group-count { font-weight: 400; opacity: .7; }
 .sb-group-head.has-active .sb-group-name { text-decoration: underline; }
+
+/* v3.100 a session on another machine, read-only (renderer/remote-view.js) */
+.remote-view { position: fixed; top: 44px; right: 12px; bottom: 12px; width: min(680px, calc(100vw - 360px)); min-width: 320px; z-index: 40; display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 30px rgba(0, 0, 0, .35); }
+.remote-view[hidden] { display: none; }
+.rv-head { display: flex; align-items: baseline; gap: 8px; color: var(--text); font-family: var(--font-ui); font-size: 13px; }
+.rv-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-asof { font-size: 11px; opacity: .7; white-space: nowrap; }
+.rv-close { cursor: pointer; border: 0; background: none; color: inherit; font: inherit; padding: 0 4px; }
+.rv-note { font-family: var(--font-ui); font-size: 12px; padding: 6px 8px; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.rv-note[hidden] { display: none; }
+.rv-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }

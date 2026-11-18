@@ -67,10 +67,12 @@ function textBody(text) {
 
 /**
  * @param {HTMLElement} el the pane's chat host
- * @param {{ ptyId: string, onTerminal: () => void, screen: () => string[] }} opts onTerminal: the person wants the
- *   terminal; screen: the tab's terminal screen lines
+ * @param {{ ptyId: string, onTerminal: () => void, screen: () => string[], source?: { read: (cursor: any) => Promise<any> } | null }} opts
+ *   onTerminal: the person wants the terminal; screen: the tab's terminal screen lines; source (v3.100): another
+ *   place the items come from (read answers like chat:read), shown read-only: no input, no menu buttons, no reply
+ *   (renderer/remote-view.js: a session on another machine)
  */
-export function mountChat(el, { ptyId, onTerminal, screen }) {
+export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   const api = window.agentOffice;
   const list = h('div', { class: 'chat-list' });
   const empty = h('p', { class: 'chat-empty dim' });
@@ -95,7 +97,9 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   // once it is complete, so this is the live part
   const live = h('div', { class: 'chat-live' });
   live.hidden = true;
-  el.append(banner, list, empty, live, card, replyBar, h('div', { class: 'chat-form' }, slash, input, send, term), why);
+  const form = h('div', { class: 'chat-form' }, slash, input, send, term);
+  form.hidden = Boolean(source);
+  el.append(banner, list, empty, live, card, replyBar, form, why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -153,7 +157,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
   function message(kind, text, body) {
     const copy = h('button', { class: 'chat-act', onclick: () => copyText(String(text), copy) }, t('chat.copy'));
     const reply = h('button', { class: 'chat-act', onclick: () => replyTo(String(text)) }, t('chat.reply'));
-    return h('div', { class: `chat-msg ${kind}` }, body, h('div', { class: 'chat-acts' }, copy, kind === 'error' ? null : reply));
+    return h('div', { class: `chat-msg ${kind}` }, body, h('div', { class: 'chat-acts' }, copy, kind === 'error' || source ? null : reply));
   }
   function item(it) {
     if (it.kind === 'toolDone') {
@@ -295,7 +299,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
     reading = true;
     try {
       for (let n = 0; n < 20; n++) {
-        const r = await api.chat.read(ptyId, cursor);
+        const r = source ? await source.read(cursor) : await api.chat.read(ptyId, cursor);
         if (!r || r.unsupported) { onTerminal(); return; }
         if (r.reset || r.sid !== sid) clear();
         sid = r.sid;
@@ -410,6 +414,7 @@ export function mountChat(el, { ptyId, onTerminal, screen }) {
       el.hidden = false;
       poll();
       timer = window.setInterval(poll, POLL_MS);
+      if (source) return;   // read-only: there is no terminal screen to look for a menu on
       checkMenu();
       menuTimer = window.setInterval(checkMenu, MENU_MS);
     },

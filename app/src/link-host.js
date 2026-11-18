@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const C = require('./link-core.js');
+const CHAT = require('./chat.js');
 const H = require('./handoff.js');
 const { createLoginRelay } = require('./login-relay.js');
 
@@ -57,6 +58,9 @@ function setupLink(d) {
   const logFile = path.join(dir, 'commands.log');
   const manageLog = path.join(dir, 'manage.log');   // v3.33 every project action a device asked for
   const handoffLog = path.join(dir, 'handoff.log');
+  const sessLog = path.join(dir, 'sessions.log');   // v3.100 who read which project's session, and when (never what)
+  const readers = new Map();             // v3.100 subscription key → { key, device, project, name, file, cursor }
+  let sessTimer = null;
   const ownersFile = path.join(dir, 'owners.json');
   const resultsFile = path.join(dir, 'handoff-results.json');   // the receiver's handoff outcomes (no secrets)
   const targets = new Map();             // incoming handoff id → the folder chosen for it
@@ -103,6 +107,10 @@ function setupLink(d) {
       link.on('remote', onRemote);
       link.on('command', onCommand);
       link.on('proj-op', onProjOp);
+      link.on('sess-open', onSessOpen);       // v3.100 a device reads one of our sessions
+      link.on('sess-closed', onSessClosed);
+      link.on('sess-items', (m) => d.send('link:sess', m));               // v3.100 a session this machine reads
+      link.on('sess-end', (m) => d.send('link:sess', { ...m, end: true }));
       link.on('task-cancel', onTaskCancel);   // v3.48
       link.on('report', ({ device, id, report }) => d.onReport?.({ id, machine: device.name, pub: device.pub, report }));
       link.on('handoff-offer', onHandoffOffer);
@@ -135,7 +143,7 @@ function setupLink(d) {
     return defaults.get(id);
   }
   const opStatus = new Map();            // v3.33 `${devicePub}/${projectId}` → { op, state: 'sent'|'ok'|'failed', reason?, at } (our asks)
-  const view = () => ({ projOps: Object.fromEntries(opStatus), ...(link ? { ...withTargets(link.view()), error: null } : { name: os.hostname(), id: '', pairing: null, devices: [], remotes: [], outgoing: [], handoffs: { out: [], in: [] }, self: { app: '', res: null, catalog: [] }, error: error || 'off' }), owners: ownersView() });
+  const view = () => ({ projOps: Object.fromEntries(opStatus), sessReaders: [...readers.values()].map((r) => ({ device: r.device, project: r.project })), ...(link ? { ...withTargets(link.view()), error: null } : { name: os.hostname(), id: '', pairing: null, devices: [], remotes: [], outgoing: [], handoffs: { out: [], in: [] }, self: { app: '', res: null, catalog: [] }, error: error || 'off' }), owners: ownersView() });
   let pushTimer = null;
   function push() {
     if (pushTimer) return;
@@ -488,6 +496,58 @@ function setupLink(d) {
     }
     answer();
   }
+  // --- v3.100 a paired device reads the session of one of our projects (contract v3.100). Only the project's main tab,
+  // only chat items (src/chat.js linkItems: redacted text, tool names), only while "Allow reading sessions" is on for it.
+  const SESS_POLL_MS = 1000;
+  function slog(entry) {
+    try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.appendFileSync(sessLog, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, { mode: 0o600 }); } catch { /* best effort */ }
+  }
+  /** main's answer for a project id: { file } (its main tab's transcript) or { reason }. */
+  function sessionOf(project) {
+    try { return (d.sessionOf && d.sessionOf(project)) || { reason: 'unknown-project' }; } catch { return { reason: 'no-session' }; }
+  }
+  function onSessOpen({ key, device, project, refuse }) {
+    const p = d.projects().find((x) => x.id === project);
+    if (!p) return refuse('unknown-project');
+    if (p.engine !== 'claude') return refuse('engine');
+    const s = sessionOf(project);
+    if (!s.file) return refuse(C.SESS_REASONS.includes(s.reason) ? s.reason : 'no-session');
+    const r = { key, device: device.name, project, name: p.name, file: '', cursor: null };
+    readers.set(key, r);
+    slog({ device: device.name, project: p.name, event: 'open' });
+    d.notify(d.T('main.sessionViewed', { device: device.name, project: p.name }), '');
+    feed(r);
+    if (!sessTimer) { sessTimer = setInterval(() => { for (const x of [...readers.values()]) feed(x); }, SESS_POLL_MS); sessTimer.unref?.(); }
+    push();
+  }
+  /** Reads what the transcript gained and hands it to the link (the first read and a new session file start over). */
+  function feed(r) {
+    if (!readers.has(r.key)) return;
+    const s = sessionOf(r.project);
+    if (!s.file) return;   // no session right now: what was sent stays, the next one starts over
+    if (s.file !== r.file) { r.file = s.file; r.cursor = null; }
+    let items = [];
+    let reset = false;
+    for (let n = 0; n < 8; n++) {
+      const x = CHAT.readChat(r.file, r.cursor);
+      if (x.reset) { reset = true; items = []; }
+      r.cursor = x.cursor;
+      items.push(...x.items);
+      if (!x.more) break;
+    }
+    if (!reset && !items.length) return;
+    const out = CHAT.linkItems(items);
+    link?.sessPush(r.key, reset ? C.sessBackfill(out) : out, { reset });
+  }
+  function onSessClosed({ key, why }) {
+    const r = readers.get(key);
+    if (!r) return;   // refused before it started: nothing was sent, nothing is logged
+    readers.delete(key);
+    slog({ device: r.device, project: r.name, event: 'close', why });
+    if (!readers.size && sessTimer) { clearInterval(sessTimer); sessTimer = null; }
+    push();
+  }
+
   // --- v3.33 project actions from a device allowed to manage (proj-op): one at a time, logged, a notice here
   const opQueue = [];
   let opRunning = false;
@@ -613,6 +673,11 @@ function setupLink(d) {
   ipc('link:setAllowHandoff', (l, id, on) => l.setAllowHandoff(String(id), on === true));
   ipc('link:setAllowManage', (l, id, on) => l.setAllowManage(String(id), on === true));       // v3.31
   ipc('link:setAllowAccounts', (l, id, on) => l.setAllowAccounts(String(id), on === true));   // v3.31
+  ipc('link:setAllowSessions', (l, id, on) => l.setAllowSessions(String(id), on === true));   // v3.100
+  // v3.100 reading a session on another machine: the items come as 'link:sess' events
+  d.ipcMain.handle('link:sessOpen', (_e, id, project) => { const l = start(); return l ? l.openSess(String(id), String(project)) : { ok: false, reason: 'offline' }; });
+  d.ipcMain.handle('link:sessKeep', (_e, id) => { link?.keepSess(String(id)); });
+  d.ipcMain.handle('link:sessClose', (_e, id) => { link?.closeSess(String(id)); });
   ipc('link:handoffAnswer', (l, id, accept) => answerHandoff(l, String(id), accept === true));
   ipc('link:handoffAsk', (_l, folder) => askAgain(String(folder)));
   ipc('link:handoffKeep', (_l, folder) => keepHere(String(folder)));
@@ -669,7 +734,7 @@ function setupLink(d) {
     /** Paired devices a project can be handed to (online ones first). */
     devices() { const l = start(); return l ? l.devices.map((x) => ({ id: x.pub, name: x.name, online: l.conns.has(x.pub) })) : []; },
     handOff, unknownFor, askAgain, keepHere,
-    destroy() { clearInterval(pumpTimer); clearInterval(reportTimer); relay?.destroy(); return link?.destroy(); },
+    destroy() { clearInterval(pumpTimer); clearInterval(reportTimer); clearInterval(sessTimer); relay?.destroy(); return link?.destroy(); },
   };
 }
 

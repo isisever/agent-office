@@ -49,6 +49,8 @@ const line = (s, max) => { const t = String(s ?? '').replace(ESCAPES, '').replac
 
 // the journal's patterns (plugin/hooks/journal.ts SECRET_PATTERNS): obvious secrets out of every dispatched task
 const SECRET_PATTERNS = [
+  // v3.100 a PEM private key block (one cut off before its END line goes to the end of the text)
+  [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, '[redacted private key]'],
   [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [redacted]'],
   [/\beyJ[\w-]{6,}\.[\w-]{6,}\.[\w-]{6,}/g, '[redacted]'],
   [/\b(?:sk|nsk|pk|rk|ak)[-_][A-Za-z0-9_-]{8,}/g, '[redacted]'],
@@ -56,6 +58,10 @@ const SECRET_PATTERNS = [
   [/\bAKIA[0-9A-Z]{16}\b/g, '[redacted]'],
   [/(:\/\/)[^\s/:@]+:[^\s/@]+@/g, '$1[redacted]@'],
   [/\b((?:[\w-]*[_-])?(?:key|apikey|token|secret|passw(?:or)?d|pwd|credentials?|authorization|auth))\b(["']?\s*[:=]\s*["']?)[^\s"'&,;)\]}>]{4,}/gi, '$1$2[redacted]'],
+  // v3.100 shell assignments: NAME=value where the name says secret (API_KEY_PROD=…, export DB_PASSWORD_2="a b"), and
+  // export NAME=value whose value looks random (20+ characters with letters and digits)
+  [/\b((?:export\s+)?[A-Z_][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSW(?:OR)?D|PASSPHRASE|PWD|CREDENTIALS?|AUTH(?!OR))[A-Z0-9_]*=)(?!\[redacted\])(?:"[^"\n]*"|'[^'\n]*'|[^\s"'&,;)\]}>]{4,})/g, '$1[redacted]'],
+  [/\b(export\s+[A-Za-z_][A-Za-z0-9_]*=)(["']?)(?=[A-Za-z0-9+=_-]*\d)(?=[A-Za-z0-9+=_-]*[A-Za-z])[A-Za-z0-9+=_-]{20,}\2/g, '$1[redacted]'],
 ];
 /** @param {string} text */
 const redact = (text) => SECRET_PATTERNS.reduce((out, [re, to]) => out.replace(/** @type {RegExp} */ (re), /** @type {string} */ (to)), String(text ?? ''));

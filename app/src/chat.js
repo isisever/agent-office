@@ -163,4 +163,28 @@ function lastAnswer(file, fsm = fs) {
   return '';
 }
 
-module.exports = { TAIL, STEP_MAX, TEXT_MAX, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };
+// v3.100 what a paired device allowed to read sessions gets: tool rows carry the tool's NAME only. The detail line (a
+// command, a path, a prompt) would need a second opt-in on the owning machine, which is not built: keep this off.
+const LINK_TOOL_DETAIL = false;
+/**
+ * Chat items → the items that may cross the device link (contract v3.100): user / assistant / error / command text and
+ * notes, every text through `redact` (HQ.redact: best effort), a tool row with its name only, a tool's done/failed flag.
+ * Never: images (not even their count), thinking, tool input or results (chatItems reads none of the last three).
+ */
+function linkItems(items, { redact = (s) => require('./hq.js').redact(s), toolDetail = LINK_TOOL_DETAIL } = {}) {
+  const out = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    const base = { key: String(it.key || ''), at: Number.isInteger(it.at) && it.at > 0 ? it.at : 0, kind: it.kind };
+    if (it.kind === 'user' || it.kind === 'assistant' || it.kind === 'error' || it.kind === 'command') {
+      const text = redact(String(it.text || ''));
+      if (text.trim()) out.push({ ...base, text });   // a message that was only images is not sent
+    } else if (it.kind === 'tool') {
+      const detail = toolDetail === true && it.detail ? redact(String(it.detail)) : '';
+      out.push({ ...base, id: String(it.id || ''), name: redact(String(it.name || '')), ...(detail ? { detail } : {}) });
+    } else if (it.kind === 'toolDone') out.push({ ...base, id: String(it.id || ''), error: it.error === true });
+    else if (it.kind === 'note') out.push({ ...base, note: it.note });
+  }
+  return out;
+}
+
+module.exports = { TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };

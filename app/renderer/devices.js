@@ -53,12 +53,25 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
   section.addEventListener('toggle', () => { try { localStorage.setItem('ao.panel.devices', /** @type {HTMLDetailsElement} */ (section).open ? '1' : '0'); } catch {} });
   sidebarEl.querySelector('.sb-accounts')?.after(section);
 
+  // v3.100 a project whose session a paired device reads right now says so on its row. PROJECTS is drawn by sidebar.js:
+  // a style rule keyed by the row's data-id survives its redraws.
+  const readStyle = document.createElement('style');
+  document.head.append(readStyle);
+  const cssText = (/** @type {string} */ s) => s.replace(/[^A-Za-z0-9 ]/gu, (c) => `\\${(c.codePointAt(0) || 32).toString(16)} `);
+  function markReaders() {
+    /** @type {Map<string, string[]>} */ const by = new Map();
+    for (const r of /** @type {any[]} */ (view.sessReaders || [])) by.set(r.project, [...new Set([...(by.get(r.project) || []), String(r.device)])]);
+    readStyle.textContent = [...by].map(([id, names]) => `#sb-projects li.sb-proj[data-id="${window.CSS.escape(id)}"] .sb-name::after { content: " \\b7  ${cssText(t('devices.sessionRead', { device: names.join(', ') }))}"; font-size: 11px; opacity: .8; }`).join('\n');
+  }
+
   function renderDevices() {
+    markReaders();
     const wasOpen = /** @type {HTMLDetailsElement} */ (section).open;
     // The four opt-ins per device live in a popup (the row shows how many are on); every one is off by default.
     const perms = (/** @type {any} */ d) => [
       ['allow', 'allowCommands', 'setAllow', ''], ['allowHandoff', 'allowHandoff', 'setAllowHandoff', 'sb-dev-handoff'],
       ['allowManage', 'allowManage', 'setAllowManage', 'sb-dev-manage'], ['allowAccounts', 'allowAccounts', 'setAllowAccounts', 'sb-dev-accounts'],
+      ['allowSessions', 'allowSessions', 'setAllowSessions', 'sb-dev-sessions'],   // v3.100 reading sessions; its hint follows the list
     ].map(([label, field, call, cls]) => ({ label, field, call, cls, on: Boolean(d[field]) }));
     // v3.97 "This is my own computer": main asks before it turns on, so the box follows what main answered (not the click)
     const setTrusted = (/** @type {any} */ d, /** @type {HTMLInputElement} */ box) => api.link.setTrusted(d.id, box.checked).then((/** @type {any} */ v) => {
@@ -89,6 +102,7 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
             if (x.field === 'allowCommands') needsAllow(on);
             apply(api.link[x.call](d.id, on));
           } }))),
+        h('div', { class: 'sb-note' }, t('devices.allowSessionsHint')),
         row,
         h('div', { class: 'sb-note' }, t('devices.trustedHint')),
       ]);

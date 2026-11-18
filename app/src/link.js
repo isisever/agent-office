@@ -19,7 +19,7 @@ class Link extends EventEmitter {
   /**
    * @param {{ keyPair: { publicKey: Buffer, secretKey: Buffer }, name: string, devices?: C.Device[], secrets?: Record<string, string>,
    *   bootstrap?: any[], now?: () => number, swarmFactory?: (opts: any) => any, heartbeatMs?: number,
-   *   handoffAskMs?: number, handoffIdleMs?: number, resultsFile?: string | null, reportsFile?: string | null, tasksFile?: string | null, seenFile?: string | null, outboxTtlMs?: number, app?: string, projOpMs?: number, loginTimeoutMs?: number, log?: (...a: any[]) => void }} o
+   *   handoffAskMs?: number, handoffIdleMs?: number, resultsFile?: string | null, reportsFile?: string | null, tasksFile?: string | null, seenFile?: string | null, outboxTtlMs?: number, app?: string, sessGapMs?: number, projOpMs?: number, loginTimeoutMs?: number, log?: (...a: any[]) => void }} o
    */
   constructor(o) {
     super();
@@ -55,6 +55,13 @@ class Link extends EventEmitter {
     this.results = this.loadResults();
     // v3.31/v3.32: what each connected peer said in its hello, and the machine data exchanged by capability
     this.appVersion = /^[0-9A-Za-z.+-]{1,20}$/.test(String(o.app || '')) ? String(o.app) : '';
+    // v3.100 reading a remote project's session (cap 'sess')
+    this.sessOut = new Map();     // `${pub}/${id}` → a subscription a device holds on one of our projects
+    this.sessIn = new Map();      // id → { pub, project }: sessions on other machines this device reads
+    this.sessOpens = new Map();   // pub → times of its recent sess-open messages (rate limit)
+    this.sessGapMs = o.sessGapMs || Math.ceil(1000 / C.SESS_FRAMES_PER_SEC);
+    this.sessSweep = setInterval(() => this.sweepSess(), 30000);
+    this.sessSweep.unref?.();
     this.peers = new Map();       // pub → { v, app, caps: string[] } (from its hello on this connection)
     this.res = null;              // this machine's resources (publishRes)
     this.catalog = null;          // this machine's project catalog (publishCatalog)
@@ -213,7 +220,7 @@ class Link extends EventEmitter {
   }
 
   addDevice(pub, name, secret) {
-    const device = { pub, name: C.deviceName(name), addedAt: this.now(), allowCommands: false, allowHandoff: false, allowManage: false, allowAccounts: false, trusted: false };   // all OFF by default (a re-paired device starts untrusted again)
+    const device = { pub, name: C.deviceName(name), addedAt: this.now(), allowCommands: false, allowHandoff: false, allowManage: false, allowAccounts: false, allowSessions: false, trusted: false };   // all OFF by default (a re-paired device starts untrusted again)
     this.devices = [...this.devices.filter((d) => d.pub !== pub), device];
     this.secrets[pub] = secret;
     this.swarm?.join(C.pairTopic(secret), { server: true, client: true });
@@ -242,7 +249,10 @@ class Link extends EventEmitter {
     conn.on('close', () => {
       clearInterval(beat);
       clearTimeout(silence);
+      // v3.100 a subscription lives on one connection and ends with it
+      for (const s of [...this.sessOut.values()]) if (s.conn === conn) this.endSess(s.key, null, 'offline');
       if (this.conns.get(device.pub) !== conn) return;
+      this.dropSessIn(device.pub, 'offline');
       this.conns.delete(device.pub);
       this.remotes.delete(device.pub);
       const seenCheck = this.peerHas(device.pub, 'task-status');   // before the peer is forgotten
@@ -304,6 +314,19 @@ class Link extends EventEmitter {
       this.emit('change');
     } else if (m.t === 'cmd') {
       this.receiveCommand(conn, d, m);
+    } else if (m.t === 'sess-open') {
+      this.receiveSessOpen(conn, d, m);
+    } else if (m.t === 'sess-keep') {
+      const s = this.sessOut.get(`${d.pub}/${m.id}`);
+      if (s) s.keptAt = this.now();
+    } else if (m.t === 'sess-close') {
+      this.endSess(`${d.pub}/${m.id}`, null, 'closed');
+    } else if (m.t === 'sess-items') {
+      const s = this.sessIn.get(m.id);   // only for a subscription this device opened with that peer
+      if (s && s.pub === d.pub) this.emit('sess-items', { id: m.id, pub: d.pub, project: s.project, seq: m.seq, items: m.items, reset: m.reset === true });
+    } else if (m.t === 'sess-end') {
+      const s = this.sessIn.get(m.id);
+      if (s && s.pub === d.pub) { this.sessIn.delete(m.id); this.emit('sess-end', { id: m.id, pub: d.pub, project: s.project, reason: m.reason }); }
     } else if (m.t === 'proj-op') {
       this.receiveProjOp(conn, d, m);
     } else if (m.t === 'proj-op-status') {
@@ -574,6 +597,102 @@ class Link extends EventEmitter {
   }
 
   // --- v3.33 project actions (start / wake / sleep / stop a project's boss tab on another device)
+
+  // --- v3.100 reading a remote project's session (cap 'sess'). The owning side: receiveSessOpen → 'sess-open' (the host
+  // finds the transcript and feeds sessPush) → frames at most SESS_FRAMES_PER_SEC → endSess. Nothing here reads a file.
+
+  sessOf(pub) { return [...this.sessOut.values()].filter((s) => s.pub === pub); }
+  /** A device asks to read one of our projects' sessions: only with "Allow reading sessions from this device" on. */
+  receiveSessOpen(conn, d, m) {
+    if (!this.peerHas(d.pub, 'sess')) return;   // it never said it understands the answer
+    const end = (reason) => { if (C.trusted(this.devices, this.secrets, d.pub) && !conn.destroyed) this.write(conn, { t: 'sess-end', id: m.id, reason }); };
+    if (!C.maySessions(this.devices, this.secrets, d.pub)) return end('not-allowed');
+    const now = this.now();
+    const opens = (this.sessOpens.get(d.pub) || []).filter((at) => now - at < 60000);
+    this.sessOpens.set(d.pub, opens);
+    if (opens.length >= C.SESS_OPENS_PER_MIN) return end('rate-limited');
+    opens.push(now);
+    const key = `${d.pub}/${m.id}`;
+    if (this.sessOut.has(key)) return;
+    if (m.project.includes(':')) return end('unknown-project');   // a project's main tab only: never a desk or an extra tab
+    if (this.sessOf(d.pub).length >= C.SESS_PER_DEVICE) return end('limit');
+    this.sessOut.set(key, { key, pub: d.pub, device: d.name, id: m.id, project: m.project, conn, seq: 0, keptAt: now, queue: [], cool: null });
+    this.emit('sess-open', { key, device: d, id: m.id, project: m.project, refuse: (reason) => this.endSess(key, reason, 'refused') });
+    this.emit('change');
+  }
+  /** Items (already link-safe: chat.js linkItems) for a live subscription: cut into frames and sent in order, at most
+   *  SESS_FRAMES_PER_SEC. reset: the view starts over (frames still waiting are dropped). → false when it is not live. */
+  sessPush(key, items, { reset = false } = {}) {
+    const s = this.sessOut.get(key);
+    if (!s) return false;
+    if (!C.maySessions(this.devices, this.secrets, s.pub)) { this.endSess(key, 'not-allowed', 'revoked'); return false; }
+    const frames = C.sessFrames(s.id, s.seq, items, reset);
+    if (reset) s.queue.length = 0;
+    s.seq += frames.length;
+    s.queue.push(...frames);
+    if (s.queue.length > C.SESS_QUEUE_MAX) { this.endSess(key, 'rate-limited', 'overflow'); return false; }
+    this.pumpSess(s);
+    return true;
+  }
+  pumpSess(s) {
+    if (s.cool || !s.queue.length || this.sessOut.get(s.key) !== s) return;
+    // the permission is read again before every frame: turning it off or removing the device stops the stream at once
+    if (!C.maySessions(this.devices, this.secrets, s.pub)) return void this.endSess(s.key, 'not-allowed', 'revoked');
+    if (s.conn.destroyed) return void this.endSess(s.key, null, 'offline');
+    this.write(s.conn, s.queue.shift());
+    s.cool = setTimeout(() => { s.cool = null; this.pumpSess(s); }, this.sessGapMs);
+    s.cool.unref?.();
+  }
+  /** Ends a subscription a device holds here. reason: told to the device (sess-end) when it is still trusted and connected. */
+  endSess(key, reason, why) {
+    const s = this.sessOut.get(key);
+    if (!s) return;
+    this.sessOut.delete(key);
+    clearTimeout(s.cool);
+    s.cool = null;
+    s.queue.length = 0;
+    if (reason && !s.conn.destroyed && C.trusted(this.devices, this.secrets, s.pub) && this.peerHas(s.pub, 'sess')) this.write(s.conn, { t: 'sess-end', id: s.id, reason });
+    this.emit('sess-closed', { key, pub: s.pub, device: s.device, id: s.id, project: s.project, why });
+    this.emit('change');
+  }
+  /** Subscriptions nobody kept for SESS_IDLE_MS, or whose connection is gone, end. */
+  sweepSess() {
+    const now = this.now();
+    for (const s of [...this.sessOut.values()]) {
+      if (s.conn.destroyed) this.endSess(s.key, null, 'offline');
+      else if (now - s.keptAt >= C.SESS_IDLE_MS) this.endSess(s.key, 'limit', 'idle');
+    }
+  }
+  // the reading side
+  /** Asks a device for one of its projects' sessions. → { ok: true, id } | { ok: false, reason } ('no-cap': an older app there). */
+  openSess(pub, project) {
+    const conn = this.conns.get(pub);
+    if (!C.trusted(this.devices, this.secrets, pub)) return { ok: false, reason: 'removed' };
+    if (!conn) return { ok: false, reason: 'offline' };
+    if (!this.peerHas(pub, 'sess')) return { ok: false, reason: 'no-cap' };   // an unknown message type is never sent to it
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(String(project))) return { ok: false, reason: 'unknown-project' };
+    const mine = [...this.sessIn].filter(([, s]) => s.pub === pub);
+    while (mine.length >= C.SESS_PER_DEVICE) this.closeSess(mine.shift()[0]);   // the oldest view gives way
+    const id = crypto.randomBytes(8).toString('hex');
+    this.sessIn.set(id, { pub, project: String(project) });
+    this.write(conn, { t: 'sess-open', id, project: String(project) });
+    return { ok: true, id };
+  }
+  keepSess(id) {
+    const s = this.sessIn.get(id);
+    const conn = s && this.conns.get(s.pub);
+    if (conn && this.peerHas(s.pub, 'sess')) this.write(conn, { t: 'sess-keep', id });
+  }
+  closeSess(id) {
+    const s = this.sessIn.get(id);
+    if (!s) return;
+    this.sessIn.delete(id);
+    const conn = this.conns.get(s.pub);
+    if (conn && this.peerHas(s.pub, 'sess')) this.write(conn, { t: 'sess-close', id });
+  }
+  dropSessIn(pub, reason) {
+    for (const [id, s] of [...this.sessIn]) if (s.pub === pub) { this.sessIn.delete(id); this.emit('sess-end', { id, pub, project: s.project, reason }); }
+  }
 
   /** A device asks us to act on one of our projects: allowed to manage, rate limited (shared with commands); main acts. */
   receiveProjOp(conn, d, m) {
@@ -1047,6 +1166,13 @@ class Link extends EventEmitter {
     if (conn) this.flushCatalog(pub, conn);
     this.emit('change');
   }
+  /** v3.100 "Allow reading sessions from this device". Turning it off ends that device's subscriptions at once. */
+  setAllowSessions(pub, on) {
+    this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowSessions: on === true } : d));
+    this.persist();
+    if (on !== true) for (const s of this.sessOf(pub)) this.endSess(s.key, 'not-allowed', 'revoked');
+    this.emit('change');
+  }
   /** v3.31 "Allow account sign-in": v3.34 the account list goes to that device and it may start a login relay here. */
   setAllowAccounts(pub, on) {
     this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowAccounts: on === true } : d));
@@ -1065,6 +1191,8 @@ class Link extends EventEmitter {
     const secret = this.secrets[pub];
     this.devices = this.devices.filter((d) => d.pub !== pub);
     delete this.secrets[pub];
+    for (const s of this.sessOf(pub)) this.endSess(s.key, null, 'removed');   // v3.100 unpaired: nothing more is sent
+    this.dropSessIn(pub, 'removed');
     this.conns.get(pub)?.destroy();
     this.conns.delete(pub);
     this.remotes.delete(pub);
@@ -1088,7 +1216,7 @@ class Link extends EventEmitter {
       pairing: this.pairing ? { role: this.pairing.role, code: this.pairing.role === 'inviter' ? this.pairing.code : null, expiresAt: this.pairing.expiresAt } : null,
       devices: this.devices.map((d) => {
         const peer = this.peers.get(d.pub);
-        return { id: d.pub, name: d.name, addedAt: d.addedAt, allowCommands: d.allowCommands, allowHandoff: d.allowHandoff, allowManage: d.allowManage, allowAccounts: d.allowAccounts, trusted: d.trusted === true, online: this.conns.has(d.pub),
+        return { id: d.pub, name: d.name, addedAt: d.addedAt, allowCommands: d.allowCommands, allowHandoff: d.allowHandoff, allowManage: d.allowManage, allowAccounts: d.allowAccounts, allowSessions: d.allowSessions === true, trusted: d.trusted === true, online: this.conns.has(d.pub),
           trustsUs: this.peerTrusts.has(d.pub) ? this.peerTrusts.get(d.pub) : null,   // v3.97 null = unknown (offline, or an older Agent Office there)
           // v3.31/v3.32: null = no hello yet; v 1 = an older Agent Office there (no caps)
           v: peer ? peer.v : null, app: peer?.app || '', caps: peer?.caps || [], res: this.peerRes.get(d.pub) || null, catalog: this.peerCatalog.get(d.pub) || null, accounts: this.peerAccounts.get(d.pub) || null };
@@ -1107,6 +1235,8 @@ class Link extends EventEmitter {
   }
 
   async destroy() {
+    clearInterval(this.sessSweep);
+    for (const key of [...this.sessOut.keys()]) this.endSess(key, null, 'offline');
     this.destroyed = true;
     this.flushTasks();
     clearTimeout(this.pubTimer);

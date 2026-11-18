@@ -6,9 +6,9 @@ const crypto = require('crypto');
 // v3.31: 2 = hello carries the app version and capabilities; a v1 peer gets no message type it does not know
 const PROTOCOL = 2;
 // what a peer may say it understands (hello.caps); unknown names are dropped
-const CAPS = ['res', 'catalog', 'manage', 'accounts', 'report', 'task-status', 'report2', 'revive'];
+const CAPS = ['res', 'catalog', 'manage', 'accounts', 'report', 'task-status', 'report2', 'revive', 'sess'];
 // what this build sends and understands (v3.32: res and catalog)
-const OUR_CAPS = ['res', 'catalog', 'report', 'manage', 'accounts', 'task-status', 'report2', 'revive'];   // v3.48 'task-status' (task-status/task-query/task-cancel, cmd.ttl), 'report2' (larger reports, prs/artifacts/transcriptRef); v3.35 adds 'report', v3.33 'manage' (proj-op), v3.34 'accounts' (login relay)
+const OUR_CAPS = ['res', 'catalog', 'report', 'manage', 'accounts', 'task-status', 'report2', 'revive', 'sess'];   // v3.48 'task-status' (task-status/task-query/task-cancel, cmd.ttl), 'report2' (larger reports, prs/artifacts/transcriptRef); v3.35 adds 'report', v3.33 'manage' (proj-op), v3.34 'accounts' (login relay)
 // v3.33 what a device allowed to manage may do to a project's boss tab here (proj-op), and why it may be refused
 const PROJ_OPS = ['start', 'wake', 'sleep', 'stop'];
 const PROJ_OP_REASONS = ['not-allowed', 'unknown-project', 'engine', 'busy', 'locked', 'rate-limited', 'removed', 'offline', 'no-manage', 'timeout', 'failed'];
@@ -333,6 +333,84 @@ function cleanAccounts(list) {
   return out;
 }
 
+// --- v3.100 reading a remote project's session (cap 'sess'): chat items of the project's main tab, never terminal bytes
+const SESS_REASONS = ['not-allowed', 'unknown-project', 'engine', 'no-session', 'rate-limited', 'limit'];
+const SESS_BACKFILL_ITEMS = 200;          // a new subscription starts with the last items of the transcript's tail …
+const SESS_BACKFILL_BYTES = 256 * 1024;   // … and at most this many bytes of them (JSON, UTF-8)
+const SESS_FRAME_BYTES = 48 * 1024;       // one sess-items line in BYTES after JSON.stringify (well under MAX_FRAME)
+const SESS_FRAME_ITEMS = 200;             // items in one frame
+const SESS_FRAMES_PER_SEC = 4;
+const SESS_PER_DEVICE = 2;                // subscriptions one device may hold here
+const SESS_IDLE_MS = 10 * 60 * 1000;      // without a sess-keep the subscription ends
+const SESS_QUEUE_MAX = 32;                // frames waiting for one subscription; more ends it (rate-limited)
+const SESS_OPENS_PER_MIN = 12;            // sess-open messages taken from one device per minute
+const SESS_TEXT_MAX = 20000;              // characters of one message (chat.js TEXT_MAX)
+const SESS_KINDS = ['user', 'assistant', 'error', 'command', 'tool', 'toolDone', 'note'];
+const SESS_NOTES = ['compact', 'task', 'interrupted', 'message'];
+const sessBytes = (v) => Buffer.byteLength(JSON.stringify(v));
+const sessId = (v, max) => (typeof v === 'string' ? v.replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, max) : '');
+/** One chat item off the wire, rebuilt field by field → the item, or null (an unknown kind, an empty or oversized text). */
+function cleanSessItem(it) {
+  if (!it || typeof it !== 'object' || Array.isArray(it) || !SESS_KINDS.includes(it.kind)) return null;
+  const base = { key: sessId(it.key, 120), at: isInt(it.at) ? it.at : 0, kind: it.kind };
+  if (it.kind === 'note') return SESS_NOTES.includes(it.note) ? { ...base, note: it.note } : null;
+  if (it.kind === 'toolDone') return { ...base, id: sessId(it.id, 100), error: it.error === true };
+  if (it.kind === 'tool') {
+    const name = cleanLine(it.name, 80);
+    if (!name) return null;
+    // detail: only a peer with the (not yet built) second opt-in sends one; one line, bounded
+    const detail = typeof it.detail === 'string' && it.detail.length <= 4000 ? cleanLine(it.detail, 200) : '';
+    return { ...base, id: sessId(it.id, 100), name, ...(detail ? { detail } : {}) };
+  }
+  if (typeof it.text !== 'string' || it.text.length > MAX_FRAME) return null;
+  const text = it.text.replace(ESCAPES, '').replace(CONTROLS, '').slice(0, SESS_TEXT_MAX + 20);   // the sender's cut mark fits
+  return text.trim() ? { ...base, text } : null;
+}
+/** An item cut so that its JSON is at most `max` BYTES (multi-byte text and JSON escapes count), or null when it cannot fit. */
+function fitSessItem(it, max = SESS_FRAME_BYTES - 256) {
+  if (typeof it.text === 'string' && it.text.length > SESS_TEXT_MAX) it = { ...it, text: `${it.text.slice(0, SESS_TEXT_MAX).replace(/[\ud800-\udbff]$/, '')}${TRUNC_MARK}` };
+  if (sessBytes(it) <= max) return it;
+  if (typeof it.text !== 'string') return null;
+  let text = it.text.endsWith(TRUNC_MARK) ? it.text.slice(0, -TRUNC_MARK.length) : it.text;
+  while (text && sessBytes({ ...it, text: `${text}${TRUNC_MARK}` }) > max) {
+    text = text.slice(0, Math.floor(text.length * 0.8));
+    if (/[\ud800-\udbff]$/.test(text)) text = text.slice(0, -1);   // never half a surrogate pair
+  }
+  return text ? { ...it, text: `${text}${TRUNC_MARK}` } : null;
+}
+/** Items → sess-items messages, in order, each at most SESS_FRAME_BYTES as a line; seq counts up from `seq`. A reset
+ *  always gives at least one frame (it empties the view). */
+function sessFrames(id, seq, items, reset = false) {
+  const room = SESS_FRAME_BYTES - 256;   // the envelope (t, id, seq, reset) and the newline
+  const out = [];
+  let cur = [];
+  let size = 0;
+  const flush = () => { out.push({ t: 'sess-items', id, seq: seq + out.length, items: cur, ...(reset && !out.length ? { reset: true } : {}) }); cur = []; size = 0; };
+  for (const raw of Array.isArray(items) ? items : []) {
+    const it = fitSessItem(raw, room);
+    if (!it) continue;
+    const n = sessBytes(it) + 1;
+    if (cur.length && (size + n > room || cur.length >= SESS_FRAME_ITEMS)) flush();
+    cur.push(it);
+    size += n;
+  }
+  if (cur.length || (reset && !out.length)) flush();
+  return out;
+}
+/** What a new subscription gets first: the last SESS_BACKFILL_ITEMS items, at most SESS_BACKFILL_BYTES of them. */
+function sessBackfill(items) {
+  const out = [];
+  let size = 0;
+  for (const raw of (Array.isArray(items) ? items : []).slice(-SESS_BACKFILL_ITEMS).reverse()) {
+    const it = fitSessItem(raw);
+    if (!it) continue;
+    size += sessBytes(it) + 1;
+    if (size > SESS_BACKFILL_BYTES) break;
+    out.push(it);
+  }
+  return out.reverse();
+}
+
 /**
  * Validates one decoded message from a trusted device. Unknown types, missing or oversized fields → null.
  * Pairing messages are validated separately (validatePair), before trust exists.
@@ -404,6 +482,18 @@ function validateMessage(m) {
     case 'cmd-status':
       return isId(m.id) && CMD_STATUS.includes(m.status) && (m.reason == null || REASONS.includes(m.reason))
         ? { t: 'cmd-status', id: m.id, status: m.status, ...(m.reason ? { reason: m.reason } : {}) } : null;
+    case 'sess-open':    // v3.100, all five only to a peer with cap 'sess'
+      return isId(m.id) && isId(m.project) ? { t: 'sess-open', id: m.id, project: m.project } : null;
+    case 'sess-keep':
+      return isId(m.id) ? { t: 'sess-keep', id: m.id } : null;
+    case 'sess-close':
+      return isId(m.id) ? { t: 'sess-close', id: m.id } : null;
+    case 'sess-end':
+      return isId(m.id) && SESS_REASONS.includes(m.reason) ? { t: 'sess-end', id: m.id, reason: m.reason } : null;
+    case 'sess-items': {
+      if (!isId(m.id) || !isInt(m.seq) || !Array.isArray(m.items) || m.items.length > SESS_FRAME_ITEMS) return null;
+      return { t: 'sess-items', id: m.id, seq: m.seq, items: m.items.map(cleanSessItem).filter(Boolean), ...(m.reset === true ? { reset: true } : {}) };
+    }
     case 'ho-offer': {
       const g = m.git;
       const sum = (x) => x && isInt(x.size) && isHex(x.sha, 32) ? { size: x.size, sha: x.sha } : null;
@@ -468,12 +558,13 @@ function encode(m) {
 
 // --- the trust list (devices.json; the secrets live apart, encrypted)
 
-/** @typedef {{ pub: string, name: string, addedAt: number, allowCommands: boolean, allowHandoff: boolean, allowManage: boolean, allowAccounts: boolean, trusted: boolean }} Device */
+/** @typedef {{ pub: string, name: string, addedAt: number, allowCommands: boolean, allowHandoff: boolean, allowManage: boolean, allowAccounts: boolean, allowSessions?: boolean, trusted: boolean }} Device */
 function normalizeDevices(raw) {
   const out = [];
   for (const d of Array.isArray(raw) ? raw : []) {
     if (!d || !isHex(d.pub, 32) || out.some((o) => o.pub === d.pub)) continue;
     out.push({ pub: d.pub, name: deviceName(d.name), addedAt: isInt(d.addedAt) ? d.addedAt : 0, allowCommands: d.allowCommands === true, allowHandoff: d.allowHandoff === true,
+      allowSessions: d.allowSessions === true,   // v3.100 OFF by default; implied by nothing else
       allowManage: d.allowManage === true, allowAccounts: d.allowAccounts === true,   // v3.31, both OFF by default
       trusted: d.trusted === true });   // v3.97 "This is my own computer": OFF by default, set only from this machine's own UI
   }
@@ -504,6 +595,9 @@ const mayRunUnattended = (devices, secrets, remotePub) => { const d = trusted(de
 const mayHandoff = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowHandoff);
 /** May this device see our project catalog (and, later, manage projects)? "Allow managing projects" on (v3.31). */
 const mayManage = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowManage);
+/** v3.100 May this device read the sessions of our projects? Only "Allow reading sessions from this device": not
+ *  implied by trusted, allowManage or allowCommands. */
+const maySessions = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowSessions);
 /** May this device work with our accounts (later phases)? "Allow account sign-in" on (v3.31). */
 const mayAccounts = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowAccounts);
 
@@ -541,7 +635,9 @@ module.exports = {
   makeCode, normalizeCode, pairSecrets, pairProof, proofOk, pairTopic, hex, isHex,
   cleanLine, sanitizeCommand, markedCommand, markedTask, cleanReport, fitReport, REPORT_MAX, REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK, TASK_STATES, WAIT_STATES, TASK_TTL_MAX, deviceName, RateLimiter,
   cleanSnapshot, validateMessage, validatePair, LineReader, encode,
-  normalizeDevices, trustedKeys, sealTrusted, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, snapshotOf, snapshotFor, logEntry,
+  normalizeDevices, trustedKeys, sealTrusted, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, maySessions,
+  SESS_REASONS, SESS_BACKFILL_ITEMS, SESS_BACKFILL_BYTES, SESS_FRAME_BYTES, SESS_FRAME_ITEMS, SESS_FRAMES_PER_SEC, SESS_PER_DEVICE, SESS_IDLE_MS, SESS_QUEUE_MAX, SESS_OPENS_PER_MIN,
+  cleanSessItem, fitSessItem, sessFrames, sessBackfill, snapshotOf, snapshotFor, logEntry,
   cleanRes, cleanCatalog, resOf, resChanged, typingReady,
   LOGIN_HOSTS, LOGIN_REDIRECT, LOGIN_CODE_RE, LOGIN_TIMEOUT_MS, LOGIN_REASONS, loginUrlOk, loginCodeOk, stripAnsi, parseLoginOutput, cleanAccounts,
 };
