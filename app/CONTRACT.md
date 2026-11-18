@@ -1887,8 +1887,11 @@ dialog that names a paired machine.
 where `machine` is the paired device's key and absent for this machine. `HQ.consentedTarget` matches a consented,
 not-by-initiative row of the same request with the same `machine` and `projectId`. A follow-up may go to a paired
 machine only when that exact machine + project was already consented in this request; counts, the 2 h window and the
-caps are unchanged. A remote project's "Skip permissions" is unknown on the sender and treated as false: the receiver
-decides. A released remote stage sent by initiative is checked again at release, like a local one.
+caps are unchanged. A follow-up to a paired machine additionally requires `state.hq.dispatchRemoteWithoutAsking`
+(`initiativeFor` takes `remoteSetting`; checked at the first decision, the re-check and a stage's release); with it off the
+normal dialog stands, as for any report-driven turn. A remote project's Skip/Auto-approve state is not in the peer
+catalog, so the sender cannot know it: a target on a machine with `trustsUs === true` is marked `skip` (possibly
+unattended) and never gets an initiative follow-up; on `false`/`null` the receiver decides, as before. A released remote stage sent by initiative is checked again at release, like a local one.
 
 **Wire.** Cap `revive` (in `CAPS` and `OUR_CAPS`). `cmd` gains optional `revive: true`, written only for an HQ task
 (`report: true`) and only to a peer that named the cap; an older peer never gets the field, and an older sender never
@@ -1900,12 +1903,15 @@ sets it (validators rebuild the object). New reason `stopped-here`, sent only in
   again in `pump` when the tab is found gone (turned off while the task waited: `not-running`);
 - the tab is `gone` (stopped or asleep). A tab that is `starting` is never restarted for another device's task: it
   waits, as before;
-- the person at this machine did not end that session themselves in the last 10 minutes (its process ended in the tab,
-  not through an app or remote stop; kept in memory, cleared when the tab starts again): else `rejected: stopped-here`;
+- that session did not end by itself in the last 10 minutes (its process ended in the tab, not through an app or
+  remote stop; the cause is not known: someone stopped it, it crashed or hit a usage limit, so the reason text blames
+  nobody). The window is kept in memory only: it is lost on an app restart and cleared when the tab starts again.
+  Else `rejected: stopped-here`;
 - the existing revive budget: at most 3 starts per project, one a minute, the budget given back only when the tab is
   seen ready (so a device cannot loop starts); a start that never becomes ready ends `not-running` after the third
   try, or `expired` at the task's TTL if that comes first.
-Each start is written to `manage.log` (`op: start`, `via: task`, the task id) and shows `main.projOpNotice`.
+Each start is written to `manage.log` (`op: start`, `via: task`, the task id) and shows `main.projOpNotice` after the
+start ran, with its real outcome (`ok`, or `failed:<reason>`; the notice then names the reason).
 
 **Still enforced on the receiver.** `allowCommands` (off by default); the rate limit and the queue cap; 8 KB sanitised
 text; Claude engine only; logged-out refusal; the handoff lock; a project that answers or skips its permission prompts

@@ -702,3 +702,33 @@ test('v3.99 a single remote dispatch: the paired-machines setting decides, never
   assert.equal(env.remoteDialogs, 2);                       // this machine was never consented for the request
   assert.equal(env.board.tasks.find((t) => t.id === d.id).byInitiative, undefined);
 });
+
+test('v3.99 initiative to a paired machine needs the remote setting; a machine that trusts us counts as possibly Skip', async () => {
+  // remote setting off, initiative on: the consented row exists (dialog), the follow-up is not sent silently
+  const off = stageHarness({ initiative: true, link: remoteLink() });
+  let request = off.env.minter.mint();
+  await off.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request });
+  assert.equal(off.env.remoteDialogs, 1);
+  off.env.minter.clear();
+  const b = await off.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'fix', title: 'Fix', request });
+  assert.equal(off.env.remoteDialogs, 2);                   // the dialog stands
+  assert.equal(off.env.board.tasks.find((t) => t.id === b.id).byInitiative, undefined);
+  assert.equal(HQ.initiativeSent(off.env.board, request), 0);
+  // a released stage on that machine: not silent either
+  const st = stageHarness({ noAsk: true, initiative: true, link: remoteLink() });
+  request = st.env.minter.mint();
+  await st.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request });
+  st.env.minter.clear();
+  await st.api.hqDispatch({ project: 'office', task: 'a', title: 'A', request, then: [{ project: 'api', machine: 'Studio', task: 'b', title: 'B' }] });
+  assert.equal(st.env.board.tasks.some((t) => t.byInitiative && t.machine === R_PUB), false);
+  // trustsUs true on the machine: possibly Skip, so no initiative even with the setting on
+  const link = remoteLink();
+  link.view = () => ({ devices: [{ id: R_PUB, trustsUs: true }] });
+  const trust = stageHarness({ remoteNoAsk: true, initiative: true, link });
+  request = trust.env.minter.mint();
+  await trust.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request });
+  trust.env.minter.clear();
+  const c = await trust.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'fix', title: 'Fix', request });
+  assert.equal(trust.env.remoteDialogs, 1);
+  assert.equal(trust.env.board.tasks.find((t) => t.id === c.id).byInitiative, undefined);
+});

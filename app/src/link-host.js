@@ -411,19 +411,22 @@ function setupLink(d) {
             // v3.99 nor for another device's task: nothing here started the project before it arrived
             if (!isDesk && !(far && !b.n) && now - (b.n ? b.at : b.since) < REVIVE_GAP_MS) break;
             b.n += 1; b.at = now;
-            if (far) {
+            // v3.99 manage.log and the notice are written after the start ran, with its real outcome
+            const startNote = (reason) => {
+              if (!far) return;
               const name = d.projects().find((x) => x.id === project)?.name || project;
-              mlog({ device: c.device.name, op: 'start', project: name, outcome: 'ok', via: 'task', task: c.id });
-              try { d.notify(d.T('main.projOpNotice', { device: c.device.name, project: name, op: d.T('machines.op.start') }), ''); } catch { /* the notice is best effort */ }
-            }
+              mlog({ device: c.device.name, op: 'start', project: name, outcome: reason ? `failed:${reason}` : 'ok', via: 'task', task: c.id });
+              try { d.notify(d.T('main.projOpNotice', { device: c.device.name, project: name, op: reason ? `${d.T('machines.op.start')} (${reason})` : d.T('machines.op.start') }), ''); } catch { /* the notice is best effort */ }
+            };
             // v3.83 amendment: started with the task as its first prompt (a fresh session takes no typing, see 'starting')
             if (d.startWith) {
               let ok; try { ok = deliver(c, project, (text) => d.startWith(project, text)); } catch { ok = false; }
               // v3.99 a device's budget is given back only when the tab is seen ready (below): it cannot loop starts
-              if (ok) { q.shift(); if (!far) reviveBudget.delete(project); break; }
+              if (ok) { startNote(); q.shift(); if (!far) reviveBudget.delete(project); break; }
             }
             let r; try { r = d.manage('start', project); } catch { r = { ok: false }; }
-            if (r && typeof r.then !== 'function' && r.ok === false) { q.shift(); c.reply('rejected', r.reason === 'locked' ? 'locked' : 'not-running'); continue; }
+            if (r && typeof r.then !== 'function' && r.ok === false) { startNote(String(r.reason || 'failed')); q.shift(); c.reply('rejected', r.reason === 'locked' ? 'locked' : 'not-running'); continue; }
+            startNote();
             break;
           }
           q.shift(); c.reply('rejected', 'not-running'); continue;

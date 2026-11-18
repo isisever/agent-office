@@ -2238,9 +2238,12 @@ function hqRemoteTarget(key, machine, project) {
   const l = linkHost?.link();
   const dv = key ? (l?.devices || []).find((x) => x.pub === key.pub) : byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
   const pub = dv && l ? (key ? key.pub : dv.id) : '';
-  if (!pub) return { machine: '', projectId: '' };
+  if (!pub) return { machine: '', projectId: '', remote: true, skip: false };
   const known = l.remotes.get(pub)?.snap?.projects || (l.conns.has(pub) ? [] : peerCache()[pub]?.projects || []);
-  return { machine: pub, projectId: key ? key.id : byName(known, project)?.id || '' };
+  // v3.99 the peer catalog does not carry a project's Skip/Auto-approve state, so a machine that trusts us (its Auto-approve/Skip
+  // projects run our tasks unattended) is treated as possibly skipping: no initiative follow-up goes there
+  const skip = (l.view?.().devices || []).find((x) => x.id === pub)?.trustsUs === true;
+  return { machine: pub, projectId: key ? key.id : byName(known, project)?.id || '', remote: true, skip };
 }
 /** v3.99 a task went to a paired machine without a dialog on this one: the person is told here, every time. */
 function notifyRemoteSent(project, machine) {
@@ -2296,9 +2299,9 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const initiativeArgs = (counted) => {
     const p = remote ? null : byName(state.projects, args.project);
     const m = args.staff && teamOn() ? ST.findMember(state.staff, args.staff) : null;
-    return { initiative: state.hq?.initiative === true, remote, request, minter: hqMinter, counted,
-      // v3.99 a paired machine's project: machine key + project id; its Skip permissions are unknown here (the receiver decides)
-      targets: [remote ? { ...hqRemoteTarget(key, machine, args.project), staffId: args.staff ? null : '', skip: false }
+    return { initiative: state.hq?.initiative === true, remoteSetting: state.hq?.dispatchRemoteWithoutAsking === true, remote, request, minter: hqMinter, counted,
+      // v3.99 a paired machine's project: machine key + project id; its Skip state comes from hqRemoteTarget (trustsUs)
+      targets: [remote ? { ...hqRemoteTarget(key, machine, args.project), staffId: args.staff ? null : '' }
         : { projectId: p?.id || '', staffId: args.staff ? m?.id || null : '', skip: hqTargetSkips(p, args.staff ? m?.id || '' : '') }] };
   };
   const askPerson = async () => {
@@ -2492,9 +2495,9 @@ async function hqDispatchStages(args, request, rrun) {
   const quietThere = needsNone(true);
   const asked = stages.filter((s) => !(s.remote ? quietThere : quietHere));
   const asks = asked.length > 0;
-  const initiativeArgs = (counted) => ({ initiative: state.hq?.initiative === true, remote: false, request, minter: hqMinter, counted,
+  const initiativeArgs = (counted) => ({ initiative: state.hq?.initiative === true, remoteSetting: state.hq?.dispatchRemoteWithoutAsking === true, remote: false, request, minter: hqMinter, counted,
     targets: asked.map((s) => {
-      if (s.remote) return { ...hqRemoteTarget(s.key, String(s.machine || '').trim(), s.project), staffId: '', skip: false };
+      if (s.remote) return { ...hqRemoteTarget(s.key, String(s.machine || '').trim(), s.project), staffId: '' };
       const p = s.personalFor || !s.projectId ? null : P.findProject(state, s.projectId);
       return { projectId: p?.id || '', staffId: s.staff ? s.staffId || null : '', skip: hqTargetSkips(p, s.staff ? s.staffId || '' : '') };
     }) });
@@ -2591,9 +2594,9 @@ async function hqReleaseStage({ id, after, resumed = false }) {
     const p = st.remote ? null : P.findProject(state, project);
     const m = st.staff && teamOn() ? ST.findMember(state.staff, st.staff) : null;
     const fresh = loadHqBoard();
-    const still = HQ.initiativeFor({ initiative: state.hq?.initiative === true, remote: st.remote === true, request: t.request, minter: hqMinter, counted: true,
+    const still = HQ.initiativeFor({ initiative: state.hq?.initiative === true, remoteSetting: state.hq?.dispatchRemoteWithoutAsking === true, remote: st.remote === true, request: t.request, minter: hqMinter, counted: true,
       board: { ...fresh, tasks: fresh.tasks.filter((x) => x.id !== id) },   // the row does not count against itself
-      targets: [st.remote ? { ...hqRemoteTarget(st.key || null, String(st.machine || '').trim(), st.project), staffId: '', skip: false }
+      targets: [st.remote ? { ...hqRemoteTarget(st.key || null, String(st.machine || '').trim(), st.project), staffId: '' }
         : { projectId: p?.id || '', staffId: st.staff ? m?.id || null : '', skip: hqTargetSkips(p, st.staff ? m?.id || '' : '') }] });
     if (!still) {
       if (!(await confirmHqDispatch({ machine: st.machine, project: p ? p.name : project, title: st.title, task: text, ...(st.staff ? { staff: st.staff, staffName: st.staff } : {}) }, st.remote === true))) {

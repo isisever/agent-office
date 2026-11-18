@@ -1349,7 +1349,7 @@ test('v3.99 consent matrix: typed/routine x local/remote x setting; the remote s
   assert.equal(/dispatchRemoteWithoutAsking/.test(fnBody('hqAllowAlways')), false);
   assert.equal(/dispatchRemoteWithoutAsking/.test(fnBody('confirmHqDispatch')), false);
   // wiring: both consent calls pass the remote setting; the notice; revive only for HQ's tasks; HQ's information
-  assert.equal((src.match(/remoteSetting: state\.hq\?\.dispatchRemoteWithoutAsking === true/g) || []).length, 2);
+  assert.equal((src.match(/remoteSetting: state\.hq\?\.dispatchRemoteWithoutAsking === true/g) || []).length, 5);   // two consent calls + the three initiative checks
   assert.match(fnBody('hqDispatch'), /notifyRemoteSent\(pname, dv\.name\)/);
   assert.match(fnBody('notifyRemoteSent'), /notify\(T\('main\.hqRemoteSent'/);
   assert.match(fnBody('officeDispatch'), /revive: revive && tab === HQ\.HQ_ID/);
@@ -1369,7 +1369,7 @@ test('v3.99 initiative: a paired machine target is machine key + project id, and
   const row = (over = {}) => ({ id: 't1', request: id, title: 'first', pub: PUB, machineName: 'Studio', project: 'api', projectId: 'p-api', status: 'reported', consented: true, ...over });
   const board = HQ.addTask(HQ.emptyBoard(), row(), clock.t);
   m.clear();
-  const ask = (target, over = {}) => HQ.initiativeFor({ initiative: true, remote: true, request: id, minter: m, board, targets: [target], now: clock.t, ...over });
+  const ask = (target, over = {}) => HQ.initiativeFor({ initiative: true, remoteSetting: true, remote: true, request: id, minter: m, board, targets: [target], now: clock.t, ...over });
   assert.equal(ask({ machine: PUB, projectId: 'p-api', staffId: '', skip: false }), true);
   assert.equal(ask({ machine: OTHER, projectId: 'p-api' }), false);          // the same project id on another machine
   assert.equal(ask({ machine: PUB, projectId: 'p-other' }), false);          // another project on that machine
@@ -1384,14 +1384,21 @@ test('v3.99 initiative: a paired machine target is machine key + project id, and
   // a local consented row never covers a paired machine, a row sent by initiative or without consent covers nothing
   for (const over of [{ pub: 'self' }, { consented: false }, { consented: false, byInitiative: true }]) {
     const b = HQ.addTask(HQ.emptyBoard(), row(over), clock.t);
-    assert.equal(HQ.initiativeFor({ initiative: true, remote: true, request: id, minter: m, board: b, targets: [{ machine: PUB, projectId: 'p-api' }], now: clock.t }), false, JSON.stringify(over));
+    assert.equal(HQ.initiativeFor({ initiative: true, remoteSetting: true, remote: true, request: id, minter: m, board: b, targets: [{ machine: PUB, projectId: 'p-api' }], now: clock.t }), false, JSON.stringify(over));
   }
   // mixed targets of one chain (remote: false, each target names its own machine): every one must be consented
   const both = HQ.addTask(board, row({ id: 't2', pub: 'self', project: 'web', projectId: 'p-web' }), clock.t);
-  const mixed = (targets) => HQ.initiativeFor({ initiative: true, remote: false, request: id, minter: m, board: both, targets, now: clock.t });
+  const mixed = (targets, over = {}) => HQ.initiativeFor({ initiative: true, remoteSetting: true, remote: false, request: id, minter: m, board: both, targets, now: clock.t, ...over });
   assert.equal(mixed([{ projectId: 'p-web' }, { machine: PUB, projectId: 'p-api' }]), true);
   assert.equal(mixed([{ projectId: 'p-web' }, { machine: OTHER, projectId: 'p-api' }]), false);
-  // main: the sender treats a paired machine's Skip permissions as unknown (false) and stamps its rows
-  assert.match(fnBody('hqDispatch'), /targets: \[remote \? \{ \.\.\.hqRemoteTarget\(key, machine, args\.project\), staffId: args\.staff \? null : '', skip: false \}/);
+  // v3.99 the remote setting: off (or unset) means no initiative to a paired machine, alone or in a mixed chain; local targets are unaffected
+  assert.equal(ask({ machine: PUB, projectId: 'p-api' }, { remoteSetting: false }), false);
+  assert.equal(ask({ machine: PUB, projectId: 'p-api' }, { remoteSetting: undefined }), false);
+  assert.equal(mixed([{ projectId: 'p-web' }, { machine: PUB, projectId: 'p-api', remote: true }], { remoteSetting: false }), false);
+  assert.equal(mixed([{ projectId: 'p-web' }], { remoteSetting: false }), true);
+  // a machine that trusts us may run in Skip projects unattended: its target is marked skip and never gets initiative
+  assert.equal(ask({ machine: PUB, projectId: 'p-api', skip: true }), false);
+  // main: the sender treats a paired machine's Skip state from trustsUs (hqRemoteTarget) and stamps its rows
+  assert.match(fnBody('hqDispatch'), /targets: \[remote \? \{ \.\.\.hqRemoteTarget\(key, machine, args\.project\), staffId: args\.staff \? null : '' \}/);
   assert.match(fnBody('hqDispatch'), /\.\.\.\(byInitiative \? \{ byInitiative: true \} : \{\}\), \.\.\.\(consented && !byInitiative \? \{ consented: true \} : \{\}\)/);
 });

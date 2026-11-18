@@ -187,17 +187,19 @@ const allowAlways = (hq) => normalizeHq({ ...(hq && typeof hq === 'object' ? hq 
  * v3.91 HQ's initiative (the `initiative` setting, default off): a dispatch that consentFor would ask about needs no
  * consent when ALL hold: the target is local, or (v3.99) on a paired machine and named by that machine's key; the request id was minted from a prompt the person typed (never a
  * routine's id, never 'adhoc'); it is younger than 2 h; EVERY target (`targets`: one per task, `{ projectId, staffId,
- * skip }`) is one the person already consented to for this request (consentedTarget) and its project does not run
+ * skip, remote? }`) is one the person already consented to for this request (consentedTarget) and its project does not run
  * with Skip permissions (`skip`); the caps (8 per request counting removed rows, 12 open) leave room for the tasks;
  * and at most MAX_INITIATIVE tasks were sent this way for the request (counted on the request record, so a removed
  * row still counts). `counted`: these tasks are already in that count (takeInitiative ran; the re-check after a wait).
  * Anything else → false: consentFor's answer stands.
  */
-function initiativeFor({ initiative, remote, request, minter, board, targets, counted = false, now = Date.now() }) {
+function initiativeFor({ initiative, remoteSetting, remote, request, minter, board, targets, counted = false, now = Date.now() }) {
   const n = Array.isArray(targets) ? targets.length : 0;
   if (initiative !== true || !isStr(request) || request === ADHOC || n < 1) return false;
   // v3.99 a dispatch to a paired machine: every target names that machine (its key); consentedTarget matches machine + project
   if (remote && !targets.every((t) => typeof t?.machine === 'string' && t.machine && t.machine !== 'self')) return false;
+  // v3.99 a target on a paired machine also needs the person's "send to my other computers without asking" setting (the dialog stands otherwise)
+  if ((remote || targets.some((t) => t?.remote === true)) && remoteSetting !== true) return false;
   if (minter?.isRoutine?.(request) || !typedWithin(minter, request, now)) return false;
   const mine = (board?.tasks || []).filter((t) => t.request === request);
   if (!mine.length) return false;
