@@ -1280,7 +1280,7 @@ test('v3.96 remoteWaitFields: why a task on a paired device waits, in one senten
   assert.deepEqual([rows.l1.waiting, rows.l1.note], ['busy', HQ.waitFields(local).note]);
   assert.equal(rows.l2.waiting, undefined);
   // main: office_reports and the three remote answers of office_dispatch
-  assert.match(fnBody('officeReports'), /x\.pub !== 'self' \? HQ\.remoteWaitFields\(\{ machine: x\.pub, machineName: x\.machine, project: x\.project, status, reason \}, waits\[x\.id\]\)/);
+  assert.match(fnBody('officeReports'), /HQ\.reportWaitFields\(x, status, reason, waits\[x\.id\]\)/);
   const d = fnBody('hqDispatch');
   assert.match(d, /const remoteWait = \(r\) => HQ\.remoteWaitFields\(\{ machine: pub, machineName: dv\.name, project: pname, status: r\.status, reason: r\.reason \}, hqWaits\(\)\[r\.id\]\)/);
   assert.equal(d.split('...remoteWait(').length - 1, 3);
