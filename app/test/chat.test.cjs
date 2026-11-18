@@ -284,13 +284,13 @@ test('link items: hidden blocks are dropped anywhere in a user message, the loca
   const tags = ['bash-input', 'bash-stdout', 'bash-stderr', 'local-command-stdout', 'ide_selection', 'ide_opened_file', 'system-reminder', 'command-args'];
   for (const tag of tags) {
     const mid = linkItems([{ key: 'm', at: 1, kind: 'user', text: `before\n<${tag}>SECRET-${tag}</${tag}>\nafter` }]);
-    assert.equal(mid[0].text, 'before\nafter', `${tag} in the middle`);
+    assert.equal(mid[0].text, 'before\n\nafter', `${tag} in the middle`);
     const end = linkItems([{ key: 'e', at: 1, kind: 'user', text: `hello\n<${tag}>SECRET-${tag}</${tag}>` }]);
     assert.equal(end[0].text.trim(), 'hello', `${tag} at the end`);
     const cut = linkItems([{ key: 'c', at: 1, kind: 'user', text: `hello <${tag}>SECRET-${tag} and no close` }]);
     assert.equal(cut[0].text.trim(), 'hello', `${tag} cut off`);
   }
-  assert.equal(linkItems([{ key: 'i', at: 1, kind: 'user', text: 'look\n[Image: source: /Users/x/shot.png]\nplease' }])[0].text, 'look\nplease');
+  assert.equal(linkItems([{ key: 'i', at: 1, kind: 'user', text: 'look\n[Image: source: /Users/x/shot.png]\nplease' }])[0].text, 'look\n\nplease');
   assert.deepEqual(linkItems([{ key: 'o', at: 1, kind: 'user', text: '<bash-input>ls</bash-input>' }]), []);
   assert.equal(linkItems([{ key: 'a', at: 1, kind: 'assistant', text: 'the <bash-input> tag' }])[0].text, 'the <bash-input> tag');
 });

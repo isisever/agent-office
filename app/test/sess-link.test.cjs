@@ -261,7 +261,7 @@ test('sess limits: two subscriptions per device, main tab only, idle timeout, th
   // a queue that outgrows its bound ends the subscription
   const key = `${PB}/s1`;
   assert.equal(a.sessPush(key, Array.from({ length: (C.SESS_QUEUE_MAX + 2) * 2 }, (_, n) => item(n, 'x'.repeat(20000)))), false);
-  assert.deepEqual(sessWire(a).at(-1), { t: 'sess-end', id: 's1', reason: 'rate-limited' });
+  assert.deepEqual(sessWire(a).at(-1), { t: 'sess-end', id: 's1', reason: 'limit' });
   // too many opens in a minute
   for (let n = 0; n < C.SESS_OPENS_PER_MIN + 2; n++) b.write(conn, { t: 'sess-open', id: `r${n}`, project: 'p1' });
   await flush();
