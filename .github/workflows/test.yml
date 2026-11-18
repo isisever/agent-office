@@ -44,7 +44,7 @@ jobs:
       - name: Bundled skill packs (contract v3.45)
         run: node --test app/test/skill-packs.test.mjs
       - name: One MCP system (contract v3.44)
-        run: node --test app/test/mcp-servers.test.cjs
+        run: node --test app/test/mcp-servers.test.cjs app/test/sealed.test.cjs
       - name: Office renderer and session reading
         run: node app/test/office.test.mjs
       - name: Office pictures (visual regression)

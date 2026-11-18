@@ -70,7 +70,8 @@ function hasControl(text) {
 }
 /**
  * Why a text cannot be a token or a secret, or null when it can: one line, no control characters, at most TOKEN_MAX
- * characters, and never a JSON object or array (so the link keys or the own record can never be handed out as one).
+ * characters, and never a JSON object (so the link keys or the own record can never be handed out as one). A JSON
+ * array or scalar is a legitimate password or token and is accepted.
  * @param {unknown} text
  * @returns {'type' | 'length' | 'control' | 'structured' | null}
  */
@@ -78,8 +79,7 @@ function tokenProblem(text) {
   if (typeof text !== 'string') return 'type';
   if (text.length > TOKEN_MAX) return 'length';
   if (hasControl(text)) return 'control';
-  const first = text.trimStart()[0];
-  if (first === '{' || first === '[') { const v = parsed(text); if (v && typeof v === 'object') return 'structured'; }
+  if (text.trimStart()[0] === '{') { const v = parsed(text); if (v && typeof v === 'object' && !Array.isArray(v)) return 'structured'; }
   return null;
 }
 

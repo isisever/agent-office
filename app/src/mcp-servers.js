@@ -320,7 +320,7 @@ function migrateConnections(projects, servers) {
  * like an unreadable one. Files written before v3.102 have no header: they are rewritten with it once, when they
  * decrypt to the shape of a token (`S.tokenProblem`); then the marker `.ao1` is written in `dir` and a headerless file
  * is refused from there on. A token is one line without control characters, at most `S.TOKEN_MAX` long and never a
- * JSON object or array: anything else is neither saved nor handed out. The folder itself must not be a symbolic link
+ * JSON object: anything else is neither saved nor handed out. The folder itself must not be a symbolic link
  * (else the store does nothing), and no file is read or written through one.
  * @param {string} dir
  * @param {{ isEncryptionAvailable(): boolean, encryptString(s: string): Buffer, decryptString(b: Buffer): string }} safe
@@ -338,25 +338,35 @@ function tokenStore(dir, safe, purpose, fsx = fs) {
   const migrated = () => S.present(marker, fsx);
   /**
    * The one-time migration of this store: every headerless .bin that decrypts to a token is rewritten with the
-   * header. The marker is written only when every file could be looked at (a locked keychain: retried next time).
+   * header. A file that does not decrypt is skipped (left untouched, logged once); the marker is written once every
+   * other file is done. Only "no file decrypts" (encryption unavailable, a locked keychain) defers the marker.
    */
+  const logged = new Set();
+  const once = (/** @type {string} */ name, /** @type {string} */ why) => {
+    if (logged.has(name)) return;
+    logged.add(name);
+    console.error(`token store ${purpose}: ${name.replace(/\.bin$/, '')} ${why}`);
+  };
   const migrate = () => {
     if (migrated() || !dirOk() || !S.present(dir, fsx)) return;
     let enc = false;
     try { enc = safe.isEncryptionAvailable(); } catch {}
     if (!enc) return;
-    let pending = false;
+    let tried = 0, failedN = 0;
     for (const name of names().filter((f) => f.endsWith('.bin'))) {
       const to = path.join(dir, name);
       try {
         const buf = S.readPlain(to, fsx);
         if (!buf.length) continue;
         const r = sealer.inspect(purpose, buf);
+        tried++;
         if (r.state === 'legacy' && S.tokenProblem(r.payload) === null) S.writePlain(to, sealer.seal(purpose, r.payload), fsx);
-        // 'purpose', or a headerless text that is no token: left as it is, refused at every read
-      } catch { pending = true; }
+        else if (r.state === 'legacy') once(name, 'is not the shape of a token and is left as it is');
+        // 'purpose': already sealed
+      } catch { tried++; failedN++; once(name, 'could not be decrypted and is skipped'); }
     }
-    if (!pending) try { S.writePlain(marker, '', fsx); } catch { /* retried next time */ }
+    if (tried > 0 && failedN === tried) return;   // nothing decrypts at all (locked keychain): retried next time
+    try { S.writePlain(marker, '', fsx); } catch { /* retried next time */ }
   };
   return {
     /** @param {string} id @param {string} token */

@@ -93,7 +93,7 @@ test('sealed: the header names the purpose; another purpose or no header is refu
 });
 
 test('sealed: a token is one line without control characters, of a sane length, and never a JSON structure', () => {
-  for (const ok of ['tok-123', 'a b c', 'p@ss w\u00f6rd {x}', '123456', 'true', '"quoted"', '{not json', 'x'.repeat(S.TOKEN_MAX)]) assert.equal(S.tokenProblem(ok), null, ok.slice(0, 20));
+  for (const ok of ['tok-123', 'a b c', 'p@ss w\u00f6rd {x}', '123456', 'true', '"quoted"', '[1,2]', ' ["a"]', '[not json', '"{}"', 'null', '{not json', 'x'.repeat(S.TOKEN_MAX)]) assert.equal(S.tokenProblem(ok), null, ok.slice(0, 20));
   assert.equal(S.tokenProblem('a\nb'), 'control');
   assert.equal(S.tokenProblem('a\rb'), 'control');
   assert.equal(S.tokenProblem('a\u0000b'), 'control');
@@ -101,7 +101,7 @@ test('sealed: a token is one line without control characters, of a sane length, 
   assert.equal(S.tokenProblem('x'.repeat(S.TOKEN_MAX + 1)), 'length');
   assert.equal(S.tokenProblem(JSON.stringify(KEYS)), 'structured');
   assert.equal(S.tokenProblem(JSON.stringify(RECORD)), 'structured');
-  assert.equal(S.tokenProblem(' [1]'), 'structured');
+  assert.equal(S.tokenProblem(' {"a":1}'), 'structured');
   assert.equal(S.tokenProblem(null), 'type');
 });
 
@@ -171,6 +171,66 @@ test('token store: headerless files migrate once and are refused afterwards; ano
   assert.equal(fs.existsSync(path.join(dir3, '.ao1')), false);
   assert.deepEqual(mcpStore(ud3).read('a'), { token: 'tok-a', failed: false });
   assert.throws(() => MS.tokenStore(dir3, safe));   // no store without a purpose
+});
+
+test('token store: one file that never decrypts is skipped and logged once; the marker waits only when nothing decrypts', (t) => {
+  const errors = [];
+  t.mock.method(console, 'error', (m) => { errors.push(String(m)); });
+  const ud = tmp(t), dir = path.join(ud, 'mcp-tokens');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'a.bin'), safe.encryptString('tok-a'));
+  fs.writeFileSync(path.join(dir, 'bad.bin'), Buffer.from('garbage-not-encrypted'));
+  fs.writeFileSync(path.join(dir, 'j.bin'), safe.encryptString(JSON.stringify(RECORD)));
+  const st = mcpStore(ud);
+  assert.deepEqual(st.read('a'), { token: 'tok-a', failed: false });
+  assert.equal(plain(path.join(dir, 'a.bin')), 'ao1:mcp-token\ntok-a');
+  assert.ok(fs.existsSync(path.join(dir, '.ao1')), 'marker written although one file never decrypts');
+  assert.equal(fs.readFileSync(path.join(dir, 'bad.bin'), 'utf8'), 'garbage-not-encrypted');
+  assert.deepEqual(st.read('bad'), { token: '', failed: true });
+  assert.deepEqual(st.read('j'), { token: '', failed: true });
+  assert.equal(errors.filter((e) => e.includes('bad')).length, 1);
+  assert.equal(errors.filter((e) => e.includes('j ') || e.includes(': j')).length, 1);
+  assert.ok(errors.every((e) => e.includes('mcp-token') && !e.includes('tok-a') && !e.includes('enc:')));
+  // encryption unavailable: nothing is migrated, no marker
+  const ud2 = tmp(t), dir2 = path.join(ud2, 'mcp-tokens');
+  fs.mkdirSync(dir2);
+  fs.writeFileSync(path.join(dir2, 'a.bin'), safe.encryptString('tok-a'));
+  const off = MS.tokenStore(dir2, { ...safe, isEncryptionAvailable: () => false }, S.PURPOSE.MCP_TOKEN);
+  off.read('a');
+  assert.equal(fs.existsSync(path.join(dir2, '.ao1')), false);
+  // no file decrypts (every first decrypt throws): no marker, retried later
+  const ud3 = tmp(t), dir3 = path.join(ud3, 'mcp-tokens');
+  fs.mkdirSync(dir3);
+  fs.writeFileSync(path.join(dir3, 'a.bin'), safe.encryptString('tok-a'));
+  fs.writeFileSync(path.join(dir3, 'b.bin'), safe.encryptString('tok-b'));
+  MS.tokenStore(dir3, { ...safe, decryptString: () => { throw new Error('locked'); } }, S.PURPOSE.MCP_TOKEN).read('a');
+  assert.equal(fs.existsSync(path.join(dir3, '.ao1')), false);
+  assert.deepEqual(mcpStore(ud3).read('b'), { token: 'tok-b', failed: false });
+  assert.ok(fs.existsSync(path.join(dir3, '.ao1')));
+});
+
+test('link: a headerless keys file with the v3.97 trusted set, and one with own / ownV, migrate keeping every field', async (t) => {
+  const dir = tmp(t);
+  const L = linkWorld(t, dir);
+  const w0 = await L.pairTwo();
+  await w0.host.destroy();
+  for (const extra of [{ trusted: [PA] }, { trusted: [PA, PB], own: [PA, PB], ownV: C.OWN_VERSION }, { own: [PA], ownV: C.OWN_VERSION }]) {
+    const keys = { ...L.keys(), ...extra };
+    if (!extra.own) { delete keys.own; delete keys.ownV; }
+    fs.writeFileSync(L.f('keys.bin'), safe.encryptString(JSON.stringify(keys)));
+    fs.writeFileSync(L.f('own.bin'), safe.encryptString(JSON.stringify(L.rec())));
+    for (const n of ['keys.bin.ao1', 'own.bin.ao1']) fs.rmSync(L.f(n), { force: true });
+    const w = L.boot();
+    assert.notEqual(w.link, null);
+    assert.equal(plain(L.f('keys.bin')).startsWith('ao1:link-keys\n'), true);
+    assert.ok(fs.existsSync(L.f('keys.bin.ao1')));
+    const after = L.keys();
+    // every field the loader reads survives (own / ownV / trusted are rewritten from the device list by the save)
+    for (const k of ['publicKey', 'secretKey', 'secrets']) assert.deepEqual(after[k], keys[k], k);
+    assert.deepEqual(w.link.secrets, keys.secrets);
+    assert.equal(w.link.devices.length, 2);
+    await w.host.destroy();
+  }
 });
 
 test('token store: what is not a token is neither saved nor handed out; a plain-text JSON never becomes a sealed file', (t) => {

@@ -2150,7 +2150,7 @@ These are all the `safeStorage` uses of the app. A new one gets a new purpose, n
 
 **Payload shape.** Independent of the header:
 - A token or secret (the three stores) is one line: no control characters (so no line break), at most 8192
-  characters, and not a JSON object or array. Anything else is not saved (`save` → false) and not handed out, whether
+  characters, and not a JSON object (a JSON array or scalar is a valid password or token). Anything else is not saved (`save` → false) and not handed out, whether
   it comes from a sealed file or from the plain `.txt` a store uses where the OS has no keyring. So neither the keys
   file nor the own record can ever be emitted as a bearer token, and a JSON text placed in a plain token file is never
   sealed.
@@ -2159,19 +2159,24 @@ These are all the `safeStorage` uses of the app. A new one gets a new purpose, n
 
 **Migration, once per kind.** Files written before this version have no header.
 - A token store: at its first use every headerless `.bin` that decrypts to the shape of a token is rewritten with the
-  header, then the marker file `.ao1` is written in the store's folder. If a file could not be decrypted then, no
-  marker is written and the next use tries again. A headerless file that is not a token is left as it is and refused.
+  header, then the marker file `.ao1` is written in the store's folder. A file that does not decrypt is skipped (left
+  untouched, one `console.error` line naming the store and id, never the content) and the marker is written once every
+  other file is done; only when no file decrypts at all (encryption unavailable, a locked keychain) is the marker
+  deferred and the next use tries again. A headerless file that is not a token is left as it is, logged once with the
+  same kind of line, and refused.
 - `keys.bin` and `own.bin`: at the first start a headerless file that parses to its own schema is taken, both files
   are written again with their headers, and the markers `keys.bin.ao1` and `own.bin.ao1` are written next to them.
 - Once a kind's marker exists, a headerless file of that kind is refused.
 - An Agent Office older than this version cannot read the files with a header: there its link does not start and its
   tokens are not usable until the newer version runs again. It does not rewrite or delete them.
+- After such a downgrade, a token or password entered (or a token rotated) on the older version is saved without the
+  header, and the newer version refuses it once its marker exists: it must be entered once more.
 
 **Paths.** A store's file name is its id with every character outside `[A-Za-z0-9_-]` replaced by `_`: one segment
 under the store's own folder. Sealed files are read only when they are regular files and written through a new temp
 file and a rename, so a symbolic link at a file's path is never followed (it is replaced by the write). A store whose
 folder is itself a symbolic link does nothing (no read, save, listing or removal: the start sweep cannot delete
-another folder's files through it), and the link does not start when `link/` is one.
+another folder's files through it), and the link does not start when `link/` is one. In both cases the data is kept.
 
 **Limits.** This stops moving and copying files between the app's stores; it is not a sandbox. A process running as
 the same user can still run the app's own binary, or read the keychain item if macOS lets it, and then decrypt and
