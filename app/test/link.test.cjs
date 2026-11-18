@@ -741,7 +741,7 @@ test('integration v3.31: a v1 peer gets zero new message types and stays connect
 
 test('integration v3.31/v3.32: caps negotiated; res to res peers; catalog only with allowManage; removal revokes', { timeout: 60000 }, async (t) => {
   const { a, b, got, until } = await pairPair(t);
-  assert.deepEqual(b.view().devices[0].caps, ['res', 'catalog', 'report', 'manage', 'accounts', 'task-status', 'report2']);
+  assert.deepEqual(b.view().devices[0].caps, ['res', 'catalog', 'report', 'manage', 'accounts', 'task-status', 'report2', 'revive']);
   assert.equal(b.view().devices[0].app, '0.14.0');
   a.publishRes(RES);
   a.publishCatalog(CATALOG);

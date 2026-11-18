@@ -1874,3 +1874,72 @@ The projects of paired devices were already rows of the PROJECTS list (v3.46), b
 - **Locale keys**: `hq.restart`, `hq.lastSeen`, `hq.lastKnown`, `hq.state.stopped`, `hq.state.asleep`. Start, Wake and Stop reuse `machines.op.*`, Sleep reuses `hq.sleep`; `hq.start` ("Start or wake") stays for a row whose state is not known.
 - **Not changed**: the command box of a remote row, the link protocol and capabilities, consent, the HQ tools (`office_machines`, `office_project`), the Machines panel and the Devices list; there is no remote session view.
 - **Known limits**: the row's state and buttons follow the HQ view, refreshed every 10 s, so after a button they may lag a few seconds; a restart is two messages, so if the device drops between them the project stays stopped (Start brings it back); the state needs the other machine's catalog ("Allow managing projects" there). Restart retry (v3.98 review): the receiver's per-device limiter (burst 3, one token per 10 s) is shared with commands, so it may accept the stop and refuse the start `rate-limited`; the sender (`HQ.runRemoteSteps`) then retries the start after about 3.5 s and again after about 11 s, and if it still fails the row says plainly that the project is stopped and Start brings it back (`hq.restartStopped`). A refused stop ends the restart and reads as a refused Restart with the reason. A row with an operation in flight ignores a second click or op (`hq:remoteOp` answers `in-flight`) and its buttons are disabled meanwhile. A row carries its device key `pub`, so a project id with `:` does not split a group. The link protocol is unchanged.
+
+## Remote targets are equal (v3.99)
+
+v3.98 is reserved (remote projects in the sidebar). This section changes who is asked on the SENDING machine when HQ
+dispatches to a project on a paired machine, and lets such a task start a stopped project there. Nothing the receiving
+machine enforces is relaxed.
+
+**Setting.** `state.hq.dispatchRemoteWithoutAsking` (default off; kept only when `true`). Set only by its own checkbox
+on the Board ("Send to my other computers without asking", shown while at least one device is paired) through
+`hq:setSettings`. `HQ.allowAlways` (the v3.94 "stop asking" button) never sets it, and that button is not offered in a
+dialog that names a paired machine.
+
+**Consent on the sender** (`HQ.consentFor({ setting, remoteSetting, remote, request, minter, routineNoAsk })`):
+
+| request | target | setting | result |
+| --- | --- | --- | --- |
+| typed, id live | this machine | `dispatchWithoutAsking` on | no dialog |
+| typed, id live | this machine | off | dialog |
+| typed, id live | paired machine | `dispatchRemoteWithoutAsking` on | no dialog, notice `main.hqRemoteSent` |
+| typed, id live | paired machine | off (whatever `dispatchWithoutAsking` says) | dialog |
+| `adhoc`, expired or cleared id | any | any | dialog |
+| routine | this machine | the routine's own no-ask, id live | no dialog |
+| routine | this machine | otherwise | held card |
+| routine | paired machine | any | held card (unchanged) |
+
+- A row sent without the dialog under this rule is stamped `consented` for its target, as a local one is; a remote row
+  whose dialog was accepted is stamped too.
+- Stages (`then` / `after`): one rule for the chain. Each stage needs no question when `consentFor` answers `none` for
+  its side; all remaining stages, local and remote, go into ONE dialog (a remote stage no longer opens its own).
+- Each time a task goes to a paired machine without a dialog here (the setting, initiative, or a stage under the same
+  rule), this machine shows `main.hqRemoteSent`; a waiting stage shows it when it is released.
+
+**Initiative (v3.91) target identity.** A target is machine + project (+ member): `{ machine, projectId, staffId }`,
+where `machine` is the paired device's key and absent for this machine. `HQ.consentedTarget` matches a consented,
+not-by-initiative row of the same request with the same `machine` and `projectId`. A follow-up may go to a paired
+machine only when that exact machine + project was already consented in this request; counts, the 2 h window and the
+caps are unchanged. A follow-up to a paired machine additionally requires `state.hq.dispatchRemoteWithoutAsking`
+(`initiativeFor` takes `remoteSetting`; checked at the first decision, the re-check and a stage's release); with it off the
+normal dialog stands, as for any report-driven turn. A remote project's Skip/Auto-approve state is not in the peer
+catalog, so the sender cannot know it: a target on a machine with `trustsUs === true` is marked `skip` (possibly
+unattended) and never gets an initiative follow-up; on `false`/`null` the receiver decides, as before. A released remote stage sent by initiative is checked again at release, like a local one.
+
+**Wire.** Cap `revive` (in `CAPS` and `OUR_CAPS`). `cmd` gains optional `revive: true`, written only for an HQ task
+(`report: true`) and only to a peer that named the cap; an older peer never gets the field, and an older sender never
+sets it (validators rebuild the object). New reason `stopped-here`, sent only in answer to a `cmd` that carried
+`revive`.
+
+**Receiver: starting a stopped project for a task.** All must hold, else `not-running` exactly as before:
+- the `cmd` is a task and carries `revive`, and the device has `allowManage` on, checked at accept (`onCommand`) and
+  again in `pump` when the tab is found gone (turned off while the task waited: `not-running`);
+- the tab is `gone` (stopped or asleep). A tab that is `starting` is never restarted for another device's task: it
+  waits, as before;
+- that session did not end by itself in the last 10 minutes (its process ended in the tab, not through an app or
+  remote stop; the cause is not known: someone stopped it, it crashed or hit a usage limit, so the reason text blames
+  nobody). The window is kept in memory only: it is lost on an app restart and cleared when the tab starts again.
+  Else `rejected: stopped-here`;
+- the existing revive budget: at most 3 starts per project, one a minute, the budget given back only when the tab is
+  seen ready (so a device cannot loop starts); a start that never becomes ready ends `not-running` after the third
+  try, or `expired` at the task's TTL if that comes first.
+Each start is written to `manage.log` (`op: start`, `via: task`, the task id) and shows `main.projOpNotice` after the
+start ran, with its real outcome (`ok`, or `failed:<reason>`; the notice then names the reason).
+
+**Still enforced on the receiver.** `allowCommands` (off by default); the rate limit and the queue cap; 8 KB sanitised
+text; Claude engine only; logged-out refusal; the handoff lock; a project that answers or skips its permission prompts
+refuses the task at accept and at pump unless the device is `trusted` (v3.97); prompts are never answered, only
+reported as `needs-approval`; the task is typed with the remote-task marker; `commands.log`.
+
+**HQ's information.** `office_machines` gives `trustsUs` per paired machine (true / false / null, from v3.97
+`res.trusted`); HQ's brief tells it to prefer projects that will not stall.

@@ -71,6 +71,7 @@ function normalizeHq(raw) {
     enabled: o.enabled !== false,
     ...(hqBossModel(o.bossModel) ? { bossModel: o.bossModel } : {}),
     dispatchWithoutAsking: o.dispatchWithoutAsking === true,
+    ...(o.dispatchRemoteWithoutAsking === true ? { dispatchRemoteWithoutAsking: true } : {}),   // v3.99 typed requests go to paired machines without the dialog here (off: absent)
     ...(o.initiative === true ? { initiative: true } : {}),   // v3.91 HQ may continue an open typed request on its own (off: absent)
   };
 }
@@ -161,12 +162,14 @@ const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && 
  * prompt; everything else (setting off, remote, 'adhoc', or a request that is not the live one) → 'app' (the app's dialog).
  * A foreign or missing id never reaches here as such: resolveRequest maps it to the minter's current id, which is live
  * (so no dialog) unless it expired or was cleared, then 'adhoc' (dialog).
+ * v3.99 a target on a paired machine follows the same rule with its OWN setting (`remoteSetting`:
+ * `dispatchRemoteWithoutAsking`, default off); `setting` never covers it. A routine's remote dispatch stays held.
  */
-function consentFor({ setting, remote, request, minter, routineNoAsk = false }) {
+function consentFor({ setting, remoteSetting = false, remote, request, minter, routineNoAsk = false }) {
   // v3.47 a routine run's request: never a modal; no-ask only for a local dispatch, the routine's own checkbox on and
   // the run's id still live (the global setting does not apply); else a held card the person approves on the Board
   if (minter?.isRoutine?.(request)) return !remote && routineNoAsk && minter.isLiveRoutine(request) ? 'none' : 'held';
-  return setting && !remote && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';
+  return (remote ? remoteSetting === true : setting) && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';
 }
 
 /**
@@ -176,22 +179,27 @@ function consentFor({ setting, remote, request, minter, routineNoAsk = false }) 
  */
 const offersAlways = ({ remote, request, minter }) => !remote && isStr(request) && request !== ADHOC
   && Boolean(minter?.isLive?.(request)) && (minter?.typedAt?.(request) || 0) > 0 && !minter?.isRoutine?.(request);
-/** v3.94 what that button turns on: the two existing settings, nothing else changed. */
+/** v3.94 what that button turns on: the two existing settings, nothing else changed. v3.99 it never turns on
+ *  `dispatchRemoteWithoutAsking` (paired machines): that one is set only by its own checkbox. */
 const allowAlways = (hq) => normalizeHq({ ...(hq && typeof hq === 'object' ? hq : {}), dispatchWithoutAsking: true, initiative: true });
 
 /**
  * v3.91 HQ's initiative (the `initiative` setting, default off): a dispatch that consentFor would ask about needs no
- * consent when ALL hold: the target is local; the request id was minted from a prompt the person typed (never a
+ * consent when ALL hold: the target is local, or (v3.99) on a paired machine and named by that machine's key; the request id was minted from a prompt the person typed (never a
  * routine's id, never 'adhoc'); it is younger than 2 h; EVERY target (`targets`: one per task, `{ projectId, staffId,
- * skip }`) is one the person already consented to for this request (consentedTarget) and its project does not run
+ * skip, remote? }`) is one the person already consented to for this request (consentedTarget) and its project does not run
  * with Skip permissions (`skip`); the caps (8 per request counting removed rows, 12 open) leave room for the tasks;
  * and at most MAX_INITIATIVE tasks were sent this way for the request (counted on the request record, so a removed
  * row still counts). `counted`: these tasks are already in that count (takeInitiative ran; the re-check after a wait).
  * Anything else → false: consentFor's answer stands.
  */
-function initiativeFor({ initiative, remote, request, minter, board, targets, counted = false, now = Date.now() }) {
+function initiativeFor({ initiative, remoteSetting, remote, request, minter, board, targets, counted = false, now = Date.now() }) {
   const n = Array.isArray(targets) ? targets.length : 0;
-  if (initiative !== true || remote || !isStr(request) || request === ADHOC || n < 1) return false;
+  if (initiative !== true || !isStr(request) || request === ADHOC || n < 1) return false;
+  // v3.99 a dispatch to a paired machine: every target names that machine (its key); consentedTarget matches machine + project
+  if (remote && !targets.every((t) => typeof t?.machine === 'string' && t.machine && t.machine !== 'self')) return false;
+  // v3.99 a target on a paired machine also needs the person's "send to my other computers without asking" setting (the dialog stands otherwise)
+  if ((remote || targets.some((t) => t?.remote === true)) && remoteSetting !== true) return false;
   if (minter?.isRoutine?.(request) || !typedWithin(minter, request, now)) return false;
   const mine = (board?.tasks || []).filter((t) => t.request === request);
   if (!mine.length) return false;
@@ -200,7 +208,8 @@ function initiativeFor({ initiative, remote, request, minter, board, targets, co
   return initiativeSent(board, request) + (counted ? 0 : n) <= MAX_INITIATIVE;
 }
 /**
- * v3.91 a target the person consented to for this request: a local row of the SAME request that carries
+ * v3.91 a target the person consented to for this request (v3.99 its identity is machine + project: `target.machine`
+ * is a paired machine's key, absent for this machine): a row for that machine of the SAME request that carries
  * `consented: true` (stamped when the consent is known: an accepted dialog, consentFor's 'none', a consented stage
  * chain: each of its stages' rows, a held card the person allowed) and was not sent by initiative went to the same
  * project id and the same staff member id (or both without a member). A member's personal workspace is a project
@@ -212,8 +221,9 @@ function initiativeFor({ initiative, remote, request, minter, board, targets, co
 function consentedTarget(board, request, target) {
   const pid = typeof target?.projectId === 'string' ? target.projectId : '';
   const sid = target?.staffId === undefined ? '' : target.staffId;
+  const machine = typeof target?.machine === 'string' && target.machine ? target.machine : 'self';   // v3.99 a paired machine's key, else this machine
   if (!pid || typeof sid !== 'string') return false;
-  return (board?.tasks || []).some((t) => t.request === request && t.consented === true && t.byInitiative !== true && t.machine === 'self' && t.projectId === pid
+  return (board?.tasks || []).some((t) => t.request === request && t.consented === true && t.byInitiative !== true && t.machine === machine && t.projectId === pid
     && (t.staff ? t.staffId || null : '') === sid);
 }
 /** v3.91 the tasks HQ sent on its own for a request (kept on the request record: removing a row does not lower it). */

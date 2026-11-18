@@ -569,7 +569,8 @@ class Link extends EventEmitter {
     const s = C.sanitizeCommand(m.text);
     if (!s.ok) return send('rejected', s.reason);
     // main decides (project, engine, busy tab) and answers through reply()
-    this.emit('command', { device: d, id: m.id, project: m.project, text: s.text, reply, report: task, ...(m.ttl && this.peerHas(d.pub, 'task-status') ? { ttl: m.ttl } : {}) });
+    // v3.99 revive: a task asks that a stopped project be started for it; main honours it only for a device allowed to manage
+    this.emit('command', { device: d, id: m.id, project: m.project, text: s.text, reply, report: task, ...(m.ttl && this.peerHas(d.pub, 'task-status') ? { ttl: m.ttl } : {}), ...(m.revive === true && task ? { revive: true } : {}) });
   }
 
   // --- v3.33 project actions (start / wake / sleep / stop a project's boss tab on another device)
@@ -608,7 +609,7 @@ class Link extends EventEmitter {
 
   /** Sends a prompt to a remote project's boss tab. Returns the command's local record. */
   /** v3.48 o.hold: a task (report) for a device that is offline is kept in the outbox and sent on its next hello; o.ttl: its queue wait there. */
-  sendCommand(pub, project, text, { report = false, ttl = 0, hold = false, projectName = '' } = {}) {
+  sendCommand(pub, project, text, { report = false, ttl = 0, hold = false, projectName = '', revive = false } = {}) {
     const conn = this.conns.get(pub);
     const s = C.sanitizeCommand(text);
     const snap = this.remotes.get(pub)?.snap;
@@ -619,6 +620,7 @@ class Link extends EventEmitter {
     else if (report && !this.peerHas(pub, 'report')) Object.assign(rec, { status: 'rejected', reason: 'no-report' });
     if (report) {
       rec.report = true;
+      if (revive === true) rec.revive = true;   // v3.99 kept on the record: an outbox resend asks again
       if (rec.status !== 'rejected') Object.assign(rec, { text: s.text, expiresAt: rec.at + this.outboxTtlMs, ...(ttl > 0 ? { ttl: Math.min(ttl, C.TASK_TTL_MAX) } : {}) });
       this.tasks.set(rec.id, rec);
       this.saveTasks();
@@ -630,7 +632,8 @@ class Link extends EventEmitter {
   }
 
   writeCmd(conn, rec, text) {
-    this.write(conn, { t: 'cmd', id: rec.id, project: rec.project, text, ...(rec.report ? { report: true } : {}), ...(rec.ttl && this.peerHas(rec.pub, 'task-status') ? { ttl: rec.ttl } : {}) });
+    this.write(conn, { t: 'cmd', id: rec.id, project: rec.project, text, ...(rec.report ? { report: true } : {}), ...(rec.ttl && this.peerHas(rec.pub, 'task-status') ? { ttl: rec.ttl } : {}),
+      ...(rec.revive === true && rec.report && this.peerHas(rec.pub, 'revive') ? { revive: true } : {}) });   // v3.99 never to a peer that did not name the cap
   }
 
   // --- v3.48 dispatcher: sent-task records, offline outbox, resync, cancel
@@ -643,7 +646,7 @@ class Link extends EventEmitter {
       if (!r || !C.isHex(r.pub, 32) || !/^[A-Za-z0-9_.:-]{1,64}$/.test(String(r.id)) || !/^[A-Za-z0-9_.:-]{1,64}$/.test(String(r.project)) || !TASK_REC.includes(r.status)) continue;
       const rec = { id: r.id, pub: r.pub, project: r.project, projectName: C.cleanLine(r.projectName, 60) || r.project, firstLine: C.cleanLine(r.firstLine, 80), status: r.status, at: Number(r.at) || 0, report: true,
         expiresAt: Number(r.expiresAt) || 0, ...(r.reason ? { reason: C.cleanLine(r.reason, 40) } : {}), ...(Number(r.ttl) > 0 ? { ttl: Math.min(Number(r.ttl), C.TASK_TTL_MAX) } : {}),
-        ...(r.held ? { held: true } : {}), ...(typeof r.text === 'string' && C.sanitizeCommand(r.text).ok ? { text: C.sanitizeCommand(r.text).text } : {}) };
+        ...(r.held ? { held: true } : {}), ...(r.revive === true ? { revive: true } : {}), ...(typeof r.text === 'string' && C.sanitizeCommand(r.text).ok ? { text: C.sanitizeCommand(r.text).text } : {}) };
       // a restart: what was sent or queued is asked about again on the next hello
       // (it reached the wire: an older runner may have typed it, so resync decides: task-query, or lost for an old peer)
       if (rec.status === 'sent' || rec.status === 'queued') rec.status = 'unknown';

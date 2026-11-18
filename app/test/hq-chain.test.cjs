@@ -118,16 +118,16 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const MAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-function stageHarness({ noAsk = false, allow = true, initiative = false } = {}) {
+function stageHarness({ noAsk = false, allow = true, initiative = false, remoteNoAsk = false, link = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-chain-'));
-  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips'];
+  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips', 'hqRemoteTarget', 'notifyRemoteSent'];
   const lines = ['const isHere', 'const byName', 'const officeName', 'const routineRunOfRequest', 'const openHqRoutineRequest', 'const routineById', 'const readJson'];
   const src = [
     ...lines.map((l) => { const x = MAIN_SRC.split('\n').find((y) => y.startsWith(l)); assert.ok(x, l); return x; }),
     ...names.map((n) => { const i = MAIN_SRC.search(new RegExp(`^(async )?function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return MAIN_SRC.slice(i, MAIN_SRC.indexOf('\n}\n', i) + 2); }),
   ].join('\n');
   const env = { board: HQ.emptyBoard(), sent: [], dialogs: [], remoteDialogs: 0, rows: [], notices: [], n: 0, allow, dir,
-    state: { projects: [{ id: 'pa', name: 'office', dir: '/w/office' }, { id: 'pb', name: 'erp', dir: '/w/erp' }], hq: { enabled: true, dispatchWithoutAsking: noAsk, ...(initiative ? { initiative: true } : {}) }, routines: [] } };
+    state: { projects: [{ id: 'pa', name: 'office', dir: '/w/office' }, { id: 'pb', name: 'erp', dir: '/w/erp' }], hq: { enabled: true, dispatchWithoutAsking: noAsk, ...(initiative ? { initiative: true } : {}), ...(remoteNoAsk ? { dispatchRemoteWithoutAsking: true } : {}) }, routines: [] }, link };
   const prelude = `
     const { HQ, CH, LC, SF, P, fs, path, crypto } = env.mods; const state = env.state; const OM = { TASK_MAX: 8192 };
     const hqMinter = HQ.createMinter(); env.minter = hqMinter; const hqPacer = HQ.createPacer();
@@ -140,9 +140,9 @@ function stageHarness({ noAsk = false, allow = true, initiative = false } = {}) 
     const selfName = () => 'Mac1'; const peerCache = () => ({}); const notify = (title) => { env.notices.push(title); }; const routinesOnDone = (d) => d;
     const holdDispatch = () => ({ status: 'held' }); const projectOp = () => {}; const terms = new Map([['pa', {}], ['pb', {}]]); const skipStarted = new Set(); env.skipStarted = skipStarted;
     const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
-    const linkHost = { link: () => ({ devices: [], conns: new Set(), remotes: new Map(), outgoing: [] }) };
+    const linkHost = { link: () => env.link || ({ devices: [], conns: new Set(), remotes: new Map(), outgoing: [] }) };
     const hqWaits = () => env.waits || {};   // v3.93 why a queued task waits (main reads the queue and the tab)
-    const officeDispatch = (tab, args) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task }); return { id, status: 'queued' }; };
+    const officeDispatch = (tab, args, o) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task, ...(args.machine ? { machine: args.machine, revive: o?.revive === true } : {}) }); return { id, status: 'queued' }; };
   `;
   env.mods = { HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
   const api = new Function('env', `${prelude}\n${src}\nreturn { hqDispatch, hqChainSweep, hqStatus };`)(env);
@@ -604,4 +604,131 @@ test('v3.93: a queued dispatch to this machine answers with why it waits; withou
   assert.match(r.note, /^Accepted\. The "office" tab shows a permission prompt that only the person can answer/);
   const plain = await api.hqDispatch({ project: 'erp', task: 'Build it', title: 'Build', request });
   assert.deepEqual([plain.id, plain.status, plain.waiting, plain.note], ['c2', 'queued', undefined, undefined]);
+});
+
+// --- v3.99 remote targets are equal: a paired machine's stages join the one stage rule; the sender's own setting
+const R_PUB = 'ab'.repeat(32);
+const remoteLink = () => ({ devices: [{ pub: R_PUB, name: 'Studio' }], conns: new Set([R_PUB]), outgoing: [],
+  remotes: new Map([[R_PUB, { snap: { projects: [{ id: 'rp1', name: 'api' }, { id: 'rp2', name: 'web' }] } }]]) });
+const settle = () => new Promise((r) => setImmediate(r));
+
+test('v3.99 mixed stages, both settings on: no dialog at all; the remote stage is consented and announced when it is sent', async () => {
+  const { env, api } = stageHarness({ noAsk: true, remoteNoAsk: true, link: remoteLink() });
+  const request = env.minter.mint();
+  const r = await api.hqDispatch({ project: 'office', task: 'task-A', title: 'A', request, then: [{ project: 'api', machine: 'Studio', task: 'task-B', title: 'B' }] });
+  assert.equal(r.status, 'queued');
+  assert.equal(env.dialogs.length, 0);
+  assert.equal(env.remoteDialogs, 0);
+  assert.deepEqual(env.sent.map((s) => s.task), ['task-A']);
+  const waiting = env.board.tasks.find((t) => t.status === 'waiting');
+  assert.deepEqual([waiting.machine, waiting.projectId, waiting.consented, waiting.byInitiative], [R_PUB, 'rp1', true, undefined]);
+  assert.equal(env.notices.length, 0);                    // nothing left this machine yet
+  env.minter.clear();
+  report(env, 'c1');
+  api.hqChainSweep();
+  await settle();
+  assert.equal(env.dialogs.length + env.remoteDialogs, 0);
+  assert.equal(env.sent.length, 2);
+  assert.deepEqual([env.sent[1].machine, env.sent[1].project, env.sent[1].revive], [R_PUB, 'rp1', true]);   // a stopped project there is started for it
+  assert.deepEqual(env.notices, ['main.hqRemoteSent{"project":"api","machine":"Studio"}']);
+});
+
+test('v3.99 mixed stages, one rule: only the side whose setting is off is asked, in ONE dialog; declined sends nothing', async () => {
+  // local no-ask on, remote off: the one dialog names only the remote stage and its machine
+  const one = stageHarness({ noAsk: true, link: remoteLink() });
+  let request = one.env.minter.mint();
+  await one.api.hqDispatch({ project: 'office', task: 'task-A', title: 'A', request, then: [{ project: 'api', machine: 'Studio', task: 'task-B', title: 'B' }] });
+  assert.equal(one.env.dialogs.length, 1);
+  assert.equal(one.env.remoteDialogs, 0);                // a remote stage opens no dialog of its own
+  assert.match(one.env.dialogs[0].detail, /task-B/);
+  assert.match(one.env.dialogs[0].detail, /Studio/);
+  assert.equal(/task-A/.test(one.env.dialogs[0].detail), false);
+  assert.equal(one.env.dialogs[0].buttons.length, 2);    // never the "stop asking" button next to a paired machine
+  one.env.minter.clear();
+  report(one.env, 'c1');
+  one.api.hqChainSweep();
+  await settle();
+  assert.equal(one.env.sent.length, 2);
+  assert.deepEqual(one.env.notices, []);                 // it was asked about: no "without asking" notice
+  // remote no-ask on, local off: only the local stage is asked about
+  const two = stageHarness({ remoteNoAsk: true, link: remoteLink() });
+  request = two.env.minter.mint();
+  await two.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'task-B', title: 'B', request, then: [{ project: 'office', task: 'task-A', title: 'A' }] });
+  assert.equal(two.env.dialogs.length, 1);
+  assert.match(two.env.dialogs[0].detail, /task-A/);
+  assert.equal(/task-B/.test(two.env.dialogs[0].detail), false);
+  assert.deepEqual(two.env.notices, ['main.hqRemoteSent{"project":"api","machine":"Studio"}']);   // the first stage went now, unasked
+  assert.equal(two.env.sent[0].revive, true);
+  // both off: one dialog for both stages; declined: nothing is sent or queued
+  const three = stageHarness({ allow: false, link: remoteLink() });
+  request = three.env.minter.mint();
+  const r = await three.api.hqDispatch({ project: 'office', task: 'task-A', title: 'A', request, then: [{ project: 'api', machine: 'Studio', task: 'task-B', title: 'B' }] });
+  assert.equal(three.env.dialogs.length, 1);
+  assert.match(three.env.dialogs[0].detail, /task-A[\s\S]*task-B/);
+  assert.deepEqual([r.status, r.reason], ['rejected', 'declined']);
+  assert.equal(three.env.sent.length, 0);
+  assert.equal(three.env.board.tasks.length, 0);
+});
+
+test('v3.99 a single remote dispatch: the paired-machines setting decides, never the local one; initiative only to that machine + project', async () => {
+  // the local setting alone never covers a paired machine
+  const off = stageHarness({ noAsk: true, link: remoteLink() });
+  let request = off.env.minter.mint();
+  await off.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request });
+  assert.equal(off.env.remoteDialogs, 1);
+  assert.deepEqual(off.env.notices, []);
+  assert.equal(off.env.board.tasks[0].consented, true);   // the accepted dialog is this target's consent
+  // on, in a live typed turn: no dialog, the row is consented for machine + project, one notice
+  const { env, api } = stageHarness({ remoteNoAsk: true, initiative: true, link: remoteLink() });
+  request = env.minter.mint();
+  const a = await api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request });
+  assert.equal(a.status, 'queued');
+  assert.equal(env.remoteDialogs, 0);
+  const row = env.board.tasks.find((t) => t.id === a.id);
+  assert.deepEqual([row.machine, row.projectId, row.consented], [R_PUB, 'rp1', true]);
+  assert.deepEqual([env.sent[0].machine, env.sent[0].revive], [R_PUB, true]);
+  assert.deepEqual(env.notices, ['main.hqRemoteSent{"project":"api","machine":"Studio"}']);
+  env.minter.clear();                                       // a report came in: no longer the typed turn
+  const b = await api.hqDispatch({ project: 'api', machine: 'Studio', task: 'fix', title: 'Fix', request });
+  assert.equal(env.remoteDialogs, 0);                       // the same machine + project: HQ's initiative
+  assert.equal(env.board.tasks.find((t) => t.id === b.id).byInitiative, true);
+  assert.equal(HQ.initiativeSent(env.board, request), 1);
+  assert.equal(env.notices.length, 2);
+  const c = await api.hqDispatch({ project: 'web', machine: 'Studio', task: 'other', title: 'Other', request });
+  assert.equal(env.remoteDialogs, 1);                       // another project on that machine: the dialog
+  assert.equal(env.board.tasks.find((t) => t.id === c.id).byInitiative, undefined);
+  assert.equal(env.notices.length, 2);
+  const d = await api.hqDispatch({ project: 'office', task: 'local', title: 'Local', request });
+  assert.equal(env.remoteDialogs, 2);                       // this machine was never consented for the request
+  assert.equal(env.board.tasks.find((t) => t.id === d.id).byInitiative, undefined);
+});
+
+test('v3.99 initiative to a paired machine needs the remote setting; a machine that trusts us counts as possibly Skip', async () => {
+  // remote setting off, initiative on: the consented row exists (dialog), the follow-up is not sent silently
+  const off = stageHarness({ initiative: true, link: remoteLink() });
+  let request = off.env.minter.mint();
+  await off.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request });
+  assert.equal(off.env.remoteDialogs, 1);
+  off.env.minter.clear();
+  const b = await off.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'fix', title: 'Fix', request });
+  assert.equal(off.env.remoteDialogs, 2);                   // the dialog stands
+  assert.equal(off.env.board.tasks.find((t) => t.id === b.id).byInitiative, undefined);
+  assert.equal(HQ.initiativeSent(off.env.board, request), 0);
+  // a released stage on that machine: not silent either
+  const st = stageHarness({ noAsk: true, initiative: true, link: remoteLink() });
+  request = st.env.minter.mint();
+  await st.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request });
+  st.env.minter.clear();
+  await st.api.hqDispatch({ project: 'office', task: 'a', title: 'A', request, then: [{ project: 'api', machine: 'Studio', task: 'b', title: 'B' }] });
+  assert.equal(st.env.board.tasks.some((t) => t.byInitiative && t.machine === R_PUB), false);
+  // trustsUs true on the machine: possibly Skip, so no initiative even with the setting on
+  const link = remoteLink();
+  link.view = () => ({ devices: [{ id: R_PUB, trustsUs: true }] });
+  const trust = stageHarness({ remoteNoAsk: true, initiative: true, link });
+  request = trust.env.minter.mint();
+  await trust.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request });
+  trust.env.minter.clear();
+  const c = await trust.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'fix', title: 'Fix', request });
+  assert.equal(trust.env.remoteDialogs, 1);
+  assert.equal(trust.env.board.tasks.find((t) => t.id === c.id).byInitiative, undefined);
 });

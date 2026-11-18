@@ -289,7 +289,7 @@ test('v3.48 wiring: HQ holds offline dispatches, Cancel reaches remote cards, re
   const root = path.join(__dirname, '..', '..');
   const main = fs.readFileSync(path.join(root, 'app', 'main.js'), 'utf8');
   const host = fs.readFileSync(path.join(root, 'app', 'src', 'link-host.js'), 'utf8');
-  assert.match(main, /officeDispatch\(HQ\.HQ_ID, \{ machine: pub, project: pid, task \}, \{ hold: true, ttl: HQ\.HQ_TTL_MS \}\)/);
+  assert.match(main, /officeDispatch\(HQ\.HQ_ID, \{ machine: pub, project: pid, task \}, \{ hold: true, ttl: HQ\.HQ_TTL_MS, revive: true \}\)/);
   assert.match(main, /linkHost\?\.cancelRemote\(id\)/);
   assert.match(main, /HQ\.remoteOpen\(linkHost\?\.remoteTask\(t\.id\)\)/);
   assert.match(host, /link\.on\('task-cancel', onTaskCancel\)/);
@@ -783,4 +783,167 @@ test('v3.97: nothing but the link:setTrusted IPC handler sets the flag', () => {
   // the sealed set: written from the device list on every save, checked where the list is loaded
   assert.match(host, /secrets, trusted: C\.trustedKeys\(devices\) \}/);
   assert.match(host, /devices: C\.sealTrusted\(saved\.devices, keys\.trusted\)/);
+});
+
+// --- v3.99 a task from a paired machine may start a stopped project (cmd.revive, cap 'revive')
+test('v3.99 revive on the wire: only with a task, only to a peer that named the cap; an older peer gets today\'s cmd', async (t) => {
+  assert.ok(C.CAPS.includes('revive') && C.OUR_CAPS.includes('revive') && C.REASONS.includes('stopped-here'));
+  const { make, connect } = world(t);
+  const a = make('A'); const b = make('B');
+  const got = runner(b);
+  await connect(a, b);
+  a.sendCommand(PB, 'p1', 'a task', { report: true, revive: true });
+  a.sendCommand(PB, 'p1', 'a plain command', { revive: true });
+  a.sendCommand(PB, 'p1', 'a task without it', { report: true });
+  await flush();
+  const cmds = a.wire.filter((m) => m.t === 'cmd');
+  assert.deepEqual(cmds.map((m) => m.revive), [true, undefined, undefined]);
+  assert.deepEqual(got.map((c) => c.revive), [true, undefined, undefined]);
+  // an older peer (no cap): the field is never written, so it behaves as today
+  const { make: make2, connect: connect2 } = world(t);
+  const a2 = make2('A'); const old = make2('B', { caps: OLD_CAPS });
+  const got2 = runner(old);
+  await connect2(a2, old);
+  a2.sendCommand(PB, 'p1', 'a task', { report: true, revive: true });
+  await flush();
+  assert.equal('revive' in a2.wire.find((m) => m.t === 'cmd'), false);
+  assert.equal(got2[0].revive, undefined);
+});
+
+function reviveHost(t) {
+  const { setupLink } = require('../src/link-host.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-revive-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const w = { dir, now: 2e12, tabs: {}, typed: [], withs: [], starts: [], notices: [], startOk: true, stopped: {}, handlers: {} };
+  const realNow = Date.now;
+  Date.now = () => w.now;
+  let captured = null;
+  const realOn = Link.prototype.on;
+  Link.prototype.on = function (ev, fn) { captured = this; return realOn.call(this, ev, fn); };
+  t.after(() => { Link.prototype.on = realOn; Date.now = realNow; });
+  const host = setupLink({
+    app: { getPath: () => dir, getVersion: () => '0.23.0' },
+    safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain', encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+    ipcMain: { handle: (ch, fn) => { w.handlers[ch] = fn; } }, send: () => {}, notify: (title) => { w.notices.push(title); }, T: (k, v) => (v ? `${k}${JSON.stringify(v)}` : k),
+    loginOf: () => 'in', reportsDir: path.join(dir, 'r'),
+    projects: () => ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'].map((id) => ({ id, name: id, engine: 'claude' })),
+    tabState: (id) => w.tabs[id] || 'gone',
+    type: (id, text) => { w.typed.push([id, text]); },
+    startWith: (id, text) => { w.withs.push([id, text]); return w.startOk; },
+    manage: (op, id) => { w.starts.push([op, id]); return { ok: true }; },
+    stoppedHere: (id) => w.stopped[id] || 0,
+    answersPrompts: (id) => id === 'p4',
+    confirmTrusted: async () => true,
+  });
+  t.after(() => host.destroy());
+  host.devices();   // starts the link
+  const link = captured;
+  link.devices = C.normalizeDevices([{ pub: PA, name: 'Studio', addedAt: 5, allowCommands: true, allowManage: true }]);
+  link.secrets[PA] = 'cd'.repeat(32);
+  const dev = { pub: PA, name: 'Studio' };
+  w.host = host; w.link = link;
+  w.manage = (on) => { link.devices = link.devices.map((x) => ({ ...x, allowManage: on })); };
+  w.send = (id, project, o = {}) => { const r = []; link.emit('command', { device: dev, id, project, text: `remote ${id}`, report: true, revive: true, ...o, reply: (s, why) => r.push(why ? `${s}:${why}` : s) }); return r; };
+  w.mlog = () => { try { return fs.readFileSync(path.join(dir, 'link', 'manage.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)); } catch { return []; } };
+  w.clog = () => fs.readFileSync(path.join(dir, 'link', 'commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).outcome);
+  return w;
+}
+
+test('v3.99 revive: a stopped project is started for a paired machine\'s task only with allowManage, at accept and at pump; logged and shown', async (t) => {
+  const w = reviveHost(t);
+  // "manage projects" off for the device: exactly today's answer, nothing started, nothing logged
+  w.manage(false);
+  assert.deepEqual(w.send('t-off', 'p1'), ['queued', 'rejected:not-running']);
+  assert.deepEqual([w.withs.length, w.starts.length, w.mlog().length, w.notices.length], [0, 0, 0, 0]);
+  // on, but the cmd carried no revive (an older sender, or not an HQ task): today's answer
+  w.manage(true);
+  assert.deepEqual(w.send('t-plain', 'p1', { revive: false }), ['queued', 'rejected:not-running']);
+  assert.deepEqual(w.send('t-cmd', 'p1', { report: false }), ['queued', 'rejected:not-running']);   // a plain command never starts a project
+  assert.equal(w.withs.length + w.starts.length, 0);
+  // on and asked for: started with the task as its first prompt, written to manage.log, the proj-op notice shown
+  assert.deepEqual(w.send('t-on', 'p1'), ['queued', 'delivered']);
+  assert.equal(w.withs.length, 1);
+  assert.match(w.withs[0][1], /^\[Agent Office: remote task #t-on from "Studio"\] remote t-on$/);
+  const m = w.mlog();
+  assert.equal(m.length, 1);
+  assert.deepEqual([m[0].device, m[0].op, m[0].project, m[0].outcome, m[0].via, m[0].task], ['Studio', 'start', 'p1', 'ok', 'task', 't-on']);
+  assert.equal(w.notices.length, 1);
+  assert.match(w.notices[0], /^main\.projOpNotice\{"device":"Studio","project":"p1","op":"machines\.op\.start"\}$/);
+  // the toggle is turned off while a task waits for its start: refused at pump, never started
+  const waiting = w.send('t-wait', 'p1');          // the budget's minute: it waits
+  assert.deepEqual(waiting, ['queued']);
+  w.manage(false);
+  w.now += 61 * 1000;
+  w.host.pump();
+  assert.deepEqual(waiting, ['queued', 'rejected:not-running']);
+  assert.equal(w.withs.length, 1);
+  assert.equal(w.mlog().length, 1);
+  // a tab that is 'starting' (the person there just opened it) is never restarted for another machine's task
+  w.manage(true);
+  w.tabs.p2 = 'starting';
+  const st = w.send('t-starting', 'p2');
+  w.now += 5 * 60 * 1000;
+  w.host.pump();
+  assert.deepEqual(st, ['queued']);
+  assert.equal(w.withs.filter((x) => x[0] === 'p2').length, 0);
+  assert.equal(w.starts.length, 0);
+  w.tabs.p2 = 'ready';
+  w.host.pump();
+  assert.deepEqual(st, ['queued', 'delivered']);
+  assert.equal(w.typed.length, 1);
+  // a project that answers or skips its prompts is still refused, revive or not, unless the device is trusted (v3.97)
+  assert.deepEqual(w.send('t-skip', 'p4'), ['rejected:not-allowed']);
+  assert.equal(w.withs.filter((x) => x[0] === 'p4').length, 0);
+  await w.handlers['link:setTrusted'](null, PA, true);
+  assert.equal(w.link.devices.find((x) => x.pub === PA).trusted, true);
+  assert.deepEqual(w.send('t-skip-own', 'p4'), ['queued', 'delivered']);
+  assert.equal(w.withs.filter((x) => x[0] === 'p4').length, 1);
+  assert.deepEqual(w.clog().slice(-2), ['task:queued:trusted-unattended', 'task:delivered:trusted-unattended']);
+});
+
+test('v3.99 revive: refused for 10 minutes after the person here stopped the project themselves (stopped-here)', (t) => {
+  const w = reviveHost(t);
+  w.stopped.p3 = w.now - 5 * 60 * 1000;
+  assert.deepEqual(w.send('t-sticky', 'p3'), ['queued', 'rejected:stopped-here']);
+  assert.equal(w.withs.length + w.starts.length + w.mlog().length, 0);
+  assert.equal(w.clog().pop(), 'task:rejected:stopped-here');
+  // a device without "manage projects" learns nothing about the stop: today's reason
+  w.manage(false);
+  assert.deepEqual(w.send('t-sticky-off', 'p3'), ['queued', 'rejected:not-running']);
+  w.manage(true);
+  w.now += 5 * 60 * 1000 + 1000;                   // the window is over
+  assert.deepEqual(w.send('t-later', 'p3'), ['queued', 'delivered']);
+  assert.equal(w.mlog().length, 1);
+});
+
+test('v3.99 revive budget: a start that never becomes ready (window closed) does not spin; the task ends not-running or at its TTL', (t) => {
+  const w = reviveHost(t);
+  w.startOk = false;                               // startWithPrompt returns false: no window to start it in
+  const r = w.send('t-closed', 'p5');
+  assert.deepEqual(r, ['queued']);
+  assert.equal(w.starts.length, 1);                // the plain start is tried once
+  for (let i = 0; i < 20; i++) w.host.pump();
+  assert.equal(w.starts.length, 1);                // not again within the minute, however often the queue is pumped
+  w.now += 61 * 1000; w.host.pump(); w.host.pump();
+  assert.equal(w.starts.length, 2);
+  w.now += 61 * 1000; w.host.pump(); w.host.pump();
+  assert.equal(w.starts.length, 3);
+  w.now += 30 * 1000; w.host.pump();
+  assert.deepEqual(r, ['queued']);                 // the last try gets its minute
+  w.now += 31 * 1000; w.host.pump();
+  assert.deepEqual(r, ['queued', 'rejected:not-running']);
+  assert.equal(w.starts.length, 3);
+  assert.equal(w.mlog().length, 3);                // every start is in manage.log
+  assert.equal(w.notices.length, 3);
+  // the budget is spent: the next task from that device starts nothing
+  assert.deepEqual(w.send('t-again', 'p5'), ['queued', 'rejected:not-running']);
+  assert.equal(w.starts.length, 3);
+  // a task with a short TTL ends at it, with its own reason
+  const s = w.send('t-ttl', 'p6', { ttl: 100 * 1000 });
+  assert.equal(w.starts.filter((x) => x[1] === 'p6').length, 1);
+  w.now += 61 * 1000; w.host.pump();
+  assert.equal(w.starts.filter((x) => x[1] === 'p6').length, 2);
+  w.now += 45 * 1000; w.host.pump();
+  assert.deepEqual(s, ['queued', 'rejected:expired']);
+  assert.equal(w.starts.filter((x) => x[1] === 'p6').length, 2);
 });
