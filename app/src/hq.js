@@ -558,20 +558,73 @@ function remoteProjects({ pub, online, live = null, catalog = null, at = 0, cach
 }
 const remoteKey = (pub, id) => `${pub}:${id}`;
 const parseRemoteKey = (key) => { const m = /^([0-9a-f]{16,128}):([A-Za-z0-9_.-]{1,64})$/.exec(String(key || '')); return m ? { pub: m[1], id: m[2] } : null; };
-/** PROJECTS rows for paired devices' projects: keyed `<pub>:<id>`, with the actions allowed on them. */
+/** v3.98 the buttons a remote PROJECTS row shows, by the project's state. None when the machine is offline or does
+ *  not allow managing. `restart` is not an op of its own: it is stop then start (remoteOpSteps). Sleep only for an idle
+ *  Claude Code tab (the other machine refuses the rest). A state that is not known (no catalog) keeps the two buttons
+ *  of v3.46: start-or-wake and sleep.
+ *  @param {{ online?: boolean, manage?: boolean, state?: string, status?: string, engine?: string }} [row] */
+function remoteButtons({ online, manage, state, status, engine } = {}) {
+  if (!online || !manage) return [];
+  if (state === 'stopped') return ['start'];
+  if (state === 'asleep') return ['wake', 'stop'];
+  if (state === 'running') return [...((!status || status === 'idle') && (!engine || engine === 'claude') ? ['sleep'] : []), 'restart', 'stop'];
+  return ['wake', 'sleep'];
+}
+/** PROJECTS rows for paired devices' projects: keyed `<pub>:<id>`, with the actions allowed on them. v3.98: each row
+ *  also carries the project's `state`, `status`, `engine` and `account` label when known (live status while online,
+ *  otherwise the cache's last-known values), `asOf` (the time of that data) and `buttons` (remoteButtons). */
 function remoteRows(cache, live = {}) {
   const rows = [];
   for (const [pub, dv] of Object.entries(cache || {})) {
+    if (!isObj(dv)) continue;
     const on = Boolean(live[pub]?.online);
-    for (const p of dv.projects || []) {
-      const st = live[pub]?.status?.[p.id];
-      rows.push({ key: remoteKey(pub, p.id), id: p.id, name: p.name, machine: dv.name, online: on, lastSeen: dv.lastSeen, remote: true, ...(on && st ? { status: st } : {}),
-        actions: [...REMOTE_ACTIONS, ...(dv.manage ? MANAGE_ACTIONS : [])] });
+    const manage = Boolean(dv.manage);
+    for (const p of Array.isArray(dv.projects) ? dv.projects : []) {
+      const state = PEER_STATES.includes(p.state) ? p.state : '';
+      const st = [on ? live[pub]?.status?.[p.id] : '', p.status].find((s) => PEER_STATUS.includes(s)) || '';
+      const status = !state || state === 'running' ? st : '';
+      const engine = PEER_ENGINES.includes(p.engine) ? p.engine : '';
+      const account = line(p.account, 40);
+      rows.push({ key: remoteKey(pub, p.id), pub, id: p.id, name: p.name, machine: dv.name, online: on, lastSeen: dv.lastSeen, remote: true,
+        ...(state ? { state } : {}), ...(status ? { status } : {}), ...(engine ? { engine } : {}), ...(account ? { account } : {}),
+        asOf: Number.isFinite(p.asOf) && p.asOf > 0 ? p.asOf : dv.lastSeen || 0,
+        actions: [...REMOTE_ACTIONS, ...(manage ? MANAGE_ACTIONS : [])],
+        buttons: remoteButtons({ online: on, manage, state, status, engine }) });
     }
   }
   return rows;
 }
 const remoteActionAllowed = (row, action) => Boolean(row?.actions?.includes(action));
+/** v3.98 the existing proj-ops a remote row operation is made of, or null when it is not allowed on that row:
+ *  `restart` is `stop` then `start`; every step has to be in MANAGE_ACTIONS and in the row's actions. */
+function remoteOpSteps(row, op) {
+  const steps = op === 'restart' ? ['stop', 'start'] : [op];
+  return steps.every((s) => MANAGE_ACTIONS.includes(s) && remoteActionAllowed(row, s)) ? steps : null;
+}
+
+/** v3.98 reasons of a refused step that may pass on a later try (the receiver's per-device limit, a slow answer). */
+const RETRY_REASONS = ['rate-limited', 'timeout'];
+/** v3.98 waits before the two retries of the start step of a restart: the receiver's limiter gives one token per 10 s. */
+const RESTART_RETRY_MS = [3500, 11000];
+/** v3.98 runs the steps of a remote operation with `run(step)` -> { ok, reason? }. A step that fails ends the operation
+ *  (a refused stop never reaches start). When a start step fails after the stop of a restart went through, it is retried
+ *  after each wait of `delays` if the reason is transient; if it still fails the result says `stopped: true`, because the
+ *  project is then stopped and only Start brings it back. `sleep(ms)` is injected so a test does not wait. */
+async function runRemoteSteps(steps, run, { sleep = (ms) => new Promise((res) => setTimeout(res, ms)), delays = RESTART_RETRY_MS } = {}) {
+  let r = { ok: false, reason: 'not-allowed' };
+  for (let i = 0; i < steps.length; i++) {
+    r = await run(steps[i]);
+    if (!r?.ok && i > 0) {
+      for (const ms of delays) {
+        if (r?.ok || !RETRY_REASONS.includes(r?.reason)) break;
+        await sleep(ms);
+        r = await run(steps[i]);
+      }
+    }
+    if (!r?.ok) return { ok: false, reason: r?.reason || 'unknown', ...(i > 0 ? { stopped: true } : {}) };
+  }
+  return r;
+}
 
 const HQ_CLAUDE_MD = `# HQ (Agent Office)
 
@@ -635,5 +688,5 @@ module.exports = {
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
   redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, offersAlways, allowAlways, initiativeFor, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
-  taskFile, requestFile, reportMd, boardView, remoteWaitFields, reportWaitFields, createPacer, mergePeerCache, remoteProjects, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
+  taskFile, requestFile, reportMd, boardView, remoteWaitFields, reportWaitFields, createPacer, mergePeerCache, remoteProjects, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed, remoteButtons, remoteOpSteps, runRemoteSteps, RETRY_REASONS, RESTART_RETRY_MS,
 };

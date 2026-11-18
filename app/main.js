@@ -2963,12 +2963,18 @@ ipcMain.handle('routines:markRead', (_e, runId) => { const run = rt().runs.find(
 ipcMain.handle('routines:setCfg', (_e, cfg) => { commit({ ...state, routinesCfg: ROUT.normalizeCfg({ ...ROUT.normalizeCfg(state.routinesCfg), ...(cfg && typeof cfg === 'object' ? cfg : {}) }) }); return routinesView(); });
 ipcMain.handle('routines:preview', (_e, schedule) => { const out = []; let t = Date.now(); for (let i = 0; i < 3; i++) { t = ROUT.nextAfter(schedule, t); if (!Number.isFinite(t)) break; out.push(t); } return out; });
 ipcMain.handle('routines:summary', (_e, request) => { const f = HQ.requestFile(hqDir(), String(request)); try { return f ? fs.readFileSync(f, 'utf8') : ''; } catch { return ''; } });
-// v3.46 remote rows: only start/wake/sleep/stop, and only on a device that allows managing (cap 'manage')
+// v3.46 remote rows: only start/wake/sleep/stop, and only on a device that allows managing (cap 'manage').
+// v3.98 `restart` is sent as stop then start through the same proj-op; a refused stop (busy) ends it there, and a start refused after the stop is retried (HQ.runRemoteSteps).
+const remoteOpBusy = new Set();   // v3.98 rows with an operation in flight: a second click or op on the same row is ignored
 ipcMain.handle('hq:remoteOp', async (_e, key, op) => {
   const k = HQ.parseRemoteKey(key);
   const row = HQ.remoteRows(peerCache(), liveRemotes()).find((r) => r.key === key);
-  if (!k || !HQ.MANAGE_ACTIONS.includes(op) || !HQ.remoteActionAllowed(row, op) || !linkHost) return { ok: false, reason: 'not-allowed' };
-  return linkHost.projOp(k.pub, k.id, op);
+  const steps = k && linkHost ? HQ.remoteOpSteps(row, op) : null;
+  if (!steps) return { ok: false, reason: 'not-allowed' };
+  if (remoteOpBusy.has(key)) return { ok: false, reason: 'in-flight' };
+  remoteOpBusy.add(key);
+  try { return await HQ.runRemoteSteps(steps, (step) => linkHost.projOp(k.pub, k.id, step)); }
+  finally { remoteOpBusy.delete(key); }
 });
 // v3.33 a project's boss tab started, woken, put to sleep or stopped from outside (proj-op, office_project).
 // sleep and stop refuse a busy tab (a turn, a dialog, a draft, a permission prompt) and a non-Claude engine for sleep.

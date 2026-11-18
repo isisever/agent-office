@@ -292,6 +292,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     return el('div', { class: 'hq-task-wait' }, el('span', {}, t('hq.stage.waiting', { id: x.after || '' })),
       el('button', { class: 'hq-link', title: t('hq.stage.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
   }
+  const remoteBusy = new Map();   // v3.98 row key -> op in flight: the buttons of that row are disabled meanwhile
+  const remoteDone = new Map();   // v3.98 row key -> { op, res, at } the last outcome, shown for 30 s
   /** The link's live snapshot of one remote project (engine, counts) and the commands sent to it. */
   function liveOf(r) {
     const lv = link?.view?.();
@@ -318,32 +320,72 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       ...out.map((o) => el('div', { class: `sb-note cmd-${o.status}` },
         `${o.firstLine} — ${o.status === 'rejected' ? t('devices.cmd.rejected', { reason: t(`devices.reason.${o.reason}`) }) : t(`devices.cmd.${o.status}`)}`)));
   }
+  // v3.98 a time for "last seen" and "last known": the hour today, the date and the hour before that
+  const when = (ms) => { const d = new Date(ms); return d.toDateString() === new Date().toDateString() ? hhmm(d) : `${d.toLocaleDateString()} ${hhmm(d)}`; };
+  // v3.98 the row buttons, in the order HQ.remoteButtons gives them; every one is the existing proj-op path
+  const ROP = {
+    start: ['▶', () => t('machines.op.start')], wake: ['▶', () => t('machines.op.wake')], sleep: ['⏸', () => t('hq.sleep')],
+    restart: ['↻', () => t('hq.restart')], stop: ['■', () => t('machines.op.stop')],
+  };
+  /** v3.98 the header of one machine's rows: its name, an online dot and, when offline, "last known" and when it was last seen. */
+  function machineHead(r) {
+    const { online } = liveOf(r);
+    return el('li', { class: `sb-group-head sb-mgroup${online ? '' : ' offline'}`, title: online ? t('hq.machineTitle') : t('hq.offline') },
+      el('span', { class: 'sb-dot' }),
+      el('span', { class: 'sb-group-name' }, r.machine),
+      online ? null : el('span', { class: 'hq-badge' }, t('hq.lastKnown')),
+      el('span', { class: 'sb-group-count' }, online ? t('devices.online') : r.lastSeen ? t('hq.lastSeen', { time: when(r.lastSeen) }) : t('devices.offline')));
+  }
   function remoteRow(r) {
     const { pub, p, out, online } = liveOf(r);
     r = { ...r, online };
-    const st = !online ? 'offline' : p?.status || r.status || 'idle';
+    // the state comes from the other machine's catalog; without it the row reads as before (its snapshot status)
+    const known = r.state === 'asleep' || r.state === 'stopped' ? r.state : '';
+    const st = !online ? 'offline' : known || p?.status || r.status || 'idle';
     const open = openKey === r.key;
-    const op = (action) => (e) => { e.stopPropagation(); api.hq.remoteOp(r.key, action); };
-    const status = st === 'offline' ? t('devices.offline')
-      : [t(`devices.status.${st}`), p?.working ? t('devices.working', { n: p.working }) : '', p?.delivered ? t('devices.delivered', { n: p.delivered }) : ''].filter(Boolean).join(' · ');
+    const busy = remoteBusy.has(r.key);
+    const op = (action) => (e) => {
+      e.stopPropagation();
+      if (remoteBusy.has(r.key)) return;
+      remoteBusy.set(r.key, action); remoteDone.delete(r.key); renderRemote();
+      api.hq.remoteOp(r.key, action).then((res) => { remoteDone.set(r.key, { op: action, res, at: Date.now() }); }, () => {})
+        .finally(() => { remoteBusy.delete(r.key); renderRemote(); });
+    };
+    const sent = link?.view?.()?.projOps?.[`${pub}/${r.id}`];
+    const done = remoteDone.get(r.key);
+    const opName = (o) => (o === 'restart' ? t('hq.restart') : t(`machines.op.${o}`));
+    const reasonText = (why) => { for (const k of [`devices.reason.${why}`, `main.handoffReason.${why}`]) { const v = t(k); if (v !== k) return v; } return why || '?'; };
+    // a restart is two link ops, so its own outcome (not the last step's) is what the row shows
+    const note = !online ? '' : busy ? t('machines.opSent', { op: opName(remoteBusy.get(r.key)) })
+      : done && Date.now() - done.at <= 30000 && done.op === 'restart' && done.res?.ok === false
+        ? (done.res.stopped ? t('hq.restartStopped', { machine: r.machine }) : t('machines.opFailed', { op: opName('restart'), reason: reasonText(done.res.reason) }))
+      : done && Date.now() - done.at <= 30000 && done.op === 'restart' ? ''
+      : !sent || Date.now() - sent.at > 30000 ? '' : sent.state === 'sent' ? t('machines.opSent', { op: t(`machines.op.${sent.op}`) })
+      : sent.state === 'failed' ? t('machines.opFailed', { op: t(`machines.op.${sent.op}`), reason: sent.reason || '?' }) : '';
+    const status = known ? t(`hq.state.${known}`)
+      : st === 'offline' ? (r.status ? t(`devices.status.${r.status}`) : t('devices.offline'))
+        : [t(`devices.status.${st}`), p?.working ? t('devices.working', { n: p.working }) : '', p?.delivered ? t('devices.delivered', { n: p.delivered }) : ''].filter(Boolean).join(' · ');
+    const buttons = online ? (r.buttons || []).filter((b) => ROP[b]) : [];
     return el('li', {
-      class: `sb-proj sb-rrow st-${st}${open ? ' open' : ''}${r.online ? '' : ' offline'}`, 'data-key': r.key,
-      title: `${r.name} · ${r.machine}\n${r.online ? t('hq.remoteTip') : t('hq.offline')}`,
+      class: `sb-proj sb-rrow st-${st}${known ? ` is-${known}` : ''}${open ? ' open' : ''}${r.online ? '' : ' offline'}`, 'data-key': r.key,
+      title: `${r.name} · ${r.machine}\n${r.online ? t('hq.remoteTip') : `${t('hq.offline')}${r.asOf ? ` (${t('hq.lastKnown')} · ${when(r.asOf)})` : ''}`}`,
       tabindex: '0', role: 'button', 'aria-expanded': String(open),
       onclick: () => { openKey = open ? '' : r.key; renderRemote(); },
       onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); openKey = open ? '' : r.key; renderRemote(); } },
     },
-    el('span', { class: `sb-dot${st === 'working' || st === 'approval' ? ' live' : ''}` }),
+    el('span', { class: `sb-dot${st === 'working' || st === 'approval' ? ' live' : known === 'asleep' ? ' asleep' : ''}` }),
     el('span', { class: 'sb-rname' }, el('span', { class: 'sb-name' }, r.name), el('span', { class: 'hq-badge', title: t('hq.remoteTitle') }, t('hq.remote'))),
     el('span', { class: 'sb-icons' },
       st === 'approval' ? el('span', { class: 'sb-attn permission', title: t('devices.status.approval') }, '✋') : null,
-      ...(r.online && r.actions.includes('wake') ? [
-        el('button', { class: 'sb-x sb-rop', title: t('hq.start'), 'aria-label': t('hq.start'), onclick: op('wake') }, '▶'),
-        el('button', { class: 'sb-x sb-rop', title: t('hq.sleep'), 'aria-label': t('hq.sleep'), onclick: op('sleep') }, '⏸')] : [])),
+      ...buttons.map((b) => {
+        // a row whose state is not known keeps the one "Start or wake" button of v3.46
+        const label = b === 'wake' && !r.state ? t('hq.start') : ROP[b][1]();
+        return el('button', { class: `sb-x sb-rop rop-${b}`, title: label, 'aria-label': label, disabled: busy ? '' : null, onclick: op(b) }, ROP[b][0]);
+      })),
     el('div', { class: 'sb-meta' },
-      el('span', { class: 'sb-tag sb-engine' }, ENGINE_NAMES[p?.engine || 'claude'] || p?.engine),
-      el('span', { class: 'sb-stats' }, status),
-      el('span', { class: 'sb-machine', title: `${r.machine} · ${t(r.online ? 'devices.online' : 'devices.offline')}` }, `⇄ ${r.machine}`)),
+      el('span', { class: 'sb-tag sb-engine' }, ENGINE_NAMES[p?.engine || r.engine || 'claude'] || p?.engine || r.engine),
+      el('span', { class: 'sb-stats', title: note || null }, note || status),
+      r.account ? el('span', { class: 'sb-machine sb-racct', title: r.account }, r.account) : null),
     open ? remoteCmd(r, pub, p, out) : null);
   }
   function renderRemote() {
@@ -354,7 +396,11 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const rows = view.remotes || [];
     if (openKey && !rows.some((r) => r.key === openKey)) openKey = '';
     remoteList.hidden = !rows.length;
-    remoteList.replaceChildren(...rows.map(remoteRow));
+    // v3.98 grouped by machine: one header per paired device, then its rows
+    // the group is the row's own `pub` (a project id may hold ':', so the key is never split from the right)
+    const groups = new Map();
+    for (const r of rows) { const pub = r.pub || r.key.slice(0, r.key.indexOf(':')); groups.set(pub, [...(groups.get(pub) || []), r]); }
+    remoteList.replaceChildren(...[...groups.values()].flatMap((g) => [machineHead(g[0]), ...g.map(remoteRow)]));
   }
   function render() {
     const tasks = view.board.tasks || [];
