@@ -1022,13 +1022,17 @@ function usageStatusLine(project, configDir, dir = project.dir, key = project.id
 // to survive cmd.exe's quoting when claude is npm's claude.cmd. If it cannot be written, the JSON itself is passed.
 function settingsFile(key, json) {
   const f = path.join(app.getPath('userData'), 'settings', `${key}.json`);
+  const tmp = `${f}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, json);
+    // temp + rename: a symlink left at the target is replaced, never written through
+    fs.writeFileSync(tmp, json, { flag: 'wx' });
+    fs.renameSync(tmp, f);
     return f;
   } catch (e) {
-    console.error('ayar dosyası yazılamadı:', e.message);
-    return json;
+    try { fs.unlinkSync(tmp); } catch {}
+    console.error('settings file could not be written:', e.message);
+    return null;
   }
 }
 
@@ -1263,7 +1267,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // its --mcp-config file (no claude.ai connectors, no account servers: none of them could send mail behind the outbox)
   const guarded = mailMcp ? MG.guardSettings(settings, Object.keys(readJson(prepared.mcpConfig || '')?.mcpServers || {}).filter((n) => n !== MMCP.SERVER_NAME)) : deskAccountRules(r, account, settings);
   // v3.94 a long rule list goes through the settings file too: one command line argument has a size limit
-  const settingsArg = guarded && (IS_WIN || guarded.length > DR.MAX_ARG_CHARS) ? settingsFile(usageKey(id), guarded) : guarded;
+  let settingsArg = guarded;
+  if (guarded && (IS_WIN || guarded.length > DR.MAX_ARG_CHARS)) {
+    settingsArg = settingsFile(usageKey(id), guarded);
+    if (!settingsArg && guarded.length <= DR.MAX_ARG_CHARS) settingsArg = guarded;
+    else if (!settingsArg) console.error('desk starts without the extra account rules: the oversize settings file could not be written');
+  }
   const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(mailMcp ? ['--strict-mcp-config'] : []), ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
@@ -4237,7 +4246,7 @@ function trustDeskWorktree(id) {
   try {
     const home = app.getPath('home');
     const given = readJson(PD.claudeJson(A.accountOf(state, own).configDir, home))?.projects;
-    if (!PD.projectPaths([own.dir]).some((d) => PD.trustedIn(given, d))) return;   // not trusted by the person: Claude Code asks
+    if (!PD.folderTrusted(given, own.dir)) return;   // not trusted by the person: Claude Code asks
     PD.trustFolder(A.accountOf(state, r.project).configDir, home, root);
   } catch (e) { console.error('desk trust:', e.message); }
 }

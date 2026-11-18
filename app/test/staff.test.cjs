@@ -528,7 +528,7 @@ test('v3.94 main trusts that worktree on every start, in the desk\'s account, on
   assert.match(src, /function startPty\([^\n]*\n[^\n]*\n {2}trustPersonalDesk\(id\);\n {2}trustDeskWorktree\(id\);/);
   const fn = src.slice(src.indexOf('function trustDeskWorktree('), src.indexOf("ipcMain.handle('staff:personal'"));
   assert.match(fn, /ST\.appMadeWorktree\(app\.getPath\('userData'\), r\.project\.id, r\.tab\)/);
-  const gate = fn.indexOf('if (!PD.projectPaths([own.dir]).some((d) => PD.trustedIn(given, d))) return;');
+  const gate = fn.indexOf('if (!PD.folderTrusted(given, own.dir)) return;');
   const trust = fn.indexOf("PD.trustFolder(A.accountOf(state, r.project).configDir, home, root)");
   assert.ok(gate > 0 && trust > gate, 'the project account\'s trust is read first; the account the desk runs on gets the entry');
   assert.equal(fn.includes('r.dir'), false, 'never a folder other than the app-made worktree');
