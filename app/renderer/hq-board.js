@@ -349,8 +349,10 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const open = openKey === r.key;
     // v3.100 opening a row also opens its session (only while that machine is online); the view follows the row's status
     const toggle = () => {
-      openKey = open ? '' : r.key;
-      if (open) rview?.close();
+      // the panel's own ✕ closes the view but leaves openKey set: the next click then opens it again
+      const showing = open && (!rview || rview.isOpen(r.key));
+      openKey = showing ? '' : r.key;
+      if (showing) rview?.close();
       else if (online) rview?.open({ key: r.key, pub, project: r.id, name: r.name, machine: r.machine, status: st });
       renderRemote();
     };

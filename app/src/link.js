@@ -650,7 +650,7 @@ class Link extends EventEmitter {
     if (reset) s.queue.length = 0;
     s.seq += frames.length;
     s.queue.push(...frames);
-    if (s.queue.length > C.SESS_QUEUE_MAX) { this.endSess(key, 'rate-limited', 'overflow'); return false; }
+    if (s.queue.length > C.SESS_QUEUE_MAX) { this.endSess(key, 'limit', 'overflow'); return false; }
     this.pumpSess(s);
     return true;
   }
@@ -1207,6 +1207,7 @@ class Link extends EventEmitter {
     const secret = this.secrets[pub];
     this.devices = this.devices.filter((d) => d.pub !== pub);
     delete this.secrets[pub];
+    this.sessOpens.delete(pub);
     for (const s of this.sessOf(pub)) this.endSess(s.key, null, 'removed');   // v3.100 unpaired: nothing more is sent
     this.dropSessIn(pub, 'removed');
     this.conns.get(pub)?.destroy();

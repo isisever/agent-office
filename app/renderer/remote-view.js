@@ -25,9 +25,9 @@ export function mountRemoteView({ api, t }) {
   document.body.append(el);
 
   const time = (/** @type {number} */ ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  /** Why nothing is shown: the peer does not share sessions with this computer (flag off, or an older app), or another reason. */
-  const reasonText = (/** @type {string} */ reason, /** @type {string} */ machine) => (reason === 'not-allowed' || reason === 'no-cap'
-    ? t('hq.remoteView.off', { machine })
+  /** Why nothing is shown: the peer is paused there ('not-allowed'), runs an older app ('no-cap'), or another reason. */
+  const reasonText = (/** @type {string} */ reason, /** @type {string} */ machine) => (reason === 'not-allowed' ? t('hq.remoteView.off', { machine })
+    : reason === 'no-cap' ? t('hq.remoteView.older', { machine })
     : t(`hq.remoteView.reason.${REASONS.includes(reason) ? reason : reason === 'removed' ? 'offline' : 'other'}`, { machine }));
   function draw() {
     if (!cur) return;
@@ -59,7 +59,7 @@ export function mountRemoteView({ api, t }) {
     draw();
   }
   api.link.onSess?.((/** @type {any} */ m) => {
-    if (cur && !cur.id && !cur.reason) cur.early.push(m);   // before sessOpen answered with the id
+    if (cur && !cur.id && !cur.reason) { if (cur.early.length < 50) cur.early.push(m); }   // before sessOpen answered with the id; at most 50, take() drops what is not ours
     else take(m);
   });
 
@@ -85,9 +85,9 @@ export function mountRemoteView({ api, t }) {
     draw();
     api.link.sessOpen(o.pub, o.project).then((/** @type {any} */ r) => {
       if (cur !== mine) { if (r?.ok) api.link.sessClose(r.id).catch(() => {}); return; }
-      if (!r?.ok) { mine.reason = String(r?.reason || 'offline'); draw(); return; }
+      if (!r?.ok) { mine.reason = String(r?.reason || 'offline'); mine.early.length = 0; draw(); return; }
       mine.id = r.id;
-      for (const m of mine.early.splice(0)) take(m);
+      for (const m of mine.early.splice(0)) if (m.id === r.id) take(m);
     }).catch(() => { if (cur === mine) { mine.reason = 'offline'; draw(); } });
   }
   return {

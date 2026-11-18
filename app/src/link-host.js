@@ -521,6 +521,8 @@ function setupLink(d) {
   function sessionOf(project) {
     try { return (d.sessionOf && d.sessionOf(project)) || { reason: 'unknown-project' }; } catch { return { reason: 'no-session' }; }
   }
+  const SESS_NOTIFY_MS = 10 * 60 * 1000;
+  const notified = new Map();   // device pub/project → when it was last announced
   function onSessOpen({ key, device, project, refuse }) {
     const p = d.projects().find((x) => x.id === project);
     if (!p) return refuse('unknown-project');
@@ -530,7 +532,11 @@ function setupLink(d) {
     const r = { key, device: device.name, project, name: p.name, file: '', cursor: null };
     readers.set(key, r);
     slog({ device: device.name, project: p.name, event: 'open' });
-    d.notify(d.T('main.sessionViewed', { device: device.name, project: p.name }), '');
+    const nk = `${device.pub}/${project}`;
+    if (Date.now() - (notified.get(nk) || 0) >= SESS_NOTIFY_MS) {   // every open is logged; the notice at most once per device and project per 10 minutes
+      notified.set(nk, Date.now());
+      d.notify(d.T('main.sessionViewed', { device: device.name, project: p.name }), '');
+    }
     feed(r);
     if (!sessTimer) { sessTimer = setInterval(() => { for (const x of [...readers.values()]) feed(x); }, SESS_POLL_MS); sessTimer.unref?.(); }
     push();

@@ -166,6 +166,11 @@ function lastAnswer(file, fsm = fs) {
 // v3.100 what a paired device allowed to read sessions gets: tool rows carry the tool's NAME only. The detail line (a
 // command, a path, a prompt) would need a second opt-in on the owning machine, which is not built: keep this off.
 const LINK_TOOL_DETAIL = false;
+// Blocks Claude Code writes into a user message that must never cross the link, wherever they sit in the message
+// (HIDDEN_RE only looks at the start). An unclosed block (the text was cut) runs to the end.
+const LINK_HIDDEN_RE = /<(bash-input|bash-stdout|bash-stderr|local-command-stdout|local-command-stderr|local-command-caveat|ide_selection|ide_opened_file|system-reminder|command-args)>[\s\S]*?(?:<\/\1>|$)|^[ \t]*\[Image: source: .*$/gm;
+/** A user text for the link: hidden blocks and pasted-image path lines removed. */
+const linkUserText = (s) => String(s || '').replace(LINK_HIDDEN_RE, '').replace(/\n{3,}/g, '\n\n');
 /**
  * Chat items → the items that may cross the device link (contract v3.100): user / assistant / error / command text and
  * notes, every text through `redact` (HQ.redact: best effort), a tool row with its name only, a tool's done/failed flag.
@@ -176,7 +181,7 @@ function linkItems(items, { redact = (s) => require('./hq.js').redact(s), toolDe
   for (const it of Array.isArray(items) ? items : []) {
     const base = { key: String(it.key || ''), at: Number.isInteger(it.at) && it.at > 0 ? it.at : 0, kind: it.kind };
     if (it.kind === 'user' || it.kind === 'assistant' || it.kind === 'error' || it.kind === 'command') {
-      const text = redact(String(it.text || ''));
+      const text = redact(it.kind === 'user' ? linkUserText(it.text) : String(it.text || ''));
       if (text.trim()) out.push({ ...base, text });   // a message that was only images is not sent
     } else if (it.kind === 'tool') {
       const detail = toolDetail === true && it.detail ? redact(String(it.detail)) : '';

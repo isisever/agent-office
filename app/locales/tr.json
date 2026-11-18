@@ -1198,7 +1198,8 @@
     "restartStopped": "{machine} üzerinde durduruldu; yeniden açmak için Başlat'a basın.",
     "lastSeen": "son görülme: {time}",
     "remoteView": {
-      "off": "{machine} bu bilgisayarla oturum paylaşmıyor. Orada Cihazlar bölümünden açın.",
+      "off": "{machine} duraklatıldı; oturumlarını okumak için orada duraklatmayı kaldırın (Cihazlar > Duraklat).",
+      "older": "{machine} Agent Office'in eski bir sürümünü çalıştırıyor ve oturum paylaşamıyor. Orada güncelleyin.",
       "approval": "{machine} makinesinde onay bekliyor; orada yanıtlanır.",
       "asOf": "{time} itibarıyla",
       "close": "Kapat",

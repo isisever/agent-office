@@ -196,7 +196,11 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
       if (n) frag.append(n);
     }
     if (pending.length) list.insertBefore(frag, pending[0]); else list.append(frag);
-    while (list.childElementCount > KEEP) list.firstElementChild.remove();
+    while (list.childElementCount > KEEP) {
+      const gone = list.firstElementChild;
+      for (const [id, line] of tools) if (line === gone) tools.delete(id);   // a trimmed tool row is never marked done
+      gone.remove();
+    }
     if (atBottom) list.scrollTop = list.scrollHeight;
   }
 

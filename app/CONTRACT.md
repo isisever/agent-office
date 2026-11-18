@@ -1972,12 +1972,17 @@ not built (`LINK_TOOL_DETAIL` in `src/chat.js` stays `false`; there is no UI for
 **Redaction is best effort.** Every text passes `HQ.redact` before it is sent. v3.100 adds to its patterns a PEM
 private-key block (also one cut off before its END line) and shell assignments (`NAME=value` where the name says
 secret, such as `API_KEY_PROD=...` or `export DB_PASSWORD="..."`, and `export NAME=value` whose value looks random).
-The patterns catch obvious secrets only: a secret in another shape crosses with the text. Turning the flag on means
-trusting that device with what is said in the session.
+The patterns catch obvious secrets only: a secret in another shape crosses with the text. Known gaps: Google API
+keys (`AIza...`), a password written without `:` or `=` ("my password is hunter22"), lowercase assignments that are
+not `export`ed (`db_pass=...` outside the patterns above), and base64 blobs. What the link does remove, before
+redaction and wherever it sits in a user message: `<bash-input>`, `<bash-stdout>`, `<bash-stderr>`,
+`<local-command-stdout>`, `<ide_selection>`, `<ide_opened_file>`, `<system-reminder>` and `<command-args>` blocks
+(and the other hidden local-command blocks) and `[Image: source: ...]` lines. Sharing sessions with a paired device
+means trusting it with what is said in the session.
 
 **Wire** (capability `sess`, in `CAPS` / `OUR_CAPS`). The reader sends `sess-open { id, project }`, `sess-keep { id }`
 and `sess-close { id }`; the owner sends `sess-items { id, seq, items, reset? }` and `sess-end { id, reason }`, with
-reason one of `not-allowed`, `unknown-project`, `engine`, `no-session`, `rate-limited`, `limit`. `reset` starts the
+reason one of `not-allowed`, `unknown-project`, `engine`, `no-session`, `rate-limited`, `limit` (also: the view fell too far behind to follow). `reset` starts the
 view over (the first frame, a new session file). The validators rebuild every message and every item field by field
 and bound each field; an item of an unknown kind is dropped, a frame with more than 200 items is refused.
 

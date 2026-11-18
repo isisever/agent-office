@@ -1226,7 +1226,8 @@
     "restartStopped": "Stopped on {machine}; press Start to bring it back.",
     "lastSeen": "last seen {time}",
     "remoteView": {
-      "off": "{machine} does not share sessions with this computer. Turn it on there under Devices.",
+      "off": "{machine} is paused on this computer's side. Resume it there (Devices > Pause) to read its sessions.",
+      "older": "{machine} runs an older Agent Office that cannot share sessions. Update it there.",
       "approval": "Waiting for an approval on {machine}; it is answered there.",
       "asOf": "as of {time}",
       "close": "Close",
