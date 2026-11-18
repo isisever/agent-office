@@ -118,8 +118,8 @@ test('integration: pair over a local testnet, mirror state, send a command, revo
   const testnet = await createTestnet(3);
   t.after(() => testnet.destroy());
   const persisted = { a: null, b: null };
-  const a = new Link({ keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap });
-  const b = new Link({ keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap });
+  const a = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap });
+  const b = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap });
   t.after(() => Promise.all([a.destroy(), b.destroy()]));
   a.on('persist', (p) => { persisted.a = p; });
   b.on('persist', (p) => { persisted.b = p; });
@@ -178,8 +178,8 @@ test('integration: a wrong code does not pair', { timeout: 30000 }, async (t) =>
   const DHT = require('hyperdht');
   const testnet = await createTestnet(3);
   t.after(() => testnet.destroy());
-  const a = new Link({ keyPair: DHT.keyPair(), name: 'A', bootstrap: testnet.bootstrap });
-  const b = new Link({ keyPair: DHT.keyPair(), name: 'B', bootstrap: testnet.bootstrap });
+  const a = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'A', bootstrap: testnet.bootstrap });
+  const b = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'B', bootstrap: testnet.bootstrap });
   t.after(() => Promise.all([a.destroy(), b.destroy()]));
   const { code } = await a.invite();
   const words = code.split('-');
@@ -200,8 +200,8 @@ test('heartbeat: pings keep a quiet session online, a silent peer shows offline 
   const testnet = await createTestnet(3);
   t.after(() => testnet.destroy());
   const heartbeatMs = 200;
-  const a = new Link({ keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap, heartbeatMs });
-  const b = new Link({ keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap, heartbeatMs });
+  const a = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap, heartbeatMs });
+  const b = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap, heartbeatMs });
   t.after(() => Promise.all([a.destroy(), b.destroy()]));
   const until = (fn, ms = 20000) => new Promise((resolve, reject) => {
     const t0 = Date.now();
@@ -383,8 +383,8 @@ test('integration: a full handoff over the link (opt-in refused first, then bund
   const DHT = require('hyperdht');
   const testnet = await createTestnet(3);
   t.after(() => testnet.destroy());
-  const a = new Link({ keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap });
-  const b = new Link({ keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap });
+  const a = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap });
+  const b = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap });
   t.after(() => Promise.all([a.destroy(), b.destroy()]));
   const until = (fn, ms = 20000) => new Promise((resolve, reject) => {
     const t0 = Date.now();
@@ -500,8 +500,8 @@ test('integration: handoff timeouts reach the receiver, busy/changed aborts, a d
   const DHT = require('hyperdht');
   const testnet = await createTestnet(3);
   t.after(() => testnet.destroy());
-  const a = new Link({ keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap });
-  const b = new Link({ keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap });
+  const a = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap });
+  const b = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap });
   t.after(() => Promise.all([a.destroy(), b.destroy()]));
   const until = (fn, ms = 20000) => new Promise((resolve, reject) => {
     const t0 = Date.now();
@@ -566,8 +566,8 @@ test('integration: a persisted handoff result survives a Link restart and answer
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-hores-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const resultsFile = path.join(tmp, 'link', 'handoff-results.json');
-  const a = new Link({ keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap });
-  let b = new Link({ keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap, resultsFile });
+  const a = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap });
+  let b = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap, resultsFile });
   t.after(() => Promise.all([a.destroy(), b.destroy()]));
   const until = (fn, ms = 30000) => new Promise((resolve, reject) => {
     const t0 = Date.now();
@@ -591,7 +591,7 @@ test('integration: a persisted handoff result survives a Link restart and answer
   const restart = async () => {
     const keep = { keyPair: b.keyPair, devices: b.devices, secrets: b.secrets };
     await b.destroy();
-    b = new Link({ ...keep, name: 'Laptop', bootstrap: testnet.bootstrap, resultsFile });
+    b = new Link({ confirmPair: async () => true, ...keep, name: 'Laptop', bootstrap: testnet.bootstrap, resultsFile });
     b.ensureSwarm();
     await until(() => a.view().devices[0]?.online && b.view().devices[0]?.online);
   };
@@ -701,8 +701,8 @@ async function pairPair(t, opts = {}) {
   const DHT = require('hyperdht');
   const testnet = await createTestnet(3);
   t.after(() => testnet.destroy());
-  const a = new Link({ keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap, app: '0.14.0', heartbeatMs: opts.heartbeatMs });
-  const b = new Link({ keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap, app: '0.14.0', heartbeatMs: opts.heartbeatMs });
+  const a = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap, app: '0.14.0', heartbeatMs: opts.heartbeatMs });
+  const b = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap, app: '0.14.0', heartbeatMs: opts.heartbeatMs });
   t.after(() => Promise.all([a.destroy(), b.destroy()]));
   if (opts.v1) {
     // b plays an Agent Office 0.13 (protocol 1): its hello has no caps; it counts every message type it receives
@@ -827,7 +827,7 @@ test('integration v3.35: cmd with report round trip; the report reaches the disp
 
 function fakeLink(t, file) {
   const kp = { publicKey: Buffer.alloc(32, 7), secretKey: Buffer.alloc(64, 7) };
-  const l = new Link({ keyPair: kp, name: 'Laptop', reportsFile: file, swarmFactory: () => ({ join: () => ({ flushed: async () => {}, refresh: async () => {} }), on: () => {}, leave: async () => {}, destroy: async () => {} }) });
+  const l = new Link({ confirmPair: async () => true, keyPair: kp, name: 'Laptop', reportsFile: file, swarmFactory: () => ({ join: () => ({ flushed: async () => {}, refresh: async () => {} }), on: () => {}, leave: async () => {}, destroy: async () => {} }) });
   l.devices = [{ pub: pubA, name: 'Studio', addedAt: 0, own: true, allowHandoff: false, allowAccounts: false }];
   l.secrets = { [pubA]: 'ab'.repeat(32) };
   t.after(() => l.destroy());
@@ -1241,8 +1241,8 @@ test('integration v3.101: pairing asks the person at both machines, the joiner f
   const DHT = require('hyperdht');
   const testnet = await createTestnet(3);
   t.after(() => testnet.destroy());
-  const a = new Link({ keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap, app: '0.14.0' });
-  const b = new Link({ keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap, app: '0.14.0' });
+  const a = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap, app: '0.14.0' });
+  const b = new Link({ confirmPair: async () => true, keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap, app: '0.14.0' });
   t.after(() => Promise.all([a.destroy(), b.destroy()]));
   const asked = [];
   let yesB = false;
@@ -1257,4 +1257,126 @@ test('integration v3.101: pairing asks the person at both machines, the joiner f
   const dev = await b.join(two.code);
   assert.deepEqual(asked.slice(1), [['b', 'Studio', 0], ['a', 'Laptop', 0]]);   // nothing is stored before both said yes
   assert.deepEqual([dev.own, a.devices[0].own, a.devices[0].name, b.devices[0].name], [true, true, 'Laptop', 'Studio']);
+});
+
+// --- v3.101 review fixes: Pause (and "Accept handoffs" off) reaches a handoff in flight; pairing fails closed
+
+function hoWorld(t) {
+  const l = fakeLink(t);
+  l.devices = l.devices.map((d) => ({ ...d, allowHandoff: true }));
+  const conn = fakeConn();
+  l.conns.set(pubA, conn);
+  const pack = Buffer.from('0123456789');
+  const ev = { failed: [], data: [] };
+  l.on('handoff-failed', (x) => ev.failed.push(x.reason));
+  l.on('handoff-data', (x) => ev.data.push(x));
+  const dev = { pub: pubA, name: 'Studio' };
+  const offer = (id) => l.receiveOffer(conn, dev, { t: 'ho-offer', id, name: 'p', dir: '/x/p', pack: { size: pack.length, sha: crypto.createHash('sha256').update(pack).digest('hex') } });
+  const chunk = (id, seq, buf) => l.receiveChunk(dev, { t: 'ho-chunk', id, part: 'pack', seq, data: buf.toString('base64') });
+  const pauseQuietly = () => { l.devices = l.devices.map((d) => ({ ...d, own: false })); };   // the state alone, without the drop
+  return { l, conn, pack, ev, offer, chunk, pauseQuietly };
+}
+
+test('v3.101 handoff, offer pending: pause (or "Accept handoffs" off) refuses it and a later yes is not taken', (t) => {
+  const w = hoWorld(t);
+  w.offer('h1');
+  assert.equal(w.l.handoffsIn.get('h1').stage, 'asking');
+  w.l.setOwn(pubA, false);
+  assert.equal(w.l.handoffsIn.size, 0);
+  assert.deepEqual(w.conn.out.filter((m) => m.t === 'ho-answer'), [{ t: 'ho-answer', id: 'h1', ok: false, reason: 'not-allowed' }]);
+  assert.deepEqual(w.ev.failed, ['not-allowed']);
+  assert.equal(w.l.answerHandoff('h1', true), false);
+  // the answer checks again by itself
+  w.l.setOwn(pubA, true);
+  w.offer('h2');
+  w.pauseQuietly();
+  assert.equal(w.l.answerHandoff('h2', true), false);
+  assert.equal(w.l.handoffsIn.size, 0);
+  // the opt-in turned off while an offer is open
+  w.l.setOwn(pubA, true);
+  w.offer('h3');
+  w.l.setAllowHandoff(pubA, false);
+  assert.equal(w.l.handoffsIn.size, 0);
+  assert.equal(w.l.answerHandoff('h3', true), false);
+  assert.equal(w.conn.out.some((m) => m.t === 'ho-answer' && m.ok === true), false);
+  assert.deepEqual(w.ev.failed, ['not-allowed', 'not-allowed', 'not-allowed']);
+  // a new offer while paused or without the opt-in is refused as before
+  w.offer('h4');
+  assert.equal(w.l.handoffsIn.size, 0);
+});
+
+test('v3.101 handoff, transfer arriving: pause drops it and nothing is applied', (t) => {
+  const w = hoWorld(t);
+  w.offer('h1');
+  assert.equal(w.l.answerHandoff('h1', true), true);
+  w.chunk('h1', 0, w.pack.subarray(0, 4));
+  w.l.setOwn(pubA, false);
+  assert.equal(w.l.handoffsIn.size, 0);
+  assert.deepEqual(w.conn.out.filter((m) => m.t === 'ho-result'), [{ t: 'ho-result', id: 'h1', ok: false, reason: 'not-allowed' }]);
+  w.chunk('h1', 1, w.pack.subarray(4));
+  assert.equal(w.ev.data.length, 0);
+  assert.equal(w.l.results.has('h1'), false);   // it never reached 'applying'
+  // the receiver checks again on the chunk itself
+  w.l.setOwn(pubA, true);
+  w.offer('h2');
+  assert.equal(w.l.answerHandoff('h2', true), true);
+  w.pauseQuietly();
+  w.chunk('h2', 0, w.pack);
+  assert.equal(w.ev.data.length, 0);
+  assert.equal(w.l.handoffsIn.size, 0);
+  assert.deepEqual(w.ev.failed, ['not-allowed', 'not-allowed']);
+  // "Accept handoffs" off mid-transfer
+  w.l.setOwn(pubA, true);
+  w.offer('h3');
+  w.l.answerHandoff('h3', true);
+  w.chunk('h3', 0, w.pack.subarray(0, 4));
+  w.l.setAllowHandoff(pubA, false);
+  w.chunk('h3', 1, w.pack.subarray(4));
+  assert.equal(w.ev.data.length, 0);
+});
+
+test('v3.101 handoff, already applying: pause lets it finish', (t) => {
+  const w = hoWorld(t);
+  w.offer('h1');
+  w.l.answerHandoff('h1', true);
+  w.chunk('h1', 0, w.pack);
+  assert.equal(w.ev.data.length, 1);
+  assert.equal(w.l.handoffsIn.get('h1').stage, 'applying');
+  w.l.setOwn(pubA, false);
+  assert.equal(w.l.handoffsIn.has('h1'), true);
+  assert.equal(w.ev.data[0].alive(), true);
+  w.ev.data[0].done({ ok: true });
+  assert.deepEqual(w.conn.out.filter((m) => m.t === 'ho-result'), [{ t: 'ho-result', id: 'h1', ok: true }]);
+  assert.equal(w.l.results.get('h1').status, 'applied');
+  assert.deepEqual([w.l.handoffsIn.size, w.ev.failed], [0, []]);
+});
+
+test('v3.101 pause and resume send the state to that device again at once (no worker descriptions while paused)', (t) => {
+  const l = fakeLink(t);
+  const conn = fakeConn();
+  l.conns.set(pubA, conn);
+  l.snap = { projects: [{ id: 'p1', name: 'shop', status: 'working' }], workers: [{ id: 'w1', project: 'p1', type: 'Explore', description: 'Find it' }], delivered: 0 };
+  l.snapJson = JSON.stringify(l.snap);
+  l.flushTo(pubA, conn);
+  const states = () => conn.out.filter((m) => m.t === 'state').map((m) => m.snap.workers[0].description);
+  assert.deepEqual(states(), ['Find it']);
+  l.setOwn(pubA, false);
+  assert.deepEqual(states(), ['Find it', undefined]);   // no new publish was needed
+  l.setOwn(pubA, true);
+  assert.deepEqual(states(), ['Find it', undefined, 'Find it']);
+});
+
+test('v3.101 pairing fails closed: with no confirm function wired the answer is no', async (t) => {
+  const createTestnet = require('hyperdht/testnet');
+  const DHT = require('hyperdht');
+  const testnet = await createTestnet(3);
+  t.after(() => testnet.destroy());
+  const mk = (name) => new Link(Object.assign({ keyPair: DHT.keyPair(), name, bootstrap: testnet.bootstrap, app: '0.14.0' }));
+  const a = mk('Studio');
+  const b = mk('Laptop');
+  t.after(() => Promise.all([a.destroy(), b.destroy()]));
+  assert.deepEqual([a.confirmPair, b.confirmPair], [null, null]);
+  const { code } = await a.invite();
+  await assert.rejects(b.join(code), /declined/);
+  assert.deepEqual([a.devices.length, b.devices.length, b.pairing], [0, 0, null]);
 });

@@ -17,7 +17,7 @@ const SEEN_PER_DEVICE = 200;
 
 class Link extends EventEmitter {
   /**
-   * @param {{ keyPair: { publicKey: Buffer, secretKey: Buffer }, name: string, devices?: C.Device[], secrets?: Record<string, string>,
+   * @param {{ keyPair: { publicKey: Buffer, secretKey: Buffer }, name: string, confirmPair?: (name: string) => boolean | Promise<boolean>, devices?: C.Device[], secrets?: Record<string, string>,
    *   bootstrap?: any[], now?: () => number, swarmFactory?: (opts: any) => any, heartbeatMs?: number,
    *   handoffAskMs?: number, handoffIdleMs?: number, resultsFile?: string | null, reportsFile?: string | null, tasksFile?: string | null, seenFile?: string | null, outboxTtlMs?: number, app?: string, sessGapMs?: number, projOpMs?: number, loginTimeoutMs?: number, log?: (...a: any[]) => void }} o
    */
@@ -36,8 +36,8 @@ class Link extends EventEmitter {
     this.conns = new Map();      // device pub → conn (trusted sessions)
     this.remotes = new Map();    // device pub → { snap, at }
     this.pairing = null;         // { role, code, key, topic, expiresAt, timer, resolve?, reject?, asking? }
-    /** @type {null | ((name: string) => boolean | Promise<boolean>)} v3.101 asks the person at this machine before a device is paired (unset: yes) */
-    this.confirmPair = null;
+    /** @type {null | ((name: string) => boolean | Promise<boolean>)} v3.101 asks the person at this machine before a device is paired (unset: the answer is no) */
+    this.confirmPair = typeof o.confirmPair === 'function' ? o.confirmPair : null;
     this.limiter = new C.RateLimiter({ now: this.now });
     this.outgoing = [];          // commands this device sent: { id, pub, project, projectName, firstLine, status, reason?, at }
     this.snap = null;            // what we publish
@@ -193,7 +193,7 @@ class Link extends EventEmitter {
     const t = setTimeout(fail, C.PAIR_CONFIRM_MS);
     t.unref?.();
     const hello = () => this.write(conn, { t: 'pair-hello', name: this.name, proof: C.pairProof(p.key, p.role, this.pub, remote) });
-    const ask = (name) => (this.confirmPair ? Promise.resolve().then(() => this.confirmPair?.(name)).catch(() => false) : Promise.resolve(true));
+    const ask = (name) => (this.confirmPair ? Promise.resolve().then(() => this.confirmPair?.(name)).catch(() => false) : Promise.resolve(false));   // fail closed: nobody to ask = no
     // the inviter names itself at once; the joiner proves the code (its pair-hello) only after its person said yes
     if (p.role === 'inviter') hello();
     let device = null;
@@ -533,6 +533,8 @@ class Link extends EventEmitter {
   answerHandoff(id, accept, reason = 'declined') {
     const h = this.handoffsIn.get(id);
     if (!h || h.stage !== 'asking') return false;
+    // v3.101 paused, or "Accept handoffs" turned off, since the offer came: a yes no longer counts
+    if (accept && !C.mayHandoff(this.devices, this.secrets, h.pub)) { this.refuseIn(h); return false; }
     clearTimeout(h.timer);
     if (!accept) { this.write(h.conn, { t: 'ho-answer', id, ok: false, reason }); this.handoffsIn.delete(id); }
     else {
@@ -551,9 +553,21 @@ class Link extends EventEmitter {
     this.emit('handoff-failed', { offer: h.offer, reason });
     this.emit('change');
   }
+  /** v3.101 An incoming handoff that is no longer allowed is refused in the message its stage expects. */
+  refuseIn(h) {
+    if (h.stage === 'asking') { this.write(h.conn, { t: 'ho-answer', id: h.id, ok: false, reason: 'not-allowed' }); this.dropIn(h, 'not-allowed', false); }
+    else this.dropIn(h, 'not-allowed');
+  }
+  /** v3.101 Pause, or "Accept handoffs" off, also ends what that device has in flight here: an open offer and a
+   *  transfer still arriving. One that is already being applied finishes (stopping there could leave half a project). */
+  dropDisallowedIn(pub) {
+    if (C.mayHandoff(this.devices, this.secrets, pub)) return;
+    for (const h of [...this.handoffsIn.values()]) if (h.pub === pub && h.stage !== 'applying') this.refuseIn(h);
+  }
   receiveChunk(d, m) {
     const h = this.handoffsIn.get(m.id);
     if (!h || h.pub !== d.pub || h.stage !== 'receiving') return;
+    if (!C.mayHandoff(this.devices, this.secrets, h.pub)) return this.refuseIn(h);   // v3.101 checked again on every chunk
     const want = h.offer[m.part];
     if (!want || m.seq !== h.seq[m.part] || (m.part === 'bundle' && h.bytes.pack < h.offer.pack.size)) return this.dropIn(h, 'bad-data');
     const buf = Buffer.from(m.data, 'base64');
@@ -1180,15 +1194,22 @@ class Link extends EventEmitter {
     this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, own: on === true } : d));
     this.persist();
     const conn = this.conns.get(pub);
-    if (conn) { this.flushRes(pub, conn); this.flushCatalog(pub, conn); this.flushAccounts(pub, conn); }
+    // sent again right away: a paused device drops the worker descriptions and the catalog now, a resumed one has them at once
+    if (conn) { this.sentJson.delete(pub); this.flushTo(pub, conn); this.flushRes(pub, conn); this.flushCatalog(pub, conn); this.flushAccounts(pub, conn); }
     if (on !== true) {
+      this.dropDisallowedIn(pub);                                                        // an open offer or arriving transfer is refused
       for (const s of this.sessOf(pub)) this.endSess(s.key, 'not-allowed', 'revoked');   // a session it reads ends at once
       this.emit('login-cancel', { device: { pub }, id: null });                          // a relay it started here stops
     }
     this.emit('own', { pub, on: on === true });   // the host refuses what that device still has queued
     this.emit('change');
   }
-  setAllowHandoff(pub, on) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowHandoff: on === true } : d)); this.persist(); this.emit('change'); }
+  setAllowHandoff(pub, on) {
+    this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowHandoff: on === true } : d));
+    this.persist();
+    this.dropDisallowedIn(pub);   // turned off: what that device has in flight here is refused too
+    this.emit('change');
+  }
   /** v3.31 "Allow account sign-in": v3.34 the account list goes to that device and it may start a login relay here. */
   setAllowAccounts(pub, on) {
     this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowAccounts: on === true } : d));

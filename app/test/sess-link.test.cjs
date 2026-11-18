@@ -27,7 +27,7 @@ function world(t, { allow = true, capsA = null, capsB = null, gap = 20 } = {}) {
   const clock = { now: 1e9 };
   const make = (who, caps) => {
     const other = who === 'A' ? PB : PA;
-    const l = new Link({ keyPair: kp(who === 'A' ? 1 : 2), name: who === 'A' ? 'Studio' : 'Laptop', swarmFactory, now: () => clock.now, heartbeatMs: 60000, sessGapMs: gap });
+    const l = new Link({ confirmPair: async () => true, keyPair: kp(who === 'A' ? 1 : 2), name: who === 'A' ? 'Studio' : 'Laptop', swarmFactory, now: () => clock.now, heartbeatMs: 60000, sessGapMs: gap });
     l.devices = C.normalizeDevices([{ pub: other, name: who === 'A' ? 'Laptop' : 'Studio', addedAt: 0, own: who !== 'A' || allow }]);
     l.secrets = { [other]: 'ab'.repeat(32) };
     if (caps) l.helloMsg = () => ({ t: 'hello', v: 2, name: l.name, caps });
@@ -156,7 +156,7 @@ test('sess compat: a peer without the cap is never sent a sess message, in eithe
 test('sess stream: items reach the reader in order, at most 4 frames a second', async (t) => {
   assert.equal(Math.ceil(1000 / C.SESS_FRAMES_PER_SEC), 250);
   const { a, b, ready } = world(t, { gap: 250 });
-  assert.equal(new Link({ keyPair: kp(3), name: 'x', swarmFactory }).sessGapMs, 250);
+  assert.equal(new Link({ confirmPair: async () => true, keyPair: kp(3), name: 'x', swarmFactory }).sessGapMs, 250);
   await ready();
   const r = b.openSess(PA, 'p1');
   await flush();
