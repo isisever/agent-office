@@ -35,6 +35,16 @@ export function taskIdOf(text: string): string | undefined {
   return MARKER.exec(typeof text === 'string' ? text : '')?.[1]
 }
 
+// v3.95 a dispatched task is worked with nobody at the tab: the session gets this as context with the task's prompt,
+// never with a prompt the person types themselves
+export const UNATTENDED_TASK_TEXT =
+  'Nobody is at this tab: this task was dispatched by Agent Office. Do not use AskUserQuestion or plan mode for this task; decide, do the work, and state each assumption in the report.'
+
+/** UNATTENDED_TASK_TEXT for a prompt that carries a dispatched task (the marker, or the id the app recorded before typing). */
+export function taskContext(text: string, typedId?: string): string | undefined {
+  return taskIdOf(text) || (typedId && ID.test(typedId)) ? UNATTENDED_TASK_TEXT : undefined
+}
+
 /** The open task of this session: one at a time; it reports once the main turn ends with no worker running. */
 export class ReportTracker {
   pending: PendingTask | undefined = undefined

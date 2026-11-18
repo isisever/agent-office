@@ -22,7 +22,7 @@ import type { VerifyStop } from './harness'
 import type { StopInput } from './finish'
 import { appendEntry, directoryProjects, entryOf, JOURNAL_FILE, LOOKBACK_MS, newsText, parseJournal, placeOfDir, selectNews } from './journal'
 import type { Host, JournalSeen, OfficeProject } from './journal'
-import { readyText, ReportTracker, typedTaskId, writeReport } from './reports'
+import { readyText, ReportTracker, taskContext, typedTaskId, writeReport } from './reports'
 import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from './hq'
 import { memberText, parseMember, STAFF_SECTION_ID, TEAM_SECTION_ID, TEAM_TEXT } from './staff'
 import { MAIL_SECTION_ID, MAIL_TEXT, mailGuardDecision } from './mail-guard'
@@ -1599,6 +1599,7 @@ export const register: Register = on => {
   // the office journal's news ride a prompt as context (not the system prompt: the cached prompt stays as it is)
   on('prompt.submit', async ($, e, next) => {
     finishPrompt(e.origin?.kind, e.text)
+    let unattended: string | undefined // v3.95 one sentence for a dispatched task; never for the person's own prompt
     if (e.origin?.kind !== 'task-notification') {
       verifyPrompt()
       isBriefReminded = false
@@ -1607,6 +1608,7 @@ export const register: Register = on => {
       // the 2 h limit, counted from the task's start, is checked here too
       if (isInApp && !isNested) {
         const typed = await typedTaskId(hostOf($), rootDir, sessionId, Date.now()).catch(() => undefined)
+        unattended = taskContext(e.text, typed)
         const late = reports.expired(Date.now())
         if (late && rootDir) await writeReport(hostOf($), rootDir, sessionCwd, late, Date.now(), true, isWindows)
         const closed = reports.prompt(e.text, Date.now(), typed, sessionId)
@@ -1620,7 +1622,9 @@ export const register: Register = on => {
     else await clearWaiting($)
     const news = journalOn && isInApp && e.origin?.kind !== 'task-notification' ? await journalNews($).catch(() => '') : ''
 
-    return next(news ? { ...e, context: [...(e.context ?? []), news] } : e)
+    const added = [unattended, news].filter((text): text is string => Boolean(text))
+
+    return next(added.length ? { ...e, context: [...(e.context ?? []), ...added] } : e)
   }).catch(($, e, next) => next(e))
 
   on('session.append', async ($, e, next) => {
