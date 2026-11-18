@@ -27,13 +27,17 @@ function wanted({ project, tab, hasMail }) {
 const lstat = (f) => { try { return fs.lstatSync(f); } catch { return null; } };
 const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
-/** A settings file → its JSON object, or null: missing, not a regular file, a symlink (never followed), over the cap or not a JSON object. */
-function readSettings(file) {
-  const st = lstat(file);
+/**
+ * A settings file → its JSON object, or null: missing, not a regular file, a symlink (never followed), over the cap or
+ * not a JSON object. `follow`: a symlink is followed (v3.94, an account's own settings.json, which is only ever read).
+ */
+function readSettings(file, { follow = false } = {}) {
+  let st = lstat(file);
+  if (follow && st && st.isSymbolicLink()) { try { st = fs.statSync(file); } catch { st = null; } }
   if (!st || !st.isFile() || st.size > MAX_BYTES) return null;
   let fd = null;
   try {
-    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (follow ? 0 : fs.constants.O_NOFOLLOW || 0));
     const now = fs.fstatSync(fd);
     if (!now.isFile() || now.size > MAX_BYTES) return null;
     const data = fs.readFileSync(fd);
@@ -74,6 +78,33 @@ function merge(rules, desk) {
     if (all.length || k in perms) next[k] = all;
   }
   return { ...own, permissions: next };
+}
+
+// ---- v3.94 the project account's user-level rules for a desk that runs on another account
+
+const MAX_ARG_CHARS = 32 * 1024;   // a longer --settings JSON is passed as a file (one argument has a size limit)
+
+/**
+ * Does this tab get the project account's user-level rules? Only a staff desk of a project whose session runs on
+ * another account than the project's (`projectConfigDir` / `deskConfigDir`: null for Default); never HQ, a personal
+ * workspace or a member with a mail account (the mail guard decides there).
+ */
+function accountRulesWanted({ project, tab, hasMail, projectConfigDir, deskConfigDir }) {
+  return Boolean(project && tab && tab.staffId && !project.hq && !project.staffOwner && !hasMail
+    && (projectConfigDir || '') !== (deskConfigDir || ''));
+}
+
+/**
+ * The `--settings` JSON of a session with an account's rules added: every key the JSON has is kept, and only
+ * `permissions.allow` / `deny` / `ask` of the account's parsed settings.json are taken (rulesOf: bounded string
+ * arrays), ahead of the JSON's own. Never `defaultMode`, env, hooks or any other key. No usable rules → the JSON as given.
+ */
+function withAccountRules(json, accountSettings) {
+  const rules = rulesOf(accountSettings);
+  if (!rules) return json || null;
+  let own = {};
+  try { own = json ? JSON.parse(json) : {}; } catch { own = {}; }
+  return JSON.stringify(merge(rules, own));
 }
 
 /** Where the rules go, or null when the desk's `.claude` or the file itself is something this never writes through (a symlink, a folder, a missing desk folder). */
@@ -176,4 +207,4 @@ async function sync(projectDir, deskDir, { git, tmpDir }) {
   return write(projectDir, deskDir, { tmpDir });
 }
 
-module.exports = { REL, MAX_BYTES, MAX_RULES, MAX_RULE_CHARS, wanted, readSettings, rulesOf, merge, plan, needsSync, write, excludeAddition, ensureExcluded, sync };
+module.exports = { REL, MAX_BYTES, MAX_RULES, MAX_RULE_CHARS, MAX_ARG_CHARS, accountRulesWanted, withAccountRules, wanted, readSettings, rulesOf, merge, plan, needsSync, write, excludeAddition, ensureExcluded, sync };

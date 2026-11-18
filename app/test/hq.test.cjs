@@ -353,7 +353,7 @@ test('a foreign request id resolves to the current id and consentFor sees it liv
 
 test('caps are re-checked after the consent dialog resolves', () => {
   const body = fnBody('hqDispatch');
-  const a = body.indexOf('confirmHqDispatch(args, remote)');
+  const a = body.indexOf('confirmHqDispatch(args, remote, { request })');
   const b = body.indexOf('HQ.capReason(loadHqBoard(), request)', a);
   assert.ok(a > 0 && b > a, 'fresh capReason after the dialog');
   // behavior: the board that filled while the dialog was open now refuses
@@ -1101,4 +1101,65 @@ test('v3.93: a queued task of this machine tells HQ why it waits (dispatch resul
   const OMS = fs.readFileSync(path.join(__dirname, '..', 'src', 'office-mcp.js'), 'utf8');
   assert.match(OMS, /Nobody types or fetches a queued task: never ask the person to, relay the note instead\./);
   assert.match(OMS, /Never ask the person to type or fetch a task in a tab\./);
+});
+
+// --- v3.94 the consent dialog's third button: "Allow, and stop asking for my own requests"
+
+test('v3.94 offersAlways: only a local target in the live turn of a prompt the person typed', () => {
+  let t = 1000;
+  const m = HQ.createMinter({ now: () => t, rand: () => String(t) });
+  const typed = m.mint();
+  assert.equal(HQ.offersAlways({ remote: false, request: typed, minter: m }), true);
+  assert.equal(HQ.offersAlways({ remote: true, request: typed, minter: m }), false, 'a paired device always asks, with two buttons');
+  assert.equal(HQ.offersAlways({ remote: false, request: HQ.ADHOC, minter: m }), false);
+  assert.equal(HQ.offersAlways({ remote: false, request: '', minter: m }), false);
+  assert.equal(HQ.offersAlways({ remote: false, request: 'forged', minter: m }), false);
+  t += 10;
+  const routine = m.mint({ origin: 'routine', run: 'run1' });
+  assert.equal(HQ.offersAlways({ remote: false, request: routine, minter: m }), false, 'a routine never gets the button');
+  assert.equal(HQ.offersAlways({ remote: false, request: typed, minter: m }), true, 'a routine mint does not replace the typed id');
+  m.clear();   // an inbox row: a turn the person did not type
+  assert.equal(HQ.offersAlways({ remote: false, request: typed, minter: m }), false, 'a report-driven turn');
+  t += 10;
+  const again = m.mint();
+  t += 31 * 60 * 1000;
+  assert.equal(HQ.offersAlways({ remote: false, request: again, minter: m }), false, 'no longer live');
+  assert.equal(HQ.offersAlways({ remote: false, request: typed, minter: null }), false);
+});
+
+test('v3.94 allowAlways turns on the two existing settings and nothing else; main wires the button only where a request is passed', () => {
+  const before = HQ.normalizeHq({ enabled: true, bossModel: '', accountId: 'a1' });
+  const after = HQ.allowAlways(before);
+  assert.equal(after.dispatchWithoutAsking, true);
+  assert.equal(after.initiative, true);
+  const { dispatchWithoutAsking: _d, initiative: _i, ...rest } = after;
+  const { dispatchWithoutAsking: _d2, initiative: _i2, ...was } = before;
+  assert.deepEqual(rest, was);
+  assert.deepEqual(HQ.allowAlways(after), after);
+  assert.equal(HQ.allowAlways(undefined).dispatchWithoutAsking, true);
+
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const one = src.slice(src.indexOf('async function confirmHqDispatch('), src.indexOf('function tagRoutineRec('));
+  assert.match(one, /const always = HQ\.offersAlways\(\{ remote, request, minter: hqMinter \}\);/);
+  assert.match(one, /buttons: \[T\('main\.hqAllow'\), T\('main\.hqDeny'\), \.\.\.\(always \? \[T\('main\.hqAllowAlways'\)\] : \[\]\)\], defaultId: 1, cancelId: 1,/);
+  assert.match(one, /if \(always && r\.response === 2\) \{ hqAllowAlways\(\); return true; \}/);
+  assert.match(one, /T\('main\.hqAllowAlwaysNote'\)/);
+  const many = src.slice(src.indexOf('async function confirmHqStages('), src.indexOf('async function hqDispatchStages('));
+  assert.match(many, /const always = HQ\.offersAlways\(\{ remote: false, request, minter: hqMinter \}\);/);
+  assert.match(many, /if \(always && r\.response === 2\) \{ hqAllowAlways\(\); return true; \}/);
+  const set = src.slice(src.indexOf('function hqAllowAlways('), src.indexOf('async function confirmHqDispatch('));
+  assert.match(set, /commit\(\{ \.\.\.state, hq: HQ\.allowAlways\(state\.hq\) \}\);\n {2}send\('hq:board', hqView\(\)\);/);
+  assert.equal(/killPty|hqRestarter|startPty/.test(set), false, 'HQ is not restarted');
+  // every other dialog call passes no request: remote stages, a released stage
+  const calls = [...src.matchAll(/await confirmHqDispatch\(([^\n]*?)\)\)\)/g)].map((x) => x[1]);
+  assert.equal(calls.filter((c) => c.includes('{ request }')).length, 1);
+  assert.ok(calls.length >= 3);
+  for (const c of calls) if (c.includes('{ request }')) assert.equal(c, 'args, remote, { request }');
+  for (const lang of ['en', 'tr']) {
+    const main = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${lang}.json`), 'utf8')).main;
+    assert.ok(main.hqAllowAlways && main.hqAllowAlwaysNote, lang);
+  }
+  assert.equal(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', 'en.json'), 'utf8')).main.hqAllowAlways, 'Allow, and stop asking for my own requests');
 });

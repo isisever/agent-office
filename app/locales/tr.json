@@ -923,6 +923,8 @@
     "projectFilesRefused": "Agent Office, “{name}” içindeki bazı dosyalara dokunmadı: kendisinin yazmadığı (ya da yazdıktan sonra değiştirilmiş) aynı adlı bir dosyanın üzerine asla yazılmaz, silinmez.",
     "hqAllow": "Görevi ver",
     "hqDeny": "Vazgeç",
+    "hqAllowAlways": "İzin ver ve kendi isteklerim için bir daha sorma",
+    "hqAllowAlwaysNote": "Üçüncü düğme Pano'daki iki Müdür ayarını da açar: \"Bu makinedeki projelere sormadan görev ver\" ve \"Müdür açık bir isteği kendiliğinden sürdürsün\"; bunlar yalnızca Müdür'e kendi yazdığınız istekler için geçerlidir.",
     "hqInitiativeSent": "Müdür kendiliğinden bir devam görevi gönderdi: {title} → {target}",
     "hqAsk": "Müdür {project} projesine görev vermek istiyor.",
     "hqAskStaff": "Müdür {staff} adlı personele {project} projesinde görev vermek istiyor.",
