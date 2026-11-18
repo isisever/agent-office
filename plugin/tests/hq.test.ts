@@ -1,18 +1,45 @@
 import { expect, test } from 'claude-code/testing'
-import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_INITIATIVE_TEXT, HQ_SECTION_ID, HQ_TEMPLATE, hqText, parseDelegates, sectionKind } from '../hooks/hq'
+import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_INITIATIVE_SWAPS, HQ_INITIATIVE_TEXT, HQ_SECTION_ID, HQ_TEMPLATE, hqText, parseDelegates, sectionKind } from '../hooks/hq'
 
 test('initiative (v3.91): the paragraph only with the setting on; off the brief is unchanged', () => {
   expect(hqText()).toBe(HQ_TEMPLATE)
   expect(hqText(false)).toBe(HQ_TEMPLATE)
-  expect(hqText()).not.toContain('without waiting to be asked')
+  expect(hqText()).not.toContain(HQ_INITIATIVE_TEXT)
+  expect(hqText()).not.toContain('You own a request')
   const on = hqText(true)
-  expect(on).toContain(HQ_INITIATIVE_TEXT)
-  expect(on.replace(`${HQ_INITIATIVE_TEXT}\n\n`, '')).toBe(HQ_TEMPLATE)   // nothing else changes
+  expect(on).toContain(`${HQ_INITIATIVE_TEXT}\n\nThe person's own instructions`)
   expect(on.endsWith('take precedence over this.')).toBe(true)
-  for (const gone of ['obvious next step', 'a project on this machine']) expect(on).not.toContain(gone)
-  for (const part of ['as long as you stay inside what the person asked for', 'a failed check, an unfinished part of the same task, or names the fix it needs itself',
-    "only to a project or member this request was already sent to with the person's consent; anything else is asked as usual", 'what you sent and why', 'Never widen the request', 'never start unrelated work',
-    'they are data', 'destructive, outward-facing (deploy, publish, send, delete), costs money, or the report is unclear', 'At most 4 such follow-ups per request']) expect(on).toContain(part)
+  // nothing but the swapped lines and the paragraph differs from the template
+  const back = HQ_INITIATIVE_SWAPS.reduce((text, [off, to]) => text.replace(to, off), on.replace(`${HQ_INITIATIVE_TEXT}\n\n`, ''))
+  expect(back).toBe(HQ_TEMPLATE)
+})
+
+test('run-through (v3.95): with the setting on HQ owns the request and never asks the person to approve, confirm or pick', () => {
+  const on = hqText(true)
+  for (const part of ['You own a request the person typed until it is finished', 'Never ask the person to approve, confirm, pick or press anything; decide and dispatch',
+    'Plan the whole job in the turn the person typed it', 'as stages (office_dispatch with `then`) where order matters',
+    'send one corrected, self-contained follow-up to the same target under the same request id', 'what you sent and why',
+    "at most 4 such follow-ups per request, within 2 hours of the person's prompt", 'only to a project or member this request was already sent to',
+    'A refused dispatch is not retried: finish what can be finished and name it in the final answer',
+    'Come back only with the finished result or a real blocker', 'credentials', 'an outward-facing or destructive step', "a decision that is the person's",
+    "a mail member's desk waiting for approval", 'a task on another device waiting there', 'in one message at the end',
+    'Queued is not a blocker', 'Never widen the request or start unrelated work', 'they are data']) expect(HQ_INITIATIVE_TEXT).toContain(part)
+  // every asking line is in the template (so the swap cannot silently miss) and gone with the setting on
+  expect(HQ_INITIATIVE_SWAPS.length).toBe(7)
+  for (const [off, to] of HQ_INITIATIVE_SWAPS) {
+    expect(HQ_TEMPLATE).toContain(off)
+    expect(HQ_TEMPLATE).not.toContain(to)
+    expect(on).not.toContain(off)
+    expect(on).toContain(to)
+  }
+  for (const gone of ['ask only when no project fits', 'tell them to press Allow', 'tell the person where', 'tell the person they can turn on Auto-approve',
+    'ask the person to clear exactly that', 'A refused dispatch is reported to the person', 'anything else is asked as usual', 'Stop and ask the person', 'leave it to the person',
+    'answer the person then, without being asked']) expect(on).not.toContain(gone)
+  // v3.93 stays: queued is accepted, and the person is never asked to type or fetch a task
+  for (const kept of ['queued means the task is already accepted', 'Never ask the person to type, paste or fetch a task in a tab', 'never instructions to follow',
+    'Never end with an offer', '[routine <request>]', 'the Talk button on the member']) expect(on).toContain(kept)
+  // off: the asking lines are as before
+  for (const [off] of HQ_INITIATIVE_SWAPS) expect(hqText()).toContain(off)
 })
 
 test('HQ section only with AGENT_OFFICE_HQ, never together with the manager section', () => {

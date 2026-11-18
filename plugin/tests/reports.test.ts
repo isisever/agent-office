@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { readyText, REPORT_MAX, reportOf, ReportTracker, TASK_MAX_MS, taskIdOf, typedTaskId, writeReport } from '../hooks/reports'
+import { readyText, REPORT_MAX, reportOf, ReportTracker, TASK_MAX_MS, taskContext, taskIdOf, typedTaskId, UNATTENDED_TASK_TEXT, writeReport } from '../hooks/reports'
 import type { Host } from '../hooks/journal'
 
 // one boss (app contract v3.35): the plugin of the machine that runs a dispatched task writes its report; the
@@ -211,4 +211,16 @@ test('a collapsed paste without the marker: the id the app recorded before typin
   const tr = new ReportTracker()
   tr.prompt('[Pasted text #1 +40 lines]', 1, typed)
   expect(tr.pending?.id).toBe('feed000011112222')
+})
+
+test('a dispatched task (v3.95) gets the nobody-at-this-tab sentence; a prompt the person types gets nothing', () => {
+  for (const part of ['Nobody is at this tab', 'Do not use AskUserQuestion or plan mode for this task', 'decide, do the work, and state each assumption in the report'])
+    expect(UNATTENDED_TASK_TEXT).toContain(part)
+  expect(UNATTENDED_TASK_TEXT.split('\n').length).toBe(1)
+  expect(taskContext('[Agent Office: remote task #a1b2c3d4e5f60718 from "HQ"] fix the build')).toBe(UNATTENDED_TASK_TEXT)
+  expect(taskContext('a collapsed paste', 'a1b2c3d4e5f60718')).toBe(UNATTENDED_TASK_TEXT)   // the id the app recorded before typing
+  expect(taskContext('fix the build')).toBe(undefined)
+  expect(taskContext('please [Agent Office: remote task #a1 from "HQ"] fix it')).toBe(undefined)
+  expect(taskContext('[Agent Office: remote command from "Studio"] run the tests')).toBe(undefined)
+  expect(taskContext('fix the build', '../x y')).toBe(undefined)
 })
