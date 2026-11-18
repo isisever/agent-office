@@ -448,10 +448,38 @@ function waitFields(w) {
   return { waiting: w.state, note: `Accepted. It will be typed into the "${tab}" tab by itself ${WAIT_WHEN[w.state]}; nothing for the person to type or fetch.${ahead}` };
 }
 
+/** v3.96 what HQ is told about a task on a paired device that waits: `waiting` ('offline' | 'sending' | 'paced' | a
+ *  WAIT_STATES value reported by that machine | 'needs-approval') and one sentence. `t` is the row ({ machine,
+ *  machineName, project, status, reason }), `w` its entry of main's hqWaits() when there is one. A local row, a row
+ *  that does not wait or one whose reason is not known → {}. Names come from a peer: cleaned, quotes removed. */
+const REMOTE_WHEN = {
+  ready: 'in a moment',
+  busy: 'when that tab is free (it is in a turn, has agents running or is still loading)',
+  starting: 'when that tab has finished starting',
+  asleep: 'once that tab is awake on that machine (it is asleep now)',
+  'not-running': 'once that tab is running on that machine (it is not running now)',
+};
+function remoteWaitFields(t, w) {
+  if (!isObj(t) || !t.machine || t.machine === 'self') return {};
+  const name = (v, fallback) => line(v, 64).replace(/["`]/g, '') || fallback;
+  const m = name(t.machineName, 'the other machine');
+  const p = name(t.project, 'project');
+  if (t.status === 'needs-approval') return { waiting: 'needs-approval', note: `The task is on "${m}", where the "${p}" tab shows a permission prompt: only the person at that machine can answer it. It cannot be answered from this machine.` };
+  if (t.status !== 'queued') return {};
+  const state = isObj(w) && isStr(w.state) ? w.state : t.reason === 'offline' || t.reason === 'paced' ? t.reason : '';
+  const self = 'nothing for the person to type or fetch';
+  if (state === 'offline') return { waiting: 'offline', note: `Accepted. "${m}" is offline: the task is held in this machine's outbox and is sent by itself when that machine connects; ${self}.` };
+  if (state === 'sending') return { waiting: 'sending', note: `Accepted. "${m}" is connected and the task is being sent to it by itself; ${self}.` };
+  if (state === 'paced') return { waiting: 'paced', note: `Accepted. Tasks to "${m}" are sent a few at a time: this one is held on this machine and is sent by itself shortly; ${self}.` };
+  if (!WAIT_STATES.includes(state)) return {};
+  const ahead = w.pos > 1 ? ` ${w.pos - 1} earlier task(s) in that tab's queue go first.` : '';
+  return { waiting: state, note: `Accepted. It is queued on "${m}" and will be typed into the "${p}" tab there by itself ${REMOTE_WHEN[state]}; ${self}.${ahead}` };
+}
+
 /** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string, waits?: Record<string, any> }} [o] `waits` (v3.93): main's hqWaits() */
 const boardView = (board, { request = '', status = '', waits = {} } = {}) => board.tasks
   .filter((t) => (!request || t.request === request) && (!status || t.status === status)).slice(0, 50)
-  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), ...(t.byInitiative ? { byInitiative: true } : {}), ...(t.personPrompted ? { personPrompted: true, note: PERSON_PROMPTED_NOTE } : {}), ...(t.status === 'queued' ? waitFields(waits[t.id]) : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
+  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), ...(t.byInitiative ? { byInitiative: true } : {}), ...(t.personPrompted ? { personPrompted: true, note: PERSON_PROMPTED_NOTE } : {}), ...(t.status === 'queued' ? waitFields(waits[t.id]) : {}), ...remoteWaitFields(t, waits[t.id]), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
 
 // --- paired devices: dispatcher-side pacing (the receiver allows a burst of 3, one per 10 s) and the peer cache
 function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {
@@ -471,7 +499,31 @@ function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {
     get size() { return held.length; },
   };
 }
-/** The peer cache (names and ids only): updated from the live view, kept when a device goes offline. */
+/** v3.96 one project of a paired device as the peer cache keeps it and office_machines returns it. Everything here
+ *  came from a peer: ids and names are cleaned, the rest is kept only when it is one of the known values. `cat` is the
+ *  project's row of that device's catalog (null: live, catalog not shared → no state, no account label); left out, `p`
+ *  is a cached row and is read as it is. A project that is not running has no `status` (its snapshot says idle). */
+const PEER_STATES = ['running', 'asleep', 'stopped'];
+const PEER_STATUS = ['idle', 'working', 'approval'];
+const PEER_ENGINES = ['claude', 'agy', 'commandcode', 'opencode'];
+function peerProject(p, cat, asOf) {
+  const src = cat === undefined ? p : cat || {};
+  const state = PEER_STATES.includes(src.state) ? src.state : '';
+  const engine = [src.engine, p.engine].find((e) => PEER_ENGINES.includes(e)) || '';
+  const account = line(cat === undefined ? p.account : src.accountLabel, 40);
+  const status = PEER_STATUS.includes(p.status) && (!state || state === 'running') ? p.status : '';
+  const at = Number.isFinite(asOf) && asOf > 0 ? Math.floor(asOf) : 0;
+  return { id: line(p.id, 64), name: line(p.name, 64), ...(state ? { state } : {}), ...(status ? { status } : {}), ...(engine ? { engine } : {}), ...(account ? { account } : {}), asOf: at };
+}
+const peerProjects = (list, catalog, asOf) => {
+  const cat = Array.isArray(catalog) ? new Map(catalog.filter(isObj).map((c) => [c.id, c])) : null;
+  return (Array.isArray(list) ? list : []).filter((p) => isObj(p) && isStr(p.id)).slice(0, 100)
+    .map((p) => (catalog === undefined ? peerProject(p, undefined, Number.isFinite(p.asOf) && p.asOf > 0 ? p.asOf : asOf) : peerProject(p, cat?.get(p.id) || null, asOf)));
+};
+/** The peer cache: updated from the live view, kept when a device goes offline. v3.96: besides names and ids it keeps
+ *  each project's last-known state, status, engine and account label (state and label only while that device shares
+ *  its catalog) and `asOf`, the time of that data. A device entry: `projects` (its snapshot), `catalog` (array or
+ *  null), `at` (when the snapshot arrived). Bounded: 100 projects per device, paired devices only. */
 function mergePeerCache(cache, devices, now = Date.now()) {
   const out = {};
   for (const dv of devices || []) {
@@ -482,10 +534,20 @@ function mergePeerCache(cache, devices, now = Date.now()) {
       name: line(dv.name || old?.name || '?', 64),
       lastSeen: dv.online ? now : old?.lastSeen || 0,
       manage: Boolean(dv.manage),
-      projects: (dv.online && live ? live : old?.projects || []).filter((p) => isStr(p.id)).slice(0, 100).map((p) => ({ id: line(p.id, 64), name: line(p.name, 64) })),
+      // catalog fields (state, account label) are last-known only while the device is offline: online and not
+      // sharing its catalog (any more) drops them at once, also before its next snapshot arrives
+      projects: dv.online && live ? peerProjects(live, dv.catalog || null, dv.at || now)
+        : peerProjects(old?.projects, undefined, old?.lastSeen || 0).map((p) => { if (!dv.online || Array.isArray(dv.catalog)) return p; const { state: _s, account: _a, ...rest } = p; return rest; }),
     };
   }
   return out;
+}
+/** v3.96 office_machines: the projects of one paired device. Online: its snapshot (none yet → []) with its catalog;
+ *  offline: the peer cache's last-known rows with their `asOf`. `openTasks` counts the open rows of this machine's
+ *  board for that device and project. */
+function remoteProjects({ pub, online, live = null, catalog = null, at = 0, cached = null, tasks = [], now = Date.now() }) {
+  const list = online ? (Array.isArray(live) ? peerProjects(live, catalog || null, at || now) : []) : peerProjects(cached?.projects, undefined, cached?.lastSeen || 0);
+  return list.map((p) => ({ id: p.id, key: remoteKey(pub, p.id), ...p, openTasks: (tasks || []).filter((t) => OPEN(t) && t.machine === pub && t.projectId === p.id).length }));
 }
 const remoteKey = (pub, id) => `${pub}:${id}`;
 const parseRemoteKey = (key) => { const m = /^([0-9a-f]{16,128}):([A-Za-z0-9_.-]{1,64})$/.exec(String(key || '')); return m ? { pub: m[1], id: m[2] } : null; };
@@ -566,5 +628,5 @@ module.exports = {
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
   redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, offersAlways, allowAlways, initiativeFor, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
-  taskFile, requestFile, reportMd, boardView, createPacer, mergePeerCache, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
+  taskFile, requestFile, reportMd, boardView, remoteWaitFields, createPacer, mergePeerCache, remoteProjects, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
 };
