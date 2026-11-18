@@ -64,3 +64,14 @@ test('stage-blocked rows (v3.79): a fixed prompt from checked ids and reasons; a
   expect(blockedText({ kind: 'request-done', request: 'r1', n: 1 }, wrap)).toBe(undefined)
   expect(blockedText(null, wrap)).toBe(undefined)
 })
+
+test('queued (v3.93): accepted and typed by the app; HQ never asks the person to type or fetch a task', () => {
+  const text = hqText()
+  for (const part of ['queued means the task is already accepted', 'the app types it into the target tab by itself when that tab is free',
+    'Never ask the person to type, paste or fetch a task in a tab', 'there is no "take task from the board" flow', 'Relay the wait reason instead',
+    'shows a permission prompt or holds unsent text, ask the person to clear exactly that in the named tab']) expect(text).toContain(part)
+  // the running-task line offers the follow-up; typing in the tab is the person's own option, never a request
+  expect(text).not.toContain("either they type in that session's tab")
+  expect(text).toContain('never something you request and never a way to deliver or start a task')
+  expect(hqText(true)).toContain('queued means the task is already accepted')
+})

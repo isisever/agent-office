@@ -409,11 +409,39 @@ function reportMd(task, report) {
  *  whether a gone tab is asleep → 'ready' | 'busy' | 'starting' | 'asleep' | 'not-running'. */
 const WAIT_STATES = ['ready', 'busy', 'starting', 'asleep', 'not-running'];
 const waitState = (tab, isAsleep) => (tab === 'ready' || tab === 'busy' || tab === 'starting' ? tab : isAsleep ? 'asleep' : 'not-running');
+/** v3.93 what HQ is told about a queued task of this machine: `waiting` (a WAIT_STATES value), `blockedBy` when only
+ *  the person can clear the wait (WAIT_BLOCKS: a permission prompt in that tab, unsent text in its input) and one
+ *  sentence. `w` is an entry of main's hqWaits(); an entry without `tab` (a task on a paired device) or none → {}. */
+const WAIT_BLOCKS = ['permission', 'draft'];
+/** v3.93 the wait state plus, when busy, what only the person can clear (permission first). Pure; `tab` is the pump's view. */
+const waitEntry = (tab, isAsleep, permission, draft) => {
+  const state = waitState(tab, isAsleep);
+  return { state, blockedBy: state !== 'busy' ? '' : permission ? 'permission' : draft ? 'draft' : '' };
+};
+const WAIT_WHEN = {
+  ready: 'in a moment',
+  busy: 'when that tab is free (it is in a turn, has agents running or is still loading)',
+  starting: 'when that tab has finished starting',
+  asleep: 'when that tab is awake (the app is waking it)',
+  'not-running': 'when that tab is up (the app is starting it)',
+};
+const WAIT_ASK = {
+  permission: 'shows a permission prompt that only the person can answer: ask them to answer it in that tab',
+  draft: 'has unsent text in its input, which may be queued behind a running turn: ask them to clear it in that tab, or to send it once that session is done',
+};
+function waitFields(w) {
+  if (!w || !w.tab || !WAIT_STATES.includes(w.state)) return {};
+  const tab = line(w.tab, 96).replace(/["`]/g, '');
+  const ahead = w.pos > 1 ? ` ${w.pos - 1} earlier task(s) in that tab's queue go first.` : '';
+  const blockedBy = w.state === 'busy' && WAIT_BLOCKS.includes(w.blockedBy) ? w.blockedBy : '';
+  if (blockedBy) return { waiting: w.state, blockedBy, note: `Accepted. The "${tab}" tab ${WAIT_ASK[blockedBy]}. The app then types the task by itself; the person must not type or fetch the task.${ahead}` };
+  return { waiting: w.state, note: `Accepted. It will be typed into the "${tab}" tab by itself ${WAIT_WHEN[w.state]}; nothing for the person to type or fetch.${ahead}` };
+}
 
-/** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string }} [o] */
-const boardView = (board, { request = '', status = '' } = {}) => board.tasks
+/** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string, waits?: Record<string, any> }} [o] `waits` (v3.93): main's hqWaits() */
+const boardView = (board, { request = '', status = '', waits = {} } = {}) => board.tasks
   .filter((t) => (!request || t.request === request) && (!status || t.status === status)).slice(0, 50)
-  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), ...(t.byInitiative ? { byInitiative: true } : {}), ...(t.personPrompted ? { personPrompted: true, note: PERSON_PROMPTED_NOTE } : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
+  .map((t) => ({ id: t.id, request: t.request, title: line(t.title, TITLE_MAX), machine: t.machine === 'self' ? 'this machine' : line(t.machineName, 64), project: line(t.project, 64), status: t.status, ...(t.reason ? { reason: t.reason } : {}), ...(t.after ? { after: t.after } : {}), ...(t.closedByHq ? { closedByHq: true } : {}), ...(t.byInitiative ? { byInitiative: true } : {}), ...(t.personPrompted ? { personPrompted: true, note: PERSON_PROMPTED_NOTE } : {}), ...(t.status === 'queued' ? waitFields(waits[t.id]) : {}), commits: t.commits.length, prs: t.prs, ...(t.report ? { report: t.report } : {}) }));
 
 // --- paired devices: dispatcher-side pacing (the receiver allows a burst of 3, one per 10 s) and the peer cache
 function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {
@@ -522,7 +550,7 @@ module.exports = {
   PERSON_PROMPTED_NOTE,
   TASK_OPS, taskOpPlan, removeTask, retitleTask, closeByHq, removedOf,
   hqBossModel, boardOfRemote, remoteOpen,
-  waitState, WAIT_STATES,
+  waitState, waitEntry, WAIT_STATES, WAIT_BLOCKS, waitFields,
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, MAX_INITIATIVE, INITIATIVE_MS, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
