@@ -1285,3 +1285,31 @@ test('v3.96 remoteWaitFields: why a task on a paired device waits, in one senten
   assert.match(d, /const remoteWait = \(r\) => HQ\.remoteWaitFields\(\{ machine: pub, machineName: dv\.name, project: pname, status: r\.status, reason: r\.reason \}, hqWaits\(\)\[r\.id\]\)/);
   assert.equal(d.split('...remoteWait(').length - 1, 3);
 });
+
+test('v3.96 review: a task held in the outbox or being sent says why, in office_reports rows too', () => {
+  const pub = 'ab'.repeat(16);
+  const x = { pub, machine: 'Studio', project: 'web' };
+  const held = HQ.reportWaitFields(x, 'held', 'offline', undefined);
+  assert.equal(held.waiting, 'offline');
+  assert.match(held.note, /offline: the task is held in this machine's outbox/);
+  assert.equal(HQ.reportWaitFields(x, 'sent', '', undefined).waiting, 'sending');
+  assert.equal(HQ.reportWaitFields(x, 'sent', '', { state: 'busy', pos: 1 }).waiting, 'busy');   // the other machine's own report wins
+  assert.equal(HQ.reportWaitFields(x, 'queued', '', { state: 'ready', pos: 1 }).waiting, 'ready');
+  assert.equal(HQ.reportWaitFields(x, 'needs-approval', '', undefined).waiting, 'needs-approval');
+  assert.deepEqual(HQ.reportWaitFields({ pub: 'self', machine: 'x', project: 'p' }, 'held', 'offline'), {});
+  assert.deepEqual(HQ.reportWaitFields(x, 'reported', '', undefined), {});
+});
+
+test('v3.96 review: openTasks counts a waiting remote stage addressed by name (empty projectId)', () => {
+  const pub = 'cd'.repeat(16);
+  const live = [{ id: 'p1', name: 'Web App', status: 'idle' }, { id: 'p2', name: 'api', status: 'idle' }];
+  const tasks = [
+    { id: 't1', machine: pub, projectId: '', project: 'web  app', status: 'waiting' },
+    { id: 't2', machine: pub, projectId: 'p2', project: 'api', status: 'queued' },
+    { id: 't3', machine: 'other', projectId: '', project: 'Web App', status: 'waiting' },
+    { id: 't4', machine: pub, projectId: 'p9', project: 'Web App', status: 'queued' },
+  ];
+  const r = HQ.remoteProjects({ pub, online: true, live, catalog: null, at: 1, tasks, now: 2 });
+  assert.equal(r[0].openTasks, 1);
+  assert.equal(r[1].openTasks, 1);
+});

@@ -465,8 +465,10 @@ function remoteWaitFields(t, w) {
   const m = name(t.machineName, 'the other machine');
   const p = name(t.project, 'project');
   if (t.status === 'needs-approval') return { waiting: 'needs-approval', note: `The task is on "${m}", where the "${p}" tab shows a permission prompt: only the person at that machine can answer it. It cannot be answered from this machine.` };
-  if (t.status !== 'queued') return {};
-  const state = isObj(w) && isStr(w.state) ? w.state : t.reason === 'offline' || t.reason === 'paced' ? t.reason : '';
+  // the link record's own statuses: `held` (kept in the outbox, the machine is offline) and `sent` (being sent to it)
+  if (t.status !== 'queued' && t.status !== 'held' && t.status !== 'sent') return {};
+  const own = t.status === 'held' ? 'offline' : t.status === 'sent' ? 'sending' : '';
+  const state = isObj(w) && isStr(w.state) ? w.state : own || (t.reason === 'offline' || t.reason === 'paced' ? t.reason : '');
   const self = 'nothing for the person to type or fetch';
   if (state === 'offline') return { waiting: 'offline', note: `Accepted. "${m}" is offline: the task is held in this machine's outbox and is sent by itself when that machine connects; ${self}.` };
   if (state === 'sending') return { waiting: 'sending', note: `Accepted. "${m}" is connected and the task is being sent to it by itself; ${self}.` };
@@ -475,6 +477,10 @@ function remoteWaitFields(t, w) {
   const ahead = w.pos > 1 ? ` ${w.pos - 1} earlier task(s) in that tab's queue go first.` : '';
   return { waiting: state, note: `Accepted. It is queued on "${m}" and will be typed into the "${p}" tab there by itself ${REMOTE_WHEN[state]}; ${self}.${ahead}` };
 }
+
+/** v3.96 the wait fields of one `office_reports` row: `x` is the dispatch record ({ pub, machine, project }), `status` and
+ *  `reason` the row's resolved ones (a link record's `held` / `sent` included), `w` its hqWaits() entry. A local row → {}. */
+const reportWaitFields = (x, status, reason, w) => (x && x.pub !== 'self' ? remoteWaitFields({ machine: x.pub, machineName: x.machine, project: x.project, status, reason }, w) : {});
 
 /** @param {{ tasks: any[] }} board @param {{ request?: string, status?: string, waits?: Record<string, any> }} [o] `waits` (v3.93): main's hqWaits() */
 const boardView = (board, { request = '', status = '', waits = {} } = {}) => board.tasks
@@ -545,9 +551,10 @@ function mergePeerCache(cache, devices, now = Date.now()) {
 /** v3.96 office_machines: the projects of one paired device. Online: its snapshot (none yet → []) with its catalog;
  *  offline: the peer cache's last-known rows with their `asOf`. `openTasks` counts the open rows of this machine's
  *  board for that device and project. */
+const cleanName = (v) => line(v, 64).replace(/["`]/g, '').toLowerCase();
 function remoteProjects({ pub, online, live = null, catalog = null, at = 0, cached = null, tasks = [], now = Date.now() }) {
   const list = online ? (Array.isArray(live) ? peerProjects(live, catalog || null, at || now) : []) : peerProjects(cached?.projects, undefined, cached?.lastSeen || 0);
-  return list.map((p) => ({ id: p.id, key: remoteKey(pub, p.id), ...p, openTasks: (tasks || []).filter((t) => OPEN(t) && t.machine === pub && t.projectId === p.id).length }));
+  return list.map((p) => ({ id: p.id, key: remoteKey(pub, p.id), ...p, openTasks: (tasks || []).filter((t) => OPEN(t) && t.machine === pub && (t.projectId === p.id || (!t.projectId && cleanName(t.project) === cleanName(p.name)))).length }));
 }
 const remoteKey = (pub, id) => `${pub}:${id}`;
 const parseRemoteKey = (key) => { const m = /^([0-9a-f]{16,128}):([A-Za-z0-9_.-]{1,64})$/.exec(String(key || '')); return m ? { pub: m[1], id: m[2] } : null; };
@@ -628,5 +635,5 @@ module.exports = {
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
   redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, offersAlways, allowAlways, initiativeFor, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
-  taskFile, requestFile, reportMd, boardView, remoteWaitFields, createPacer, mergePeerCache, remoteProjects, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
+  taskFile, requestFile, reportMd, boardView, remoteWaitFields, reportWaitFields, createPacer, mergePeerCache, remoteProjects, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
 };

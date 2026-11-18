@@ -1890,7 +1890,7 @@ function officeReports(args) {
     const status = x.report ? (x.report.partial ? 'partial' : 'reported') : o?.status || live?.status || x.status;
     const reason = x.report ? '' : o ? o.reason : live?.reason || x.reason;
     const member = live?.staff ? `${x.project} · ${live.staff}` : '';
-    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), ...(member ? { tab: member } : {}), at: x.at, ...(x.report?.personPrompted === true ? { note: HQ.PERSON_PROMPTED_NOTE } : {}), ...(status === 'queued' && x.pub === 'self' ? HQ.waitFields(waits[x.id]) : {}), ...(x.pub !== 'self' ? HQ.remoteWaitFields({ machine: x.pub, machineName: x.machine, project: x.project, status, reason }, waits[x.id]) : {}), ...(x.report ? { report: x.report } : {}) };
+    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), ...(member ? { tab: member } : {}), at: x.at, ...(x.report?.personPrompted === true ? { note: HQ.PERSON_PROMPTED_NOTE } : {}), ...(status === 'queued' && x.pub === 'self' ? HQ.waitFields(waits[x.id]) : {}), ...HQ.reportWaitFields(x, status, reason, waits[x.id]), ...(x.report ? { report: x.report } : {}) };
   });
   const all = [...loadDispatches().values()].sort((x, y) => y.at - x.at);
   const list = args.id ? all.filter((x) => x.id === args.id) : all.slice(0, 10);
