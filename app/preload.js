@@ -178,6 +178,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setName: (name) => ipcRenderer.invoke('link:setName', name),
     rename: (id, name) => ipcRenderer.invoke('link:rename', id, name),
     setAllow: (id, on) => ipcRenderer.invoke('link:setAllow', id, on),
+    setTrusted: (id, on) => ipcRenderer.invoke('link:setTrusted', id, on),   // v3.97: asks on this machine before it turns on
     remove: (id) => ipcRenderer.invoke('link:remove', id),
     setAllowHandoff: (id, on) => ipcRenderer.invoke('link:setAllowHandoff', id, on),   // v3.29
     setAllowManage: (id, on) => ipcRenderer.invoke('link:setAllowManage', id, on),     // v3.31: catalog, later project actions

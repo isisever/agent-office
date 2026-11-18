@@ -11,6 +11,7 @@ const { createLoginRelay } = require('./login-relay.js');
 
 const QUEUE_MAX = 5;                    // waiting commands per project
 const QUEUE_TTL_MS = 30 * 60 * 1000;    // a command that waited this long is dropped ('expired')
+const UNATTENDED = 'trusted-unattended';   // v3.97 commands.log marker: taken for a project that answers or skips its prompts, because the device is trusted
 const SELF = 'self';                    // v3.35 the device of a task dispatched to a project of this machine
 const REPORT_POLL_MS = 5000;
 const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/starts its gone boss at most this often
@@ -26,6 +27,7 @@ const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks be
  *   projects: () => { id: string, name: string, engine: string }[],
  *   tabState: (projectId: string) => 'ready' | 'busy' | 'starting' | 'gone', type: (projectId: string, text: string, o?: { taskId?: string }) => boolean | void,   // false: not typed
  *   loginOf?: (projectId: string) => 'in' | 'out' | 'unknown', reportsDir?: string,
+ *   answersPrompts?: (projectId: string) => boolean, confirmTrusted?: (device: string) => Promise<boolean>,   // v3.97 the dialog on this machine
  *   onReport?: (r: { id: string, machine: string, pub: string, report: any }) => void,
  *   asleep?: (projectId: string) => boolean, attentionOf?: (projectId: string) => string,   // v3.48 why a device's task waits / needs approval
  *   manage?: (op: 'start' | 'wake' | 'sleep' | 'stop', projectId: string) => { ok: boolean, reason?: string } | Promise<{ ok: boolean, reason?: string }>,
@@ -73,14 +75,15 @@ function setupLink(d) {
   function loadKeys() {
     if (!fs.existsSync(keysFile)) {
       const kp = require('hyperdht').keyPair();
-      return { publicKey: kp.publicKey, secretKey: kp.secretKey, secrets: {}, fresh: true };
+      return { publicKey: kp.publicKey, secretKey: kp.secretKey, secrets: {}, trusted: [], fresh: true };
     }
     const k = JSON.parse(d.safeStorage.decryptString(fs.readFileSync(keysFile)));
-    return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {} };
+    return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {}, trusted: k.trusted };
   }
   function save({ name, devices, secrets }) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const keys = { publicKey: link.pub, secretKey: C.hex(link.keyPair.secretKey), secrets };
+    // v3.97 the trusted device keys are sealed here too: devices.json alone (a plain file) cannot turn the flag on
+    const keys = { publicKey: link.pub, secretKey: C.hex(link.keyPair.secretKey), secrets, trusted: C.trustedKeys(devices) };
     fs.writeFileSync(keysFile, d.safeStorage.encryptString(JSON.stringify(keys)), { mode: 0o600 });
     fs.writeFileSync(devicesFile, JSON.stringify({ name, devices }, null, 2), { mode: 0o600 });
   }
@@ -91,7 +94,7 @@ function setupLink(d) {
     try {
       const keys = loadKeys();
       const saved = readJson(devicesFile) || {};
-      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: saved.devices, secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), tasksFile: path.join(dir, 'tasks-out.json'), seenFile: path.join(dir, 'tasks-seen.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
+      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: C.sealTrusted(saved.devices, keys.trusted), secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), tasksFile: path.join(dir, 'tasks-out.json'), seenFile: path.join(dir, 'tasks-seen.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
       link.on('persist', save);
       if (keys.fresh) link.persist();
       link.on('change', push);
@@ -312,6 +315,10 @@ function setupLink(d) {
     }
   }
 
+  /** v3.97 Is this a device's entry for a project that answers or skips its permission prompts right now? */
+  const unattendedFor = (device, project) => device.pub !== SELF && Boolean(d.answersPrompts?.(project));
+  /** v3.97 "This is my own computer" (and "Allow commands") is on for that device, read at the moment of the check. */
+  const ownDevice = (device) => Boolean(link) && C.mayRunUnattended(link.devices, link.secrets, device.pub);
   // Claude Code projects only: their busy state is known (pid file) and their prompt takes a bracketed paste.
   function onCommand({ device, id, project, text, reply, report = false, ttl = 0, revive = false }) {
     // v3.83 a staff member's desk (a tab id `<project>:<n>`) is a target for this machine's own tasks only (HQ): paired
@@ -323,12 +330,14 @@ function setupLink(d) {
     if (report && d.loginOf?.(project) === 'out') return done('rejected', 'logged-out');   // v3.35
     // v3.71/v3.72: a tab that answers or skips its permission prompts never takes another device's text (v3.48: the
     // runner never answers a prompt for a device). This machine's own tasks (SELF: HQ, routines, a local boss) still run.
-    if (device.pub !== SELF && d.answersPrompts?.(project)) return done('rejected', 'not-allowed');
+    // v3.97: a device the person marked as their own computer is taken; the project's own unattended mode then applies.
+    const unattended = unattendedFor(device, project);
+    if (unattended && !ownDevice(device)) return done('rejected', 'not-allowed');
     const q = queue.get(project) || [];
     if (q.length >= QUEUE_MAX) return done('rejected', 'queue-full');
     q.push({ id, device, text, at: Date.now(), reply, report, ttl, revive: Boolean(revive) && device.pub === SELF });
     queue.set(project, q);
-    done('queued');
+    if (unattended) { log(device.name, p.name, text, `${report ? 'task:' : ''}queued:${UNATTENDED}`); reply('queued'); } else done('queued');
     pump();
   }
   const reviveBudget = new Map();   // project -> { n tries, at last try, since first seen gone }
@@ -344,6 +353,8 @@ function setupLink(d) {
       if (!ok) { if (remote) link?.dropReport(c.id); return false; }
       if (!remote) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); }
     } else if (put(C.markedCommand(c.device.name, c.text), {}) !== true) return false;
+    // v3.97 it went into a tab that answers or skips its prompts (only a trusted device's entry gets this far): logged as such
+    if (unattendedFor(c.device, project)) log(c.device.name, d.projects().find((x) => x.id === project)?.name || project, c.text, `${c.report ? 'task:' : ''}delivered:${UNATTENDED}`);
     c.reply('delivered');
     return true;
   }
@@ -355,7 +366,8 @@ function setupLink(d) {
         if (c.device.pub !== SELF && !link?.devices.some((x) => x.pub === c.device.pub)) { q.shift(); continue; }   // removed meanwhile
         if (now - c.at > ttlOf(c)) { q.shift(); c.reply('rejected', 'expired'); continue; }
         // v3.71/v3.72: the switch was turned on while a device's command waited here: refused now, never typed
-        if (c.device.pub !== SELF && d.answersPrompts?.(project)) {
+        // v3.97: unless that device is trusted now (turning "This is my own computer" off while it waits refuses it here)
+        if (unattendedFor(c.device, project) && !ownDevice(c.device)) {
           q.shift();
           log(c.device.name, d.projects().find((x) => x.id === project)?.name || project, c.text, `${c.report ? 'task:' : ''}rejected:not-allowed`);
           c.reply('rejected', 'not-allowed');
@@ -559,6 +571,16 @@ function setupLink(d) {
   ipc('link:setName', (l, name) => l.setName(String(name || '')));
   ipc('link:rename', (l, id, name) => l.rename(String(id), String(name || '')));
   ipc('link:setAllow', (l, id, on) => l.setAllow(String(id), on === true));
+  // v3.97 "This is my own computer": the only setter. Turning it on needs the confirmation dialog on this machine
+  // (no dialog wired = it stays off) and "Allow commands" on (it does nothing without it); the device must still be
+  // the same pairing when the person answers. Link.persist then writes it to devices.json and to the sealed set.
+  ipc('link:setTrusted', async (l, id, on) => {
+    const dev = l.devices.find((x) => x.pub === String(id));
+    if (!dev) return;
+    if (on !== true) return l.setTrusted(dev.pub, false);
+    if (dev.trusted || !dev.allowCommands || !d.confirmTrusted || (await d.confirmTrusted(dev.name)) !== true) return;
+    if (l.devices.some((x) => x.pub === dev.pub && x.addedAt === dev.addedAt)) l.setTrusted(dev.pub, true);
+  });
   ipc('link:remove', (l, id) => { for (const k of [...opStatus.keys()]) if (k.startsWith(`${id}/`)) opStatus.delete(k); return l.remove(String(id)); });
   ipc('link:projOp', (_l, id, project, op) => { projOp(String(id), String(project), String(op)); });   // v3.33: the outcome comes in a later view
   ipc('link:setAllowHandoff', (l, id, on) => l.setAllowHandoff(String(id), on === true));

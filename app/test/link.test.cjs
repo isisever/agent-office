@@ -1166,3 +1166,74 @@ test('owesReportFor counts an entry only while young (4 h TTL + 30 min)', (t) =>
   assert.equal(b.owesReportFor('projX'), false);
   assert.equal(b.owesReport('o1'), true);   // still tracked for delivery, just no longer blocking depth
 });
+
+test('v3.97 trusted: off unless exactly true, needs "Allow commands" and a stored secret; res carries it as an optional boolean', () => {
+  const pub = 'ab'.repeat(32);
+  const [dev] = C.normalizeDevices([{ pub, name: 'L', allowCommands: true, trusted: 'yes' }]);
+  assert.equal(dev.trusted, false);
+  assert.equal(C.normalizeDevices([{ pub, name: 'L' }])[0].trusted, false);
+  assert.equal(C.normalizeDevices([{ pub, name: 'L', trusted: true }])[0].trusted, true);
+  const secrets = { [pub]: 'cd'.repeat(32) };
+  assert.equal(C.mayRunUnattended([dev], secrets, pub), false);
+  assert.equal(C.mayRunUnattended([{ ...dev, trusted: true }], secrets, pub), true);
+  assert.equal(C.mayRunUnattended([{ ...dev, trusted: true, allowCommands: false }], secrets, pub), false);
+  assert.equal(C.mayRunUnattended([{ ...dev, trusted: true }], {}, pub), false);   // removed (no secret): no rights
+  const res = { at: 1, mem: { total: 8, free: 4 }, load1: 1, cpus: 4 };
+  assert.equal('trusted' in C.validateMessage({ t: 'res', res }), false);            // an older peer's res
+  assert.equal(C.validateMessage({ t: 'res', res, trusted: true }).trusted, true);
+  assert.equal(C.validateMessage({ t: 'res', res, trusted: false }).trusted, false);
+  assert.equal('trusted' in C.validateMessage({ t: 'res', res, trusted: 'yes' }), false);
+  // no other message keeps such a field
+  for (const m of [{ t: 'hello', v: 2, name: 'x', caps: C.OUR_CAPS, trusted: true, allowCommands: true }, { t: 'ping', trusted: true },
+    { t: 'catalog', catalog: { projects: [], trusted: true }, trusted: true }]) {
+    assert.equal(JSON.stringify(C.validateMessage(m)).includes('trusted'), false, m.t);
+  }
+  assert.equal(C.validateMessage({ t: 'set-trusted', on: true }), null);
+  assert.equal(C.validateMessage({ t: 'trusted', trusted: true }), null);
+});
+
+test('integration v3.97: the sender learns whether it is trusted there; no message from it sets the flag; removal clears it', { timeout: 60000 }, async (t) => {
+  const { a, b, until } = await pairPair(t);
+  const RES2 = { at: 1700000000000, mem: { total: 16e9, free: 8e9 }, load1: 1.5, cpus: 8, tabs: 2, agents: 1, sleeping: 0, platform: 'darwin', app: '0.14.0' };
+  assert.equal(a.view().devices[0].trustsUs, null);          // nothing heard yet
+  b.publishRes(RES2);
+  await until(() => a.view().devices[0].trustsUs === false);
+  b.setTrusted(a.pub, true);                                  // without "Allow commands" its tasks are refused anyway
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(a.view().devices[0].trustsUs, false);
+  b.setAllow(a.pub, true);
+  await until(() => a.view().devices[0].trustsUs === true);
+  assert.equal(b.view().devices[0].trusted, true);
+  b.setTrusted(a.pub, false);
+  await until(() => a.view().devices[0].trustsUs === false);
+
+  // a tries every shape over the link: b's flag for a stays off
+  const conn = a.conns.get(b.pub);
+  for (const m of [{ t: 'hello', v: 2, name: 'Studio', caps: C.OUR_CAPS, trusted: true }, { t: 'res', res: RES2, trusted: true },
+    { t: 'cmd', id: 'c1', project: 'p1', text: 'x', trusted: true }, { t: 'set-trusted', on: true }, { t: 'trusted', trusted: true }]) a.write(conn, m);
+  await until(() => b.view().devices[0].trustsUs === true);  // the res arrived (it only says what a claims about itself)
+  assert.equal(b.devices[0].trusted, false);
+  assert.equal(b.view().devices[0].trusted, false);
+  assert.equal(b.view().devices[0].online, true);            // two unknown types do not end the session
+
+  // a res without the field (an older Agent Office there): unknown again
+  b.write(b.conns.get(a.pub), { t: 'res', res: RES2 });
+  await until(() => a.view().devices[0].trustsUs === null);
+
+  b.setTrusted(a.pub, true);
+  assert.equal(b.devices[0].trusted, true);
+  await b.remove(a.pub);
+  assert.equal(b.devices.length, 0);
+  assert.equal(b.addDevice(a.pub, 'Studio', 'cd'.repeat(32)).trusted, false);
+});
+
+test('integration v3.97: an older peer (no res cap) is told nothing and reports nothing', { timeout: 60000 }, async (t) => {
+  const { a, b, got } = await pairPair(t, { v1: true });
+  a.publishRes({ at: 1700000000000, mem: { total: 16e9, free: 8e9 }, load1: 1.5, cpus: 8, tabs: 2, agents: 1, sleeping: 0, platform: 'darwin', app: '0.14.0' });
+  a.setAllow(b.pub, true);
+  a.setTrusted(b.pub, true);
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(got.includes('res'), false);
+  assert.equal(a.view().devices[0].trustsUs, null);
+  assert.equal(a.view().devices[0].trusted, true);
+});

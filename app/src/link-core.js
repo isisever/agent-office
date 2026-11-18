@@ -352,7 +352,8 @@ function validateMessage(m) {
     }
     case 'res': {
       const res = cleanRes(m.res);
-      return res ? { t: 'res', res } : null;
+      // v3.97 optional: does the sending machine run our tasks unattended (its "This is my own computer" for us)? Older peers send none.
+      return res ? { t: 'res', res, ...(typeof m.trusted === 'boolean' ? { trusted: m.trusted } : {}) } : null;
     }
     case 'catalog': {
       const catalog = cleanCatalog(m.catalog);
@@ -467,15 +468,27 @@ function encode(m) {
 
 // --- the trust list (devices.json; the secrets live apart, encrypted)
 
-/** @typedef {{ pub: string, name: string, addedAt: number, allowCommands: boolean, allowHandoff: boolean, allowManage: boolean, allowAccounts: boolean }} Device */
+/** @typedef {{ pub: string, name: string, addedAt: number, allowCommands: boolean, allowHandoff: boolean, allowManage: boolean, allowAccounts: boolean, trusted: boolean }} Device */
 function normalizeDevices(raw) {
   const out = [];
   for (const d of Array.isArray(raw) ? raw : []) {
     if (!d || !isHex(d.pub, 32) || out.some((o) => o.pub === d.pub)) continue;
     out.push({ pub: d.pub, name: deviceName(d.name), addedAt: isInt(d.addedAt) ? d.addedAt : 0, allowCommands: d.allowCommands === true, allowHandoff: d.allowHandoff === true,
-      allowManage: d.allowManage === true, allowAccounts: d.allowAccounts === true });   // v3.31, both OFF by default
+      allowManage: d.allowManage === true, allowAccounts: d.allowAccounts === true,   // v3.31, both OFF by default
+      trusted: d.trusted === true });   // v3.97 "This is my own computer": OFF by default, set only from this machine's own UI
   }
   return out;
+}
+/** v3.97 The keys of the devices with `trusted` on: what the host seals inside the keychain-encrypted keys file. */
+const trustedKeys = (devices) => devices.filter((d) => d.trusted === true).map((d) => d.pub);
+/**
+ * v3.97 The trust list as read from disk. devices.json is a plain file that anything running as this user can edit, so
+ * its `trusted` is honoured only for a key that is also in the sealed set (kept in the encrypted keys file, written
+ * only by the app). Anything else, and a sealed set that is missing or malformed, reads as off.
+ */
+function sealTrusted(raw, sealed) {
+  const ok = new Set(Array.isArray(sealed) ? sealed.filter((k) => isHex(k, 32)) : []);
+  return normalizeDevices(raw).map((d) => (d.trusted && !ok.has(d.pub) ? { ...d, trusted: false } : d));
 }
 /** The trusted device for a remote Noise key, or null. A device without a stored secret is not trusted. */
 function trusted(devices, secrets, remotePub) {
@@ -484,6 +497,9 @@ function trusted(devices, secrets, remotePub) {
 }
 /** May this device type into our tabs? Only a trusted device with the toggle on. */
 const mayCommand = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowCommands);
+/** v3.97 May a task from this device run in a project that answers or skips its permission prompts? Only a trusted
+ *  device with both "Allow commands" and "This is my own computer" on. */
+const mayRunUnattended = (devices, secrets, remotePub) => { const d = trusted(devices, secrets, remotePub); return Boolean(d?.allowCommands && d.trusted); };
 /** May this device hand us a project? Only a trusted device with "Accept handoffs" on (v3.29). */
 const mayHandoff = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowHandoff);
 /** May this device see our project catalog (and, later, manage projects)? "Allow managing projects" on (v3.31). */
@@ -525,7 +541,7 @@ module.exports = {
   makeCode, normalizeCode, pairSecrets, pairProof, proofOk, pairTopic, hex, isHex,
   cleanLine, sanitizeCommand, markedCommand, markedTask, cleanReport, fitReport, REPORT_MAX, REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK, TASK_STATES, WAIT_STATES, TASK_TTL_MAX, deviceName, RateLimiter,
   cleanSnapshot, validateMessage, validatePair, LineReader, encode,
-  normalizeDevices, trusted, mayCommand, mayHandoff, mayManage, mayAccounts, snapshotOf, snapshotFor, logEntry,
+  normalizeDevices, trustedKeys, sealTrusted, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, snapshotOf, snapshotFor, logEntry,
   cleanRes, cleanCatalog, resOf, resChanged, typingReady,
   LOGIN_HOSTS, LOGIN_REDIRECT, LOGIN_CODE_RE, LOGIN_TIMEOUT_MS, LOGIN_REASONS, loginUrlOk, loginCodeOk, stripAnsi, parseLoginOutput, cleanAccounts,
 };
