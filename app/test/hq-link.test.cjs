@@ -28,7 +28,7 @@ function world(t) {
   const make = (who, { caps = null } = {}) => {
     const me = who === 'A' ? 1 : 2;
     const other = who === 'A' ? PB : PA;
-    const l = new Link({ keyPair: kp(me), name: who === 'A' ? 'Studio' : 'Laptop', swarmFactory, now: () => clock.now, heartbeatMs: 60000,
+    const l = new Link({ confirmPair: async () => true, keyPair: kp(me), name: who === 'A' ? 'Studio' : 'Laptop', swarmFactory, now: () => clock.now, heartbeatMs: 60000,
       reportsFile: path.join(dir, who, 'reports-out.json'), tasksFile: path.join(dir, who, 'tasks-out.json'), seenFile: path.join(dir, who, 'tasks-seen.json') });
     l.devices = [{ pub: other, name: who === 'A' ? 'Laptop' : 'Studio', addedAt: 0, own: true, allowHandoff: false, allowAccounts: false }];
     l.secrets = { [other]: 'ab'.repeat(32) };
@@ -772,6 +772,7 @@ test('v3.101 migration: devices paired before become own exactly once, logged an
   // the files of an older version: no marker, every old switch off for the paired device, and an entry without a secret
   const old = keys();
   delete old.own; delete old.ownV;
+  fs.rmSync(path.join(dir, 'link', 'own.bin'));   // an older version never wrote the own record either
   fs.writeFileSync(keysFile, JSON.stringify({ ...old, secrets: { [PA]: 'cd'.repeat(32) }, trusted: [] }));
   fs.writeFileSync(devFile, JSON.stringify({ name: 'Me', devices: [{ pub: PA, name: 'Studio', addedAt: 1, allowCommands: false, allowManage: false, allowSessions: false, trusted: false },
     { pub: PB, name: 'Ghost', addedAt: 1, allowCommands: true, trusted: true }] }));
@@ -794,5 +795,82 @@ test('v3.101 migration: devices paired before become own exactly once, logged an
   assert.deepEqual(gates(w, PA), [false, false, false, false]);
   await w.handlers['link:setPaused'](null, PA, false);   // only this machine's own Devices UI resumes it
   assert.deepEqual(gates(w, PA), [true, true, true, true]);
+  await w.host.destroy();
+});
+
+test('v3.101 the own record (own.bin): a keys.bin that lost its marker restores from it and never migrates again; an unreadable record pauses every device', async (t) => {
+  const { setupLink } = require('../src/link-host.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-ownrec-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const realSwarm = Link.prototype.ensureSwarm;
+  Link.prototype.ensureSwarm = function () { return null; };   // no network
+  t.after(() => { Link.prototype.ensureSwarm = realSwarm; });
+  const realError = console.error;
+  console.error = () => {};   // the unreadable-record line
+  t.after(() => { console.error = realError; });
+  const boot = () => {
+    const w = { notices: [], handlers: {} };
+    w.host = setupLink({
+      app: { getPath: () => dir, getVersion: () => '0.24.0' },
+      safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain', encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+      ipcMain: { handle: (ch, fn) => { w.handlers[ch] = fn; } }, send: () => {}, notify: (title) => { w.notices.push(title); }, T: (k, v) => (v ? `${k}${JSON.stringify(v)}` : k),
+      loginOf: () => 'in', reportsDir: path.join(dir, 'r'), projects: () => [], tabState: () => 'gone', type: () => {},
+    });
+    w.host.devices();
+    w.link = w.host.link();
+    return w;
+  };
+  const keysFile = path.join(dir, 'link', 'keys.bin');
+  const ownFile = path.join(dir, 'link', 'own.bin');
+  const devFile = path.join(dir, 'link', 'devices.json');
+  const PX = 'e1'.repeat(32);
+  const keys = () => JSON.parse(fs.readFileSync(keysFile, 'utf8'));
+  const rec = () => JSON.parse(fs.readFileSync(ownFile, 'utf8'));
+  const events = (name) => (fs.existsSync(path.join(dir, 'link', 'commands.log')) ? fs.readFileSync(path.join(dir, 'link', 'commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.event === name) : []);
+  const own = (w) => [PA, PB, PX].map((p) => C.isOwn(w.link.devices, w.link.secrets, p));
+  // both files missing = a fresh install: nothing migrates, both carry the marker
+  let w = boot();
+  assert.deepEqual([keys().ownV, rec(), events('own-migration')], [C.OWN_VERSION, { v: C.OWN_VERSION, own: [], paused: [] }, []]);
+  await w.host.destroy();
+  // the files of an older version (neither marker): the one migration
+  const base = keys();
+  delete base.own; delete base.ownV;
+  const secrets = { [PA]: 'cd'.repeat(32), [PB]: 'ef'.repeat(32) };
+  const oldDevices = [{ pub: PA, name: 'Studio', addedAt: 1, allowCommands: true, trusted: true }, { pub: PB, name: 'Mini', addedAt: 1, allowCommands: true, trusted: true }];
+  fs.writeFileSync(keysFile, JSON.stringify({ ...base, secrets, trusted: [PA, PB] }));
+  fs.writeFileSync(devFile, JSON.stringify({ name: 'Me', devices: oldDevices }));
+  fs.rmSync(ownFile);
+  w = boot();
+  assert.deepEqual([own(w), events('own-migration').length, w.notices.length], [[true, true, false], 1, 1]);
+  const copy = fs.readFileSync(keysFile);   // a copy of keys.bin from while Studio was still own (it has the marker)
+  await w.handlers['link:setPaused'](null, PA, true);
+  assert.deepEqual([rec().own, rec().paused, keys().own], [[PB], [PA], [PB]]);
+  await w.host.destroy();
+  // 1. that older copy of keys.bin is put back: the record still says paused
+  fs.writeFileSync(keysFile, copy);
+  w = boot();
+  assert.deepEqual([own(w), w.notices], [[false, true, false], []]);
+  await w.host.destroy();
+  // 2. downgrade, then upgrade: the older app rewrote keys.bin without the marker and devices.json in its own format,
+  //    and paired one more device meanwhile, which the record does not know
+  fs.writeFileSync(keysFile, JSON.stringify({ ...base, secrets: { ...secrets, [PX]: '12'.repeat(32) }, trusted: [PA, PB, PX] }));
+  fs.writeFileSync(devFile, JSON.stringify({ name: 'Me', devices: [...oldDevices, { pub: PX, name: 'New', addedAt: 2, allowCommands: true, trusted: true }] }));
+  w = boot();
+  assert.deepEqual([own(w), w.notices, events('own-migration').length], [[false, true, false], [], 1]);   // paused stays paused, the unknown one is never auto-owned
+  assert.deepEqual(events('own-restored').map((x) => x.devices), [['Mini']]);
+  assert.deepEqual([keys().ownV, keys().own, rec().own, rec().paused], [C.OWN_VERSION, [PB], [PB], [PA, PX]]);
+  await w.host.destroy();
+  // 3. the record is unreadable: every device is paused (also with the marker in keys.bin), and it is logged
+  fs.writeFileSync(ownFile, 'not the record');
+  w = boot();
+  assert.deepEqual([own(w), events('own-record-unreadable').length, events('own-migration').length, w.notices], [[false, false, false], 1, 1, []]);
+  await w.handlers['link:setPaused'](null, PB, false);   // the person resumes one: sealed in both files again
+  assert.deepEqual([own(w), rec().own, keys().own], [[false, true, false], [PB], [PB]]);
+  await w.host.destroy();
+  // 4. unreadable record AND a keys.bin without the marker: still no migration, all paused
+  fs.writeFileSync(keysFile, JSON.stringify({ ...base, secrets, trusted: [PA, PB] }));
+  fs.writeFileSync(ownFile, JSON.stringify({ v: C.OWN_VERSION, own: 'all' }));
+  w = boot();
+  assert.deepEqual([own(w), events('own-record-unreadable').length, events('own-migration').length, w.notices], [[false, false, false], 2, 1, []]);
   await w.host.destroy();
 });

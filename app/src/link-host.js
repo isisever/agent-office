@@ -54,6 +54,7 @@ const ttlOf = (c) => (Number.isFinite(c.ttl) && c.ttl > 0 ? Math.min(c.ttl, 4 * 
 function setupLink(d) {
   const dir = path.join(d.app.getPath('userData'), 'link');
   const keysFile = path.join(dir, 'keys.bin');
+  const ownFile = path.join(dir, 'own.bin');   // v3.101 the own record: a second sealed file that an older app never rewrites
   const devicesFile = path.join(dir, 'devices.json');
   const logFile = path.join(dir, 'commands.log');
   const manageLog = path.join(dir, 'manage.log');   // v3.33 every project action a device asked for
@@ -86,8 +87,25 @@ function setupLink(d) {
     const k = JSON.parse(d.safeStorage.decryptString(fs.readFileSync(keysFile)));
     return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {}, own: k.own, ownV: k.ownV };
   }
+  /**
+   * v3.101 The own record (own.bin, keychain-encrypted like keys.bin): the migration marker with the current own and
+   * paused sets. An older app rewrites keys.bin without the marker and knows nothing of this file, so it is what tells
+   * a rolled-back keys.bin from a first upgrade. → state 'none' (no file), 'bad' (unreadable or malformed) or 'ok'.
+   * @returns {{ state: 'none' | 'bad' | 'ok', own: string[] }} own: the keys the record lists as own (empty unless 'ok')
+   */
+  function loadOwnRecord() {
+    if (!fs.existsSync(ownFile)) return { state: 'none', own: [] };
+    try {
+      const r = JSON.parse(d.safeStorage.decryptString(fs.readFileSync(ownFile)));
+      if (!r || r.v !== C.OWN_VERSION || !Array.isArray(r.own) || !Array.isArray(r.paused)) return { state: 'bad', own: [] };
+      return { state: 'ok', own: r.own.filter((k) => C.isHex(k, 32)) };
+    } catch { return { state: 'bad', own: [] }; }
+  }
   function save({ name, devices, secrets }) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // the own record first: were the two files ever to disagree, the device reads as paused (start() takes what both say)
+    const record = { v: C.OWN_VERSION, own: C.ownKeys(devices), paused: devices.filter((x) => x.own !== true).map((x) => x.pub) };
+    fs.writeFileSync(ownFile, d.safeStorage.encryptString(JSON.stringify(record)), { mode: 0o600 });
     // v3.101 (the v3.97 sealing) the keys of the devices that are `own` are sealed here with the migration marker:
     // devices.json alone (a plain file) can neither resume a paused device nor run the migration again
     const keys = { publicKey: link.pub, secretKey: C.hex(link.keyPair.secretKey), secrets, own: C.ownKeys(devices), ownV: C.OWN_VERSION };
@@ -101,15 +119,24 @@ function setupLink(d) {
     try {
       const keys = loadKeys();
       const saved = readJson(devicesFile) || {};
-      // v3.101 a keys file without the marker is from before "a paired device is my own computer": every device paired
-      // then becomes `own` once, here, and is sealed with the marker right away (so it never runs again)
-      const migrate = !keys.fresh && keys.ownV !== C.OWN_VERSION;
+      // v3.101 files with neither marker (keys.bin without ownV and no own record) are from before "a paired device is
+      // my own computer": every device paired then becomes `own` once, here, and both markers are sealed right away.
+      // keys.bin alone losing its marker (an older copy put back, or an older app that rewrote it) is NOT that: the own
+      // record then decides, and a device it does not list as own stays paused. An unreadable record pauses them all.
+      const rec = keys.fresh ? { state: 'none', own: [] } : loadOwnRecord();
+      const marked = keys.ownV === C.OWN_VERSION;
+      const migrate = !keys.fresh && !marked && rec.state === 'none';
       const moved = migrate ? C.migrateOwn(saved.devices, keys.secrets) : null;
-      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: moved ? moved.devices : C.sealOwn(saved.devices, keys.own), secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), tasksFile: path.join(dir, 'tasks-out.json'), seenFile: path.join(dir, 'tasks-seen.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
+      const sealedOwn = Array.isArray(keys.own) ? keys.own : [];
+      const ownSet = rec.state === 'bad' ? [] : rec.state === 'none' ? sealedOwn : marked ? sealedOwn.filter((k) => rec.own.includes(k)) : rec.own;
+      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: moved ? moved.devices : C.sealOwn(saved.devices, ownSet), secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), tasksFile: path.join(dir, 'tasks-out.json'), seenFile: path.join(dir, 'tasks-seen.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
       link.confirmPair = async (name) => (d.confirmPair ? (await d.confirmPair(name)) === true : false);   // no dialog wired = no pairing
       link.on('persist', save);
       link.on('own', () => pump());   // v3.101 a paused device's queued entries are refused now
-      if (keys.fresh || migrate) link.persist();
+      if (keys.fresh || !marked || rec.state !== 'ok') link.persist();   // both files carry the marker and the same sets from here on
+      const ownLog = (event, more = {}) => { try { fs.appendFileSync(logFile, `${JSON.stringify({ at: new Date().toISOString(), event, ...more })}\n`, { mode: 0o600 }); } catch { /* best effort */ } };
+      if (rec.state === 'bad') { console.error('link: the own record (own.bin) is unreadable, every device is paused'); ownLog('own-record-unreadable'); }
+      else if (!keys.fresh && !marked && !migrate) ownLog('own-restored', { devices: link.devices.filter((x) => C.isOwn(link.devices, link.secrets, x.pub)).map((x) => x.name) });
       if (moved) {
         try { fs.appendFileSync(logFile, `${JSON.stringify({ at: new Date().toISOString(), event: 'own-migration', devices: moved.names })}\n`, { mode: 0o600 }); } catch { /* best effort */ }
         // one time, non-blocking: the person is told which computers now have full access here
