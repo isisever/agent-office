@@ -27,6 +27,8 @@ function el(tag, attrs = {}, ...kids) {
 }
 
 // engine names on a remote row's status line (brand names, not translated)
+import { mountRemoteView } from './remote-view.js';
+
 const ENGINE_NAMES = { claude: 'Claude Code', agy: 'Antigravity', commandcode: 'Command Code', opencode: 'OpenCode' };
 
 /** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void } }} o */
@@ -41,9 +43,6 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   const consent = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ dispatchWithoutAsking: consent.checked }); render(); } });
   // v3.91 HQ may send follow-up tasks of a request the person typed without asking (local only; default off)
   const initiative = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ initiative: initiative.checked }); render(); } });
-  // v3.99 requests typed into HQ go to projects on paired computers without the dialog here (its own setting, default off)
-  const remoteNoAsk = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ dispatchRemoteWithoutAsking: remoteNoAsk.checked }); render(); } });
-  const remoteNoAskRow = el('label', { title: t('hq.noAskRemoteHint') }, remoteNoAsk, ` ${t('hq.noAskRemote')}`);
   // HQ on/off (default on): off = no HQ pty; the row says "off" and keeps this toggle
   const onOff = el('input', { type: 'checkbox', class: 'hq-toggle', title: t('hq.enabled'), onclick: (e) => e.stopPropagation(),
     onchange: async () => { view = await api.hq.setSettings({ enabled: onOff.checked }); render(); } });
@@ -56,7 +55,6 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   const settings = el('div', { class: 'hq-settings', hidden: true },
     el('label', { title: t('hq.consentHint') }, consent, ` ${t('hq.consent')}`),
     el('label', { title: t('hq.initiativeHint') }, initiative, ` ${t('hq.initiative')}`),
-    remoteNoAskRow,
     ...(api.routines ? [el('label', {}, quietOn, ` ${t('routines.quiet')} `, quietFrom, '–', quietTo), el('label', {}, `${t('routines.dailyCap')} `, dailyCap)] : []),
     el('button', { class: 'hq-link', onclick: () => api.hq.openFolder() }, t('hq.openFolder')));
   const row = el('div', { class: 'hq-row', id: 'hq-row', role: 'button', tabindex: '0', title: t('hq.title'), onclick: () => onSelect() },
@@ -78,6 +76,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   // remote rows sit right under the local rows of PROJECTS, with the local rows' look (.sb-proj)
   const remoteList = el('ul', { class: 'sb-list sb-rlist', id: 'sb-rprojects' });
   let openKey = '';                 // the remote row showing its command box
+  // v3.100 the open row's session, read-only (renderer/remote-view.js); typing stays in the row's command box
+  const rview = api.link?.sessOpen ? mountRemoteView({ api, t }) : null;
   const drafts = new Map();         // typed commands per row, kept across live updates
   const placeRemote = () => { const pl = document.getElementById('sb-projects'); if (pl && remoteList.parentElement !== pl.parentElement) pl.after(remoteList); };
 
@@ -347,6 +347,16 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const known = r.state === 'asleep' || r.state === 'stopped' ? r.state : '';
     const st = !online ? 'offline' : known || p?.status || r.status || 'idle';
     const open = openKey === r.key;
+    // v3.100 opening a row also opens its session (only while that machine is online); the view follows the row's status
+    const toggle = () => {
+      // the panel's own ✕ closes the view but leaves openKey set: the next click then opens it again
+      const showing = open && (!rview || rview.isOpen(r.key));
+      openKey = showing ? '' : r.key;
+      if (showing) rview?.close();
+      else if (online) rview?.open({ key: r.key, pub, project: r.id, name: r.name, machine: r.machine, status: st });
+      renderRemote();
+    };
+    if (open && rview?.isOpen(r.key)) rview.update(st);
     const busy = remoteBusy.has(r.key);
     const op = (action) => (e) => {
       e.stopPropagation();
@@ -374,8 +384,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       class: `sb-proj sb-rrow st-${st}${known ? ` is-${known}` : ''}${open ? ' open' : ''}${r.online ? '' : ' offline'}`, 'data-key': r.key,
       title: `${r.name} · ${r.machine}\n${r.online ? t('hq.remoteTip') : `${t('hq.offline')}${r.asOf ? ` (${t('hq.lastKnown')} · ${when(r.asOf)})` : ''}`}`,
       tabindex: '0', role: 'button', 'aria-expanded': String(open),
-      onclick: () => { openKey = open ? '' : r.key; renderRemote(); },
-      onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); openKey = open ? '' : r.key; renderRemote(); } },
+      onclick: () => toggle(),
+      onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); toggle(); } },
     },
     el('span', { class: `sb-dot${st === 'working' || st === 'approval' ? ' live' : known === 'asleep' ? ' asleep' : ''}` }),
     el('span', { class: 'sb-rname' }, el('span', { class: 'sb-name' }, r.name), el('span', { class: 'hq-badge', title: t('hq.remoteTitle') }, t('hq.remote'))),
@@ -398,7 +408,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     const focused = document.activeElement;
     if (focused && remoteList.contains(focused) && focused.tagName === 'INPUT') return;
     const rows = view.remotes || [];
-    if (openKey && !rows.some((r) => r.key === openKey)) openKey = '';
+    if (openKey && !rows.some((r) => r.key === openKey)) { openKey = ''; rview?.close(); }
     remoteList.hidden = !rows.length;
     // v3.98 grouped by machine: one header per paired device, then its rows
     // the group is the row's own `pub` (a project id may hold ':', so the key is never split from the right)
@@ -415,8 +425,6 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       : `▶ ${tasks.filter((x) => OPEN.has(x.status)).length}  ● ${tasks.filter((x) => !x.read && !OPEN.has(x.status)).length}`;
     consent.checked = Boolean(view.settings?.dispatchWithoutAsking);
     initiative.checked = Boolean(view.settings?.initiative);
-    remoteNoAsk.checked = Boolean(view.settings?.dispatchRemoteWithoutAsking);
-    remoteNoAskRow.style.display = view.paired ? '' : 'none';   // only with at least one paired computer
     row.classList.toggle('active', selected);
     board.hidden = !selected || showOffice;
     if (office) office.hidden = selected && !showOffice;

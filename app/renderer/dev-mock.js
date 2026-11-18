@@ -848,7 +848,7 @@ if (q.has('machines')) {
       { id: 'p2', dirName: 'shop', state: 'asleep', engine: 'claude', accountLabel: 'İş' },
     ] },
     devices: names.slice(0, n).map((name, i) => ({
-      id: String(i + 1).repeat(64).slice(0, 64), name, addedAt: Date.now() - 86400e3, allowCommands: i === 0, allowHandoff: i === 0, allowManage: i === 0, allowAccounts: false,
+      id: String(i + 1).repeat(64).slice(0, 64), name, addedAt: Date.now() - 86400e3, own: true, allowHandoff: i === 0, allowAccounts: false,
       online: i !== 3, v: i === 2 ? 1 : i === 3 ? null : 2, app: i === 2 ? '' : i === 1 ? '0.13.0' : '0.14.0', caps: i === 2 || i === 3 ? [] : ['res', 'catalog'],
       res: i === 0 ? res({ mem: { total: 32 * GB, free: 20 * GB }, load1: 0.8, cpus: 12, tabs: 2, agents: 0, sleeping: 0 })
         : i === 1 ? res({ mem: { total: 64 * GB, free: 50 * GB }, load1: 7.9, cpus: 16, tabs: 1, agents: 4, sleeping: 0, platform: 'linux', app: '0.13.0' }) : null,
@@ -864,8 +864,8 @@ if (q.has('machines')) {
   window.agentOffice.link = {
     get: ok, invite: ok, join: () => Promise.resolve({ ok: false, error: 'bad-code', view: view() }), cancel: ok,
     setName: (name) => { lv.name = name; return ok(); }, rename: (id, name) => setDev(id, 'name', name),
-    setAllow: (id, on) => setDev(id, 'allowCommands', on), setTrusted: (id, on) => setDev(id, 'trusted', on), setAllowHandoff: (id, on) => setDev(id, 'allowHandoff', on),
-    setAllowManage: (id, on) => setDev(id, 'allowManage', on), setAllowAccounts: (id, on) => setDev(id, 'allowAccounts', on),
+    setPaused: (id, on) => setDev(id, 'own', !on), setAllowHandoff: (id, on) => setDev(id, 'allowHandoff', on),
+    setAllowAccounts: (id, on) => setDev(id, 'allowAccounts', on),
     remove: (id) => { lv.devices = lv.devices.filter((d) => d.id !== id); return ok(); },
     handoffAnswer: ok, handoffAsk: ok, handoffKeep: ok, send: ok, handOff: () => Promise.resolve(true),
     onChange: changed.add,
@@ -879,8 +879,8 @@ if (q.has('remotes')) {
     name: 'Studio', id: 'abcd1234', pairing: null, error: null, handoffs: { out: [], in: [] }, owners: [],
     outgoing: [{ pub: A, project: 'r1', firstLine: 'run the tests', status: 'delivered' }],
     devices: [
-      { id: A, name: 'DESKTOP-GE4AT5S', online: true, allowCommands: true, allowManage: true, addedAt: Date.now() - 86400e3, v: 2, caps: [] },
-      { id: B, name: 'very-long-machine-name-build-server-01.local', online: true, allowCommands: true, addedAt: Date.now() - 86400e3, v: 2, caps: [] },
+      { id: A, name: 'DESKTOP-GE4AT5S', online: true, own: true, addedAt: Date.now() - 86400e3, v: 2, caps: [] },
+      { id: B, name: 'very-long-machine-name-build-server-01.local', online: true, own: true, addedAt: Date.now() - 86400e3, v: 2, caps: [] },
       { id: C, name: 'Old Mac', online: false, addedAt: Date.now() - 86400e3, v: null, caps: [] },
     ],
     remotes: [
@@ -893,7 +893,7 @@ if (q.has('remotes')) {
   const ok = () => Promise.resolve(structuredClone(lv));
   window.agentOffice.link = {
     get: ok, invite: ok, join: () => Promise.resolve({ ok: false, error: 'bad-code', view: structuredClone(lv) }), cancel: ok,
-    setName: ok, rename: ok, setAllow: ok, setTrusted: ok, setAllowHandoff: ok, setAllowManage: ok, setAllowAccounts: ok, remove: ok,
+    setName: ok, rename: ok, setPaused: ok, setAllowHandoff: ok, setAllowAccounts: ok, remove: ok,
     handoffAnswer: ok, handoffAsk: ok, handoffKeep: ok, send: ok, handOff: () => Promise.resolve(true), onChange: listeners().add,
   };
   const base = ['watch', 'board', 'reports', 'dispatch'];

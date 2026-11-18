@@ -250,3 +250,64 @@ test('chat markdown: a mailto link stays text (the app opens only http(s) outsid
   assert.deepEqual(M.inline('[mail](mailto:a@b.co)'), [{ t: 'text', text: '[mail](mailto:a@b.co)' }]);
   assert.equal(M.inline('[x](https://ex.com)')[0].t, 'link');
 });
+
+// --- v3.100 what crosses the device link (linkItems) and the redaction it relies on
+test('link items: text is redacted, a tool row carries its name only, images and details stay here', () => {
+  const { linkItems, chatItems: parse, LINK_TOOL_DETAIL } = require('../src/chat.js');
+  const L = (o) => JSON.stringify({ timestamp: '2026-01-01T00:00:00Z', ...o });
+  const items = parse([
+    L({ type: 'user', uuid: 'u1', message: { content: [{ type: 'text', text: 'use token: abcdefgh1234 here' }, { type: 'image', source: {} }] } }),
+    L({ type: 'user', uuid: 'u0', message: { content: [{ type: 'image', source: {} }] } }),
+    L({ type: 'assistant', uuid: 'a1', message: { content: [{ type: 'thinking', thinking: 'hidden' }, { type: 'text', text: 'ok' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'cat ~/.ssh/id_ed25519' } }] } }),
+    L({ type: 'user', uuid: 'u2', message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: true, content: 'boom' }] } }),
+    L({ type: 'user', uuid: 'u3', isCompactSummary: true, message: { content: 'summary text' } }),
+  ].join('\n'));
+  assert.ok(items.find((x) => x.kind === 'tool').detail.includes('id_ed25519'));   // the local chat view keeps its detail line
+  const out = linkItems(items);
+  assert.equal(LINK_TOOL_DETAIL, false);
+  assert.deepEqual(out.map(({ at: _at, ...x }) => x), [
+    { key: 'u1', kind: 'user', text: 'use token: [redacted] here' },
+    { key: 'a1:1', kind: 'assistant', text: 'ok' },
+    { key: 'a1:2', kind: 'tool', id: 't1', name: 'Bash' },
+    { key: 'u2:0', kind: 'toolDone', id: 't1', error: true },
+    { key: 'u3', kind: 'note', note: 'compact' },
+  ]);
+  for (const never of ['id_ed25519', 'hidden', 'boom', 'summary text', 'images']) assert.ok(!JSON.stringify(out).includes(never), never);
+  // the opt-in that is not built: even then the detail goes through the redaction
+  const withDetail = linkItems([{ key: 'k', at: 1, kind: 'tool', id: 't', name: 'Bash', detail: 'curl -H "Authorization: Bearer abcdefgh12345678"' }], { toolDetail: true });
+  assert.ok(withDetail[0].detail.startsWith('curl -H') && !withDetail[0].detail.includes('abcdefgh12345678'));
+  assert.deepEqual(linkItems(null), []);
+});
+
+test('link items: hidden blocks are dropped anywhere in a user message, the local view is unchanged', () => {
+  const { linkItems } = require('../src/chat.js');
+  const tags = ['bash-input', 'bash-stdout', 'bash-stderr', 'local-command-stdout', 'ide_selection', 'ide_opened_file', 'system-reminder', 'command-args'];
+  for (const tag of tags) {
+    const mid = linkItems([{ key: 'm', at: 1, kind: 'user', text: `before\n<${tag}>SECRET-${tag}</${tag}>\nafter` }]);
+    assert.equal(mid[0].text, 'before\n\nafter', `${tag} in the middle`);
+    const end = linkItems([{ key: 'e', at: 1, kind: 'user', text: `hello\n<${tag}>SECRET-${tag}</${tag}>` }]);
+    assert.equal(end[0].text.trim(), 'hello', `${tag} at the end`);
+    const cut = linkItems([{ key: 'c', at: 1, kind: 'user', text: `hello <${tag}>SECRET-${tag} and no close` }]);
+    assert.equal(cut[0].text.trim(), 'hello', `${tag} cut off`);
+  }
+  assert.equal(linkItems([{ key: 'i', at: 1, kind: 'user', text: 'look\n[Image: source: /Users/x/shot.png]\nplease' }])[0].text, 'look\n\nplease');
+  assert.deepEqual(linkItems([{ key: 'o', at: 1, kind: 'user', text: '<bash-input>ls</bash-input>' }]), []);
+  assert.equal(linkItems([{ key: 'a', at: 1, kind: 'assistant', text: 'the <bash-input> tag' }])[0].text, 'the <bash-input> tag');
+});
+
+test('redaction (best effort): PEM private keys and secret-looking assignments', () => {
+  const { redact } = require('../src/hq.js');
+  const pem = '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nAAAAB3NzaC1lZDI1NTE5\n-----END OPENSSH PRIVATE KEY-----';
+  assert.equal(redact(`before\n${pem}\nafter`), 'before\n[redacted private key]\nafter');
+  assert.equal(redact('x -----BEGIN RSA PRIVATE KEY-----\nMIIEow'), 'x [redacted private key]');   // cut off before its END line
+  assert.equal(redact('-----BEGIN PRIVATE KEY-----\nAA\n-----END PRIVATE KEY----- and -----BEGIN EC PRIVATE KEY-----\nBB\n-----END EC PRIVATE KEY-----'), '[redacted private key] and [redacted private key]');
+  assert.equal(redact('-----BEGIN PUBLIC KEY-----\nAA\n-----END PUBLIC KEY-----'), '-----BEGIN PUBLIC KEY-----\nAA\n-----END PUBLIC KEY-----');
+  assert.equal(redact('export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG'), 'export AWS_SECRET_ACCESS_KEY=[redacted]');
+  assert.equal(redact('API_KEY_PROD=abc12345 npm run deploy'), 'API_KEY_PROD=[redacted] npm run deploy');
+  assert.equal(redact('export DB_PASSWORD_2="two words" && run'), 'export DB_PASSWORD_2=[redacted] && run');
+  assert.equal(redact("STRIPE_TOKEN_LIVE='q w e'"), 'STRIPE_TOKEN_LIVE=[redacted]');
+  assert.equal(redact('export SESSION=4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c'), 'export SESSION=[redacted]');   // looks random
+  assert.equal(redact('export PATH=/usr/local/bin:/usr/bin'), 'export PATH=/usr/local/bin:/usr/bin');
+  assert.equal(redact('export NODE_ENV=production PORT=3000 AUTHOR=jane'), 'export NODE_ENV=production PORT=3000 AUTHOR=jane');
+  assert.equal(redact('password=hunter22 token: abcdefgh'), 'password=[redacted] token: [redacted]');   // the older patterns still hold, once
+});

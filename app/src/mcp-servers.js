@@ -11,6 +11,7 @@
 // file (shared-config.js prepareShared `app`), only where no server of that name is already defined for the session.
 const fs = require('fs');
 const path = require('path');
+const S = require('./sealed.js');
 const SC = require('./shared-config.js');
 
 const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
@@ -313,52 +314,112 @@ function migrateConnections(projects, servers) {
 /**
  * The token store (v3.43, kept): one file per id under `dir`, encrypted with `safe` (Electron safeStorage); a 0600
  * plain file only where no keyring exists. `save` returns false when the token could not be written (the old one stays).
+ *
+ * v3.102 purpose binding (src/sealed.js): every encrypted file starts with the header of this store's `purpose`, and
+ * a file whose header names another purpose (a file moved here from another store or from userData/link) is refused
+ * like an unreadable one. Files written before v3.102 have no header: they are rewritten with it once, when they
+ * decrypt to the shape of a token (`S.tokenProblem`); then the marker `.ao1` is written in `dir` and a headerless file
+ * is refused from there on. A token is one line without control characters, at most `S.TOKEN_MAX` long and never a
+ * JSON object: anything else is neither saved nor handed out. The folder itself must not be a symbolic link
+ * (else the store does nothing), and no file is read or written through one.
  * @param {string} dir
  * @param {{ isEncryptionAvailable(): boolean, encryptString(s: string): Buffer, decryptString(b: Buffer): string }} safe
+ * @param {string} purpose one of S.PURPOSE, a different one for every store
  * @param {typeof fs} [fsx]
  */
-function tokenStore(dir, safe, fsx = fs) {
+function tokenStore(dir, safe, purpose, fsx = fs) {
+  S.header(purpose);   // throws on a missing or malformed purpose: no store without one
+  const sealer = S.sealer(safe, fsx);
   const file = (/** @type {string} */ id, /** @type {string} */ ext) => path.join(dir, `${String(id).replace(/[^\w-]/g, '_')}.${ext}`);
-  const remove = (/** @type {string} */ id, exts = ['bin', 'txt']) => { for (const ext of exts) try { fsx.rmSync(file(id, ext), { force: true }); } catch {} };
+  const marker = path.join(dir, '.ao1');
+  const dirOk = () => S.plainDir(dir, fsx);
+  const remove = (/** @type {string} */ id, exts = ['bin', 'txt']) => { if (!dirOk()) return; for (const ext of exts) try { fsx.rmSync(file(id, ext), { force: true }); } catch {} };
+  const names = () => { try { return dirOk() ? fsx.readdirSync(dir).filter((f) => /\.(bin|txt)$/.test(f)) : []; } catch { return []; } };
+  const migrated = () => S.present(marker, fsx);
+  /**
+   * The one-time migration of this store: every headerless .bin that decrypts to a token is rewritten with the
+   * header. A file that does not decrypt is skipped (left untouched, logged once); the marker is written once every
+   * other file is done. Only "no file decrypts" (encryption unavailable, a locked keychain) defers the marker.
+   */
+  const logged = new Set();
+  const once = (/** @type {string} */ name, /** @type {string} */ why) => {
+    if (logged.has(name)) return;
+    logged.add(name);
+    console.error(`token store ${purpose}: ${name.replace(/\.bin$/, '')} ${why}`);
+  };
+  const migrate = () => {
+    if (migrated() || !dirOk() || !S.present(dir, fsx)) return;
+    let enc = false;
+    try { enc = safe.isEncryptionAvailable(); } catch {}
+    if (!enc) return;
+    let tried = 0, failedN = 0;
+    for (const name of names().filter((f) => f.endsWith('.bin'))) {
+      const to = path.join(dir, name);
+      try {
+        const buf = S.readPlain(to, fsx);
+        if (!buf.length) continue;
+        const r = sealer.inspect(purpose, buf);
+        tried++;
+        if (r.state === 'legacy' && S.tokenProblem(r.payload) === null) S.writePlain(to, sealer.seal(purpose, r.payload), fsx);
+        else if (r.state === 'legacy') once(name, 'is not the shape of a token and is left as it is');
+        // 'purpose': already sealed
+      } catch { tried++; failedN++; once(name, 'could not be decrypted and is skipped'); }
+    }
+    if (tried > 0 && failedN === tried) return;   // nothing decrypts at all (locked keychain): retried next time
+    try { S.writePlain(marker, '', fsx); } catch { /* retried next time */ }
+  };
   return {
     /** @param {string} id @param {string} token */
     save(id, token) {
       if (!token) { remove(id); return true; }
+      if (S.tokenProblem(token) !== null || !dirOk()) return false;
       try {
         fsx.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        if (!dirOk()) return false;
         const enc = safe.isEncryptionAvailable();
+        migrate();
         // a temp file, then rename: a write that fails half-way (disk full) never truncates the old token
-        const to = file(id, enc ? 'bin' : 'txt'), tmp = `${to}.tmp`;
-        try { fsx.writeFileSync(tmp, enc ? safe.encryptString(token) : token, { mode: 0o600 }); fsx.renameSync(tmp, to); } catch (e) { try { fsx.rmSync(tmp, { force: true }); } catch {} throw e; }
+        S.writePlain(file(id, enc ? 'bin' : 'txt'), enc ? sealer.seal(purpose, token) : token, fsx);
         remove(id, [enc ? 'txt' : 'bin']);
         return true;
       } catch { return false; }
     },
     /**
      * → { token, failed }: failed = a stored token is there but could not be read now (decrypt threw: the keychain is
-     * locked or access was denied, a re-signed build, a locked keyring, DPAPI; or a read error). Its file is kept.
+     * locked or access was denied, a re-signed build, a locked keyring, DPAPI; or a read error), or it is refused
+     * (v3.102: another purpose's header, no header after the migration, not the shape of a token). Its file is kept.
      * token '' with failed false = nothing stored, or stored empty.
      * @param {string} id
      */
     read(id) {
+      if (!dirOk()) return { token: '', failed: true };
+      migrate();
       let buf = null, failed = false;
-      try { buf = fsx.readFileSync(file(id, 'bin')); } catch (e) { if (/** @type {any} */ (e)?.code !== 'ENOENT') failed = true; }
+      try { buf = S.readPlain(file(id, 'bin'), fsx); } catch (e) { if (/** @type {any} */ (e)?.code !== 'ENOENT') failed = true; }
       if (buf) {
         if (buf.length) {
-          try { return { token: String(safe.decryptString(buf) || ''), failed: false }; } catch { failed = true; }
+          try {
+            const r = sealer.inspect(purpose, buf);
+            // a headerless file counts only until this store's migration is done (it could not be rewritten yet)
+            const text = r.state === 'ok' || (r.state === 'legacy' && !migrated()) ? r.payload : null;
+            if (text !== null && S.tokenProblem(text) === null) return { token: text, failed: false };
+            failed = true;
+          } catch { failed = true; }
         } // empty .bin: a .txt next to it still counts
       }
-      try { return { token: fsx.readFileSync(file(id, 'txt'), 'utf8'), failed }; } catch (e) { if (/** @type {any} */ (e)?.code !== 'ENOENT') failed = true; }
+      try {
+        const text = S.readPlain(file(id, 'txt'), fsx).toString('utf8');
+        if (S.tokenProblem(text) === null) return { token: text, failed };
+        failed = true;
+      } catch (e) { if (/** @type {any} */ (e)?.code !== 'ENOENT') failed = true; }
       return { token: '', failed };
     },
     /** The token, or '' (nothing stored, or it cannot be read now). @param {string} id */
     load(id) { return this.read(id).token; },
     /** @param {string} id */
-    has: (id) => fsx.existsSync(file(id, 'bin')) || fsx.existsSync(file(id, 'txt')),
+    has: (id) => dirOk() && (S.present(file(id, 'bin'), fsx) || S.present(file(id, 'txt'), fsx)),
     /** The ids with a stored token (file names, so ids as `save` wrote them). */
-    ids() {
-      try { return [...new Set(fsx.readdirSync(dir).filter((f) => /\.(bin|txt)$/.test(f)).map((f) => f.replace(/\.(bin|txt)$/, '')))]; } catch { return []; }
-    },
+    ids() { return [...new Set(names().map((f) => f.replace(/\.(bin|txt)$/, '')))]; },
     remove,
   };
 }

@@ -49,6 +49,8 @@ const line = (s, max) => { const t = String(s ?? '').replace(ESCAPES, '').replac
 
 // the journal's patterns (plugin/hooks/journal.ts SECRET_PATTERNS): obvious secrets out of every dispatched task
 const SECRET_PATTERNS = [
+  // v3.100 a PEM private key block (one cut off before its END line goes to the end of the text)
+  [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, '[redacted private key]'],
   [/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [redacted]'],
   [/\beyJ[\w-]{6,}\.[\w-]{6,}\.[\w-]{6,}/g, '[redacted]'],
   [/\b(?:sk|nsk|pk|rk|ak)[-_][A-Za-z0-9_-]{8,}/g, '[redacted]'],
@@ -56,6 +58,10 @@ const SECRET_PATTERNS = [
   [/\bAKIA[0-9A-Z]{16}\b/g, '[redacted]'],
   [/(:\/\/)[^\s/:@]+:[^\s/@]+@/g, '$1[redacted]@'],
   [/\b((?:[\w-]*[_-])?(?:key|apikey|token|secret|passw(?:or)?d|pwd|credentials?|authorization|auth))\b(["']?\s*[:=]\s*["']?)[^\s"'&,;)\]}>]{4,}/gi, '$1$2[redacted]'],
+  // v3.100 shell assignments: NAME=value where the name says secret (API_KEY_PROD=…, export DB_PASSWORD_2="a b"), and
+  // export NAME=value whose value looks random (20+ characters with letters and digits)
+  [/\b((?:export\s+)?[A-Z_][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSW(?:OR)?D|PASSPHRASE|PWD|CREDENTIALS?|AUTH(?!OR))[A-Z0-9_]*=)(?!\[redacted\])(?:"[^"\n]*"|'[^'\n]*'|[^\s"'&,;)\]}>]{4,})/g, '$1[redacted]'],
+  [/\b(export\s+[A-Za-z_][A-Za-z0-9_]*=)(["']?)(?=[A-Za-z0-9+=_-]*\d)(?=[A-Za-z0-9+=_-]*[A-Za-z])[A-Za-z0-9+=_-]{20,}\2/g, '$1[redacted]'],
 ];
 /** @param {string} text */
 const redact = (text) => SECRET_PATTERNS.reduce((out, [re, to]) => out.replace(/** @type {RegExp} */ (re), /** @type {string} */ (to)), String(text ?? ''));
@@ -71,7 +77,6 @@ function normalizeHq(raw) {
     enabled: o.enabled !== false,
     ...(hqBossModel(o.bossModel) ? { bossModel: o.bossModel } : {}),
     dispatchWithoutAsking: o.dispatchWithoutAsking === true,
-    ...(o.dispatchRemoteWithoutAsking === true ? { dispatchRemoteWithoutAsking: true } : {}),   // v3.99 typed requests go to paired machines without the dialog here (off: absent)
     ...(o.initiative === true ? { initiative: true } : {}),   // v3.91 HQ may continue an open typed request on its own (off: absent)
   };
 }
@@ -162,25 +167,25 @@ const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && 
  * prompt; everything else (setting off, remote, 'adhoc', or a request that is not the live one) → 'app' (the app's dialog).
  * A foreign or missing id never reaches here as such: resolveRequest maps it to the minter's current id, which is live
  * (so no dialog) unless it expired or was cleared, then 'adhoc' (dialog).
- * v3.99 a target on a paired machine follows the same rule with its OWN setting (`remoteSetting`:
- * `dispatchRemoteWithoutAsking`, default off); `setting` never covers it. A routine's remote dispatch stays held.
+ * v3.101 a target on a paired machine (the person's own computer) follows the SAME rule and the same `setting` as a
+ * local one (the separate v3.99 `dispatchRemoteWithoutAsking` is gone). A routine's remote dispatch stays held.
  */
-function consentFor({ setting, remoteSetting = false, remote, request, minter, routineNoAsk = false }) {
+function consentFor({ setting, remote, request, minter, routineNoAsk = false }) {
   // v3.47 a routine run's request: never a modal; no-ask only for a local dispatch, the routine's own checkbox on and
   // the run's id still live (the global setting does not apply); else a held card the person approves on the Board
   if (minter?.isRoutine?.(request)) return !remote && routineNoAsk && minter.isLiveRoutine(request) ? 'none' : 'held';
-  return (remote ? remoteSetting === true : setting) && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';
+  return setting === true && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';
 }
 
 /**
- * v3.94 may the consent dialog offer its third button ("Allow, and stop asking for my own requests")? Only for a
- * local target and only while the request id is the live one minted from a prompt the person typed into HQ: never a
- * paired device, a routine's id, 'adhoc', or a turn the person did not type (an inbox row ends the liveness).
+ * v3.94 may the consent dialog offer its third button ("Allow, and stop asking for my own requests")? Only while the
+ * request id is the live one minted from a prompt the person typed into HQ: never a routine's id, 'adhoc', or a turn
+ * the person did not type (an inbox row ends the liveness). v3.101 a paired machine's target offers it like a local one.
  */
-const offersAlways = ({ remote, request, minter }) => !remote && isStr(request) && request !== ADHOC
+const offersAlways = ({ request, minter }) => isStr(request) && request !== ADHOC
   && Boolean(minter?.isLive?.(request)) && (minter?.typedAt?.(request) || 0) > 0 && !minter?.isRoutine?.(request);
-/** v3.94 what that button turns on: the two existing settings, nothing else changed. v3.99 it never turns on
- *  `dispatchRemoteWithoutAsking` (paired machines): that one is set only by its own checkbox. */
+/** v3.94 what that button turns on: the two existing settings, nothing else changed. v3.101 they cover paired
+ *  machines too (a paired device is the person's own computer). */
 const allowAlways = (hq) => normalizeHq({ ...(hq && typeof hq === 'object' ? hq : {}), dispatchWithoutAsking: true, initiative: true });
 
 /**
@@ -193,13 +198,11 @@ const allowAlways = (hq) => normalizeHq({ ...(hq && typeof hq === 'object' ? hq 
  * row still counts). `counted`: these tasks are already in that count (takeInitiative ran; the re-check after a wait).
  * Anything else → false: consentFor's answer stands.
  */
-function initiativeFor({ initiative, remoteSetting, remote, request, minter, board, targets, counted = false, now = Date.now() }) {
+function initiativeFor({ initiative, remote, request, minter, board, targets, counted = false, now = Date.now() }) {
   const n = Array.isArray(targets) ? targets.length : 0;
   if (initiative !== true || !isStr(request) || request === ADHOC || n < 1) return false;
   // v3.99 a dispatch to a paired machine: every target names that machine (its key); consentedTarget matches machine + project
   if (remote && !targets.every((t) => typeof t?.machine === 'string' && t.machine && t.machine !== 'self')) return false;
-  // v3.99 a target on a paired machine also needs the person's "send to my other computers without asking" setting (the dialog stands otherwise)
-  if ((remote || targets.some((t) => t?.remote === true)) && remoteSetting !== true) return false;
   if (minter?.isRoutine?.(request) || !typedWithin(minter, request, now)) return false;
   const mine = (board?.tasks || []).filter((t) => t.request === request);
   if (!mine.length) return false;
@@ -226,6 +229,9 @@ function consentedTarget(board, request, target) {
   return (board?.tasks || []).some((t) => t.request === request && t.consented === true && t.byInitiative !== true && t.machine === machine && t.projectId === pid
     && (t.staff ? t.staffId || null : '') === sid);
 }
+/** v3.101 does that project of a paired machine answer or skip its permission prompts? From the catalog the machine
+ *  shares (`skips` per project); unknown (an older Agent Office there, no catalog, not in it) counts as yes. */
+const remoteSkips = (catalog, projectId) => { const f = (Array.isArray(catalog) ? catalog : []).find((p) => p && p.id === projectId)?.skips; return typeof f === 'boolean' ? f : true; };
 /** v3.91 the tasks HQ sent on its own for a request (kept on the request record: removing a row does not lower it). */
 const initiativeSent = (board, request) => Math.max(0, Number((board?.requests || []).find((r) => r.id === request)?.initiative) || 0);
 /**
@@ -696,7 +702,7 @@ module.exports = {
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, MAX_INITIATIVE, INITIATIVE_MS, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
-  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, offersAlways, allowAlways, initiativeFor, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
+  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, offersAlways, allowAlways, initiativeFor, remoteSkips, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
   taskFile, requestFile, reportMd, boardView, remoteWaitFields, reportWaitFields, createPacer, mergePeerCache, remoteProjects, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed, remoteButtons, remoteOpSteps, runRemoteSteps, RETRY_REASONS, RESTART_RETRY_MS,
 };

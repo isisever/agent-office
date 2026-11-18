@@ -17,9 +17,9 @@ const SEEN_PER_DEVICE = 200;
 
 class Link extends EventEmitter {
   /**
-   * @param {{ keyPair: { publicKey: Buffer, secretKey: Buffer }, name: string, devices?: C.Device[], secrets?: Record<string, string>,
+   * @param {{ keyPair: { publicKey: Buffer, secretKey: Buffer }, name: string, confirmPair?: (name: string) => boolean | Promise<boolean>, devices?: C.Device[], secrets?: Record<string, string>,
    *   bootstrap?: any[], now?: () => number, swarmFactory?: (opts: any) => any, heartbeatMs?: number,
-   *   handoffAskMs?: number, handoffIdleMs?: number, resultsFile?: string | null, reportsFile?: string | null, tasksFile?: string | null, seenFile?: string | null, outboxTtlMs?: number, app?: string, projOpMs?: number, loginTimeoutMs?: number, log?: (...a: any[]) => void }} o
+   *   handoffAskMs?: number, handoffIdleMs?: number, resultsFile?: string | null, reportsFile?: string | null, tasksFile?: string | null, seenFile?: string | null, outboxTtlMs?: number, app?: string, sessGapMs?: number, projOpMs?: number, loginTimeoutMs?: number, log?: (...a: any[]) => void }} o
    */
   constructor(o) {
     super();
@@ -35,7 +35,9 @@ class Link extends EventEmitter {
     this.swarm = null;
     this.conns = new Map();      // device pub → conn (trusted sessions)
     this.remotes = new Map();    // device pub → { snap, at }
-    this.pairing = null;         // { role, code, key, topic, expiresAt, timer, resolve?, reject? }
+    this.pairing = null;         // { role, code, key, topic, expiresAt, timer, resolve?, reject?, asking? }
+    /** @type {null | ((name: string) => boolean | Promise<boolean>)} v3.101 asks the person at this machine before a device is paired (unset: the answer is no) */
+    this.confirmPair = typeof o.confirmPair === 'function' ? o.confirmPair : null;
     this.limiter = new C.RateLimiter({ now: this.now });
     this.outgoing = [];          // commands this device sent: { id, pub, project, projectName, firstLine, status, reason?, at }
     this.snap = null;            // what we publish
@@ -55,6 +57,13 @@ class Link extends EventEmitter {
     this.results = this.loadResults();
     // v3.31/v3.32: what each connected peer said in its hello, and the machine data exchanged by capability
     this.appVersion = /^[0-9A-Za-z.+-]{1,20}$/.test(String(o.app || '')) ? String(o.app) : '';
+    // v3.100 reading a remote project's session (cap 'sess')
+    this.sessOut = new Map();     // `${pub}/${id}` → a subscription a device holds on one of our projects
+    this.sessIn = new Map();      // id → { pub, project }: sessions on other machines this device reads
+    this.sessOpens = new Map();   // pub → times of its recent sess-open messages (rate limit)
+    this.sessGapMs = o.sessGapMs || Math.ceil(1000 / C.SESS_FRAMES_PER_SEC);
+    this.sessSweep = setInterval(() => this.sweepSess(), 30000);
+    this.sessSweep.unref?.();
     this.peers = new Map();       // pub → { v, app, caps: string[] } (from its hello on this connection)
     this.res = null;              // this machine's resources (publishRes)
     this.catalog = null;          // this machine's project catalog (publishCatalog)
@@ -180,25 +189,16 @@ class Link extends EventEmitter {
     const p = this.pairing;
     let done = false;
     const fail = () => { if (!done) conn.destroy(); };
-    const t = setTimeout(fail, 20000);
+    // v3.101 the person at each machine confirms the pairing (first the joiner's, then the inviter's): time for both
+    const t = setTimeout(fail, C.PAIR_CONFIRM_MS);
     t.unref?.();
-    this.write(conn, { t: 'pair-hello', name: this.name, proof: C.pairProof(p.key, p.role, this.pub, remote) });
+    const hello = () => this.write(conn, { t: 'pair-hello', name: this.name, proof: C.pairProof(p.key, p.role, this.pub, remote) });
+    const ask = (name) => (this.confirmPair ? Promise.resolve().then(() => this.confirmPair?.(name)).catch(() => false) : Promise.resolve(false));   // fail closed: nobody to ask = no
+    // the inviter names itself at once; the joiner proves the code (its pair-hello) only after its person said yes
+    if (p.role === 'inviter') hello();
     let device = null;
-    this.reader(conn, (raw) => {
-      if (device) return this.handle(conn, device, raw);    // the same stream carries the session once paired
-      const m = C.validatePair(raw);
-      if (!m || this.pairing !== p) return fail();
-      if (m.t === 'pair-hello') {
-        const theirs = p.role === 'inviter' ? 'joiner' : 'inviter';
-        if (!C.proofOk(p.key, theirs, remote, this.pub, m.proof)) return fail();
-        if (p.role !== 'inviter') return;                     // the joiner waits for pair-ok
-        const secret = crypto.randomBytes(32).toString('hex');
-        device = this.addDevice(remote, m.name, secret);
-        this.write(conn, { t: 'pair-ok', name: this.name, secret, proof: C.pairProof(p.key, 'ok', this.pub, remote) });
-      } else if (m.t === 'pair-ok' && p.role === 'joiner') {
-        if (!C.proofOk(p.key, 'ok', remote, this.pub, m.proof)) return fail();
-        device = this.addDevice(remote, m.name, m.secret);
-      } else return fail();
+    let confirmed = false;   // the person at this machine said yes on this connection
+    const finish = () => {
       done = true;
       clearTimeout(t);
       const resolve = p.resolve;
@@ -208,12 +208,39 @@ class Link extends EventEmitter {
       this.swarm?.leave(p.topic).catch(() => {});
       resolve?.(device);
       this.session(conn, device, 'paired');
+    };
+    this.reader(conn, (raw) => {
+      if (device) return this.handle(conn, device, raw);    // the same stream carries the session once paired
+      const m = C.validatePair(raw);
+      if (!m || this.pairing !== p) return fail();
+      if (m.t === 'pair-hello') {
+        const theirs = p.role === 'inviter' ? 'joiner' : 'inviter';
+        if (!C.proofOk(p.key, theirs, remote, this.pub, m.proof)) return fail();
+        if (confirmed || p.asking) return fail();              // one question per code at a time
+        p.asking = true;
+        ask(m.name).then((yes) => {
+          p.asking = false;
+          if (this.pairing !== p || done) return fail();
+          if (yes !== true) { fail(); this.cancelPairing(new Error('declined')).catch(() => {}); return; }   // the code is closed
+          if (conn.destroyed) return;                          // the other side gave up meanwhile: the code stays open
+          confirmed = true;
+          if (p.role !== 'inviter') return hello();            // the joiner now waits for pair-ok
+          const secret = crypto.randomBytes(32).toString('hex');
+          device = this.addDevice(remote, m.name, secret);
+          this.write(conn, { t: 'pair-ok', name: this.name, secret, proof: C.pairProof(p.key, 'ok', this.pub, remote) });
+          finish();
+        });
+      } else if (m.t === 'pair-ok' && p.role === 'joiner' && confirmed) {
+        if (!C.proofOk(p.key, 'ok', remote, this.pub, m.proof)) return fail();
+        device = this.addDevice(remote, m.name, m.secret);
+        finish();
+      } else return fail();
     });
     conn.on('close', () => clearTimeout(t));
   }
 
   addDevice(pub, name, secret) {
-    const device = { pub, name: C.deviceName(name), addedAt: this.now(), allowCommands: false, allowHandoff: false, allowManage: false, allowAccounts: false, trusted: false };   // all OFF by default (a re-paired device starts untrusted again)
+    const device = { pub, name: C.deviceName(name), addedAt: this.now(), own: true, allowHandoff: false, allowAccounts: false };   // v3.101 pairing IS "this is my own computer"; handoffs and sign-in keep their own opt-ins (OFF)
     this.devices = [...this.devices.filter((d) => d.pub !== pub), device];
     this.secrets[pub] = secret;
     this.swarm?.join(C.pairTopic(secret), { server: true, client: true });
@@ -242,7 +269,10 @@ class Link extends EventEmitter {
     conn.on('close', () => {
       clearInterval(beat);
       clearTimeout(silence);
+      // v3.100 a subscription lives on one connection and ends with it
+      for (const s of [...this.sessOut.values()]) if (s.conn === conn) this.endSess(s.key, null, 'offline');
       if (this.conns.get(device.pub) !== conn) return;
+      this.dropSessIn(device.pub, 'offline');
       this.conns.delete(device.pub);
       this.remotes.delete(device.pub);
       const seenCheck = this.peerHas(device.pub, 'task-status');   // before the peer is forgotten
@@ -304,6 +334,19 @@ class Link extends EventEmitter {
       this.emit('change');
     } else if (m.t === 'cmd') {
       this.receiveCommand(conn, d, m);
+    } else if (m.t === 'sess-open') {
+      this.receiveSessOpen(conn, d, m);
+    } else if (m.t === 'sess-keep') {
+      const s = this.sessOut.get(`${d.pub}/${m.id}`);
+      if (s) s.keptAt = this.now();
+    } else if (m.t === 'sess-close') {
+      this.endSess(`${d.pub}/${m.id}`, null, 'closed');
+    } else if (m.t === 'sess-items') {
+      const s = this.sessIn.get(m.id);   // only for a subscription this device opened with that peer
+      if (s && s.pub === d.pub) this.emit('sess-items', { id: m.id, pub: d.pub, project: s.project, seq: m.seq, items: m.items, reset: m.reset === true });
+    } else if (m.t === 'sess-end') {
+      const s = this.sessIn.get(m.id);
+      if (s && s.pub === d.pub) { this.sessIn.delete(m.id); this.emit('sess-end', { id: m.id, pub: d.pub, project: s.project, reason: m.reason }); }
     } else if (m.t === 'proj-op') {
       this.receiveProjOp(conn, d, m);
     } else if (m.t === 'proj-op-status') {
@@ -490,6 +533,8 @@ class Link extends EventEmitter {
   answerHandoff(id, accept, reason = 'declined') {
     const h = this.handoffsIn.get(id);
     if (!h || h.stage !== 'asking') return false;
+    // v3.101 paused, or "Accept handoffs" turned off, since the offer came: a yes no longer counts
+    if (accept && !C.mayHandoff(this.devices, this.secrets, h.pub)) { this.refuseIn(h); return false; }
     clearTimeout(h.timer);
     if (!accept) { this.write(h.conn, { t: 'ho-answer', id, ok: false, reason }); this.handoffsIn.delete(id); }
     else {
@@ -508,9 +553,21 @@ class Link extends EventEmitter {
     this.emit('handoff-failed', { offer: h.offer, reason });
     this.emit('change');
   }
+  /** v3.101 An incoming handoff that is no longer allowed is refused in the message its stage expects. */
+  refuseIn(h) {
+    if (h.stage === 'asking') { this.write(h.conn, { t: 'ho-answer', id: h.id, ok: false, reason: 'not-allowed' }); this.dropIn(h, 'not-allowed', false); }
+    else this.dropIn(h, 'not-allowed');
+  }
+  /** v3.101 Pause, or "Accept handoffs" off, also ends what that device has in flight here: an open offer and a
+   *  transfer still arriving. One that is already being applied finishes (stopping there could leave half a project). */
+  dropDisallowedIn(pub) {
+    if (C.mayHandoff(this.devices, this.secrets, pub)) return;
+    for (const h of [...this.handoffsIn.values()]) if (h.pub === pub && h.stage !== 'applying') this.refuseIn(h);
+  }
   receiveChunk(d, m) {
     const h = this.handoffsIn.get(m.id);
     if (!h || h.pub !== d.pub || h.stage !== 'receiving') return;
+    if (!C.mayHandoff(this.devices, this.secrets, h.pub)) return this.refuseIn(h);   // v3.101 checked again on every chunk
     const want = h.offer[m.part];
     if (!want || m.seq !== h.seq[m.part] || (m.part === 'bundle' && h.bytes.pack < h.offer.pack.size)) return this.dropIn(h, 'bad-data');
     const buf = Buffer.from(m.data, 'base64');
@@ -569,11 +626,107 @@ class Link extends EventEmitter {
     const s = C.sanitizeCommand(m.text);
     if (!s.ok) return send('rejected', s.reason);
     // main decides (project, engine, busy tab) and answers through reply()
-    // v3.99 revive: a task asks that a stopped project be started for it; main honours it only for a device allowed to manage
+    // v3.99 revive: a task asks that a stopped project be started for it; main honours it for a paired device that is not paused (v3.101)
     this.emit('command', { device: d, id: m.id, project: m.project, text: s.text, reply, report: task, ...(m.ttl && this.peerHas(d.pub, 'task-status') ? { ttl: m.ttl } : {}), ...(m.revive === true && task ? { revive: true } : {}) });
   }
 
   // --- v3.33 project actions (start / wake / sleep / stop a project's boss tab on another device)
+
+  // --- v3.100 reading a remote project's session (cap 'sess'). The owning side: receiveSessOpen → 'sess-open' (the host
+  // finds the transcript and feeds sessPush) → frames at most SESS_FRAMES_PER_SEC → endSess. Nothing here reads a file.
+
+  sessOf(pub) { return [...this.sessOut.values()].filter((s) => s.pub === pub); }
+  /** A device asks to read one of our projects' sessions: only while it is paired and not paused (v3.101). */
+  receiveSessOpen(conn, d, m) {
+    if (!this.peerHas(d.pub, 'sess')) return;   // it never said it understands the answer
+    const end = (reason) => { if (C.trusted(this.devices, this.secrets, d.pub) && !conn.destroyed) this.write(conn, { t: 'sess-end', id: m.id, reason }); };
+    if (!C.maySessions(this.devices, this.secrets, d.pub)) return end('not-allowed');
+    const now = this.now();
+    const opens = (this.sessOpens.get(d.pub) || []).filter((at) => now - at < 60000);
+    this.sessOpens.set(d.pub, opens);
+    if (opens.length >= C.SESS_OPENS_PER_MIN) return end('rate-limited');
+    opens.push(now);
+    const key = `${d.pub}/${m.id}`;
+    if (this.sessOut.has(key)) return;
+    if (m.project.includes(':')) return end('unknown-project');   // a project's main tab only: never a desk or an extra tab
+    if (this.sessOf(d.pub).length >= C.SESS_PER_DEVICE) return end('limit');
+    this.sessOut.set(key, { key, pub: d.pub, device: d.name, id: m.id, project: m.project, conn, seq: 0, keptAt: now, queue: [], cool: null });
+    this.emit('sess-open', { key, device: d, id: m.id, project: m.project, refuse: (reason) => this.endSess(key, reason, 'refused') });
+    this.emit('change');
+  }
+  /** Items (already link-safe: chat.js linkItems) for a live subscription: cut into frames and sent in order, at most
+   *  SESS_FRAMES_PER_SEC. reset: the view starts over (frames still waiting are dropped). → false when it is not live. */
+  sessPush(key, items, { reset = false } = {}) {
+    const s = this.sessOut.get(key);
+    if (!s) return false;
+    if (!C.maySessions(this.devices, this.secrets, s.pub)) { this.endSess(key, 'not-allowed', 'revoked'); return false; }
+    const frames = C.sessFrames(s.id, s.seq, items, reset);
+    if (reset) s.queue.length = 0;
+    s.seq += frames.length;
+    s.queue.push(...frames);
+    if (s.queue.length > C.SESS_QUEUE_MAX) { this.endSess(key, 'limit', 'overflow'); return false; }
+    this.pumpSess(s);
+    return true;
+  }
+  pumpSess(s) {
+    if (s.cool || !s.queue.length || this.sessOut.get(s.key) !== s) return;
+    // the permission is read again before every frame: turning it off or removing the device stops the stream at once
+    if (!C.maySessions(this.devices, this.secrets, s.pub)) return void this.endSess(s.key, 'not-allowed', 'revoked');
+    if (s.conn.destroyed) return void this.endSess(s.key, null, 'offline');
+    this.write(s.conn, s.queue.shift());
+    s.cool = setTimeout(() => { s.cool = null; this.pumpSess(s); }, this.sessGapMs);
+    s.cool.unref?.();
+  }
+  /** Ends a subscription a device holds here. reason: told to the device (sess-end) when it is still trusted and connected. */
+  endSess(key, reason, why) {
+    const s = this.sessOut.get(key);
+    if (!s) return;
+    this.sessOut.delete(key);
+    clearTimeout(s.cool);
+    s.cool = null;
+    s.queue.length = 0;
+    if (reason && !s.conn.destroyed && C.trusted(this.devices, this.secrets, s.pub) && this.peerHas(s.pub, 'sess')) this.write(s.conn, { t: 'sess-end', id: s.id, reason });
+    this.emit('sess-closed', { key, pub: s.pub, device: s.device, id: s.id, project: s.project, why });
+    this.emit('change');
+  }
+  /** Subscriptions nobody kept for SESS_IDLE_MS, or whose connection is gone, end. */
+  sweepSess() {
+    const now = this.now();
+    for (const s of [...this.sessOut.values()]) {
+      if (s.conn.destroyed) this.endSess(s.key, null, 'offline');
+      else if (now - s.keptAt >= C.SESS_IDLE_MS) this.endSess(s.key, 'limit', 'idle');
+    }
+  }
+  // the reading side
+  /** Asks a device for one of its projects' sessions. → { ok: true, id } | { ok: false, reason } ('no-cap': an older app there). */
+  openSess(pub, project) {
+    const conn = this.conns.get(pub);
+    if (!C.trusted(this.devices, this.secrets, pub)) return { ok: false, reason: 'removed' };
+    if (!conn) return { ok: false, reason: 'offline' };
+    if (!this.peerHas(pub, 'sess')) return { ok: false, reason: 'no-cap' };   // an unknown message type is never sent to it
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(String(project))) return { ok: false, reason: 'unknown-project' };
+    const mine = [...this.sessIn].filter(([, s]) => s.pub === pub);
+    while (mine.length >= C.SESS_PER_DEVICE) this.closeSess(mine.shift()[0]);   // the oldest view gives way
+    const id = crypto.randomBytes(8).toString('hex');
+    this.sessIn.set(id, { pub, project: String(project) });
+    this.write(conn, { t: 'sess-open', id, project: String(project) });
+    return { ok: true, id };
+  }
+  keepSess(id) {
+    const s = this.sessIn.get(id);
+    const conn = s && this.conns.get(s.pub);
+    if (conn && this.peerHas(s.pub, 'sess')) this.write(conn, { t: 'sess-keep', id });
+  }
+  closeSess(id) {
+    const s = this.sessIn.get(id);
+    if (!s) return;
+    this.sessIn.delete(id);
+    const conn = this.conns.get(s.pub);
+    if (conn && this.peerHas(s.pub, 'sess')) this.write(conn, { t: 'sess-close', id });
+  }
+  dropSessIn(pub, reason) {
+    for (const [id, s] of [...this.sessIn]) if (s.pub === pub) { this.sessIn.delete(id); this.emit('sess-end', { id, pub, project: s.project, reason }); }
+  }
 
   /** A device asks us to act on one of our projects: allowed to manage, rate limited (shared with commands); main acts. */
   receiveProjOp(conn, d, m) {
@@ -907,7 +1060,7 @@ class Link extends EventEmitter {
     this.sentRes.set(pub, json);
     this.write(conn, { t: 'res', res: this.res, trusted: own });
   }
-  /** This machine's project catalog (display only): sent only to peers with 'catalog' that we allow to manage. */
+  /** This machine's project catalog (display only): sent only to peers with 'catalog' that are paired and not paused (v3.101). */
   publishCatalog(catalog) {
     const clean = C.cleanCatalog(catalog);
     if (!clean) return;
@@ -1033,18 +1186,28 @@ class Link extends EventEmitter {
   // --- the trust list
 
   rename(pub, name) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, name: C.deviceName(name, d.name) } : d)); this.persist(); this.emit('change'); }
-  setAllow(pub, on) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowCommands: on === true } : d)); this.persist(); this.tellTrust(pub); this.emit('change'); }
-  /** v3.97 "This is my own computer". Called only by the link:setTrusted IPC handler (this machine's own Devices UI, after
-   *  its confirmation dialog): no link message and no office MCP tool reaches it. */
-  setTrusted(pub, on) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, trusted: on === true } : d)); this.persist(); this.tellTrust(pub); this.emit('change'); }
-  tellTrust(pub) { const conn = this.conns.get(pub); if (conn) this.flushRes(pub, conn); }
-  setAllowHandoff(pub, on) { this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowHandoff: on === true } : d)); this.persist(); this.emit('change'); }
-  /** v3.31 "Allow managing projects": the catalog goes to that device (and stops at once when turned off). */
-  setAllowManage(pub, on) {
-    this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowManage: on === true } : d));
+  /** v3.101 the one control per device: `on` false = paused (nothing is accepted from it: commands, tasks, project
+   *  actions, session reads, handoffs, sign-in relays), true = resumed. Called only by the link:setPaused IPC handler
+   *  (this machine's own Devices UI): no link message and no office MCP tool reaches it. */
+  setOwn(pub, on) {
+    if (!this.devices.some((d) => d.pub === pub)) return;
+    this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, own: on === true } : d));
     this.persist();
     const conn = this.conns.get(pub);
-    if (conn) this.flushCatalog(pub, conn);
+    // sent again right away: a paused device drops the worker descriptions and the catalog now, a resumed one has them at once
+    if (conn) { this.sentJson.delete(pub); this.flushTo(pub, conn); this.flushRes(pub, conn); this.flushCatalog(pub, conn); this.flushAccounts(pub, conn); }
+    if (on !== true) {
+      this.dropDisallowedIn(pub);                                                        // an open offer or arriving transfer is refused
+      for (const s of this.sessOf(pub)) this.endSess(s.key, 'not-allowed', 'revoked');   // a session it reads ends at once
+      this.emit('login-cancel', { device: { pub }, id: null });                          // a relay it started here stops
+    }
+    this.emit('own', { pub, on: on === true });   // the host refuses what that device still has queued
+    this.emit('change');
+  }
+  setAllowHandoff(pub, on) {
+    this.devices = this.devices.map((d) => (d.pub === pub ? { ...d, allowHandoff: on === true } : d));
+    this.persist();
+    this.dropDisallowedIn(pub);   // turned off: what that device has in flight here is refused too
     this.emit('change');
   }
   /** v3.31 "Allow account sign-in": v3.34 the account list goes to that device and it may start a login relay here. */
@@ -1065,6 +1228,9 @@ class Link extends EventEmitter {
     const secret = this.secrets[pub];
     this.devices = this.devices.filter((d) => d.pub !== pub);
     delete this.secrets[pub];
+    this.sessOpens.delete(pub);
+    for (const s of this.sessOf(pub)) this.endSess(s.key, null, 'removed');   // v3.100 unpaired: nothing more is sent
+    this.dropSessIn(pub, 'removed');
     this.conns.get(pub)?.destroy();
     this.conns.delete(pub);
     this.remotes.delete(pub);
@@ -1088,7 +1254,7 @@ class Link extends EventEmitter {
       pairing: this.pairing ? { role: this.pairing.role, code: this.pairing.role === 'inviter' ? this.pairing.code : null, expiresAt: this.pairing.expiresAt } : null,
       devices: this.devices.map((d) => {
         const peer = this.peers.get(d.pub);
-        return { id: d.pub, name: d.name, addedAt: d.addedAt, allowCommands: d.allowCommands, allowHandoff: d.allowHandoff, allowManage: d.allowManage, allowAccounts: d.allowAccounts, trusted: d.trusted === true, online: this.conns.has(d.pub),
+        return { id: d.pub, name: d.name, addedAt: d.addedAt, own: d.own === true, allowHandoff: d.allowHandoff, allowAccounts: d.allowAccounts, online: this.conns.has(d.pub),
           trustsUs: this.peerTrusts.has(d.pub) ? this.peerTrusts.get(d.pub) : null,   // v3.97 null = unknown (offline, or an older Agent Office there)
           // v3.31/v3.32: null = no hello yet; v 1 = an older Agent Office there (no caps)
           v: peer ? peer.v : null, app: peer?.app || '', caps: peer?.caps || [], res: this.peerRes.get(d.pub) || null, catalog: this.peerCatalog.get(d.pub) || null, accounts: this.peerAccounts.get(d.pub) || null };
@@ -1107,6 +1273,8 @@ class Link extends EventEmitter {
   }
 
   async destroy() {
+    clearInterval(this.sessSweep);
+    for (const key of [...this.sessOut.keys()]) this.endSess(key, null, 'offline');
     this.destroyed = true;
     this.flushTasks();
     clearTimeout(this.pubTimer);

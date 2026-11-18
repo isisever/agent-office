@@ -224,7 +224,7 @@ test('consentFor matrix: typed/routine × local/remote × setting × routine che
     const m = HQ.createMinter();
     const typed = m.mint();
     const rid = m.mint({ origin: 'routine' });
-    assert.equal(HQ.consentFor({ setting, remote, request: typed, minter: m, routineNoAsk: noAsk }), setting && !remote ? 'none' : 'app');
+    assert.equal(HQ.consentFor({ setting, remote, request: typed, minter: m, routineNoAsk: noAsk }), setting ? 'none' : 'app');   // v3.101 a paired machine follows the same setting; routines keep their rule (next line)
     assert.equal(HQ.consentFor({ setting, remote, request: rid, minter: m, routineNoAsk: noAsk }), noAsk && !remote ? 'none' : 'held');
   }
 });

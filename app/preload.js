@@ -177,12 +177,14 @@ contextBridge.exposeInMainWorld('agentOffice', {
     cancel: () => ipcRenderer.invoke('link:cancel'),
     setName: (name) => ipcRenderer.invoke('link:setName', name),
     rename: (id, name) => ipcRenderer.invoke('link:rename', id, name),
-    setAllow: (id, on) => ipcRenderer.invoke('link:setAllow', id, on),
-    setTrusted: (id, on) => ipcRenderer.invoke('link:setTrusted', id, on),   // v3.97: asks on this machine before it turns on
+    setPaused: (id, on) => ipcRenderer.invoke('link:setPaused', id, on),   // v3.101 the one control per device: nothing is accepted from a paused one
     remove: (id) => ipcRenderer.invoke('link:remove', id),
     setAllowHandoff: (id, on) => ipcRenderer.invoke('link:setAllowHandoff', id, on),   // v3.29
-    setAllowManage: (id, on) => ipcRenderer.invoke('link:setAllowManage', id, on),     // v3.31: catalog, later project actions
     setAllowAccounts: (id, on) => ipcRenderer.invoke('link:setAllowAccounts', id, on), // v3.31: later account sign-in
+    sessOpen: (id, project) => ipcRenderer.invoke('link:sessOpen', id, project),       // v3.100 → { ok, id?, reason? }
+    sessKeep: (sessId) => ipcRenderer.invoke('link:sessKeep', sessId),
+    sessClose: (sessId) => ipcRenderer.invoke('link:sessClose', sessId),
+    onSess: listen('link:sess'),   // { id, pub, project, seq, items, reset } | { id, pub, project, reason, end: true }
     handoffAnswer: (id, accept) => ipcRenderer.invoke('link:handoffAnswer', id, accept),
     handoffAsk: (dir) => ipcRenderer.invoke('link:handoffAsk', dir),     // outcome unknown: ask the receiver again
     handoffKeep: (dir) => ipcRenderer.invoke('link:handoffKeep', dir),   // outcome unknown: keep it here (confirm dialog)

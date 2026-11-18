@@ -853,7 +853,7 @@ agentOffice.link.onChange(cb: (v: LinkView) => void)   // 'link:changed'
 - **Keys.** `userData/link/keys.bin` = Electron `safeStorage.encryptString` of `{ publicKey, secretKey, secrets: { [devicePub]: pairSecret } }` (Keychain / DPAPI / libsecret). Without a keychain (`isEncryptionAvailable()` false, or Linux `basic_text`) the link stays off (`error: 'no-keychain'`), never plain JSON. `userData/link/devices.json` holds only the name and the device list. No login, token or Claude credential is ever sent.
 - **Trust.** The swarm's firewall refuses every key that is not trusted (a device in the list with a stored secret), except while a pairing code is open, and then only the code's proof completes. Every message is checked against the list again, so **removing a device revokes it at once**: its connection is closed, its topic left, and its key refused afterwards. Rename only changes the local label.
 - **Protocol** (`link-core.js`; one JSON object per line, ≤ 64 KB per line, a longer one closes the connection; unknown types and malformed fields are dropped, more than 20 bad messages close the connection): `pair-hello { name, proof }`, `pair-ok { name, secret, proof }` (pairing only); `hello { v: 1, name }`, `ping {}` (every 5 s, `HEARTBEAT_MS`; a session with no data for 3 of them (`HEARTBEAT_MISSES`, 15 s) is closed, so a peer that crashed or lost its network shows offline within ~15 s; on quit `will-quit` waits up to 1 s for `Link.destroy()`, so a quitting peer shows offline at once; the same wait, under the same 1 s cap, also covers the ptys killed while quitting until they are reaped, so node-pty's exit callbacks do not fire into a torn-down environment), `state { seq, snap: { projects: RemoteProject[], workers: RemoteWorker[], delivered } }`, `cmd { id, project, text }`, `cmd-status { id, status: 'queued' | 'delivered' | 'rejected', reason? }`. Every received string is cleaned (`cleanLine`: no escapes or control characters, length caps).
-- **Mirror.** Main builds the snapshot from the same `readOffice` result the office draws (`snapshotOf`): per project name, engine, status (`approval` when it has an open dialog, `working` when its boss or an agent works), counts and attention; per worker only type, description, tool and times. No prompts, results, details, transcripts, code or terminal output. Sent only when it changed, at most once a second. The renderer merges remote projects into the office data as `<device> · <project>` desks with their workers (`mergeRemote`; the boss sign stays local) and lists them as rows in PROJECTS (v3.46, `renderer/hq-board.js`; the old separate Remote projects group is gone). A remote project going to `approval` raises a local notification (`main.linkApproval`).
+- **Mirror.** Main builds the snapshot from the same `readOffice` result the office draws (`snapshotOf`): per project name, engine, status (`approval` when it has an open dialog, `working` when its boss or an agent works), counts and attention; per worker only type, description, tool and times. No prompts, results, details, transcripts, code or terminal output. Sent only when it changed, at most once a second. The renderer merges remote projects into the office data as `<device> · <project>` desks with their workers (`mergeRemote`; the boss sign stays local) and lists them as rows in PROJECTS (v3.46, `renderer/hq-board.js`; the old separate Remote projects group is gone). A remote project going to `approval` raises a local notification (`main.linkApproval`). *(Amended by v3.100: this holds for every device unless "Allow reading sessions from this device" (`allowSessions`) is on for it; then the chat items of v3.100, and nothing else, cross.)*
 - **Remote commands.** Off per device until **Allow commands from this device** / **Bu cihazdan komutlara izin ver** is ticked on the owning computer. Only Claude Code projects: their busy state is known (pid file) and their prompt takes a bracketed paste; Antigravity and Command Code show *Commands go to Claude Code projects only*. The text must be a string ≤ 8 KB (UTF-8; refused, never cut); escape sequences, C0/C1 controls and bidi/zero-width characters are removed and newlines become spaces (`sanitizeCommand`), then it is typed into the project's **main tab** with `typedPrompt` (bracketed paste, then Enter) as `[Agent Office: remote command from <device>] <text>` (`promptArg` drops the quotes around the name): never run by a shell. Rate limit per device: a burst of 3, then one every 10 s. Every received command is appended to `userData/link/commands.log` (time, device, project, first line ≤ 120 chars, outcome). **Busy tab: queued.** A command waits until the main tab is idle (pid file `idle` or `shell`, no unsent draft, no open permission dialog), at most 5 per project and 30 minutes; the sender sees `queued`, then `delivered`, or `rejected` with the reason (`not-allowed`, `unknown-project`, `engine`, `not-running` (no running main tab, e.g. asleep), `too-large`, `empty`, `rate-limited`, `queue-full`, `expired`). If the connection drops before the answer, the sender marks a `sent` or `queued` command `unknown` (*connection lost, outcome unknown*): answers travel on the connection the command came on, and the owner's queue does not outlive a restart.
 - **UI.** **Devices** / **Cihazlar** under Accounts (collapsible): this device's name (editable; default the host name), each paired device with an online dot, ✎ rename, × remove (confirm) and the allow toggle, **+ Add device** with the code and its minutes left, and the code box with **Pair**. Strings in the `devices` namespace.
 - **Dev.** `AGENT_OFFICE_USER_DATA=<dir> npm start` uses a throwaway profile (unpackaged app only; Electron's home then follows `$HOME`, which macOS otherwise ignores, so a throwaway `HOME` keeps it off `~/.claude`; add `--use-mock-keychain` to skip the Keychain prompt), so two instances can pair on one machine. `app/test/link.test.cjs` pairs two `Link`s on a local `hyperdht/testnet`.
@@ -1943,3 +1943,244 @@ reported as `needs-approval`; the task is typed with the remote-task marker; `co
 
 **HQ's information.** `office_machines` gives `trustsUs` per paired machine (true / false / null, from v3.97
 `res.trusted`); HQ's brief tells it to prefer projects that will not stall.
+
+## Reading a remote project's session (v3.100)
+
+From any of the person's machines, a project that lives on another machine can be opened and its session read. Reading
+only: typing stays the row's command box (`link:send`, v3.28 / v3.46), unchanged.
+
+**Amends v3.28.** The promise that no prompts, transcripts or terminal output cross the link now holds **unless
+`allowSessions` is on for that device**. With it off (the default) nothing of this section is ever sent.
+
+**The permission.** A per-device flag on the owning machine, `allowSessions`, "Allow reading sessions from this
+device", in the Devices popup next to the other opt-ins; stored in `devices.json` (`normalizeDevices`), set by
+`link:setAllowSessions` -> `Link.setAllowSessions`, checked by `maySessions`. Off by default, and implied by nothing
+else: not by `trusted`, `allowManage` or `allowCommands`. Its hint says what it means: everything said in that
+project's session is sent to that device, and secrets are removed on a best-effort basis only.
+
+**What crosses.** Chat items built in the main process of the owning machine from the transcript, by the reader of
+v3.80 (`src/chat.js` `readChat` / `chatItems`) and then `linkItems`:
+- user, assistant, error and slash-command **text**, and the notes (compact, task, interrupted, message);
+- a tool row with the tool's **name** only, and later whether that call ended or failed (a flag).
+Each item is `{ key, at, kind, ... }`. Only the project's **main tab** is read (`linkSessionOf` in main).
+
+**What never crosses.** Thinking; tool input (no detail line, command, prompt or path) and tool results; images (not
+even their count); raw terminal bytes or the screen; HQ's own session, staff desks, personal workspaces and extra
+tabs; anything of a project whose engine is not Claude Code. A tool's detail line would need a second opt-in that is
+not built (`LINK_TOOL_DETAIL` in `src/chat.js` stays `false`; there is no UI for it).
+
+**Redaction is best effort.** Every text passes `HQ.redact` before it is sent. v3.100 adds to its patterns a PEM
+private-key block (also one cut off before its END line) and shell assignments (`NAME=value` where the name says
+secret, such as `API_KEY_PROD=...` or `export DB_PASSWORD="..."`, and `export NAME=value` whose value looks random).
+The patterns catch obvious secrets only: a secret in another shape crosses with the text. Known gaps: Google API
+keys (`AIza...`), a password written without `:` or `=` ("my password is hunter22"), lowercase assignments that are
+not `export`ed (`db_pass=...` outside the patterns above), and base64 blobs. What the link does remove, before
+redaction and wherever it sits in a user message: `<bash-input>`, `<bash-stdout>`, `<bash-stderr>`,
+`<local-command-stdout>`, `<ide_selection>`, `<ide_opened_file>`, `<system-reminder>` and `<command-args>` blocks
+(and the other hidden local-command blocks) and `[Image: source: ...]` lines. Sharing sessions with a paired device
+means trusting it with what is said in the session.
+
+**Wire** (capability `sess`, in `CAPS` / `OUR_CAPS`). The reader sends `sess-open { id, project }`, `sess-keep { id }`
+and `sess-close { id }`; the owner sends `sess-items { id, seq, items, reset? }` and `sess-end { id, reason }`, with
+reason one of `not-allowed`, `unknown-project`, `engine`, `no-session`, `rate-limited`, `limit` (also: the view fell too far behind to follow). `reset` starts the
+view over (the first frame, a new session file). The validators rebuild every message and every item field by field
+and bound each field; an item of an unknown kind is dropped, a frame with more than 200 items is refused.
+
+**Bounds.**
+- A new subscription starts with the last 200 items of the transcript's tail, at most 256 KB of them.
+- A frame is measured in **bytes after `JSON.stringify`** (multi-byte text, JSON escapes) and is at most 48 KB, under
+  the link's 64 KB frame limit; long batches are split over frames and a single long message is cut and marked.
+- At most 4 frames per second per subscription; more than 32 frames waiting ends it (`rate-limited`), as do more
+  than 12 `sess-open` messages a minute from one device.
+- At most 2 subscriptions per device (`limit`). The reading side closes its oldest view before opening a third.
+- A subscription ends: with its connection; on `sess-close`; **at once** when the flag is turned off (frames still
+  waiting are dropped; the permission is also read again before every frame); when the device is removed; after
+  10 minutes without `sess-keep` (`limit`). The reading view sends `sess-keep` every 2 minutes while it is open.
+
+**Visible on the owning machine.** `userData/link/sessions.log` (0600) gets one line per open and per close:
+time, device, project, event, why it closed; never content. A notice says "{device} is reading {project}."
+(`main.sessionViewed`) and, while a subscription is live, that project's row in PROJECTS says "read from {device}"
+(`link:get` `sessReaders`).
+
+**The reading side.** Clicking a remote project row (v3.98) opens, next to its command box, a read-only chat view:
+the chat rendering of v3.80 (`renderer/chat.js`, `mountChat` with a `source`) fed by `link:sess` events through
+`renderer/remote-view.js`; no input, no menu buttons, no reply. Its header shows machine, project and "as of". When
+that machine does not share sessions with this computer (flag off, or an older app without the capability):
+"{machine} does not share sessions with this computer. Turn it on there under Devices." While the remote status is
+`approval`: "Waiting for an approval on {machine}; it is answered there."
+
+**Compatibility.** The five messages are sent only to a peer whose hello named `sess`: an older app never receives
+a message type it does not know (more than 20 of those would close its connection), and a `sess-open` from a peer
+that did not name the capability gets no answer. A device record without the field reads as off.
+
+**Non-goals.** Typing into the remote session beyond the existing command box; answering a remote permission prompt;
+the tool-detail opt-in; sharing the task board; any change to consent or to `trusted`.
+
+## A paired device is your own computer (v3.101)
+
+**The model.** Pairing a device IS the statement "this is my own computer". There are no per-device parameters: a
+paired device has full access both ways without a further switch on either machine. On the receiving side one
+effective state per device, `own` (true for a paired device), decides every check; the check functions and their
+call sites stay, so every gate is still in one place:
+
+| Check (`src/link-core.js`) | Gate | Paired | Paused |
+| --- | --- | --- | --- |
+| `mayCommand` | `cmd` (commands and tasks), also re-checked when a queued entry is pumped | yes | no (`not-allowed`) |
+| `mayRunUnattended` | a task into a project with Auto-approve or Skip permissions on (v3.97) | yes | no (`not-allowed`) |
+| `mayManage` | the catalog, `proj-op` start / wake / sleep / stop (v3.33), `revive` (v3.99), worker descriptions | yes | no (`not-allowed`, catalog withdrawn) |
+| `maySessions` | `sess-open` (v3.100) | yes | no (`not-allowed`; an open subscription ends at once) |
+| `mayHandoff` | `ho-offer`, checked again at the person's answer and on every `ho-chunk`: its own opt-in `allowHandoff` | opt-in | no (`not-allowed`, also for one in flight) |
+| `mayAccounts` | the account list and the login relay: its own opt-in `allowAccounts`, unchanged | opt-in | no |
+
+**Pairing is confirmed on both machines.** Pairing was already deliberate on both (one machine shows a one-time
+code after "+ Add device", the other types it). Now each machine also asks its person, naming the other device and
+what pairing means, before anything is stored: "Pair {device} as your own computer? It will be able to run tasks and
+commands in your projects here, also unattended in projects with Auto-approve or Skip permissions on, start and stop
+projects, and read their sessions. Pair only a computer that is yours." Cancel is the default. The joiner is asked
+first and proves the code (`pair-hello`) only after a yes; the inviter is asked when that proof arrives and sends
+`pair-ok` only after a yes. A no closes the code on that machine (`declined`). A pairing connection waits
+`PAIR_CONFIRM_MS` (2 min) for the two answers. With an older Agent Office on the other side the wire messages are
+the same; that side keeps its 20 s limit, so the answer here must come within it (the code stays open for a new try).
+Fail closed: a host without a dialog wired pairs nothing, and the link itself answers no when no confirm function is
+set (`Link.confirmPair`, also a constructor option).
+
+**One control: Pause.** The Devices popup shows per device its name, online or not, "Your computer: can run tasks,
+manage projects and read sessions here.", the switch "Pause this device", the two unchanged opt-ins (accept handoffs,
+account sign-in) and Remove. Paused is stored as `own: false`. While paused nothing is accepted from that device:
+commands, tasks, project actions and session reads are refused `not-allowed`, the catalog and the account list are
+withdrawn, a session it reads ends at once, a sign-in relay it started stops, entries it still has in a queue here
+are refused when the queue is next pumped (at once on the switch), and handoffs and sign-in relays are refused
+whatever their opt-ins say. A handoff from that device that is in flight ends too: an offer still waiting for the
+person's answer is answered no (`ho-answer`, `not-allowed`) and a later yes is not taken, and a transfer still
+arriving is dropped (`ho-result`, `not-allowed`) and never applied. Only one that is already being applied finishes
+(stopping there could leave half a project). The same happens when "Accept handoffs" is turned off for that device.
+The switch also sends that device its state again at once, in both directions: the snapshot without worker
+descriptions and the withdrawn catalog when paused, the full ones when resumed, without waiting for the next change.
+The device stays paired and connected; this machine can still send to it if that machine
+has not paused this one. `res.trusted` (v3.97, display on the sender: `trustsUs`) now says "paired here and not paused".
+Only this machine's own Devices UI sets the state (`link:setPaused`): no link message and no office MCP tool does.
+
+**Sealing (the v3.97 idea).** `own` is honoured only for a device whose key is in the set sealed inside the
+keychain-encrypted keys file (`own`, with the marker `ownV`), written only by the app: at pairing, at resume and
+once by the migration. `devices.json` is a plain file: editing it can pause a device but can never resume one, add
+one (a device also needs its secret, which is in the sealed file) or run the migration again. A sealed set that is
+missing or malformed reads as paused.
+
+**The own record.** A second keychain-encrypted file next to the keys file, `link/own.bin`, holds
+`{ v, own: [keys], paused: [keys] }`: the same marker and the current sets, written with every save (before the keys
+file). An older Agent Office rewrites the keys file without the marker but never touches this file, so it tells a
+keys file that lost its marker (an older copy put back, or a downgrade followed by an upgrade) from a first upgrade.
+At start:
+
+| Keys file | Own record | Result |
+| --- | --- | --- |
+| missing | any | fresh install: new keys, nothing to migrate, both files written with the marker |
+| no marker | missing | the one migration (below) |
+| no marker | readable | restored from the record: only the devices it lists as `own` are own; paused stays paused and a device it does not know stays paused, never own. No notice; `{ event: "own-restored", devices: [names] }` in `link/commands.log` |
+| marker | missing | the keys file's sealed set (the record is written) |
+| marker | readable | a device is own only when both files say so |
+| any | unreadable or malformed | every device is paused (fail closed), `{ event: "own-record-unreadable" }` in `link/commands.log`; the person resumes the ones that are theirs |
+
+After any row but "marker + readable" both files are written again at once. Limit: someone who can delete `own.bin`
+AND put back a keys file from before v3.101 gets the migration again (nothing on disk then says it ever ran).
+Putting back older copies of BOTH `own.bin` and `keys.bin` (from a backup, for example) brings back the own and
+paused state of that time, and it can bring back a device that was removed since, because that device's secret is in
+the older keys file (its entry in the plain `devices.json` has to be there again as well). Without such a backup a
+removed device cannot come back: its secret is gone from the keys file, and neither `devices.json` nor one of the two
+sealed files alone restores it. A save writes `own.bin` first and `keys.bin` second; when only one of the two was
+written (a crash in between), the device whose state was being changed reads as paused, whichever file is the newer.
+
+**Migration.** At the first start of this version (a keys file without `ownV` and no own record) every device
+paired before becomes `own`, whatever its old switches said, and the set and the marker are sealed right away in
+both files, so it runs exactly once and a rolled-back keys file does not run it again.
+A line `{ event: "own-migration", devices: [names] }` goes to `link/commands.log`, and one non-blocking notice
+lists them: "Paired computers now have full access to this computer: {names}. Open Devices to pause or remove one
+that is not yours." The old fields in `devices.json` (`allowCommands`, `allowManage`, `allowSessions`, `trusted`) are
+dropped at that write and ignored if they appear again.
+
+**Sending side.** `dispatchRemoteWithoutAsking` is gone (a stored `true` is dropped the next time the settings are
+normalised; nothing else turns on because of it). A target on a paired machine follows the same rules as a local
+one: `dispatchWithoutAsking`, the v3.94 "stop asking" button (now offered for a paired target too, and what it turns
+on covers paired machines) and initiative. The notice "HQ sent a task to {project} on {machine} without asking."
+still shows every time. A routine's dispatch to a paired machine stays held (v3.47), unchanged.
+
+**Initiative and Skip projects.** The catalog a machine shares carries, per project, the optional boolean `skips`:
+its main tab answers or skips permission prompts right now (Auto-approve, Skip permissions, or started that way).
+The sender applies the v3.91 rule per project: no initiative follow-up into a project whose `skips` is true. A
+project whose flag is unknown (an older Agent Office there, no catalog yet, or not in it) counts as skipping, so
+initiative never goes to it. An older receiver ignores the field; an older sender never reads it.
+
+**Unchanged.** Every receiver rule that is not a permission: the rate limit, the queue cap, Claude engine only, the
+logged-out refusal, sanitised text and the sender mark, `commands.log` / `sessions.log` and the notices, the
+starting-tab rule, the "stopped here" window for `revive`, never typing an answer into a permission prompt, the
+session-view bounds and content limits (v3.100); HQ, desks and personal workspaces are never reachable from another
+device. Handoff (v3.29) and the login relay (v3.34) keep their rules and their own opt-ins: credentials never cross
+the link, only the sign-in URL and the one-time code.
+
+**Replaces.** The per-device `allowCommands` (v3.28) and `allowManage` (v3.31, v3.33, v3.98, v3.99 revive), `trusted`
+with its confirmation dialog (v3.97), the sender setting `dispatchRemoteWithoutAsking` and the "never by the v3.94
+button" rule (v3.99), and `allowSessions` (v3.100). Where an earlier section names one of them, read "paired and
+not paused".
+
+**Non-goals.** Answering a remote permission prompt; sharing the task board; any transfer of credentials or logins;
+changes to handoff; a pairing meant for another person's computer.
+
+## Sealed files are bound to their purpose (v3.102)
+
+Electron `safeStorage` has one key for the whole app: a file it encrypted for one use decrypts just as well where
+another use reads it. Before this version a copy of `link/keys.bin` placed in `mcp-tokens/` was decrypted and sent
+out as a bearer token, and a text stored through a token store could be copied over `link/own.bin` or
+`link/keys.bin`. Now every `safeStorage` plaintext says what it is for (`src/sealed.js`, the only module that calls
+`encryptString` / `decryptString` on a file's content).
+
+**Header.** The plaintext that is encrypted is `ao1:<purpose>\n<payload>`. `<purpose>` matches `[a-z0-9-]{1,40}`.
+A reader passes its own purpose and gets the payload only when the header names exactly that purpose; another
+purpose, or no header, is refused the way an unreadable file is. A file that does not decrypt at all (a locked
+keychain, another build) is not refused but kept, as before.
+
+| File | Purpose | When refused |
+| --- | --- | --- |
+| `link/keys.bin` | `link-keys` | the link does not start (error `keys`); nothing is written over the file |
+| `link/own.bin` | `link-own` | the own record is "unreadable or malformed" (v3.101 table): every device is paused |
+| `mcp-tokens/<id>.bin` | `mcp-token` | no token: `read` → `{ token: '', failed: true }`, the server gets no `Authorization` header |
+| `connector-tokens/<id>.bin` (v3.43, migration only) | `connector-token` | the move to `mcp-tokens` fails and is retried at the next start |
+| `mail-secrets/<id>.bin` | `mail-secret` | no password / refresh token for that mail account |
+
+These are all the `safeStorage` uses of the app. A new one gets a new purpose, never one of these.
+
+**Payload shape.** Independent of the header:
+- A token or secret (the three stores) is one line: no control characters (so no line break), at most 8192
+  characters, and not a JSON object (a JSON array or scalar is a valid password or token). Anything else is not saved (`save` → false) and not handed out, whether
+  it comes from a sealed file or from the plain `.txt` a store uses where the OS has no keyring. So neither the keys
+  file nor the own record can ever be emitted as a bearer token, and a JSON text placed in a plain token file is never
+  sealed.
+- The keys file must parse to `{ publicKey: 64 hex, secretKey: 128 hex, secrets?: object, own?: array }`, the own
+  record to `{ v, own: array, paused: array }` with the current `v` (v3.101).
+
+**Migration, once per kind.** Files written before this version have no header.
+- A token store: at its first use every headerless `.bin` that decrypts to the shape of a token is rewritten with the
+  header, then the marker file `.ao1` is written in the store's folder. A file that does not decrypt is skipped (left
+  untouched, one `console.error` line naming the store and id, never the content) and the marker is written once every
+  other file is done; only when no file decrypts at all (encryption unavailable, a locked keychain) is the marker
+  deferred and the next use tries again. A headerless file that is not a token is left as it is, logged once with the
+  same kind of line, and refused.
+- `keys.bin` and `own.bin`: at the first start a headerless file that parses to its own schema is taken, both files
+  are written again with their headers, and the markers `keys.bin.ao1` and `own.bin.ao1` are written next to them.
+- Once a kind's marker exists, a headerless file of that kind is refused.
+- An Agent Office older than this version cannot read the files with a header: there its link does not start and its
+  tokens are not usable until the newer version runs again. It does not rewrite or delete them.
+- After such a downgrade, a token or password entered (or a token rotated) on the older version is saved without the
+  header, and the newer version refuses it once its marker exists: it must be entered once more.
+
+**Paths.** A store's file name is its id with every character outside `[A-Za-z0-9_-]` replaced by `_`: one segment
+under the store's own folder. Sealed files are read only when they are regular files and written through a new temp
+file and a rename, so a symbolic link at a file's path is never followed (it is replaced by the write). A store whose
+folder is itself a symbolic link does nothing (no read, save, listing or removal: the start sweep cannot delete
+another folder's files through it), and the link does not start when `link/` is one. In both cases the data is kept.
+
+**Limits.** This stops moving and copying files between the app's stores; it is not a sandbox. A process running as
+the same user can still run the app's own binary, or read the keychain item if macOS lets it, and then decrypt and
+encrypt anything. The markers are plain files: with a marker deleted, a headerless file is taken once more, but only
+with the shape of its own kind, and the app no longer writes headerless files, so such a file has to come from a
+version before this one. The check covers the store folder and the file, not a symbolic link higher up the path.
+Purpose binding does not tell an older copy of the right file from the current one (v3.101 "Limit").
