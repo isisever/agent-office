@@ -479,6 +479,17 @@ function normalizeDevices(raw) {
   }
   return out;
 }
+/** v3.97 The keys of the devices with `trusted` on: what the host seals inside the keychain-encrypted keys file. */
+const trustedKeys = (devices) => devices.filter((d) => d.trusted === true).map((d) => d.pub);
+/**
+ * v3.97 The trust list as read from disk. devices.json is a plain file that anything running as this user can edit, so
+ * its `trusted` is honoured only for a key that is also in the sealed set (kept in the encrypted keys file, written
+ * only by the app). Anything else, and a sealed set that is missing or malformed, reads as off.
+ */
+function sealTrusted(raw, sealed) {
+  const ok = new Set(Array.isArray(sealed) ? sealed.filter((k) => isHex(k, 32)) : []);
+  return normalizeDevices(raw).map((d) => (d.trusted && !ok.has(d.pub) ? { ...d, trusted: false } : d));
+}
 /** The trusted device for a remote Noise key, or null. A device without a stored secret is not trusted. */
 function trusted(devices, secrets, remotePub) {
   const k = hex(remotePub || '');
@@ -530,7 +541,7 @@ module.exports = {
   makeCode, normalizeCode, pairSecrets, pairProof, proofOk, pairTopic, hex, isHex,
   cleanLine, sanitizeCommand, markedCommand, markedTask, cleanReport, fitReport, REPORT_MAX, REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK, TASK_STATES, WAIT_STATES, TASK_TTL_MAX, deviceName, RateLimiter,
   cleanSnapshot, validateMessage, validatePair, LineReader, encode,
-  normalizeDevices, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, snapshotOf, snapshotFor, logEntry,
+  normalizeDevices, trustedKeys, sealTrusted, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, snapshotOf, snapshotFor, logEntry,
   cleanRes, cleanCatalog, resOf, resChanged, typingReady,
   LOGIN_HOSTS, LOGIN_REDIRECT, LOGIN_CODE_RE, LOGIN_TIMEOUT_MS, LOGIN_REASONS, loginUrlOk, loginCodeOk, stripAnsi, parseLoginOutput, cleanAccounts,
 };

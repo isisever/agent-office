@@ -1114,9 +1114,10 @@
     "allowManage": "Projeleri yönetmeye izin ver (proje listesini paylaşır)",
     "allowAccounts": "Hesap girişine izin ver",
     "trusted": "Bu benim kendi bilgisayarım",
-    "trustedHint": "Bu cihazdan gelen görevler, Otomatik onay ya da İzinleri atla açık projelerde de çalışır; böylece onay için bu bilgisayarın başında kimsenin olması gerekmez. Yalnızca size ait bir bilgisayar için açın.",
-    "trustsUsOn": "Gönderdiğiniz görevler orada gözetimsiz çalışır",
-    "trustsUsOff": "O bilgisayar, başındaki birinden onay ister",
+    "trustedHint": "Bu cihazdan gelen görevler, Otomatik onay ya da İzinleri atla açık projelerde de çalışır; böylece onay için bu bilgisayarın başında kimsenin olması gerekmez. Yalnızca \"Bu cihazdan komutlara izin ver\" açıkken işe yarar. Yalnızca size ait bir bilgisayar için açın.",
+    "trustedNeedsAllow": "(Komutlara izin ver gerekli)",
+    "trustsUsOn": "Gönderdiğiniz görevler orada, Otomatik onay ya da İzinleri atla açık projelerde gözetimsiz çalışabilir.",
+    "trustsUsOff": "Otomatik onay ya da İzinleri atla açık projelere gönderdiğiniz görevler orada reddedilir, diğer projeler o bilgisayarın başındaki birinden onay ister.",
     "updateThere": "Makinesini ve projelerini görmek için {device} cihazında Agent Office'i güncelleyin",
     "machines": "Makineler"
   },

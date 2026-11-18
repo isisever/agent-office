@@ -75,14 +75,15 @@ function setupLink(d) {
   function loadKeys() {
     if (!fs.existsSync(keysFile)) {
       const kp = require('hyperdht').keyPair();
-      return { publicKey: kp.publicKey, secretKey: kp.secretKey, secrets: {}, fresh: true };
+      return { publicKey: kp.publicKey, secretKey: kp.secretKey, secrets: {}, trusted: [], fresh: true };
     }
     const k = JSON.parse(d.safeStorage.decryptString(fs.readFileSync(keysFile)));
-    return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {} };
+    return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {}, trusted: k.trusted };
   }
   function save({ name, devices, secrets }) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const keys = { publicKey: link.pub, secretKey: C.hex(link.keyPair.secretKey), secrets };
+    // v3.97 the trusted device keys are sealed here too: devices.json alone (a plain file) cannot turn the flag on
+    const keys = { publicKey: link.pub, secretKey: C.hex(link.keyPair.secretKey), secrets, trusted: C.trustedKeys(devices) };
     fs.writeFileSync(keysFile, d.safeStorage.encryptString(JSON.stringify(keys)), { mode: 0o600 });
     fs.writeFileSync(devicesFile, JSON.stringify({ name, devices }, null, 2), { mode: 0o600 });
   }
@@ -93,7 +94,7 @@ function setupLink(d) {
     try {
       const keys = loadKeys();
       const saved = readJson(devicesFile) || {};
-      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: saved.devices, secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), tasksFile: path.join(dir, 'tasks-out.json'), seenFile: path.join(dir, 'tasks-seen.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
+      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: C.sealTrusted(saved.devices, keys.trusted), secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), tasksFile: path.join(dir, 'tasks-out.json'), seenFile: path.join(dir, 'tasks-seen.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
       link.on('persist', save);
       if (keys.fresh) link.persist();
       link.on('change', push);
@@ -571,12 +572,13 @@ function setupLink(d) {
   ipc('link:rename', (l, id, name) => l.rename(String(id), String(name || '')));
   ipc('link:setAllow', (l, id, on) => l.setAllow(String(id), on === true));
   // v3.97 "This is my own computer": the only setter. Turning it on needs the confirmation dialog on this machine
-  // (no dialog wired = it stays off); the device must still be the same pairing when the person answers.
+  // (no dialog wired = it stays off) and "Allow commands" on (it does nothing without it); the device must still be
+  // the same pairing when the person answers. Link.persist then writes it to devices.json and to the sealed set.
   ipc('link:setTrusted', async (l, id, on) => {
     const dev = l.devices.find((x) => x.pub === String(id));
     if (!dev) return;
     if (on !== true) return l.setTrusted(dev.pub, false);
-    if (dev.trusted || !d.confirmTrusted || (await d.confirmTrusted(dev.name)) !== true) return;
+    if (dev.trusted || !dev.allowCommands || !d.confirmTrusted || (await d.confirmTrusted(dev.name)) !== true) return;
     if (l.devices.some((x) => x.pub === dev.pub && x.addedAt === dev.addedAt)) l.setTrusted(dev.pub, true);
   });
   ipc('link:remove', (l, id) => { for (const k of [...opStatus.keys()]) if (k.startsWith(`${id}/`)) opStatus.delete(k); return l.remove(String(id)); });
