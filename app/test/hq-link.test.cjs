@@ -545,3 +545,127 @@ test('v3.48 review: host restarted after expectReport but before the reply: the 
   assert.equal(a.sentTask(rec.id).status, 'delivered');
   assert.ok(dir);
 });
+
+test('v3.97: "This is my own computer" lets a device\'s task into a project that answers or skips its prompts; off, removed or untrusted again it is refused as before', async (t) => {
+  const { setupLink } = require('../src/link-host.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-trusted-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let on = true; let tab = 'ready'; let captured = null; let answer = false; let asked = 0;
+  const typed = [];
+  const handlers = {};
+  const realOn = Link.prototype.on;
+  Link.prototype.on = function (ev, fn) { captured = this; return realOn.call(this, ev, fn); };
+  t.after(() => { Link.prototype.on = realOn; });
+  const host = setupLink({
+    app: { getPath: () => dir, getVersion: () => '0.21.0' },
+    safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain', encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+    ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; } }, send: () => {}, notify: () => {}, T: (k) => k, loginOf: () => 'in', reportsDir: path.join(dir, 'r'),
+    projects: () => [{ id: 'p1', name: 'pii', engine: 'claude' }], tabState: () => tab,
+    type: (id, text) => { typed.push(text); },
+    answersPrompts: (id) => id === 'p1' && on,
+    confirmTrusted: async () => { asked++; return answer; },
+  });
+  t.after(() => host.destroy());
+  host.devices();   // starts the link
+  const link = captured;
+  const SECRET = 'cd'.repeat(32);
+  link.devices = C.normalizeDevices([{ pub: PA, name: 'Studio', addedAt: 5, allowCommands: true }]);
+  link.secrets[PA] = SECRET;
+  const dev = { pub: PA, name: 'Studio' };
+  const send = (id) => { const r = []; link.emit('command', { device: dev, id, project: 'p1', text: `remote ${id}`, report: true, reply: (s, why) => r.push([s, why]) }); host.pump(); return r; };
+  const logged = () => fs.readFileSync(path.join(dir, 'link', 'commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).outcome);
+  const trustedNow = () => link.devices.find((x) => x.pub === PA)?.trusted;
+  const setTrusted = (v) => handlers['link:setTrusted'](null, PA, v);
+
+  // off (the default): today's refusal and reason, at arrival
+  assert.equal(trustedNow(), false);
+  assert.deepEqual(send('t-off'), [['rejected', 'not-allowed']]);
+  assert.deepEqual(logged(), ['task:rejected:not-allowed']);
+  // ... and at typing time (the project's switch came on while the task waited)
+  on = false; tab = 'busy';
+  const waiting = send('t-pump-off');
+  assert.deepEqual(waiting, [['queued', undefined]]);
+  on = true; tab = 'ready';
+  host.pump();
+  assert.deepEqual(waiting, [['queued', undefined], ['rejected', 'not-allowed']]);
+  assert.equal(typed.length, 0);
+
+  // the only setter is this machine's IPC handler, and it turns on only after the dialog here said yes
+  await setTrusted(true);
+  assert.equal(asked, 1);
+  assert.equal(trustedNow(), false);                // the person cancelled
+  answer = true;
+  await setTrusted('yes');                           // not a boolean true: read as off, no dialog
+  assert.equal(asked, 1);
+  assert.equal(trustedNow(), false);
+  await handlers['link:setTrusted'](null, PB, true); // not a paired device
+  assert.equal(asked, 1);
+  await setTrusted(true);
+  assert.equal(asked, 2);
+  assert.equal(trustedNow(), true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'link', 'devices.json'), 'utf8')).devices[0].trusted, true);   // stored next to allowCommands
+
+  // on: taken at arrival and typed, with the remote-task marker; both steps are marked in commands.log
+  assert.deepEqual(send('t-on'), [['queued', undefined], ['delivered', undefined]]);
+  assert.equal(typed.length, 1);
+  assert.match(typed[0], /^\[Agent Office: remote task #t-on from "Studio"\] remote t-on$/);
+  assert.deepEqual(logged().slice(-2), ['task:queued:trusted-unattended', 'task:delivered:trusted-unattended']);
+  // a project that asks is logged as before (no marker)
+  on = false;
+  assert.deepEqual(send('t-asks'), [['queued', undefined], ['delivered', undefined]]);
+  assert.deepEqual(logged().slice(-1), ['task:queued']);
+  // queued while the project asked, typed after its switch came on: taken at typing time too
+  tab = 'busy';
+  const late = send('t-late');
+  on = true; tab = 'ready';
+  host.pump();
+  assert.deepEqual(late, [['queued', undefined], ['delivered', undefined]]);
+  assert.deepEqual(logged().slice(-2), ['task:queued', 'task:delivered:trusted-unattended']);
+  assert.equal(typed.length, 3);
+
+  // turned off while a task waits: the pump refuses it, nothing is typed (turning off asks nothing)
+  tab = 'busy';
+  const held = send('t-held');
+  assert.deepEqual(held, [['queued', undefined]]);
+  await setTrusted(false);
+  assert.equal(asked, 2);
+  assert.equal(trustedNow(), false);
+  tab = 'ready';
+  host.pump();
+  assert.deepEqual(held, [['queued', undefined], ['rejected', 'not-allowed']]);
+  assert.equal(typed.length, 3);
+
+  // trusted but "Allow commands" off: not enough (the link refuses such a device's cmd before the queue anyway)
+  await setTrusted(true);
+  link.setAllow(PA, false);
+  assert.equal(trustedNow(), true);
+  assert.deepEqual(send('t-nocmd'), [['rejected', 'not-allowed']]);
+  link.setAllow(PA, true);
+  assert.deepEqual(send('t-again'), [['queued', undefined], ['delivered', undefined]]);
+
+  // removing the device clears it; pairing it again starts untrusted
+  await setTrusted(true);
+  assert.equal(trustedNow(), true);
+  await link.remove(PA);
+  assert.equal(link.devices.some((x) => x.pub === PA), false);
+  link.addDevice(PA, 'Studio', SECRET);
+  assert.equal(trustedNow(), false);
+  link.setAllow(PA, true);
+  assert.deepEqual(send('t-repaired'), [['rejected', 'not-allowed']]);
+});
+
+test('v3.97: nothing but the link:setTrusted IPC handler sets the flag', () => {
+  const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  const calls = (s) => (s.match(/\.setTrusted\(/g) || []).length;
+  for (const f of ['main.js', ...fs.readdirSync(path.join(__dirname, '..', 'src')).filter((n) => /\.(js|mjs)$/.test(n) && n !== 'link-host.js').map((n) => `src/${n}`)]) {
+    assert.equal(calls(src(f)), 0, f);
+  }
+  // link-host.js: only inside the handler (off, and on after the dialog)
+  const host = src('src/link-host.js');
+  assert.equal(calls(host), 2);
+  const handler = host.slice(host.indexOf("ipc('link:setTrusted'"), host.indexOf("ipc('link:remove'"));
+  assert.equal(calls(handler), 2);
+  assert.match(handler, /d\.confirmTrusted/);
+  // the device link has one writer of the field besides pairing (off) and loading the list
+  assert.equal((src('src/link.js').match(/trusted: on === true/g) || []).length, 1);
+});

@@ -3083,6 +3083,8 @@ function startLink() {
     startWith: startWithPrompt,   // v3.83 amendment: a tab that takes no typing yet gets the task as its first prompt
     type: typePrompt,
     answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices
+    // v3.97 "This is my own computer" is turned on only after this dialog, on this machine (Cancel is the default)
+    confirmTrusted: async (device) => (await dialog.showMessageBox(win, { type: 'warning', buttons: [T('main.trustedGo'), T('main.cancel')], defaultId: 1, cancelId: 1, message: T('main.trustedConfirm', { device }) })).response === 0,
     loginOf: (projectId) => { const p = P.resolvePty(state, String(projectId))?.project; const s = p && !p.hq ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },   // v3.83 a desk: its member's account
     reportsDir: path.join(app.getPath('home'), '.claude', 'agent-office', 'reports'),
     onReport: onOfficeReport,
