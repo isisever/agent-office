@@ -28,7 +28,7 @@ function world(t, { allow = true, capsA = null, capsB = null, gap = 20 } = {}) {
   const make = (who, caps) => {
     const other = who === 'A' ? PB : PA;
     const l = new Link({ keyPair: kp(who === 'A' ? 1 : 2), name: who === 'A' ? 'Studio' : 'Laptop', swarmFactory, now: () => clock.now, heartbeatMs: 60000, sessGapMs: gap });
-    l.devices = C.normalizeDevices([{ pub: other, name: who === 'A' ? 'Laptop' : 'Studio', addedAt: 0, allowSessions: who === 'A' && allow }]);
+    l.devices = C.normalizeDevices([{ pub: other, name: who === 'A' ? 'Laptop' : 'Studio', addedAt: 0, own: who !== 'A' || allow }]);
     l.secrets = { [other]: 'ab'.repeat(32) };
     if (caps) l.helloMsg = () => ({ t: 'hello', v: 2, name: l.name, caps });
     l.wire = [];
@@ -118,15 +118,15 @@ test('sess backfill: the last 200 items, at most 256 KB', () => {
   assert.equal(big.at(-1).key, 'k99');   // the newest are kept
 });
 
-test('sess gate: off by default and implied by nothing else, so the device hears not-allowed and gets no item', async (t) => {
-  assert.equal(C.normalizeDevices([{ pub: PB, name: 'x' }])[0].allowSessions, false);
-  const all = C.normalizeDevices([{ pub: PB, name: 'x', allowCommands: true, allowManage: true, allowHandoff: true, allowAccounts: true, trusted: true }]);
-  assert.equal(C.maySessions(all, { [PB]: 'ab'.repeat(32) }, PB), false);   // every other permission on: still no
-  assert.equal(C.maySessions(C.normalizeDevices([{ pub: PB, name: 'x', allowSessions: true }]), { [PB]: 'ab'.repeat(32) }, PB), true);
-  assert.equal(C.maySessions(C.normalizeDevices([{ pub: PB, name: 'x', allowSessions: true }]), {}, PB), false);   // not paired
+test('sess gate (v3.101): a paired device may read; a paused one hears not-allowed and gets no item', async (t) => {
+  assert.equal(C.normalizeDevices([{ pub: PB, name: 'x' }])[0].allowSessions, undefined);   // the v3.100 switch is gone
+  const all = C.normalizeDevices([{ pub: PB, name: 'x', own: false, allowHandoff: true, allowAccounts: true }]);
+  assert.equal(C.maySessions(all, { [PB]: 'ab'.repeat(32) }, PB), false);   // paused: no, whatever else is on
+  assert.equal(C.maySessions(C.normalizeDevices([{ pub: PB, name: 'x' }]), { [PB]: 'ab'.repeat(32) }, PB), true);
+  assert.equal(C.maySessions(C.normalizeDevices([{ pub: PB, name: 'x' }]), {}, PB), false);   // not paired
   const { a, b, ready } = world(t, { allow: false });
   await ready();
-  a.devices = a.devices.map((d) => ({ ...d, allowCommands: true, allowManage: true, trusted: true }));
+  a.devices = a.devices.map((d) => ({ ...d, own: false }));
   const r = b.openSess(PA, 'p1');
   assert.equal(r.ok, true);
   await flush();
@@ -195,7 +195,7 @@ test('sess revoke: turning the permission off mid-stream ends it at once; waitin
   a.sessPush(key, Array.from({ length: 6 }, (_, n) => item(n, 'x'.repeat(30000))), { reset: true });
   await flush();
   assert.equal(sessWire(a).filter((m) => m.t === 'sess-items').length, 1);
-  a.setAllowSessions(PB, false);
+  a.setOwn(PB, false);
   assert.equal(a.sessOut.size, 0);
   assert.deepEqual(sessWire(a).at(-1), { t: 'sess-end', id: r.id, reason: 'not-allowed' });
   await wait(200);
@@ -205,11 +205,11 @@ test('sess revoke: turning the permission off mid-stream ends it at once; waitin
   assert.deepEqual(of(b, 'sess-end').map((m) => m.reason), ['not-allowed']);
   assert.equal(a.sessPush(key, [item(9)]), false);
   // a permission taken away behind the setter's back is caught at the next send too
-  a.setAllowSessions(PB, true);
+  a.setOwn(PB, true);
   b.openSess(PA, 'p1');
   await flush();
   const again = of(a, 'sess-open')[1];
-  a.devices = a.devices.map((d) => ({ ...d, allowSessions: false }));
+  a.devices = a.devices.map((d) => ({ ...d, own: false }));
   assert.equal(a.sessPush(again.key, [item(1)]), false);
   assert.equal(a.sessOut.size, 0);
   assert.equal(sessWire(a).filter((m) => m.t === 'sess-items').length, 1);
@@ -330,7 +330,7 @@ test('sess host: only chat items of the main tab are read; tool rows carry the n
   const log = fs.readFileSync(path.join(dir, 'link', 'sessions.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepEqual(log.map(({ at: _at, ...rest }) => rest), [{ device: 'Laptop', project: 'shop', event: 'open' }, { device: 'Laptop', project: 'shop', event: 'close', why: 'closed' }]);
   assert.ok(!fs.readFileSync(path.join(dir, 'link', 'sessions.log'), 'utf8').includes('Running'));
-  for (const ch of ['link:setAllowSessions', 'link:sessOpen', 'link:sessKeep', 'link:sessClose']) assert.ok(handlers.has(ch), ch);
+  for (const ch of ['link:setPaused', 'link:sessOpen', 'link:sessKeep', 'link:sessClose']) assert.ok(handlers.has(ch), ch);
 });
 
 test('sess wiring: main gives the main tab only, preload and the Devices popup carry the new calls', () => {
@@ -342,9 +342,9 @@ test('sess wiring: main gives the main tab only, preload and the Devices popup c
   assert.match(fn, /!r \|\| r\.tab /);                                  // never a desk or an extra tab
   assert.match(fn, /engineOf\(p\) !== 'claude'/);
   const preload = read('preload.js');
-  for (const call of ['setAllowSessions', 'sessOpen', 'sessKeep', 'sessClose']) assert.match(preload, new RegExp(`${call}: \\(.*ipcRenderer\\.invoke\\('link:${call}'`));
+  for (const call of ['setPaused', 'sessOpen', 'sessKeep', 'sessClose']) assert.match(preload, new RegExp(`${call}: \\(.*ipcRenderer\\.invoke\\('link:${call}'`));
   assert.match(preload, /onSess: listen\('link:sess'\)/);
-  assert.match(read('renderer/devices.js'), /\['allowSessions', 'allowSessions', 'setAllowSessions', 'sb-dev-sessions'\]/);
+  assert.match(read('renderer/devices.js'), /sb-dev-pause/);
   assert.equal(CHAT.LINK_TOOL_DETAIL, false);
   const host = read('src/link-host.js');
   assert.match(host, /CHAT\.linkItems\(items\)/);   // the host never passes the tool-detail option

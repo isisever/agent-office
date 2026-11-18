@@ -89,16 +89,18 @@ test('rate limiter: burst of 3, then one per 10 s, per device', () => {
   now += 2; assert.equal(r.take('a'), true);
 });
 
-test('trust checks: only listed keys with a secret; commands only with the toggle', () => {
-  const devices = C.normalizeDevices([{ pub: pubA, name: 'A', addedAt: 1, allowCommands: true }, { pub: pubB, name: 'B' }, { pub: 'zz', name: 'bad' }, { pub: pubA, name: 'dup' }]);
+test('trust checks: only listed keys with a secret; commands from a paired device, never a paused one (v3.101)', () => {
+  const devices = C.normalizeDevices([{ pub: pubA, name: 'A', addedAt: 1, own: true }, { pub: pubB, name: 'B' }, { pub: 'zz', name: 'bad' }, { pub: pubA, name: 'dup' }]);
   assert.equal(devices.length, 2);
-  assert.equal(devices[1].allowCommands, false);                          // off by default
+  assert.equal(devices[1].own, true);                                     // v3.101 a paired device is the person's own computer
   const secrets = { [pubA]: 'c'.repeat(64) };
   assert.equal(C.trusted(devices, secrets, Buffer.from(pubA, 'hex')).name, 'A');
   assert.equal(C.trusted(devices, secrets, pubB), null);                  // no secret, no trust
   assert.equal(C.trusted(devices, secrets, 'd'.repeat(64)), null);
   assert.equal(C.mayCommand(devices, secrets, pubA), true);
-  assert.equal(C.mayCommand(devices, { ...secrets, [pubB]: 'e'.repeat(64) }, pubB), false);
+  assert.equal(C.mayCommand(devices, secrets, pubB), false);                // listed, but no secret
+  assert.equal(C.mayCommand(devices, { ...secrets, [pubB]: 'e'.repeat(64) }, pubB), true);   // v3.101 paired: no switch
+  assert.equal(C.mayCommand(devices.map((x) => ({ ...x, own: false })), { ...secrets, [pubB]: 'e'.repeat(64) }, pubB), false);   // paused
 });
 
 test('snapshot: built from OfficeData, only status lines', () => {
@@ -135,7 +137,7 @@ test('integration: pair over a local testnet, mirror state, send a command, revo
   assert.equal(dev.name, 'Studio');
   assert.equal((await paired).name, 'Laptop');
   assert.equal(a.pairing, null);
-  assert.equal(persisted.a.devices[0].allowCommands, false);
+  assert.equal(persisted.a.devices[0].own, true);   // v3.101
   assert.equal(persisted.a.secrets[b.pub], persisted.b.secrets[a.pub]);  // the shared pair secret
 
   // mirror: a publishes, b sees it
@@ -145,13 +147,14 @@ test('integration: pair over a local testnet, mirror state, send a command, revo
   assert.equal(remote.name, 'Studio');
   assert.equal(remote.projects[0].status, 'approval');
 
-  // commands are refused until a allows them
+  // v3.101 commands are refused while a has paused b
+  a.setOwn(b.pub, false);
   const commands = [];
   a.on('command', (c) => { commands.push(c); c.reply('queued'); setTimeout(() => c.reply('delivered'), 20); });
   const r1 = b.sendCommand(a.pub, 'p1', 'run the tests');
   await until(() => b.outgoing.find((o) => o.id === r1.id).status === 'rejected');
   assert.equal(b.outgoing[0].reason, 'not-allowed');
-  a.setAllow(b.pub, true);
+  a.setOwn(b.pub, true);
   const r2 = b.sendCommand(a.pub, 'p1', 'run the \x1b[31mtests\x07');
   await until(() => b.outgoing.find((o) => o.id === r2.id).status === 'delivered');
   assert.equal(commands.length, 1);
@@ -670,13 +673,13 @@ test('v3.31/v3.32 schema: hello caps, res and catalog cleaned; bad ones dropped;
   assert.equal(C.validateMessage({ t: 'catalog', catalog: { projects: [{ id: 'p1', dirName: 'x', state: 'gone' }] } }), null);
   assert.equal(C.validateMessage({ t: 'catalog', catalog: { projects: Array(51).fill({ id: 'p', dirName: 'x', state: 'stopped' }) } }), null);
   assert.equal(C.validateMessage({ t: 'catalog', catalog: { projects: [], shared: false } }).catalog.shared, false);
-  const [dev] = C.normalizeDevices([{ pub: 'ab'.repeat(32), name: 'L', allowCommands: true, allowManage: 'yes' }]);
-  assert.equal(dev.allowManage, false);
+  const [dev] = C.normalizeDevices([{ pub: 'ab'.repeat(32), name: 'L', own: true, allowManage: 'yes' }]);
+  assert.equal(dev.allowManage, undefined);   // v3.101 the old switch is dropped
   assert.equal(dev.allowAccounts, false);
   const pub = 'cd'.repeat(32);
   const secrets = { [pub]: 'ef'.repeat(32) };
-  assert.equal(C.mayManage([{ ...dev, pub, allowManage: true }], secrets, pub), true);
-  assert.equal(C.mayManage([{ ...dev, pub, allowManage: true }], {}, pub), false);   // removed (no secret): no rights
+  assert.equal(C.mayManage([{ ...dev, pub }], secrets, pub), true);
+  assert.equal(C.mayManage([{ ...dev, pub }], {}, pub), false);   // removed (no secret): no rights
   assert.equal(C.mayAccounts([{ ...dev, pub, allowAccounts: true }], secrets, pub), true);
   // res: Windows load from CPU time samples; sent again only on a real change or after 30 s
   const cpu = (busy, idle) => ({ times: { user: busy, nice: 0, sys: 0, irq: 0, idle } });
@@ -724,7 +727,7 @@ test('integration v3.31: a v1 peer gets zero new message types and stays connect
   const { a, b, got, until } = await pairPair(t, { v1: true, heartbeatMs: 300 });
   assert.equal(a.view().devices[0].v, 1);
   assert.deepEqual(a.view().devices[0].caps, []);
-  a.setAllowManage(b.pub, true);                    // even with the opt-in on
+  a.setOwn(b.pub, true);                    // even with the opt-in on
   a.setAllowAccounts(b.pub, true);
   a.publishAccounts([{ id: 'work', label: 'Work', state: 'out' }]);
   assert.deepEqual(a.startRemoteLogin(b.pub, 'work'), { ok: false, reason: 'not-supported' });   // v3.34: no relay to a v1 peer
@@ -739,7 +742,7 @@ test('integration v3.31: a v1 peer gets zero new message types and stays connect
   assert.equal(b.view().devices[0].online, true);
 });
 
-test('integration v3.31/v3.32: caps negotiated; res to res peers; catalog only with allowManage; removal revokes', { timeout: 60000 }, async (t) => {
+test('integration v3.31/v3.32: caps negotiated; res to res peers; catalog to a paired device (v3.101); removal revokes', { timeout: 60000 }, async (t) => {
   const { a, b, got, until } = await pairPair(t);
   assert.deepEqual(b.view().devices[0].caps, ['res', 'catalog', 'report', 'manage', 'accounts', 'task-status', 'report2', 'revive', 'sess']);   // v3.100 'sess'
   assert.equal(b.view().devices[0].app, '0.14.0');
@@ -747,15 +750,11 @@ test('integration v3.31/v3.32: caps negotiated; res to res peers; catalog only w
   a.publishCatalog(CATALOG);
   await until(() => b.view().devices[0].res);
   assert.deepEqual(b.view().devices[0].res, RES);
-  await new Promise((r) => setTimeout(r, 500));
-  assert.equal(got.includes('catalog'), false);     // not without "Allow managing projects"
-  assert.equal(b.view().devices[0].catalog, null);
-  a.setAllowManage(b.pub, true);
-  await until(() => b.view().devices[0].catalog);
+  await until(() => b.view().devices[0].catalog);   // v3.101 a paired device gets it without a switch
   assert.deepEqual(b.view().devices[0].catalog, CATALOG.projects);
-  a.setAllowManage(b.pub, false);                   // off: b is told to forget at once
+  a.setOwn(b.pub, false);                   // off: b is told to forget at once
   await until(() => b.view().devices[0].catalog === null);
-  a.setAllowManage(b.pub, true);
+  a.setOwn(b.pub, true);
   await until(() => b.view().devices[0].catalog);
   await a.remove(b.pub);                            // removed: no rights, no connection
   assert.equal(C.mayManage(a.devices, a.secrets, b.pub), false);
@@ -784,7 +783,7 @@ test('amendment 4: a remote command waits while the tab is starting (no first pr
   t.after(() => host.destroy());
   const link = host.link();
   const device = { pub: 'ab'.repeat(32), name: 'Laptop' };
-  link.devices = [{ ...device, addedAt: 0, allowCommands: true, allowHandoff: false, allowManage: false, allowAccounts: false }];
+  link.devices = [{ ...device, addedAt: 0, own: true, allowHandoff: false, allowAccounts: false }];
   const replies = [];
   const cmd = (id) => link.emit('command', { device, id, project: 'p1', text: 'run the tests', reply: (s, r) => replies.push([id, s, r]) });
   cmd('c1');
@@ -807,7 +806,7 @@ test('amendment 4: a remote command waits while the tab is starting (no first pr
 
 test('integration v3.35: cmd with report round trip; the report reaches the dispatcher', { timeout: 60000 }, async (t) => {
   const { a, b, got, until } = await pairPair(t);
-  b.setAllow(a.pub, true);
+  b.setOwn(a.pub, true);
   const reports = [];
   a.on('report', (r) => reports.push(r));
   b.on('command', ({ id, report, reply }) => {
@@ -829,7 +828,7 @@ test('integration v3.35: cmd with report round trip; the report reaches the disp
 function fakeLink(t, file) {
   const kp = { publicKey: Buffer.alloc(32, 7), secretKey: Buffer.alloc(64, 7) };
   const l = new Link({ keyPair: kp, name: 'Laptop', reportsFile: file, swarmFactory: () => ({ join: () => ({ flushed: async () => {}, refresh: async () => {} }), on: () => {}, leave: async () => {}, destroy: async () => {} }) });
-  l.devices = [{ pub: pubA, name: 'Studio', addedAt: 0, allowCommands: true, allowHandoff: false, allowManage: false, allowAccounts: false }];
+  l.devices = [{ pub: pubA, name: 'Studio', addedAt: 0, own: true, allowHandoff: false, allowAccounts: false }];
   l.secrets = { [pubA]: 'ab'.repeat(32) };
   t.after(() => l.destroy());
   return l;
@@ -973,14 +972,15 @@ test('v3.33 schema: proj-op and proj-op-status cleaned; bad ones dropped', () =>
   assert.ok(C.OUR_CAPS.includes('manage'));
 });
 
-test('integration v3.33: proj-op refused without allowManage, busy refused, shared rate limit, removal answers removed', { timeout: 60000 }, async (t) => {
+test('integration v3.33: proj-op refused while paused (v3.101), busy refused, shared rate limit, removal answers removed', { timeout: 60000 }, async (t) => {
   const { a, b, got } = await pairPair(t);
   const ops = [];
   let busy = false;
   b.on('proj-op', ({ op, project, reply }) => { ops.push([op, project]); reply(!(busy && (op === 'sleep' || op === 'stop')), busy ? 'busy' : undefined); });
+  b.setOwn(a.pub, false);   // v3.101 paused: refused
   assert.deepEqual(await a.sendProjOp(b.pub, 'p1', 'start'), { ok: false, reason: 'not-allowed' });
   assert.deepEqual(ops, []);
-  b.setAllowManage(a.pub, true);
+  b.setOwn(a.pub, true);
   assert.deepEqual(await a.sendProjOp(b.pub, 'p1', 'start'), { ok: true });
   busy = true;
   assert.deepEqual(await a.sendProjOp(b.pub, 'p1', 'sleep'), { ok: false, reason: 'busy' });
@@ -1001,7 +1001,7 @@ test('integration v3.33: proj-op refused without allowManage, busy refused, shar
 
 test('integration v3.33: a v1 peer (no manage cap) gets no proj-op', { timeout: 60000 }, async (t) => {
   const { a, b, got } = await pairPair(t, { v1: true });
-  a.setAllowManage(b.pub, true);
+  a.setOwn(b.pub, true);
   assert.deepEqual(await a.sendProjOp(b.pub, 'p1', 'start'), { ok: false, reason: 'no-manage' });
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(got.includes('proj-op'), false);
@@ -1026,7 +1026,7 @@ test('v3.33 host: ops run in order, logged to manage.log; a removed device\'s qu
   });
   t.after(() => host.destroy());
   const link = host.link();
-  const dev = (pub, name) => ({ pub, name, addedAt: 0, allowCommands: false, allowHandoff: false, allowManage: true, allowAccounts: false });
+  const dev = (pub, name) => ({ pub, name, addedAt: 0, own: false, allowHandoff: false, allowAccounts: false });
   const laptop = { pub: 'ab'.repeat(32), name: 'Laptop' };
   const old = { pub: 'cd'.repeat(32), name: 'Old' };
   link.devices = [dev(laptop.pub, 'Laptop'), dev(old.pub, 'Old')];
@@ -1167,73 +1167,94 @@ test('owesReportFor counts an entry only while young (4 h TTL + 30 min)', (t) =>
   assert.equal(b.owesReport('o1'), true);   // still tracked for delivery, just no longer blocking depth
 });
 
-test('v3.97 trusted: off unless exactly true, needs "Allow commands" and a stored secret; res carries it as an optional boolean', () => {
-  const pub = 'ab'.repeat(32);
-  const [dev] = C.normalizeDevices([{ pub, name: 'L', allowCommands: true, trusted: 'yes' }]);
-  assert.equal(dev.trusted, false);
-  assert.equal(C.normalizeDevices([{ pub, name: 'L' }])[0].trusted, false);
-  assert.equal(C.normalizeDevices([{ pub, name: 'L', trusted: true }])[0].trusted, true);
-  const secrets = { [pub]: 'cd'.repeat(32) };
-  assert.equal(C.mayRunUnattended([dev], secrets, pub), false);
-  assert.equal(C.mayRunUnattended([{ ...dev, trusted: true }], secrets, pub), true);
-  assert.equal(C.mayRunUnattended([{ ...dev, trusted: true, allowCommands: false }], secrets, pub), false);
-  assert.equal(C.mayRunUnattended([{ ...dev, trusted: true }], {}, pub), false);   // removed (no secret): no rights
-  const res = { at: 1, mem: { total: 8, free: 4 }, load1: 1, cpus: 4 };
-  assert.equal('trusted' in C.validateMessage({ t: 'res', res }), false);            // an older peer's res
-  assert.equal(C.validateMessage({ t: 'res', res, trusted: true }).trusted, true);
-  assert.equal(C.validateMessage({ t: 'res', res, trusted: false }).trusted, false);
-  assert.equal('trusted' in C.validateMessage({ t: 'res', res, trusted: 'yes' }), false);
-  // no other message keeps such a field
-  for (const m of [{ t: 'hello', v: 2, name: 'x', caps: C.OUR_CAPS, trusted: true, allowCommands: true }, { t: 'ping', trusted: true },
-    { t: 'catalog', catalog: { projects: [], trusted: true }, trusted: true }]) {
-    assert.equal(JSON.stringify(C.validateMessage(m)).includes('trusted'), false, m.t);
-  }
-  assert.equal(C.validateMessage({ t: 'set-trusted', on: true }), null);
-  assert.equal(C.validateMessage({ t: 'trusted', trusted: true }), null);
-});
-
-test('integration v3.97: the sender learns whether it is trusted there; no message from it sets the flag; removal clears it', { timeout: 60000 }, async (t) => {
-  const { a, b, until } = await pairPair(t);
-  const RES2 = { at: 1700000000000, mem: { total: 16e9, free: 8e9 }, load1: 1.5, cpus: 8, tabs: 2, agents: 1, sleeping: 0, platform: 'darwin', app: '0.14.0' };
-  assert.equal(a.view().devices[0].trustsUs, null);          // nothing heard yet
-  b.publishRes(RES2);
-  await until(() => a.view().devices[0].trustsUs === false);
-  b.setTrusted(a.pub, true);                                  // without "Allow commands" its tasks are refused anyway
-  await new Promise((r) => setTimeout(r, 300));
-  assert.equal(a.view().devices[0].trustsUs, false);
-  b.setAllow(a.pub, true);
-  await until(() => a.view().devices[0].trustsUs === true);
-  assert.equal(b.view().devices[0].trusted, true);
-  b.setTrusted(a.pub, false);
-  await until(() => a.view().devices[0].trustsUs === false);
-
-  // a tries every shape over the link: b's flag for a stays off
-  const conn = a.conns.get(b.pub);
-  for (const m of [{ t: 'hello', v: 2, name: 'Studio', caps: C.OUR_CAPS, trusted: true }, { t: 'res', res: RES2, trusted: true },
-    { t: 'cmd', id: 'c1', project: 'p1', text: 'x', trusted: true }, { t: 'set-trusted', on: true }, { t: 'trusted', trusted: true }]) a.write(conn, m);
-  await until(() => b.view().devices[0].trustsUs === true);  // the res arrived (it only says what a claims about itself)
-  assert.equal(b.devices[0].trusted, false);
-  assert.equal(b.view().devices[0].trusted, false);
-  assert.equal(b.view().devices[0].online, true);            // two unknown types do not end the session
-
-  // a res without the field (an older Agent Office there): unknown again
-  b.write(b.conns.get(a.pub), { t: 'res', res: RES2 });
-  await until(() => a.view().devices[0].trustsUs === null);
-
-  b.setTrusted(a.pub, true);
-  assert.equal(b.devices[0].trusted, true);
-  await b.remove(a.pub);
-  assert.equal(b.devices.length, 0);
-  assert.equal(b.addDevice(a.pub, 'Studio', 'cd'.repeat(32)).trusted, false);
-});
-
 test('integration v3.97: an older peer (no res cap) is told nothing and reports nothing', { timeout: 60000 }, async (t) => {
   const { a, b, got } = await pairPair(t, { v1: true });
   a.publishRes({ at: 1700000000000, mem: { total: 16e9, free: 8e9 }, load1: 1.5, cpus: 8, tabs: 2, agents: 1, sleeping: 0, platform: 'darwin', app: '0.14.0' });
-  a.setAllow(b.pub, true);
-  a.setTrusted(b.pub, true);
+  a.setOwn(b.pub, true);
+  a.setOwn(b.pub, true);
   await new Promise((r) => setTimeout(r, 500));
   assert.equal(got.includes('res'), false);
   assert.equal(a.view().devices[0].trustsUs, null);
-  assert.equal(a.view().devices[0].trusted, true);
+  assert.equal(a.view().devices[0].own, true);
+});
+
+// --- v3.101 a paired device is the person's own computer
+
+test('v3.101 own: one state per device, every gate derives from it, and only the sealed set makes a device own', () => {
+  const S = { [pubA]: 'c'.repeat(64), [pubB]: 'c'.repeat(64) };
+  const raw = [{ pub: pubA, name: 'A', allowHandoff: true, allowAccounts: true },
+    { pub: pubB, name: 'B', own: false, allowHandoff: true, allowAccounts: true, allowCommands: true, allowManage: true, allowSessions: true, trusted: true }];
+  const d = C.normalizeDevices(raw);
+  assert.deepEqual(Object.keys(d[1]).sort(), ['addedAt', 'allowAccounts', 'allowHandoff', 'name', 'own', 'pub']);   // the old switches are dropped
+  for (const gate of ['mayCommand', 'mayRunUnattended', 'mayManage', 'maySessions', 'mayHandoff', 'mayAccounts']) {
+    assert.equal(C[gate](d, S, pubA), true, `${gate} paired`);
+    assert.equal(C[gate](d, S, pubB), false, `${gate} paused`);   // whatever the old switches in the file say
+    assert.equal(C[gate](d, {}, pubA), false, `${gate} without a secret`);
+  }
+  // handoffs and account sign-in keep their own opt-ins: pairing alone does not turn them on
+  const plain = C.normalizeDevices([{ pub: pubA, name: 'A' }]);
+  assert.deepEqual([C.mayCommand(plain, S, pubA), C.mayHandoff(plain, S, pubA), C.mayAccounts(plain, S, pubA)], [true, false, false]);
+  // the sealed set: devices.json saying `own` counts for nothing without the key in it
+  assert.deepEqual(C.ownKeys(d), [pubA]);
+  const edited = raw.map((x) => ({ ...x, own: true }));
+  assert.deepEqual(C.sealOwn(edited, [pubA]).map((x) => x.own), [true, false]);
+  assert.deepEqual(C.sealOwn([{ pub: pubA, name: 'A', own: false }], [pubA]).map((x) => x.own), [false]);   // a file edit can pause
+  for (const sealed of [undefined, null, 'x', [42], {}]) assert.deepEqual(C.sealOwn(edited, sealed).map((x) => x.own), [false, false]);
+  assert.deepEqual([C.isPaused(d, pubB), C.isPaused(d, pubA), C.isPaused(d, 'd'.repeat(64))], [true, false, false]);
+  // the one-time migration: every device paired before is own, whatever its old switches said; the notice names the paired ones
+  const m = C.migrateOwn([{ pub: pubA, name: 'A', allowCommands: false, trusted: false }, { pub: pubB, name: 'B', own: false }], { [pubA]: 'c'.repeat(64) });
+  assert.deepEqual([m.devices.map((x) => x.own), m.names], [[true, true], ['A']]);
+  // the catalog's optional per-project flag: a boolean or absent (an older peer sends none, an older receiver drops it)
+  const cat = C.cleanCatalog({ projects: [{ id: 'p1', dirName: 'a', state: 'running', skips: true }, { id: 'p2', dirName: 'b', state: 'stopped', skips: false },
+    { id: 'p3', dirName: 'c', state: 'stopped' }, { id: 'p4', dirName: 'd', state: 'stopped', skips: 'yes' }] });
+  assert.deepEqual(cat.projects.map((p) => p.skips), [true, false, undefined, undefined]);
+  assert.deepEqual(C.validateMessage({ t: 'catalog', catalog: { projects: [{ id: 'p1', dirName: 'a', state: 'running', skips: true }] } }).catalog.projects[0].skips, true);
+});
+
+test('integration v3.101: paired = commands, catalog, project actions and trustsUs without a switch; paused = none of them; resume restores', { timeout: 90000 }, async (t) => {
+  const { a, b, until } = await pairPair(t);
+  assert.deepEqual([a.view().devices[0].own, b.view().devices[0].own], [true, true]);
+  const cmds = [];
+  b.on('command', (c) => { cmds.push(c.text); c.reply('delivered'); });
+  b.on('proj-op', ({ reply }) => reply(true));
+  b.publishRes(RES);
+  b.publishCatalog({ projects: [{ id: 'p1', dirName: 'shop', state: 'running', engine: 'claude', accountLabel: '', skips: true }] });
+  await until(() => a.view().devices[0].catalog && a.view().devices[0].trustsUs === true);
+  assert.equal(a.view().devices[0].catalog[0].skips, true);
+  a.sendCommand(b.pub, 'p1', 'hello');
+  await until(() => cmds.length === 1);
+  assert.deepEqual(await a.sendProjOp(b.pub, 'p1', 'start'), { ok: true });
+  // paused on b: a hears it (trustsUs false), loses the catalog and is refused everywhere
+  b.setOwn(a.pub, false);
+  await until(() => a.view().devices[0].trustsUs === false && !a.view().devices[0].catalog);
+  assert.deepEqual(await a.sendProjOp(b.pub, 'p1', 'start'), { ok: false, reason: 'not-allowed' });
+  a.sendCommand(b.pub, 'p1', 'again');
+  await new Promise((r) => setTimeout(r, 500));
+  assert.deepEqual(cmds, ['hello']);
+  assert.equal(b.view().devices[0].online, true);   // still paired and connected
+  b.setOwn(a.pub, true);
+  await until(() => a.view().devices[0].catalog && a.view().devices[0].trustsUs === true);
+});
+
+test('integration v3.101: pairing asks the person at both machines, the joiner first; a no stores nothing and closes the code', { timeout: 90000 }, async (t) => {
+  const createTestnet = require('hyperdht/testnet');
+  const DHT = require('hyperdht');
+  const testnet = await createTestnet(3);
+  t.after(() => testnet.destroy());
+  const a = new Link({ keyPair: DHT.keyPair(), name: 'Studio', bootstrap: testnet.bootstrap, app: '0.14.0' });
+  const b = new Link({ keyPair: DHT.keyPair(), name: 'Laptop', bootstrap: testnet.bootstrap, app: '0.14.0' });
+  t.after(() => Promise.all([a.destroy(), b.destroy()]));
+  const asked = [];
+  let yesB = false;
+  a.confirmPair = async (name) => { asked.push(['a', name, a.devices.length + b.devices.length]); return true; };
+  b.confirmPair = async (name) => { asked.push(['b', name, a.devices.length + b.devices.length]); return yesB; };
+  const one = await a.invite();
+  await assert.rejects(b.join(one.code), /declined/);
+  assert.deepEqual(asked, [['b', 'Studio', 0]]);   // the inviter's person is never asked: the joiner never proved the code
+  assert.deepEqual([a.devices.length, b.devices.length, b.pairing], [0, 0, null]);
+  yesB = true;
+  const two = await a.invite();
+  const dev = await b.join(two.code);
+  assert.deepEqual(asked.slice(1), [['b', 'Studio', 0], ['a', 'Laptop', 0]]);   // nothing is stored before both said yes
+  assert.deepEqual([dev.own, a.devices[0].own, a.devices[0].name, b.devices[0].name], [true, true, 'Laptop', 'Studio']);
 });

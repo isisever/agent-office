@@ -30,7 +30,7 @@ function world(t) {
     const other = who === 'A' ? PB : PA;
     const l = new Link({ keyPair: kp(me), name: who === 'A' ? 'Studio' : 'Laptop', swarmFactory, now: () => clock.now, heartbeatMs: 60000,
       reportsFile: path.join(dir, who, 'reports-out.json'), tasksFile: path.join(dir, who, 'tasks-out.json'), seenFile: path.join(dir, who, 'tasks-seen.json') });
-    l.devices = [{ pub: other, name: who === 'A' ? 'Laptop' : 'Studio', addedAt: 0, allowCommands: true, allowHandoff: false, allowManage: false, allowAccounts: false }];
+    l.devices = [{ pub: other, name: who === 'A' ? 'Laptop' : 'Studio', addedAt: 0, own: true, allowHandoff: false, allowAccounts: false }];
     l.secrets = { [other]: 'ab'.repeat(32) };
     if (caps) l.helloMsg = () => ({ t: 'hello', v: 2, name: l.name, caps });
     l.wire = [];   // every message this link wrote
@@ -450,7 +450,7 @@ test('v3.48 review: remote report task: type() false or throwing leaves no repor
   t.after(() => host.destroy());
   host.devices();   // starts the link
   const link = captured;
-  link.devices = [{ pub: PA, name: 'Studio', addedAt: 0, allowCommands: true, allowHandoff: false, allowManage: false, allowAccounts: false }];
+  link.devices = [{ pub: PA, name: 'Studio', addedAt: 0, own: true, allowHandoff: false, allowAccounts: false }];
   const dev = { pub: PA, name: 'Studio' };
   const go = (id) => { const r = []; link.emit('command', { device: dev, id, project: 'p1', text: 'x', report: true, reply: (s, why) => r.push([s, why]) }); host.pump(); return r.filter((x) => x[0] !== 'queued'); };
   assert.deepEqual(go('t-ok'), [['delivered', undefined]]);
@@ -484,7 +484,7 @@ test('v3.71/v3.72: a project that answers or skips its permission prompts refuse
   t.after(() => host.destroy());
   host.devices();   // starts the link
   const link = captured;
-  link.devices = [{ pub: PA, name: 'Studio', addedAt: 0, allowCommands: true, allowHandoff: false, allowManage: false, allowAccounts: false }];
+  link.devices = [{ pub: PA, name: 'Studio', addedAt: 0, own: true, allowHandoff: false, allowAccounts: false }];
   const dev = { pub: PA, name: 'Studio' };
   const send = (id, report) => { const r = []; link.emit('command', { device: dev, id, project: 'p1', text: `remote ${id}`, report, reply: (s, why) => r.push([s, why]) }); host.pump(); return r; };
 
@@ -546,245 +546,6 @@ test('v3.48 review: host restarted after expectReport but before the reply: the 
   assert.ok(dir);
 });
 
-test('v3.97: "This is my own computer" lets a device\'s task into a project that answers or skips its prompts; off, removed or untrusted again it is refused as before', async (t) => {
-  const { setupLink } = require('../src/link-host.js');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-trusted-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  let on = true; let tab = 'ready'; let captured = null; let answer = false; let asked = 0;
-  const typed = [];
-  const handlers = {};
-  const realOn = Link.prototype.on;
-  Link.prototype.on = function (ev, fn) { captured = this; return realOn.call(this, ev, fn); };
-  t.after(() => { Link.prototype.on = realOn; });
-  const host = setupLink({
-    app: { getPath: () => dir, getVersion: () => '0.21.0' },
-    safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain', encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
-    ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; } }, send: () => {}, notify: () => {}, T: (k) => k, loginOf: () => 'in', reportsDir: path.join(dir, 'r'),
-    projects: () => [{ id: 'p1', name: 'pii', engine: 'claude' }], tabState: () => tab,
-    type: (id, text) => { typed.push(text); },
-    answersPrompts: (id) => id === 'p1' && on,
-    confirmTrusted: async () => { asked++; return answer; },
-  });
-  t.after(() => host.destroy());
-  host.devices();   // starts the link
-  const link = captured;
-  const SECRET = 'cd'.repeat(32);
-  link.devices = C.normalizeDevices([{ pub: PA, name: 'Studio', addedAt: 5, allowCommands: true }]);
-  link.secrets[PA] = SECRET;
-  const dev = { pub: PA, name: 'Studio' };
-  const send = (id) => { const r = []; link.emit('command', { device: dev, id, project: 'p1', text: `remote ${id}`, report: true, reply: (s, why) => r.push([s, why]) }); host.pump(); return r; };
-  const logged = () => fs.readFileSync(path.join(dir, 'link', 'commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).outcome);
-  const trustedNow = () => link.devices.find((x) => x.pub === PA)?.trusted;
-  const setTrusted = (v) => handlers['link:setTrusted'](null, PA, v);
-
-  // off (the default): today's refusal and reason, at arrival
-  assert.equal(trustedNow(), false);
-  assert.deepEqual(send('t-off'), [['rejected', 'not-allowed']]);
-  assert.deepEqual(logged(), ['task:rejected:not-allowed']);
-  // ... and at typing time (the project's switch came on while the task waited)
-  on = false; tab = 'busy';
-  const waiting = send('t-pump-off');
-  assert.deepEqual(waiting, [['queued', undefined]]);
-  on = true; tab = 'ready';
-  host.pump();
-  assert.deepEqual(waiting, [['queued', undefined], ['rejected', 'not-allowed']]);
-  assert.equal(typed.length, 0);
-
-  // the only setter is this machine's IPC handler, and it turns on only after the dialog here said yes
-  await setTrusted(true);
-  assert.equal(asked, 1);
-  assert.equal(trustedNow(), false);                // the person cancelled
-  answer = true;
-  await setTrusted('yes');                           // not a boolean true: read as off, no dialog
-  assert.equal(asked, 1);
-  assert.equal(trustedNow(), false);
-  await handlers['link:setTrusted'](null, PB, true); // not a paired device
-  assert.equal(asked, 1);
-  await setTrusted(true);
-  assert.equal(asked, 2);
-  assert.equal(trustedNow(), true);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'link', 'devices.json'), 'utf8')).devices[0].trusted, true);   // stored next to allowCommands
-
-  // on: taken at arrival and typed, with the remote-task marker; both steps are marked in commands.log
-  assert.deepEqual(send('t-on'), [['queued', undefined], ['delivered', undefined]]);
-  assert.equal(typed.length, 1);
-  assert.match(typed[0], /^\[Agent Office: remote task #t-on from "Studio"\] remote t-on$/);
-  assert.deepEqual(logged().slice(-2), ['task:queued:trusted-unattended', 'task:delivered:trusted-unattended']);
-  // a project that asks is logged as before (no marker)
-  on = false;
-  assert.deepEqual(send('t-asks'), [['queued', undefined], ['delivered', undefined]]);
-  assert.deepEqual(logged().slice(-1), ['task:queued']);
-  // queued while the project asked, typed after its switch came on: taken at typing time too
-  tab = 'busy';
-  const late = send('t-late');
-  on = true; tab = 'ready';
-  host.pump();
-  assert.deepEqual(late, [['queued', undefined], ['delivered', undefined]]);
-  assert.deepEqual(logged().slice(-2), ['task:queued', 'task:delivered:trusted-unattended']);
-  assert.equal(typed.length, 3);
-
-  // turned off while a task waits: the pump refuses it, nothing is typed (turning off asks nothing)
-  tab = 'busy';
-  const held = send('t-held');
-  assert.deepEqual(held, [['queued', undefined]]);
-  await setTrusted(false);
-  assert.equal(asked, 2);
-  assert.equal(trustedNow(), false);
-  tab = 'ready';
-  host.pump();
-  assert.deepEqual(held, [['queued', undefined], ['rejected', 'not-allowed']]);
-  assert.equal(typed.length, 3);
-
-  // trusted but "Allow commands" off: not enough (the link refuses such a device's cmd before the queue anyway)
-  await setTrusted(true);
-  link.setAllow(PA, false);
-  assert.equal(trustedNow(), true);
-  assert.deepEqual(send('t-nocmd'), [['rejected', 'not-allowed']]);
-  link.setAllow(PA, true);
-  assert.deepEqual(send('t-again'), [['queued', undefined], ['delivered', undefined]]);
-
-  // removing the device clears it; pairing it again starts untrusted
-  await setTrusted(true);
-  assert.equal(trustedNow(), true);
-  await link.remove(PA);
-  assert.equal(link.devices.some((x) => x.pub === PA), false);
-  link.addDevice(PA, 'Studio', SECRET);
-  assert.equal(trustedNow(), false);
-  link.setAllow(PA, true);
-  assert.deepEqual(send('t-repaired'), [['rejected', 'not-allowed']]);
-});
-
-test('v3.97: the flag in devices.json counts only with the device key in the sealed set of the encrypted keys file', async (t) => {
-  const { setupLink } = require('../src/link-host.js');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-sealed-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const realOn = Link.prototype.on; const realSwarm = Link.prototype.ensureSwarm;
-  let captured = null;
-  Link.prototype.on = function (ev, fn) { captured = this; return realOn.call(this, ev, fn); };
-  Link.prototype.ensureSwarm = function () {};   // a restart with paired devices must not open the network here
-  t.after(() => { Link.prototype.on = realOn; Link.prototype.ensureSwarm = realSwarm; });
-  // a fake keychain: what it "encrypts" cannot be produced or changed without it (a bad blob throws, like the real one)
-  const safeStorage = { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain',
-    encryptString: (s) => Buffer.from(`sealed:${Buffer.from(s).toString('base64')}`),
-    decryptString: (b) => { const x = b.toString(); if (!x.startsWith('sealed:')) throw new Error('bad blob'); return Buffer.from(x.slice(7), 'base64').toString(); } };
-  const devicesFile = path.join(dir, 'link', 'devices.json');
-  const keysFile = path.join(dir, 'link', 'keys.bin');
-  const sealed = () => JSON.parse(safeStorage.decryptString(fs.readFileSync(keysFile))).trusted;
-  const editDevices = (fn) => { const j = JSON.parse(fs.readFileSync(devicesFile, 'utf8')); fn(j.devices); fs.writeFileSync(devicesFile, JSON.stringify(j)); };
-  const boot = async (keychain = safeStorage) => {
-    captured = null;
-    const handlers = {}; const typed = [];
-    const host = setupLink({
-      app: { getPath: () => dir, getVersion: () => '0.21.0' }, safeStorage: keychain,
-      ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; } }, send: () => {}, notify: () => {}, T: (k) => k, loginOf: () => 'in', reportsDir: path.join(dir, 'r'),
-      projects: () => [{ id: 'p1', name: 'pii', engine: 'claude' }], tabState: () => 'ready',
-      type: (id, text) => { typed.push(text); }, answersPrompts: () => true, confirmTrusted: async () => true,
-    });
-    const view = await handlers['link:get']();
-    const link = captured;
-    const send = (id, pub) => { const r = []; link.emit('command', { device: { pub, name: 'x' }, id, project: 'p1', text: id, report: true, reply: (st, why) => r.push([st, why]) }); host.pump(); return r; };
-    return { host, handlers, link, view, send, typed, stop: async () => { await host.destroy(); } };
-  };
-
-  // first run: two devices with "Allow commands" on, only A is marked as the person's own computer (through the handler)
-  let w = await boot();
-  w.link.addDevice(PA, 'Studio', 'cd'.repeat(32));
-  w.link.addDevice(PB, 'Laptop', 'ef'.repeat(32));
-  w.link.setAllow(PA, true); w.link.setAllow(PB, true);
-  await w.handlers['link:setTrusted'](null, PA, true);
-  assert.deepEqual(sealed(), [PA]);                                  // both stores carry it
-  assert.equal(JSON.parse(fs.readFileSync(devicesFile, 'utf8')).devices[0].trusted, true);
-  assert.equal(fs.readFileSync(keysFile, 'utf8').includes(PA), false);   // not readable from outside the keychain
-  await w.stop();
-
-  // devices.json is edited by something else: B now says trusted there, the sealed set does not
-  editDevices((list) => { list[1].trusted = true; });
-  w = await boot();
-  assert.deepEqual(w.view.devices.map((x) => [x.name, x.trusted]), [['Studio', true], ['Laptop', false]]);   // B's toggle reads off
-  assert.deepEqual(w.send('b1', PB), [['rejected', 'not-allowed']]);
-  assert.deepEqual(w.send('a1', PA), [['queued', undefined], ['delivered', undefined]]);   // both stores agree: honoured
-  assert.equal(w.typed.length, 1);
-  w.link.setName('Desk');                                            // the next save writes what is honoured, not what the file claimed
-  assert.equal(JSON.parse(fs.readFileSync(devicesFile, 'utf8')).devices[1].trusted, false);
-  assert.deepEqual(sealed(), [PA]);
-  // off clears both; so does removing the device
-  await w.handlers['link:setTrusted'](null, PA, false);
-  assert.deepEqual(sealed(), []);
-  await w.handlers['link:setTrusted'](null, PA, true);
-  assert.deepEqual(sealed(), [PA]);
-  await w.handlers['link:remove'](null, PA);
-  w.link.persist();
-  assert.deepEqual(sealed(), []);
-  // "Allow commands" off: the handler does not turn the flag on
-  w.link.setAllow(PB, false);
-  await w.handlers['link:setTrusted'](null, PB, true);
-  assert.equal(w.link.devices.find((x) => x.pub === PB).trusted, false);
-  await w.stop();
-
-  // a keys file from before the sealed set (no `trusted` in it), or with a malformed one: every flag reads off
-  for (const bad of [undefined, 'all', { [PB]: true }, [PB.slice(2)]]) {
-    const k = JSON.parse(safeStorage.decryptString(fs.readFileSync(keysFile)));
-    if (bad === undefined) delete k.trusted; else k.trusted = bad;
-    fs.writeFileSync(keysFile, safeStorage.encryptString(JSON.stringify(k)));
-    editDevices((list) => { list[0].allowCommands = true; list[0].trusted = true; });
-    w = await boot();
-    assert.equal(w.view.devices[0].trusted, false, JSON.stringify(bad));
-    assert.deepEqual(w.send('b2', PB), [['rejected', 'not-allowed']]);
-    await w.stop();
-  }
-
-  // the keys file replaced by something the keychain did not write (here: a plain JSON that names B): the link stays off
-  fs.writeFileSync(keysFile, JSON.stringify({ trusted: [PB], secrets: { [PB]: 'ef'.repeat(32) } }));
-  w = await boot();
-  assert.equal(w.link, null);
-  assert.equal(w.view.error, 'keys');
-  assert.deepEqual(w.view.devices, []);
-  await w.handlers['link:setTrusted'](null, PB, true);
-  assert.equal(JSON.parse(fs.readFileSync(keysFile, 'utf8')).trusted[0], PB);   // untouched: nothing was written over it
-  await w.stop();
-
-  // no keychain: the link does not start, so no device and no flag exists for this run
-  w = await boot({ ...safeStorage, isEncryptionAvailable: () => false });
-  assert.equal(w.link, null);
-  assert.equal(w.view.error, 'no-keychain');
-  assert.deepEqual(w.view.devices, []);
-  await w.stop();
-
-  // the pure rule
-  const list = [{ pub: PA, name: 'A', trusted: true }, { pub: PB, name: 'B', trusted: true }];
-  assert.deepEqual(C.sealTrusted(list, [PA]).map((x) => x.trusted), [true, false]);
-  assert.deepEqual(C.sealTrusted(list, null).map((x) => x.trusted), [false, false]);
-  assert.deepEqual(C.sealTrusted([{ pub: PA, name: 'A' }], [PA]).map((x) => x.trusted), [false]);   // sealed alone turns nothing on
-  assert.deepEqual(C.trustedKeys(C.normalizeDevices(list)), [PA, PB]);
-});
-
-test('v3.97: nothing but the link:setTrusted IPC handler sets the flag', () => {
-  const root = path.join(__dirname, '..');
-  const src = (f) => fs.readFileSync(path.join(root, f), 'utf8');
-  const calls = (s) => (s.match(/\.setTrusted\(/g) || []).length;
-  // every script under src/ (all folders) and main.js
-  const walk = (rel) => fs.readdirSync(path.join(root, rel), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(`${rel}/${e.name}`) : /\.(js|mjs|cjs|ts)$/.test(e.name) ? [`${rel}/${e.name}`] : []));
-  const files = ['main.js', ...walk('src')];
-  assert.ok(files.includes('src/link.js') && files.some((f) => f.split('/').length > 2), 'the scan reaches the sub-folders');
-  for (const f of files) {
-    if (f !== 'src/link-host.js') assert.equal(calls(src(f)), 0, f);
-    // no literal write of the flag anywhere: it only ever comes from `on === true` (the setter), `d.trusted === true`
-    // (normalising / the view) or `false` (pairing, the sealed-set check)
-    assert.equal(/\btrusted['"]?\s*[:=]\s*true\b/.test(src(f)), false, `${f} writes trusted: true`);
-  }
-  // link-host.js: only inside the handler (off, and on after the dialog)
-  const host = src('src/link-host.js');
-  assert.equal(calls(host), 2);
-  const handler = host.slice(host.indexOf("ipc('link:setTrusted'"), host.indexOf("ipc('link:remove'"));
-  assert.equal(calls(handler), 2);
-  assert.match(handler, /d\.confirmTrusted/);
-  // the device link has one writer of the field besides pairing (off) and loading the list
-  assert.equal((src('src/link.js').match(/trusted: on === true/g) || []).length, 1);
-  // the sealed set: written from the device list on every save, checked where the list is loaded
-  assert.match(host, /secrets, trusted: C\.trustedKeys\(devices\) \}/);
-  assert.match(host, /devices: C\.sealTrusted\(saved\.devices, keys\.trusted\)/);
-});
-
 // --- v3.99 a task from a paired machine may start a stopped project (cmd.revive, cap 'revive')
 test('v3.99 revive on the wire: only with a task, only to a peer that named the cap; an older peer gets today\'s cmd', async (t) => {
   assert.ok(C.CAPS.includes('revive') && C.OUR_CAPS.includes('revive') && C.REASONS.includes('stopped-here'));
@@ -833,27 +594,27 @@ function reviveHost(t) {
     manage: (op, id) => { w.starts.push([op, id]); return { ok: true }; },
     stoppedHere: (id) => w.stopped[id] || 0,
     answersPrompts: (id) => id === 'p4',
-    confirmTrusted: async () => true,
+    confirmPair: async () => true,
   });
   t.after(() => host.destroy());
   host.devices();   // starts the link
   const link = captured;
-  link.devices = C.normalizeDevices([{ pub: PA, name: 'Studio', addedAt: 5, allowCommands: true, allowManage: true }]);
+  link.devices = C.normalizeDevices([{ pub: PA, name: 'Studio', addedAt: 5, own: true }]);
   link.secrets[PA] = 'cd'.repeat(32);
   const dev = { pub: PA, name: 'Studio' };
   w.host = host; w.link = link;
-  w.manage = (on) => { link.devices = link.devices.map((x) => ({ ...x, allowManage: on })); };
+  w.manage = (on) => { link.devices = link.devices.map((x) => ({ ...x, own: on })); };   // v3.101 off = paused
   w.send = (id, project, o = {}) => { const r = []; link.emit('command', { device: dev, id, project, text: `remote ${id}`, report: true, revive: true, ...o, reply: (s, why) => r.push(why ? `${s}:${why}` : s) }); return r; };
   w.mlog = () => { try { return fs.readFileSync(path.join(dir, 'link', 'manage.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)); } catch { return []; } };
   w.clog = () => fs.readFileSync(path.join(dir, 'link', 'commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).outcome);
   return w;
 }
 
-test('v3.99 revive: a stopped project is started for a paired machine\'s task only with allowManage, at accept and at pump; logged and shown', async (t) => {
+test('v3.99 revive: a stopped project is started for a paired machine\'s task only while that device is not paused (v3.101), at accept and at pump; logged and shown', async (t) => {
   const w = reviveHost(t);
   // "manage projects" off for the device: exactly today's answer, nothing started, nothing logged
   w.manage(false);
-  assert.deepEqual(w.send('t-off', 'p1'), ['queued', 'rejected:not-running']);
+  assert.deepEqual(w.send('t-off', 'p1'), ['queued', 'rejected:not-allowed']);   // v3.101 paused: refused at the pump
   assert.deepEqual([w.withs.length, w.starts.length, w.mlog().length, w.notices.length], [0, 0, 0, 0]);
   // on, but the cmd carried no revive (an older sender, or not an HQ task): today's answer
   w.manage(true);
@@ -875,7 +636,7 @@ test('v3.99 revive: a stopped project is started for a paired machine\'s task on
   w.manage(false);
   w.now += 61 * 1000;
   w.host.pump();
-  assert.deepEqual(waiting, ['queued', 'rejected:not-running']);
+  assert.deepEqual(waiting, ['queued', 'rejected:not-allowed']);   // v3.101 paused while it waited: refused at the pump
   assert.equal(w.withs.length, 1);
   assert.equal(w.mlog().length, 1);
   // a tab that is 'starting' (the person there just opened it) is never restarted for another machine's task
@@ -891,11 +652,12 @@ test('v3.99 revive: a stopped project is started for a paired machine\'s task on
   w.host.pump();
   assert.deepEqual(st, ['queued', 'delivered']);
   assert.equal(w.typed.length, 1);
-  // a project that answers or skips its prompts is still refused, revive or not, unless the device is trusted (v3.97)
+  // v3.101 a project that answers or skips its prompts refuses a paused device, revive or not (a paired one is taken: unattended)
+  w.manage(false);
   assert.deepEqual(w.send('t-skip', 'p4'), ['rejected:not-allowed']);
+  w.manage(true);
   assert.equal(w.withs.filter((x) => x[0] === 'p4').length, 0);
-  await w.handlers['link:setTrusted'](null, PA, true);
-  assert.equal(w.link.devices.find((x) => x.pub === PA).trusted, true);
+  assert.equal(w.link.devices.find((x) => x.pub === PA).own, true);
   assert.deepEqual(w.send('t-skip-own', 'p4'), ['queued', 'delivered']);
   assert.equal(w.withs.filter((x) => x[0] === 'p4').length, 1);
   assert.deepEqual(w.clog().slice(-2), ['task:queued:trusted-unattended', 'task:delivered:trusted-unattended']);
@@ -909,7 +671,7 @@ test('v3.99 revive: refused for 10 minutes after the person here stopped the pro
   assert.equal(w.clog().pop(), 'task:rejected:stopped-here');
   // a device without "manage projects" learns nothing about the stop: today's reason
   w.manage(false);
-  assert.deepEqual(w.send('t-sticky-off', 'p3'), ['queued', 'rejected:not-running']);
+  assert.deepEqual(w.send('t-sticky-off', 'p3'), ['queued', 'rejected:not-allowed']);   // v3.101 paused
   w.manage(true);
   w.now += 5 * 60 * 1000 + 1000;                   // the window is over
   assert.deepEqual(w.send('t-later', 'p3'), ['queued', 'delivered']);
@@ -946,4 +708,91 @@ test('v3.99 revive budget: a start that never becomes ready (window closed) does
   w.now += 45 * 1000; w.host.pump();
   assert.deepEqual(s, ['queued', 'rejected:expired']);
   assert.equal(w.starts.filter((x) => x[1] === 'p6').length, 2);
+});
+
+// --- v3.101 a paired device is the person's own computer
+
+test('v3.101 pause: a paired device is taken everywhere, a paused one nowhere; its queued entry is refused at once; only link:setPaused changes it', async (t) => {
+  const w = reviveHost(t);
+  Object.assign(w.tabs, { p1: 'ready', p4: 'ready', p2: 'busy' });
+  assert.deepEqual(w.send('t-1', 'p1', { revive: false }), ['queued', 'delivered']);
+  assert.deepEqual(w.send('t-4', 'p4', { revive: false }), ['queued', 'delivered']);   // p4 answers or skips its prompts: unattended, no switch needed
+  const waiting = w.send('t-2', 'p2', { revive: false });
+  assert.deepEqual(waiting, ['queued']);
+  const typed = w.typed.length;
+  await w.handlers['link:setPaused'](null, PA, true);
+  assert.equal(w.link.devices[0].own, false);
+  assert.deepEqual(waiting, ['queued', 'rejected:not-allowed']);   // refused at the pump, at once
+  assert.deepEqual(w.send('t-5', 'p1', { revive: false }), ['queued', 'rejected:not-allowed']);
+  assert.deepEqual(w.send('t-6', 'p4', { revive: false }), ['rejected:not-allowed']);
+  assert.equal(w.typed.length, typed);
+  for (const gate of ['mayCommand', 'mayRunUnattended', 'mayManage', 'maySessions']) assert.equal(C[gate](w.link.devices, w.link.secrets, PA), false, gate);
+  await w.handlers['link:setPaused'](null, PA, false);
+  assert.deepEqual(w.send('t-7', 'p1', { revive: false }), ['queued', 'delivered']);
+  // wiring: the per-device switches and their channels are gone; nothing but the IPC handler pauses or resumes
+  const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  for (const gone of ["'link:setAllow'", 'link:setTrusted', 'link:setAllowManage', 'link:setAllowSessions', 'confirmTrusted', 'setAllowSessions', 'setAllowManage']) {
+    for (const f of ['src/link-host.js', 'src/link.js', 'preload.js', 'renderer/devices.js', 'main.js']) assert.ok(!src(f).includes(gone), `${gone} in ${f}`);
+  }
+  assert.equal((src('src/link.js').match(/setOwn\(/g) || []).length, 1);          // its definition only: no link message reaches it
+  assert.equal((src('src/link-host.js').match(/\.setOwn\(/g) || []).length, 1);   // the link:setPaused handler
+  assert.ok(!src('src/office-mcp.js').includes('setOwn') && !src('src/office-mcp.js').includes('setPaused'));
+  assert.match(src('renderer/devices.js'), /sb-dev-pause/);
+  assert.match(src('main.js'), /confirmPair: async \(device\) => \(await dialog\.showMessageBox\(win, \{ type: 'warning', buttons: \[T\('main\.pairGo'\), T\('main\.cancel'\)\], defaultId: 1, cancelId: 1/);
+});
+
+test('v3.101 migration: devices paired before become own exactly once, logged and announced; a hand-edited devices.json gains nothing', async (t) => {
+  const { setupLink } = require('../src/link-host.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-own-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const realSwarm = Link.prototype.ensureSwarm;
+  Link.prototype.ensureSwarm = function () { return null; };   // no network: nothing here pairs or connects
+  t.after(() => { Link.prototype.ensureSwarm = realSwarm; });
+  const boot = () => {
+    const w = { notices: [], handlers: {} };
+    w.host = setupLink({
+      app: { getPath: () => dir, getVersion: () => '0.24.0' },
+      safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain', encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
+      ipcMain: { handle: (ch, fn) => { w.handlers[ch] = fn; } }, send: () => {}, notify: (title) => { w.notices.push(title); }, T: (k, v) => (v ? `${k}${JSON.stringify(v)}` : k),
+      loginOf: () => 'in', reportsDir: path.join(dir, 'r'), projects: () => [], tabState: () => 'gone', type: () => {},
+    });
+    w.host.devices();
+    w.link = w.host.link();
+    return w;
+  };
+  const keysFile = path.join(dir, 'link', 'keys.bin');
+  const devFile = path.join(dir, 'link', 'devices.json');
+  const keys = () => JSON.parse(fs.readFileSync(keysFile, 'utf8'));
+  const moved = () => (fs.existsSync(path.join(dir, 'link', 'commands.log')) ? fs.readFileSync(path.join(dir, 'link', 'commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.event === 'own-migration') : []);
+  const gates = (w, pub) => ['mayCommand', 'mayRunUnattended', 'mayManage', 'maySessions'].map((g) => C[g](w.link.devices, w.link.secrets, pub));
+  // a fresh install seals the marker at once: nothing is ever migrated there
+  let w = boot();
+  assert.deepEqual([keys().ownV, keys().own, w.notices, moved()], [C.OWN_VERSION, [], [], []]);
+  await w.host.destroy();
+  // the files of an older version: no marker, every old switch off for the paired device, and an entry without a secret
+  const old = keys();
+  delete old.own; delete old.ownV;
+  fs.writeFileSync(keysFile, JSON.stringify({ ...old, secrets: { [PA]: 'cd'.repeat(32) }, trusted: [] }));
+  fs.writeFileSync(devFile, JSON.stringify({ name: 'Me', devices: [{ pub: PA, name: 'Studio', addedAt: 1, allowCommands: false, allowManage: false, allowSessions: false, trusted: false },
+    { pub: PB, name: 'Ghost', addedAt: 1, allowCommands: true, trusted: true }] }));
+  w = boot();
+  assert.deepEqual(w.notices, ['main.ownMigrated{"names":"Studio"}']);
+  assert.deepEqual(moved().map((x) => x.devices), [['Studio']]);
+  assert.deepEqual(gates(w, PA), [true, true, true, true]);
+  assert.deepEqual(gates(w, PB), [false, false, false, false]);   // no secret: an entry in devices.json alone is not a paired device
+  assert.equal(keys().ownV, C.OWN_VERSION);
+  assert.ok(keys().own.includes(PA));
+  assert.equal(JSON.parse(fs.readFileSync(devFile, 'utf8')).devices[0].allowCommands, undefined);   // the old fields are dropped at that write
+  await w.handlers['link:setPaused'](null, PA, true);
+  assert.equal(keys().own.includes(PA), false);
+  await w.host.destroy();
+  // a hand edit of devices.json after the migration: the paused device stays paused, nothing runs again
+  const j = JSON.parse(fs.readFileSync(devFile, 'utf8'));
+  fs.writeFileSync(devFile, JSON.stringify({ ...j, devices: j.devices.map((x) => ({ ...x, own: true, allowCommands: true, allowManage: true, allowSessions: true, trusted: true })) }));
+  w = boot();
+  assert.deepEqual([w.notices, moved().length], [[], 1]);
+  assert.deepEqual(gates(w, PA), [false, false, false, false]);
+  await w.handlers['link:setPaused'](null, PA, false);   // only this machine's own Devices UI resumes it
+  assert.deepEqual(gates(w, PA), [true, true, true, true]);
+  await w.host.destroy();
 });

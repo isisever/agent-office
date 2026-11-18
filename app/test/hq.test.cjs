@@ -83,7 +83,7 @@ test('consent matrix: the app is the only gate; no dialog only for local + setti
   const m = HQ.createMinter({ now: () => t, rand: () => 'x' });
   const id = m.mint();
   for (const [setting, remote, request, want] of [
-    [false, false, id, 'app'], [false, true, id, 'app'], [true, true, id, 'app'], [true, false, id, 'none'],
+    [false, false, id, 'app'], [false, true, id, 'app'], [true, true, id, 'none'], [true, false, id, 'none'],   // v3.101 a paired machine follows the same setting
     [true, false, 'rforged', 'app'], [true, false, '', 'app'], [true, false, HQ.ADHOC, 'app'],
   ]) assert.equal(HQ.consentFor({ setting, remote, request, minter: m }), want, `${setting} ${remote} ${request}`);
   m.clear();   // an inbox row (report-ready / request-done) is a turn the person did not type
@@ -1110,7 +1110,7 @@ test('v3.94 offersAlways: only a local target in the live turn of a prompt the p
   const m = HQ.createMinter({ now: () => t, rand: () => String(t) });
   const typed = m.mint();
   assert.equal(HQ.offersAlways({ remote: false, request: typed, minter: m }), true);
-  assert.equal(HQ.offersAlways({ remote: true, request: typed, minter: m }), false, 'a paired device always asks, with two buttons');
+  assert.equal(HQ.offersAlways({ remote: true, request: typed, minter: m }), true, 'v3.101 a paired machine is offered the button like a local target');
   assert.equal(HQ.offersAlways({ remote: false, request: HQ.ADHOC, minter: m }), false);
   assert.equal(HQ.offersAlways({ remote: false, request: '', minter: m }), false);
   assert.equal(HQ.offersAlways({ remote: false, request: 'forged', minter: m }), false);
@@ -1142,12 +1142,12 @@ test('v3.94 allowAlways turns on the two existing settings and nothing else; mai
   const path = require('path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const one = src.slice(src.indexOf('async function confirmHqDispatch('), src.indexOf('function tagRoutineRec('));
-  assert.match(one, /const always = HQ\.offersAlways\(\{ remote, request, minter: hqMinter \}\);/);
+  assert.match(one, /const always = HQ\.offersAlways\(\{ request, minter: hqMinter \}\);/);
   assert.match(one, /buttons: \[T\('main\.hqAllow'\), T\('main\.hqDeny'\), \.\.\.\(always \? \[T\('main\.hqAllowAlways'\)\] : \[\]\)\], defaultId: 1, cancelId: 1,/);
   assert.match(one, /if \(always && r\.response === 2\) \{ hqAllowAlways\(\); return true; \}/);
   assert.match(one, /T\('main\.hqAllowAlwaysNote'\)/);
   const many = src.slice(src.indexOf('async function confirmHqStages('), src.indexOf('async function hqDispatchStages('));
-  assert.match(many, /const always = HQ\.offersAlways\(\{ remote: false, request, minter: hqMinter \}\);/);
+  assert.match(many, /const always = HQ\.offersAlways\(\{ request, minter: hqMinter \}\);/);
   assert.match(many, /if \(always && r\.response === 2\) \{ hqAllowAlways\(\); return true; \}/);
   const set = src.slice(src.indexOf('function hqAllowAlways('), src.indexOf('async function confirmHqDispatch('));
   assert.match(set, /commit\(\{ \.\.\.state, hq: HQ\.allowAlways\(state\.hq\) \}\);\n {2}send\('hq:board', hqView\(\)\);/);
@@ -1413,51 +1413,6 @@ test('v3.98 remote rows carry their device key, also for a project id with a col
 });
 
 // --- v3.99 remote targets are equal: the paired-machines setting and the machine + project target identity
-test('v3.99 consent matrix: typed/routine x local/remote x setting; the remote setting is its own and allowAlways never sets it', () => {
-  const m = HQ.createMinter({ now: () => 1000, rand: () => 'x' });
-  const id = m.mint();
-  for (const [setting, remoteSetting, remote, want] of [
-    [false, false, false, 'app'], [true, false, false, 'none'], [false, true, false, 'app'], [true, true, false, 'none'],
-    [false, false, true, 'app'], [true, false, true, 'app'], [false, true, true, 'none'], [true, true, true, 'none'],
-  ]) assert.equal(HQ.consentFor({ setting, remoteSetting, remote, request: id, minter: m }), want, `${setting} ${remoteSetting} ${remote}`);
-  assert.equal(HQ.consentFor({ setting: true, remoteSetting: 'yes', remote: true, request: id, minter: m }), 'app');   // only a boolean true
-  assert.equal(HQ.consentFor({ setting: true, remote: true, request: id, minter: m }), 'app');                           // default off
-  for (const request of ['rforged', '', HQ.ADHOC]) assert.equal(HQ.consentFor({ setting: true, remoteSetting: true, remote: true, request, minter: m }), 'app');
-  m.clear();   // a turn the person did not type: the same condition as the local no-ask
-  assert.equal(HQ.consentFor({ setting: true, remoteSetting: true, remote: true, request: id, minter: m }), 'app');
-  // routines: a remote dispatch stays held whatever the settings say; the local rule is unchanged
-  const routine = { isRoutine: () => true, isLiveRoutine: () => true, isLive: () => true };
-  assert.equal(HQ.consentFor({ setting: true, remoteSetting: true, remote: true, request: 'q1', minter: routine, routineNoAsk: true }), 'held');
-  assert.equal(HQ.consentFor({ setting: true, remoteSetting: true, remote: false, request: 'q1', minter: routine, routineNoAsk: false }), 'held');
-  assert.equal(HQ.consentFor({ setting: false, remoteSetting: false, remote: false, request: 'q1', minter: routine, routineNoAsk: true }), 'none');
-
-  // the setting: default off, kept only when true
-  assert.equal('dispatchRemoteWithoutAsking' in HQ.normalizeHq({}), false);
-  assert.equal('dispatchRemoteWithoutAsking' in HQ.normalizeHq({ dispatchRemoteWithoutAsking: 'yes' }), false);
-  assert.equal('dispatchRemoteWithoutAsking' in HQ.normalizeHq({ dispatchRemoteWithoutAsking: false }), false);
-  assert.equal(HQ.normalizeHq({ dispatchRemoteWithoutAsking: true }).dispatchRemoteWithoutAsking, true);
-  // the v3.94 "stop asking" button never sets it (and does not turn it off either)
-  assert.equal('dispatchRemoteWithoutAsking' in HQ.allowAlways(HQ.normalizeHq({})), false);
-  assert.equal('dispatchRemoteWithoutAsking' in HQ.allowAlways(undefined), false);
-  assert.equal('dispatchRemoteWithoutAsking' in HQ.allowAlways({ dispatchWithoutAsking: true, initiative: true }), false);
-  assert.equal(HQ.allowAlways({ dispatchRemoteWithoutAsking: true }).dispatchRemoteWithoutAsking, true);
-  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  assert.equal((src.match(/\{ dispatchRemoteWithoutAsking: /g) || []).length, 1, 'written only by hq:setSettings');
-  assert.match(src, /typeof o\.dispatchRemoteWithoutAsking === 'boolean' \? \{ dispatchRemoteWithoutAsking: o\.dispatchRemoteWithoutAsking \}/);
-  assert.equal(/dispatchRemoteWithoutAsking/.test(fnBody('hqAllowAlways')), false);
-  assert.equal(/dispatchRemoteWithoutAsking/.test(fnBody('confirmHqDispatch')), false);
-  // wiring: both consent calls pass the remote setting; the notice; revive only for HQ's tasks; HQ's information
-  assert.equal((src.match(/remoteSetting: state\.hq\?\.dispatchRemoteWithoutAsking === true/g) || []).length, 5);   // two consent calls + the three initiative checks
-  assert.match(fnBody('hqDispatch'), /notifyRemoteSent\(pname, dv\.name\)/);
-  assert.match(fnBody('notifyRemoteSent'), /notify\(T\('main\.hqRemoteSent'/);
-  assert.match(fnBody('officeDispatch'), /revive: revive && tab === HQ\.HQ_ID/);
-  assert.match(fnBody('officeMachines'), /trustsUs: typeof dv\.trustsUs === 'boolean' \? dv\.trustsUs : null/);
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'office-mcp.js'), 'utf8'), /`trustsUs`/);
-  const board = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'hq-board.js'), 'utf8');
-  assert.match(board, /setSettings\(\{ dispatchRemoteWithoutAsking: remoteNoAsk\.checked \}\)/);
-  assert.match(board, /remoteNoAskRow\.style\.display = view\.paired \? '' : 'none'/);
-});
-
 test('v3.99 initiative: a paired machine target is machine key + project id, and only one consented in this request', () => {
   const clock = { t: 1000 };
   const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
@@ -1489,14 +1444,39 @@ test('v3.99 initiative: a paired machine target is machine key + project id, and
   const mixed = (targets, over = {}) => HQ.initiativeFor({ initiative: true, remoteSetting: true, remote: false, request: id, minter: m, board: both, targets, now: clock.t, ...over });
   assert.equal(mixed([{ projectId: 'p-web' }, { machine: PUB, projectId: 'p-api' }]), true);
   assert.equal(mixed([{ projectId: 'p-web' }, { machine: OTHER, projectId: 'p-api' }]), false);
-  // v3.99 the remote setting: off (or unset) means no initiative to a paired machine, alone or in a mixed chain; local targets are unaffected
-  assert.equal(ask({ machine: PUB, projectId: 'p-api' }, { remoteSetting: false }), false);
-  assert.equal(ask({ machine: PUB, projectId: 'p-api' }, { remoteSetting: undefined }), false);
-  assert.equal(mixed([{ projectId: 'p-web' }, { machine: PUB, projectId: 'p-api', remote: true }], { remoteSetting: false }), false);
+  // v3.101 there is no remote setting any more: a stale argument changes nothing
+  assert.equal(ask({ machine: PUB, projectId: 'p-api' }, { remoteSetting: false }), true);
   assert.equal(mixed([{ projectId: 'p-web' }], { remoteSetting: false }), true);
   // a machine that trusts us may run in Skip projects unattended: its target is marked skip and never gets initiative
   assert.equal(ask({ machine: PUB, projectId: 'p-api', skip: true }), false);
   // main: the sender treats a paired machine's Skip state from trustsUs (hqRemoteTarget) and stamps its rows
   assert.match(fnBody('hqDispatch'), /targets: \[remote \? \{ \.\.\.hqRemoteTarget\(key, machine, args\.project\), staffId: args\.staff \? null : '' \}/);
   assert.match(fnBody('hqDispatch'), /\.\.\.\(byInitiative \? \{ byInitiative: true \} : \{\}\), \.\.\.\(consented && !byInitiative \? \{ consented: true \} : \{\}\)/);
+});
+
+test('v3.101 consent: a paired machine follows the same rules as a local target; the remote setting is gone and migrates away', () => {
+  const m = HQ.createMinter({ now: () => 1000, rand: () => 'x' });
+  const id = m.mint();
+  for (const setting of [false, true]) for (const request of [id, 'rforged', '', HQ.ADHOC]) {
+    assert.equal(HQ.consentFor({ setting, remote: true, request, minter: m }), HQ.consentFor({ setting, remote: false, request, minter: m }), `${setting} ${request}`);
+  }
+  assert.equal(HQ.consentFor({ setting: true, remote: true, request: id, minter: m }), 'none');
+  assert.equal(HQ.consentFor({ setting: false, remoteSetting: true, remote: true, request: id, minter: m }), 'app');   // the old setting turns nothing on
+  // a stored dispatchRemoteWithoutAsking is dropped and turns nothing else on
+  const hq = HQ.normalizeHq({ dispatchRemoteWithoutAsking: true });
+  assert.equal('dispatchRemoteWithoutAsking' in hq, false);
+  assert.notEqual(hq.dispatchWithoutAsking, true);
+  assert.notEqual(hq.initiative, true);
+  // the v3.94 button now covers paired machines too (deliberately the opposite of the v3.99 rule)
+  const on = HQ.allowAlways({});
+  assert.equal(HQ.consentFor({ setting: on.dispatchWithoutAsking === true, remote: true, request: id, minter: m }), 'none');
+  // the catalog flag decides initiative per project; unknown (an older peer, no catalog, not in it) counts as skipping
+  const cat = [{ id: 'p1', skips: true }, { id: 'p2', skips: false }, { id: 'p3' }];
+  assert.deepEqual(['p1', 'p2', 'p3', 'nope'].map((p) => HQ.remoteSkips(cat, p)), [true, false, true, true]);
+  assert.deepEqual([HQ.remoteSkips(undefined, 'p1'), HQ.remoteSkips(null, 'p1'), HQ.remoteSkips([], 'p1')], [true, true, true]);
+  const main = require('fs').readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(main, /skip: HQ\.remoteSkips\(l\.peerCatalog\?\.get\(pub\), projectId\)/);
+  assert.match(main, /skips: answersPrompts\(p\.id\)/);
+  assert.doesNotMatch(main, /dispatchRemoteWithoutAsking/);
+  assert.match(main, /notifyRemoteSent\(pname, dv\.name\)/);   // the notice for a remote task sent without a dialog stays
 });

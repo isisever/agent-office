@@ -67,44 +67,25 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
   function renderDevices() {
     markReaders();
     const wasOpen = /** @type {HTMLDetailsElement} */ (section).open;
-    // The four opt-ins per device live in a popup (the row shows how many are on); every one is off by default.
+    // v3.101 a paired device is the person's own computer: one control (Pause) and Remove. Handoffs and account
+    // sign-in keep their own opt-ins (off by default).
     const perms = (/** @type {any} */ d) => [
-      ['allow', 'allowCommands', 'setAllow', ''], ['allowHandoff', 'allowHandoff', 'setAllowHandoff', 'sb-dev-handoff'],
-      ['allowManage', 'allowManage', 'setAllowManage', 'sb-dev-manage'], ['allowAccounts', 'allowAccounts', 'setAllowAccounts', 'sb-dev-accounts'],
-      ['allowSessions', 'allowSessions', 'setAllowSessions', 'sb-dev-sessions'],   // v3.100 reading sessions; its hint follows the list
+      ['allowHandoff', 'allowHandoff', 'setAllowHandoff', 'sb-dev-handoff'], ['allowAccounts', 'allowAccounts', 'setAllowAccounts', 'sb-dev-accounts'],
     ].map(([label, field, call, cls]) => ({ label, field, call, cls, on: Boolean(d[field]) }));
-    // v3.97 "This is my own computer": main asks before it turns on, so the box follows what main answered (not the click)
-    const setTrusted = (/** @type {any} */ d, /** @type {HTMLInputElement} */ box) => api.link.setTrusted(d.id, box.checked).then((/** @type {any} */ v) => {
-      if (!v) { box.checked = false; return; }
-      view = v;
-      render();
-      box.checked = Boolean(v.devices.find((/** @type {any} */ x) => x.id === d.id)?.trusted);
-    }).catch((/** @type {any} */ e) => { box.checked = false; console.error(e); });
+    const removeDevice = (/** @type {any} */ d) => { if (confirm(t('devices.removeConfirm', { name: d.name }))) apply(api.link.remove(d.id)); };
     const openPerms = (/** @type {any} */ d) => {
-      // The flag does nothing without "Allow commands": then the row is greyed and says so, and it cannot be turned on
-      // (a box that is still on stays clickable, to turn it off). It follows the "Allow commands" box of this popup.
-      const name = h('span', {});
-      const box = /** @type {HTMLInputElement} */ (h('input', { type: 'checkbox', class: 'sb-check sb-dev-trusted', checked: Boolean(d.trusted), onchange: (/** @type {Event} */ e) => setTrusted(d, /** @type {HTMLInputElement} */ (e.target)).then(() => needsAllow(allowOn)) }));
-      const row = h('label', { class: 'sb-botcolor sb-langrow' }, name, box);
-      let allowOn = Boolean(d.allowCommands);
-      const needsAllow = (/** @type {boolean} */ on) => {
-        allowOn = on;
-        name.textContent = on ? t('devices.trusted') : `${t('devices.trusted')} ${t('devices.trustedNeedsAllow')}`;
-        box.disabled = !on && !box.checked;
-        row.style.opacity = on ? '' : '.55';
-      };
-      needsAllow(allowOn);
       popup(t('devices.permissions', { name: d.name }), [
+        h('div', { class: 'sb-note' }, `${d.name} · ${t(d.online ? 'devices.online' : 'devices.offline')}`),
+        h('div', { class: 'sb-note sb-dev-own' }, t('devices.ownNote')),
+        h('label', { class: 'sb-botcolor sb-langrow' },
+          h('span', {}, t('devices.pause')),
+          h('input', { type: 'checkbox', class: 'sb-check sb-dev-pause', checked: d.own === false, onchange: (/** @type {Event} */ e) => apply(api.link.setPaused(d.id, /** @type {HTMLInputElement} */ (e.target).checked)) })),
+        h('div', { class: 'sb-note' }, t('devices.pauseHint')),
         ...perms(d).map((x) => h('label', { class: 'sb-botcolor sb-langrow' },
           h('span', {}, t(`devices.${x.label}`)),
-          h('input', { type: 'checkbox', class: 'sb-check ' + x.cls, checked: x.on, onchange: (/** @type {Event} */ e) => {
-            const on = /** @type {HTMLInputElement} */ (e.target).checked;
-            if (x.field === 'allowCommands') needsAllow(on);
-            apply(api.link[x.call](d.id, on));
-          } }))),
-        h('div', { class: 'sb-note' }, t('devices.allowSessionsHint')),
-        row,
-        h('div', { class: 'sb-note' }, t('devices.trustedHint')),
+          h('input', { type: 'checkbox', class: 'sb-check ' + x.cls, checked: x.on, onchange: (/** @type {Event} */ e) => apply(api.link[x.call](d.id, /** @type {HTMLInputElement} */ (e.target).checked)) }))),
+        h('div', { class: 'sb-note' }, t('devices.ownHint')),
+        h('button', { class: 'sb-btn sb-dev-remove', onclick: () => removeDevice(d) }, t('devices.remove')),
       ]);
     };
     const list = view.devices.map((/** @type {any} */ d) => h('li', { class: 'sb-dev' + (d.online ? ' online' : '') },
@@ -115,9 +96,9 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
           : h('span', { class: 'sb-name', title: `${t(d.online ? 'devices.online' : 'devices.offline')} · ${new Date(d.addedAt).toLocaleDateString()}` }, d.name),
         h('button', { class: 'sb-x sb-gear', title: t('devices.permissionsTitle'), onclick: () => openPerms(d) }, '⚙'),
         h('button', { class: 'sb-x', title: t('devices.rename'), onclick: () => { editing = d.id; render(); } }, '✎'),
-        h('button', { class: 'sb-x', title: t('devices.remove'), onclick: () => { if (confirm(t('devices.removeConfirm', { name: d.name }))) apply(api.link.remove(d.id)); } }, '×'),
+        h('button', { class: 'sb-x', title: t('devices.remove'), onclick: () => removeDevice(d) }, '×'),
       ),
-      h('div', { class: 'sb-dev-sub' }, t(d.online ? 'devices.online' : 'devices.offline'), ' · ', t('devices.permCount', { n: perms(d).filter((x) => x.on).length, total: 4 }), d.trusted && d.allowCommands ? ` · ${t('devices.trusted')}` : ''),   // named only while it has an effect
+      h('div', { class: 'sb-dev-sub' + (d.own === false ? ' paused' : '') }, t(d.online ? 'devices.online' : 'devices.offline'), ' · ', t(d.own === false ? 'devices.paused' : 'devices.own')),
       // v3.97 what that machine says about tasks sent from here (nothing for an older Agent Office there)
       d.online && typeof d.trustsUs === 'boolean' ? h('div', { class: 'sb-note' }, t(d.trustsUs ? 'devices.trustsUsOn' : 'devices.trustsUsOff')) : null,
       d.online && d.v === 1 ? h('div', { class: 'sb-note warn' }, t('devices.updateThere', { device: d.name })) : null,

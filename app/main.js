@@ -2208,7 +2208,7 @@ function hqAllowAlways() {
 /** v3.94 `request`: the dispatch's request id, passed only where the third button may be offered (HQ.offersAlways). */
 async function confirmHqDispatch(args, remote, { request = '' } = {}) {
   if (!win || win.isDestroyed()) return false;
-  const always = HQ.offersAlways({ remote, request, minter: hqMinter });
+  const always = HQ.offersAlways({ request, minter: hqMinter });
   const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny'), ...(always ? [T('main.hqAllowAlways')] : [])], defaultId: 1, cancelId: 1,
     message: args.staffName ? T('main.hqAskStaff', { staff: args.staffName, project: officeName(args.targetName || args.project) }) : T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: `${LC.cleanLine(HQ.redact(String(args.task || '')), 300)}${always ? `\n\n${T('main.hqAllowAlwaysNote')}` : ''}` });
   if (always && r.response === 2) { hqAllowAlways(); return true; }
@@ -2240,10 +2240,10 @@ function hqRemoteTarget(key, machine, project) {
   const pub = dv && l ? (key ? key.pub : dv.id) : '';
   if (!pub) return { machine: '', projectId: '', remote: true, skip: false };
   const known = l.remotes.get(pub)?.snap?.projects || (l.conns.has(pub) ? [] : peerCache()[pub]?.projects || []);
-  // v3.99 the peer catalog does not carry a project's Skip/Auto-approve state, so a machine that trusts us (its Auto-approve/Skip
-  // projects run our tasks unattended) is treated as possibly skipping: no initiative follow-up goes there
-  const skip = (l.view?.().devices || []).find((x) => x.id === pub)?.trustsUs === true;
-  return { machine: pub, projectId: key ? key.id : byName(known, project)?.id || '', remote: true, skip };
+  const projectId = key ? key.id : byName(known, project)?.id || '';
+  // v3.101 the peer catalog carries each project's "answers or skips its prompts" flag, so the v3.91 rule (no initiative
+  // follow-up into such a project) holds per project; unknown (an older Agent Office there, no catalog yet) counts as skipping
+  return { machine: pub, projectId, remote: true, skip: HQ.remoteSkips(l.peerCatalog?.get(pub), projectId) };
 }
 /** v3.99 a task went to a paired machine without a dialog on this one: the person is told here, every time. */
 function notifyRemoteSent(project, machine) {
@@ -2289,7 +2289,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     args = { ...args, staffName: c.staffName, ...(c.targetName ? { targetName: c.targetName } : {}) };
   }
   const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '' });   // a project routine: only its own project
-  const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remoteSetting: state.hq?.dispatchRemoteWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: noAsk });
+  const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
   if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
   // v3.91 the initiative setting: a local follow-up of a request the person typed needs no dialog when its target
@@ -2299,8 +2299,8 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const initiativeArgs = (counted) => {
     const p = remote ? null : byName(state.projects, args.project);
     const m = args.staff && teamOn() ? ST.findMember(state.staff, args.staff) : null;
-    return { initiative: state.hq?.initiative === true, remoteSetting: state.hq?.dispatchRemoteWithoutAsking === true, remote, request, minter: hqMinter, counted,
-      // v3.99 a paired machine's project: machine key + project id; its Skip state comes from hqRemoteTarget (trustsUs)
+    return { initiative: state.hq?.initiative === true, remote, request, minter: hqMinter, counted,
+      // v3.99 a paired machine's project: machine key + project id; its Skip state comes from hqRemoteTarget (v3.101: the peer catalog's flag)
       targets: [remote ? { ...hqRemoteTarget(key, machine, args.project), staffId: args.staff ? null : '' }
         : { projectId: p?.id || '', staffId: args.staff ? m?.id || null : '', skip: hqTargetSkips(p, args.staff ? m?.id || '' : '') }] };
   };
@@ -2432,7 +2432,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
 // is frozen in tasks/<id>/stage.json then and released unchanged except for the previous report, appended as marked data.
 async function confirmHqStages(stages, { request = '' } = {}) {
   if (!win || win.isDestroyed()) return false;
-  const always = HQ.offersAlways({ remote: false, request, minter: hqMinter });
+  const always = HQ.offersAlways({ request, minter: hqMinter });
   const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny'), ...(always ? [T('main.hqAllowAlways')] : [])], defaultId: 1, cancelId: 1,
     message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.projectName || s.project)}` : officeName(s.project), machine: s.remote ? officeName(s.machineName || '') : '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}${always ? `\n\n${T('main.hqAllowAlwaysNote')}` : ''}` });
   if (always && r.response === 2) { hqAllowAlways(); return true; }
@@ -2483,19 +2483,19 @@ async function hqDispatchStages(args, request, rrun) {
   }
   const caps = () => CH.capFor(loadHqBoard(), request, stages.length, { maxOpen: HQ.MAX_OPEN, maxPerRequest: HQ.MAX_PER_REQUEST });
   if (caps()) return no(caps());
-  // v3.99 ONE rule for the whole chain: a stage is asked about unless consentFor needs none for its side (this machine:
-  // `dispatchWithoutAsking`; a paired machine: `dispatchRemoteWithoutAsking`), and every stage that is asked about goes
+  // v3.99 ONE rule for the whole chain: a stage is asked about unless consentFor needs none for its side (v3.101: `dispatchWithoutAsking`
+  // for this machine and for a paired one alike), and every stage that is asked about goes
   // into one dialog (a remote stage no longer opens its own).
   // v3.91 the initiative setting covers the asked stages together: every one of them counts and every one's target
   // (machine + project + member) must be one the person consented to for this request; a local one without Skip
   // permissions (a paired machine's are unknown here: the receiver decides); a personal workspace that is not made yet
   // has no project id, so it always asks
-  const needsNone = (remote) => HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remoteSetting: state.hq?.dispatchRemoteWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: false }) === 'none';
+  const needsNone = (remote) => HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: false }) === 'none';
   const quietHere = needsNone(false);
   const quietThere = needsNone(true);
   const asked = stages.filter((s) => !(s.remote ? quietThere : quietHere));
   const asks = asked.length > 0;
-  const initiativeArgs = (counted) => ({ initiative: state.hq?.initiative === true, remoteSetting: state.hq?.dispatchRemoteWithoutAsking === true, remote: false, request, minter: hqMinter, counted,
+  const initiativeArgs = (counted) => ({ initiative: state.hq?.initiative === true, remote: false, request, minter: hqMinter, counted,
     targets: asked.map((s) => {
       if (s.remote) return { ...hqRemoteTarget(s.key, String(s.machine || '').trim(), s.project), staffId: '' };
       const p = s.personalFor || !s.projectId ? null : P.findProject(state, s.projectId);
@@ -2594,7 +2594,7 @@ async function hqReleaseStage({ id, after, resumed = false }) {
     const p = st.remote ? null : P.findProject(state, project);
     const m = st.staff && teamOn() ? ST.findMember(state.staff, st.staff) : null;
     const fresh = loadHqBoard();
-    const still = HQ.initiativeFor({ initiative: state.hq?.initiative === true, remoteSetting: state.hq?.dispatchRemoteWithoutAsking === true, remote: st.remote === true, request: t.request, minter: hqMinter, counted: true,
+    const still = HQ.initiativeFor({ initiative: state.hq?.initiative === true, remote: st.remote === true, request: t.request, minter: hqMinter, counted: true,
       board: { ...fresh, tasks: fresh.tasks.filter((x) => x.id !== id) },   // the row does not count against itself
       targets: [st.remote ? { ...hqRemoteTarget(st.key || null, String(st.machine || '').trim(), st.project), staffId: '' }
         : { projectId: p?.id || '', staffId: st.staff ? m?.id || null : '', skip: hqTargetSkips(p, st.staff ? m?.id || '' : '') }] });
@@ -2685,7 +2685,6 @@ ipcMain.handle('hq:setSettings', (_e, patch) => {
   const o = patch && typeof patch === 'object' ? patch : {};
   const next = HQ.normalizeHq({ ...(state.hq || {}), ...(typeof o.accountId === 'string' ? { accountId: o.accountId } : {}),
     ...(typeof o.bossModel === 'string' && (o.bossModel === '' || HQ.hqBossModel(o.bossModel)) ? { bossModel: o.bossModel } : {}), ...(typeof o.dispatchWithoutAsking === 'boolean' ? { dispatchWithoutAsking: o.dispatchWithoutAsking } : {}),
-    ...(typeof o.dispatchRemoteWithoutAsking === 'boolean' ? { dispatchRemoteWithoutAsking: o.dispatchRemoteWithoutAsking } : {}),   // v3.99 its own checkbox; nothing else sets it
     ...(typeof o.initiative === 'boolean' ? { initiative: o.initiative } : {}),
     ...(typeof o.enabled === 'boolean' ? { enabled: o.enabled } : {}) });
   const relaunch = next.accountId !== hqSettings().accountId || next.bossModel !== hqSettings().bossModel;
@@ -3124,7 +3123,7 @@ function machineData() {
   const r = LC.resOf({ now: Date.now(), total: os.totalmem(), free: os.freemem(), loadavg: os.loadavg(), cpus: os.cpus(), platform: process.platform, app: app.getVersion(),
     tabs: terms.size, agents: runningAgents, sleeping: asleep.size, prev: resSample });
   resSample = r.sample;
-  const catalog = { projects: state.projects.slice(0, 50).map((p) => ({ id: p.id, dirName: path.basename(p.dir), state: terms.has(p.id) ? 'running' : asleep.has(p.id) ? 'asleep' : 'stopped', engine: P.engineOf(p), accountLabel: A.accountOf(state, p).label || '' })) };
+  const catalog = { projects: state.projects.slice(0, 50).map((p) => ({ id: p.id, dirName: path.basename(p.dir), state: terms.has(p.id) ? 'running' : asleep.has(p.id) ? 'asleep' : 'stopped', engine: P.engineOf(p), accountLabel: A.accountOf(state, p).label || '', skips: answersPrompts(p.id) })) };   // v3.101 skips: the sender's initiative rule per project
   return { res: r.res, catalog };
 }
 let machineTimer = null;
@@ -3147,8 +3146,8 @@ function startLink() {
     startWith: startWithPrompt,   // v3.83 amendment: a tab that takes no typing yet gets the task as its first prompt
     type: typePrompt,
     answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices
-    // v3.97 "This is my own computer" is turned on only after this dialog, on this machine (Cancel is the default)
-    confirmTrusted: async (device) => (await dialog.showMessageBox(win, { type: 'warning', buttons: [T('main.trustedGo'), T('main.cancel')], defaultId: 1, cancelId: 1, message: T('main.trustedConfirm', { device }) })).response === 0,
+    // v3.101 a device is paired only after this dialog, on this machine (Cancel is the default): it says what pairing means
+    confirmPair: async (device) => (await dialog.showMessageBox(win, { type: 'warning', buttons: [T('main.pairGo'), T('main.cancel')], defaultId: 1, cancelId: 1, message: T('main.pairConfirm', { device }) })).response === 0,
     loginOf: (projectId) => { const p = P.resolvePty(state, String(projectId))?.project; const s = p && !p.hq ? auths.get(A.accountOf(state, p).id)?.state : null; return s === 'out' ? 'out' : s === 'in' ? 'in' : 'unknown'; },   // v3.83 a desk: its member's account
     reportsDir: path.join(app.getPath('home'), '.claude', 'agent-office', 'reports'),
     onReport: onOfficeReport,

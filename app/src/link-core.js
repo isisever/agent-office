@@ -243,7 +243,8 @@ function cleanCatalog(c) {
   const projects = [];
   for (const p of c.projects) {
     if (!p || !isId(p.id) || !PROJECT_STATES.includes(p.state)) return null;
-    projects.push({ id: p.id, dirName: cleanLine(p.dirName, 80) || '?', state: p.state, engine: ENGINES.includes(p.engine) ? p.engine : 'claude', accountLabel: cleanLine(p.accountLabel, 40) });
+    projects.push({ id: p.id, dirName: cleanLine(p.dirName, 80) || '?', state: p.state, engine: ENGINES.includes(p.engine) ? p.engine : 'claude', accountLabel: cleanLine(p.accountLabel, 40),
+      ...(typeof p.skips === 'boolean' ? { skips: p.skips } : {}) });   // v3.101 optional: its main tab answers or skips permission prompts (absent from an older peer)
   }
   return { projects, shared: c.shared !== false };
 }
@@ -430,7 +431,7 @@ function validateMessage(m) {
     }
     case 'res': {
       const res = cleanRes(m.res);
-      // v3.97 optional: does the sending machine run our tasks unattended (its "This is my own computer" for us)? Older peers send none.
+      // v3.97 optional: does the sending machine run our tasks unattended (v3.101: are we paired there and not paused)? Older peers send none.
       return res ? { t: 'res', res, ...(typeof m.trusted === 'boolean' ? { trusted: m.trusted } : {}) } : null;
     }
     case 'catalog': {
@@ -558,48 +559,63 @@ function encode(m) {
 
 // --- the trust list (devices.json; the secrets live apart, encrypted)
 
-/** @typedef {{ pub: string, name: string, addedAt: number, allowCommands: boolean, allowHandoff: boolean, allowManage: boolean, allowAccounts: boolean, allowSessions?: boolean, trusted: boolean }} Device */
+/** @typedef {{ pub: string, name: string, addedAt: number, own: boolean, allowHandoff: boolean, allowAccounts: boolean }} Device */
+// v3.101 a paired device is the person's own computer: ONE state per device, `own` (false = paused). Every check below
+// derives from it. The per-device switches of earlier versions (allowCommands, allowManage, allowSessions, trusted) are
+// gone and ignored when read from an older devices.json.
 function normalizeDevices(raw) {
   const out = [];
   for (const d of Array.isArray(raw) ? raw : []) {
     if (!d || !isHex(d.pub, 32) || out.some((o) => o.pub === d.pub)) continue;
-    out.push({ pub: d.pub, name: deviceName(d.name), addedAt: isInt(d.addedAt) ? d.addedAt : 0, allowCommands: d.allowCommands === true, allowHandoff: d.allowHandoff === true,
-      allowSessions: d.allowSessions === true,   // v3.100 OFF by default; implied by nothing else
-      allowManage: d.allowManage === true, allowAccounts: d.allowAccounts === true,   // v3.31, both OFF by default
-      trusted: d.trusted === true });   // v3.97 "This is my own computer": OFF by default, set only from this machine's own UI
+    out.push({ pub: d.pub, name: deviceName(d.name), addedAt: isInt(d.addedAt) ? d.addedAt : 0, own: d.own !== false,
+      allowHandoff: d.allowHandoff === true, allowAccounts: d.allowAccounts === true });   // their own opt-ins, both OFF by default
   }
   return out;
 }
-/** v3.97 The keys of the devices with `trusted` on: what the host seals inside the keychain-encrypted keys file. */
-const trustedKeys = (devices) => devices.filter((d) => d.trusted === true).map((d) => d.pub);
+const OWN_VERSION = 1;   // the marker the host seals with the own set: the migration of older pairings ran
+const PAIR_CONFIRM_MS = 2 * 60 * 1000;   // v3.101 a pairing connection waits this long for the two people to confirm
+/** v3.101 The keys of the devices that are `own` (paired and not paused): what the host seals inside the keychain-encrypted keys file. */
+const ownKeys = (devices) => devices.filter((d) => d.own === true).map((d) => d.pub);
 /**
- * v3.97 The trust list as read from disk. devices.json is a plain file that anything running as this user can edit, so
- * its `trusted` is honoured only for a key that is also in the sealed set (kept in the encrypted keys file, written
- * only by the app). Anything else, and a sealed set that is missing or malformed, reads as off.
+ * v3.101 (the v3.97 sealing) The trust list as read from disk. devices.json is a plain file that anything running as
+ * this user can edit, so a device is `own` only when its key is also in the sealed set (kept in the encrypted keys
+ * file, written only by the app: at pairing, at resume, and once by the migration). Anything else, and a sealed set
+ * that is missing or malformed, reads as paused.
  */
-function sealTrusted(raw, sealed) {
+function sealOwn(raw, sealed) {
   const ok = new Set(Array.isArray(sealed) ? sealed.filter((k) => isHex(k, 32)) : []);
-  return normalizeDevices(raw).map((d) => (d.trusted && !ok.has(d.pub) ? { ...d, trusted: false } : d));
+  return normalizeDevices(raw).map((d) => ({ ...d, own: d.own && ok.has(d.pub) }));
+}
+/**
+ * v3.101 The one-time migration (a keys file without the OWN_VERSION marker): every device paired before this version
+ * becomes `own`, whatever its old switches said. → { devices, names } (names: the ones that really are paired, i.e.
+ * have a stored secret; the notice lists them).
+ */
+function migrateOwn(raw, secrets) {
+  const devices = normalizeDevices(raw).map((d) => ({ ...d, own: true }));
+  return { devices, names: devices.filter((d) => secrets && isHex(secrets[d.pub], 32)).map((d) => d.name) };
 }
 /** The trusted device for a remote Noise key, or null. A device without a stored secret is not trusted. */
 function trusted(devices, secrets, remotePub) {
   const k = hex(remotePub || '');
   return (secrets && isHex(secrets[k], 32) && devices.find((d) => d.pub === k)) || null;
 }
-/** May this device type into our tabs? Only a trusted device with the toggle on. */
-const mayCommand = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowCommands);
-/** v3.97 May a task from this device run in a project that answers or skips its permission prompts? Only a trusted
- *  device with both "Allow commands" and "This is my own computer" on. */
-const mayRunUnattended = (devices, secrets, remotePub) => { const d = trusted(devices, secrets, remotePub); return Boolean(d?.allowCommands && d.trusted); };
-/** May this device hand us a project? Only a trusted device with "Accept handoffs" on (v3.29). */
-const mayHandoff = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowHandoff);
-/** May this device see our project catalog (and, later, manage projects)? "Allow managing projects" on (v3.31). */
-const mayManage = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowManage);
-/** v3.100 May this device read the sessions of our projects? Only "Allow reading sessions from this device": not
- *  implied by trusted, allowManage or allowCommands. */
-const maySessions = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowSessions);
-/** May this device work with our accounts (later phases)? "Allow account sign-in" on (v3.31). */
-const mayAccounts = (devices, secrets, remotePub) => Boolean(trusted(devices, secrets, remotePub)?.allowAccounts);
+/** v3.101 The one effective state: paired (a stored secret) and not paused. */
+const isOwn = (devices, secrets, remotePub) => trusted(devices, secrets, remotePub)?.own === true;
+/** v3.101 Is this device in the list and paused? (What it still has queued here is refused when the queue is pumped.) */
+const isPaused = (devices, remotePub) => devices.some((d) => d.pub === hex(remotePub || '') && d.own === false);
+/** May this device type into our tabs (commands and tasks)? Paired and not paused. */
+const mayCommand = (devices, secrets, remotePub) => isOwn(devices, secrets, remotePub);
+/** v3.97 May a task from this device run in a project that answers or skips its permission prompts? Paired and not paused. */
+const mayRunUnattended = (devices, secrets, remotePub) => isOwn(devices, secrets, remotePub);
+/** May this device hand us a project? Its own opt-in "Accept handoffs" (v3.29), and never while paused. */
+const mayHandoff = (devices, secrets, remotePub) => isOwn(devices, secrets, remotePub) && Boolean(trusted(devices, secrets, remotePub)?.allowHandoff);
+/** May this device see our project catalog and start / stop projects (v3.31, v3.33, v3.99 revive)? Paired and not paused. */
+const mayManage = (devices, secrets, remotePub) => isOwn(devices, secrets, remotePub);
+/** v3.100 May this device read the sessions of our projects? Paired and not paused. */
+const maySessions = (devices, secrets, remotePub) => isOwn(devices, secrets, remotePub);
+/** May this device work with our accounts? Its own opt-in "Allow account sign-in" (v3.31), and never while paused. */
+const mayAccounts = (devices, secrets, remotePub) => isOwn(devices, secrets, remotePub) && Boolean(trusted(devices, secrets, remotePub)?.allowAccounts);
 
 // --- what this device publishes: from the same OfficeData the office renders, nothing else
 
@@ -635,7 +651,7 @@ module.exports = {
   makeCode, normalizeCode, pairSecrets, pairProof, proofOk, pairTopic, hex, isHex,
   cleanLine, sanitizeCommand, markedCommand, markedTask, cleanReport, fitReport, REPORT_MAX, REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK, TASK_STATES, WAIT_STATES, TASK_TTL_MAX, deviceName, RateLimiter,
   cleanSnapshot, validateMessage, validatePair, LineReader, encode,
-  normalizeDevices, trustedKeys, sealTrusted, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, maySessions,
+  normalizeDevices, ownKeys, sealOwn, migrateOwn, isOwn, isPaused, OWN_VERSION, PAIR_CONFIRM_MS, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, maySessions,
   SESS_REASONS, SESS_BACKFILL_ITEMS, SESS_BACKFILL_BYTES, SESS_FRAME_BYTES, SESS_FRAME_ITEMS, SESS_FRAMES_PER_SEC, SESS_PER_DEVICE, SESS_IDLE_MS, SESS_QUEUE_MAX, SESS_OPENS_PER_MIN,
   cleanSessItem, fitSessItem, sessFrames, sessBackfill, snapshotOf, snapshotFor, logEntry,
   cleanRes, cleanCatalog, resOf, resChanged, typingReady,

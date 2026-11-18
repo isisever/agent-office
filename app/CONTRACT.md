@@ -2010,3 +2010,80 @@ that did not name the capability gets no answer. A device record without the fie
 
 **Non-goals.** Typing into the remote session beyond the existing command box; answering a remote permission prompt;
 the tool-detail opt-in; sharing the task board; any change to consent or to `trusted`.
+
+## A paired device is your own computer (v3.101)
+
+**The model.** Pairing a device IS the statement "this is my own computer". There are no per-device parameters: a
+paired device has full access both ways without a further switch on either machine. On the receiving side one
+effective state per device, `own` (true for a paired device), decides every check; the check functions and their
+call sites stay, so every gate is still in one place:
+
+| Check (`src/link-core.js`) | Gate | Paired | Paused |
+| --- | --- | --- | --- |
+| `mayCommand` | `cmd` (commands and tasks), also re-checked when a queued entry is pumped | yes | no (`not-allowed`) |
+| `mayRunUnattended` | a task into a project with Auto-approve or Skip permissions on (v3.97) | yes | no (`not-allowed`) |
+| `mayManage` | the catalog, `proj-op` start / wake / sleep / stop (v3.33), `revive` (v3.99), worker descriptions | yes | no (`not-allowed`, catalog withdrawn) |
+| `maySessions` | `sess-open` (v3.100) | yes | no (`not-allowed`; an open subscription ends at once) |
+| `mayHandoff` | `ho-offer`: its own opt-in `allowHandoff`, unchanged | opt-in | no |
+| `mayAccounts` | the account list and the login relay: its own opt-in `allowAccounts`, unchanged | opt-in | no |
+
+**Pairing is confirmed on both machines.** Pairing was already deliberate on both (one machine shows a one-time
+code after "+ Add device", the other types it). Now each machine also asks its person, naming the other device and
+what pairing means, before anything is stored: "Pair {device} as your own computer? It will be able to run tasks and
+commands in your projects here, also unattended in projects with Auto-approve or Skip permissions on, start and stop
+projects, and read their sessions. Pair only a computer that is yours." Cancel is the default. The joiner is asked
+first and proves the code (`pair-hello`) only after a yes; the inviter is asked when that proof arrives and sends
+`pair-ok` only after a yes. A no closes the code on that machine (`declined`). A pairing connection waits
+`PAIR_CONFIRM_MS` (2 min) for the two answers. With an older Agent Office on the other side the wire messages are
+the same; that side keeps its 20 s limit, so the answer here must come within it (the code stays open for a new try).
+A host without a dialog wired pairs nothing.
+
+**One control: Pause.** The Devices popup shows per device its name, online or not, "Your computer: can run tasks,
+manage projects and read sessions here.", the switch "Pause this device", the two unchanged opt-ins (accept handoffs,
+account sign-in) and Remove. Paused is stored as `own: false`. While paused nothing is accepted from that device:
+commands, tasks, project actions and session reads are refused `not-allowed`, the catalog and the account list are
+withdrawn, a session it reads ends at once, a sign-in relay it started stops, entries it still has in a queue here
+are refused when the queue is next pumped (at once on the switch), and handoffs and sign-in relays are refused
+whatever their opt-ins say. The device stays paired and connected; this machine can still send to it if that machine
+has not paused this one. `res.trusted` (v3.97, display on the sender: `trustsUs`) now says "paired here and not paused".
+Only this machine's own Devices UI sets the state (`link:setPaused`): no link message and no office MCP tool does.
+
+**Sealing (the v3.97 idea).** `own` is honoured only for a device whose key is in the set sealed inside the
+keychain-encrypted keys file (`own`, with the marker `ownV`), written only by the app: at pairing, at resume and
+once by the migration. `devices.json` is a plain file: editing it can pause a device but can never resume one, add
+one (a device also needs its secret, which is in the sealed file) or run the migration again. A sealed set that is
+missing or malformed reads as paused.
+
+**Migration.** At the first start of this version (a keys file without `ownV`) every device paired before becomes
+`own`, whatever its old switches said, and the set and the marker are sealed right away, so it runs exactly once.
+A line `{ event: "own-migration", devices: [names] }` goes to `link/commands.log`, and one non-blocking notice
+lists them: "Paired computers now have full access to this computer: {names}. Open Devices to pause or remove one
+that is not yours." The old fields in `devices.json` (`allowCommands`, `allowManage`, `allowSessions`, `trusted`) are
+dropped at that write and ignored if they appear again.
+
+**Sending side.** `dispatchRemoteWithoutAsking` is gone (a stored `true` is dropped the next time the settings are
+normalised; nothing else turns on because of it). A target on a paired machine follows the same rules as a local
+one: `dispatchWithoutAsking`, the v3.94 "stop asking" button (now offered for a paired target too, and what it turns
+on covers paired machines) and initiative. The notice "HQ sent a task to {project} on {machine} without asking."
+still shows every time. A routine's dispatch to a paired machine stays held (v3.47), unchanged.
+
+**Initiative and Skip projects.** The catalog a machine shares carries, per project, the optional boolean `skips`:
+its main tab answers or skips permission prompts right now (Auto-approve, Skip permissions, or started that way).
+The sender applies the v3.91 rule per project: no initiative follow-up into a project whose `skips` is true. A
+project whose flag is unknown (an older Agent Office there, no catalog yet, or not in it) counts as skipping, so
+initiative never goes to it. An older receiver ignores the field; an older sender never reads it.
+
+**Unchanged.** Every receiver rule that is not a permission: the rate limit, the queue cap, Claude engine only, the
+logged-out refusal, sanitised text and the sender mark, `commands.log` / `sessions.log` and the notices, the
+starting-tab rule, the "stopped here" window for `revive`, never typing an answer into a permission prompt, the
+session-view bounds and content limits (v3.100); HQ, desks and personal workspaces are never reachable from another
+device. Handoff (v3.29) and the login relay (v3.34) keep their rules and their own opt-ins: credentials never cross
+the link, only the sign-in URL and the one-time code.
+
+**Replaces.** The per-device `allowCommands` (v3.28) and `allowManage` (v3.31, v3.33, v3.98, v3.99 revive), `trusted`
+with its confirmation dialog (v3.97), the sender setting `dispatchRemoteWithoutAsking` and the "never by the v3.94
+button" rule (v3.99), and `allowSessions` (v3.100). Where an earlier section names one of them, read "paired and
+not paused".
+
+**Non-goals.** Answering a remote permission prompt; sharing the task board; any transfer of credentials or logins;
+changes to handoff; a pairing meant for another person's computer.
