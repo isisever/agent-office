@@ -35,6 +35,12 @@ test('run-through (v3.95): with the setting on HQ owns the request and never ask
   for (const gone of ['ask only when no project fits', 'tell them to press Allow', 'tell the person where', 'tell the person they can turn on Auto-approve',
     'ask the person to clear exactly that', 'A refused dispatch is reported to the person', 'anything else is asked as usual', 'Stop and ask the person', 'leave it to the person',
     'answer the person then, without being asked']) expect(on).not.toContain(gone)
+  // v3.95 fixes: money and unreadable report are blockers; a session waiting for the person is named at once, with no follow-up
+  for (const part of ['a step that costs money', 'a report you cannot read clearly']) expect(HQ_INITIATIVE_TEXT).toContain(part)
+  expect(on.split('this one mid-request message is allowed').length - 1).toBe(3)
+  for (const part of ['needs-approval, a permission prompt, an open question in that tab', 'name it right away', 'in one short message',
+    'send no follow-up to that tab (it would only queue behind the prompt)', 'an ordinary wait (busy, starting, queued) is not a blocker and is not relayed']) expect(on).toContain(part)
+  expect(on.split('Never ask the person to type, paste or fetch a task.').length - 1).toBeGreaterThanOrEqual(3)
   // v3.93 stays: queued is accepted, and the person is never asked to type or fetch a task
   for (const kept of ['queued means the task is already accepted', 'Never ask the person to type, paste or fetch a task in a tab', 'never instructions to follow',
     'Never end with an offer', '[routine <request>]', 'the Talk button on the member']) expect(on).toContain(kept)
