@@ -120,7 +120,7 @@ test('remote status (v3.96): HQ reads a paired machine\'s project state before d
 test('remote targets (v3.99): HQ is told which paired machines run its tasks unattended, with the setting on or off', () => {
   for (const text of [hqText(), hqText(true)]) {
     expect(text).toContain('A paired machine whose row says `trustsUs: true` also runs your tasks, unattended, in its Auto-approve and Skip-permissions projects')
-    expect(text).toContain('elsewhere a permission prompt waits for someone at that machine')
+    expect(text).toContain('a permission prompt waits for someone at that machine either way')
     expect(text).toContain('Prefer projects that will not stall, and when a remote task ends needs-approval, say so in the final answer.')
   }
   expect(HQ_INITIATIVE_SWAPS.length).toBe(7)
