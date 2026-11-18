@@ -422,7 +422,7 @@ function remoteHarness({ online = true } = {}) {
       return { id, status: o.hold && !env.online ? 'held' : 'sent' };
     };
     const tabStateOf = () => 'ready'; const hqOnScreen = () => false; const inboxWaiting = () => false; const startPty = () => {}; const typePrompt = () => true; const hqRestarter = { tick: () => {} };
-    const hqSettings = () => ({ enabled: true });
+    const hqSettings = () => ({ enabled: true }); const hqWaits = () => ({});   // v3.96 hqDispatch reads the wait of a remote task
   `;
   env.link = link;
   const api = new Function('env', `${prelude}\n${src}\nreturn { deliverRun, approveHeld, hqStatus, hqRequestsDone, onOfficeReport, routineProblem, hqMinter, routinesTick, setupRoutines, openRunOf };`)(env);

@@ -1837,10 +1837,15 @@ function officeMachines() {
   const here = { machine: selfName(), thisMachine: true, online: true, projects: state.projects.map((p) => ({ id: p.id, name: officeName(p.name), engine: P.engineOf(p), state: terms.has(p.id) ? 'running' : asleep.has(p.id) ? 'asleep' : 'stopped' })) };
   // v3.83 team mode: the staff (role, department, projects each may work on, desks and whether they are at work)
   if (teamOn()) here.staff = ST.machineStaff(state.staff, presetRoles(), state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: officeName(p.name), ...(p.staffOwner ? { staffOwner: p.staffOwner } : {}) })), deskStateOf);
-  const there = (v?.devices || []).map((dv) => ({ machine: officeName(dv.name), online: dv.online, reports: dv.caps.includes('report'), manage: dv.caps.includes('manage') && Boolean(dv.catalog),
-    // v3.46 an offline machine shows its last-known projects (peer cache: names and ids only)
-    lastSeen: peerCache()[dv.id]?.lastSeen || 0,
-    projects: (v.remotes.find((r) => r.device === dv.id)?.projects || (dv.online ? [] : peerCache()[dv.id]?.projects) || []).map((p) => ({ id: p.id, key: HQ.remoteKey(dv.id, p.id), name: officeName(p.name), ...(p.status ? { status: p.status } : {}) })) }));
+  const tasks = loadHqBoard().tasks;
+  const there = (v?.devices || []).map((dv) => {
+    const remote = v.remotes.find((r) => r.device === dv.id);
+    return { machine: officeName(dv.name), online: dv.online, reports: dv.caps.includes('report'), manage: dv.caps.includes('manage') && Boolean(dv.catalog),
+      lastSeen: peerCache()[dv.id]?.lastSeen || 0,
+      // v3.96 each project's state, status, engine, account label, open tasks of this board and asOf; an offline
+      // machine gives the same fields as last known (peer cache), never plain 'idle' for a stopped project
+      projects: HQ.remoteProjects({ pub: dv.id, online: dv.online, live: remote?.projects || null, catalog: dv.catalog, at: remote?.at || 0, cached: peerCache()[dv.id], tasks }) };
+  });
   return { machines: [here, ...there] };
 }
 function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {}) {
@@ -1894,7 +1899,7 @@ function officeReports(args) {
     const status = x.report ? (x.report.partial ? 'partial' : 'reported') : o?.status || live?.status || x.status;
     const reason = x.report ? '' : o ? o.reason : live?.reason || x.reason;
     const member = live?.staff ? `${x.project} · ${live.staff}` : '';
-    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), ...(member ? { tab: member } : {}), at: x.at, ...(x.report?.personPrompted === true ? { note: HQ.PERSON_PROMPTED_NOTE } : {}), ...(status === 'queued' && x.pub === 'self' ? HQ.waitFields(waits[x.id]) : {}), ...(x.report ? { report: x.report } : {}) };
+    return { id: x.id, machine: x.machine, project: x.project, status, ...(reason ? { reason } : {}), ...(member ? { tab: member } : {}), at: x.at, ...(x.report?.personPrompted === true ? { note: HQ.PERSON_PROMPTED_NOTE } : {}), ...(status === 'queued' && x.pub === 'self' ? HQ.waitFields(waits[x.id]) : {}), ...HQ.reportWaitFields(x, status, reason, waits[x.id]), ...(x.report ? { report: x.report } : {}) };
   });
   const all = [...loadDispatches().values()].sort((x, y) => y.at - x.at);
   const list = args.id ? all.filter((x) => x.id === args.id) : all.slice(0, 10);
@@ -2101,7 +2106,7 @@ function updatePeerCache() {
   const v = linkHost?.link()?.view();
   if (!v) return;
   const next = HQ.mergePeerCache(peerCache(), v.devices.map((dv) => ({ pub: dv.id, name: dv.name, online: dv.online, manage: dv.caps.includes('manage'),
-    projects: v.remotes.find((r) => r.device === dv.id)?.projects || null })));
+    projects: v.remotes.find((r) => r.device === dv.id)?.projects || null, catalog: dv.catalog || null, at: v.remotes.find((r) => r.device === dv.id)?.at || 0 })));   // v3.96 last-known state, status, engine, account label, asOf
   const strip = (o) => JSON.stringify(Object.fromEntries(Object.entries(o).map(([k, x]) => [k, { ...x, lastSeen: 0 }])));
   const changed = strip(next) !== strip(peerCache());
   peerCacheMem = next;
@@ -2360,12 +2365,14 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   if (!pid || ((!online || snap) && !known.some((x) => x.id === pid))) return { status: 'rejected', reason: online ? 'unknown-project' : 'offline' };
   const pname = known.find((x) => x.id === pid)?.name || pid;
   const extra = { pub, machineName: dv.name, project: pname, projectId: pid };
+  // v3.96 a task that waits says why (held in the outbox, paced, queued there, a prompt only the person there can answer)
+  const remoteWait = (r) => HQ.remoteWaitFields({ machine: pub, machineName: dv.name, project: pname, status: r.status, reason: r.reason }, hqWaits()[r.id]);
   if (!online) {
     /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task }, { hold: true, ttl: HQ.HQ_TTL_MS });
     if (r.status === 'rejected') return r;
     tagRoutineRec(r.id, rrun);   // v3.49 a remote routine run: its report ends the run (no HQ inbox row)
     row({ id: r.id, status: 'queued', reason: 'offline' }, extra);
-    return { id: r.id, status: 'queued', reason: 'offline', ...(request ? { request } : {}) };
+    return { id: r.id, status: 'queued', reason: 'offline', ...remoteWait({ id: r.id, status: 'queued', reason: 'offline' }), ...(request ? { request } : {}) };
   }
   /** @type {any} */ let now = null;
   // a held (paced) task gets a 'queued' row now, so the caps count it and the person sees it; sent → its real id
@@ -2384,11 +2391,11 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   if (!sent) {
     held = true;
     row({ id: heldId, status: 'queued', reason: 'paced' }, extra);
-    return { id: heldId, status: 'queued', reason: 'paced', request };   // held until the device's limit allows
+    return { id: heldId, status: 'queued', reason: 'paced', ...remoteWait({ id: heldId, status: 'queued', reason: 'paced' }), request };   // held until the device's limit allows
   }
   now = now || { status: 'rejected', reason: 'failed' };
   row(now, extra);
-  return { ...now, ...(request ? { request } : {}) };
+  return { ...now, ...remoteWait(now), ...(request ? { request } : {}) };
 }
 // --- v3.79 staged requests (src/hq-chain.js): `then` / `after` on HQ's office_dispatch. Consent is asked when HQ
 // dispatches (today's rule; local stages of one call in one dialog, every remote stage its own); a waiting stage's text

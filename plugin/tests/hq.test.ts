@@ -108,3 +108,11 @@ test('queued (v3.93): accepted and typed by the app; HQ never asks the person to
   expect(text).toContain('never something you request and never a way to deliver or start a task')
   expect(hqText(true)).toContain('queued means the task is already accepted')
 })
+
+test('remote status (v3.96): HQ reads a paired machine\'s project state before dispatching; offline data is last-known', () => {
+  for (const text of [hqText(), hqText(true)]) {
+    for (const part of ['Before dispatching to a project on a paired machine, read its row in office_machines', '`state` (running, asleep or stopped)', '`openTasks`', '`asOf`',
+      'For an offline machine these are last-known values']) expect(text).toContain(part)
+  }
+  expect(HQ_INITIATIVE_SWAPS.length).toBe(7)
+})
