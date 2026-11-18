@@ -141,6 +141,7 @@ function stageHarness({ noAsk = false, allow = true, initiative = false } = {}) 
     const holdDispatch = () => ({ status: 'held' }); const projectOp = () => {}; const terms = new Map([['pa', {}], ['pb', {}]]); const skipStarted = new Set(); env.skipStarted = skipStarted;
     const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
     const linkHost = { link: () => ({ devices: [], conns: new Set(), remotes: new Map(), outgoing: [] }) };
+    const hqWaits = () => env.waits || {};   // v3.93 why a queued task waits (main reads the queue and the tab)
     const officeDispatch = (tab, args) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task }); return { id, status: 'queued' }; };
   `;
   env.mods = { HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
@@ -592,4 +593,15 @@ test('resume: only within 7 days of being blocked', () => {
   // a row without the time it was blocked falls back to when it was made
   const old = board(task('a', { status: 'partial' }), task('s2', { status: 'blocked', reason: 'after-partial', after: 'a', at: 30 }));
   assert.deepEqual(CH.resume(old, 's2', { now: 30 + CH.RESUME_MS + 1 }), { ok: false, error: 'too-old' });
+});
+
+test('v3.93: a queued dispatch to this machine answers with why it waits; without a queue entry only the status', async () => {
+  const { env, api } = stageHarness();
+  const request = env.minter.mint();
+  env.waits = { c1: { state: 'busy', project: 'office', tab: 'office', pos: 1, len: 1, expiresAt: 9, blockedBy: 'permission' } };
+  const r = await api.hqDispatch({ project: 'office', task: 'Scope it', title: 'Scope', request });
+  assert.deepEqual([r.id, r.status, r.waiting, r.blockedBy, r.request], ['c1', 'queued', 'busy', 'permission', request]);
+  assert.match(r.note, /^Accepted\. The "office" tab shows a permission prompt that only the person can answer/);
+  const plain = await api.hqDispatch({ project: 'erp', task: 'Build it', title: 'Build', request });
+  assert.deepEqual([plain.id, plain.status, plain.waiting, plain.note], ['c2', 'queued', undefined, undefined]);
 });
