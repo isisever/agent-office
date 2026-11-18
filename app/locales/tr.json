@@ -1189,6 +1189,8 @@
     "start": "Başlat veya uyandır",
     "sleep": "Uyut",
     "restart": "Yeniden başlat",
+    "machineTitle": "Diğer makinelerinizden biri",
+    "restartStopped": "{machine} üzerinde durduruldu; yeniden açmak için Başlat'a basın.",
     "lastSeen": "son görülme: {time}",
     "lastKnown": "son bilinen",
     "state": {

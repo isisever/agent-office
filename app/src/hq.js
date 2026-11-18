@@ -585,7 +585,7 @@ function remoteRows(cache, live = {}) {
       const status = !state || state === 'running' ? st : '';
       const engine = PEER_ENGINES.includes(p.engine) ? p.engine : '';
       const account = line(p.account, 40);
-      rows.push({ key: remoteKey(pub, p.id), id: p.id, name: p.name, machine: dv.name, online: on, lastSeen: dv.lastSeen, remote: true,
+      rows.push({ key: remoteKey(pub, p.id), pub, id: p.id, name: p.name, machine: dv.name, online: on, lastSeen: dv.lastSeen, remote: true,
         ...(state ? { state } : {}), ...(status ? { status } : {}), ...(engine ? { engine } : {}), ...(account ? { account } : {}),
         asOf: Number.isFinite(p.asOf) && p.asOf > 0 ? p.asOf : dv.lastSeen || 0,
         actions: [...REMOTE_ACTIONS, ...(manage ? MANAGE_ACTIONS : [])],
@@ -600,6 +600,30 @@ const remoteActionAllowed = (row, action) => Boolean(row?.actions?.includes(acti
 function remoteOpSteps(row, op) {
   const steps = op === 'restart' ? ['stop', 'start'] : [op];
   return steps.every((s) => MANAGE_ACTIONS.includes(s) && remoteActionAllowed(row, s)) ? steps : null;
+}
+
+/** v3.98 reasons of a refused step that may pass on a later try (the receiver's per-device limit, a slow answer). */
+const RETRY_REASONS = ['rate-limited', 'timeout'];
+/** v3.98 waits before the two retries of the start step of a restart: the receiver's limiter gives one token per 10 s. */
+const RESTART_RETRY_MS = [3500, 11000];
+/** v3.98 runs the steps of a remote operation with `run(step)` -> { ok, reason? }. A step that fails ends the operation
+ *  (a refused stop never reaches start). When a start step fails after the stop of a restart went through, it is retried
+ *  after each wait of `delays` if the reason is transient; if it still fails the result says `stopped: true`, because the
+ *  project is then stopped and only Start brings it back. `sleep(ms)` is injected so a test does not wait. */
+async function runRemoteSteps(steps, run, { sleep = (ms) => new Promise((res) => setTimeout(res, ms)), delays = RESTART_RETRY_MS } = {}) {
+  let r = { ok: false, reason: 'not-allowed' };
+  for (let i = 0; i < steps.length; i++) {
+    r = await run(steps[i]);
+    if (!r?.ok && i > 0) {
+      for (const ms of delays) {
+        if (r?.ok || !RETRY_REASONS.includes(r?.reason)) break;
+        await sleep(ms);
+        r = await run(steps[i]);
+      }
+    }
+    if (!r?.ok) return { ok: false, reason: r?.reason || 'unknown', ...(i > 0 ? { stopped: true } : {}) };
+  }
+  return r;
 }
 
 const HQ_CLAUDE_MD = `# HQ (Agent Office)
@@ -664,5 +688,5 @@ module.exports = {
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
   redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, offersAlways, allowAlways, initiativeFor, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
-  taskFile, requestFile, reportMd, boardView, remoteWaitFields, reportWaitFields, createPacer, mergePeerCache, remoteProjects, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed, remoteButtons, remoteOpSteps,
+  taskFile, requestFile, reportMd, boardView, remoteWaitFields, reportWaitFields, createPacer, mergePeerCache, remoteProjects, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed, remoteButtons, remoteOpSteps, runRemoteSteps, RETRY_REASONS, RESTART_RETRY_MS,
 };

@@ -1217,6 +1217,8 @@
     "start": "Start or wake",
     "sleep": "Sleep",
     "restart": "Restart",
+    "machineTitle": "One of your other machines",
+    "restartStopped": "Stopped on {machine}; press Start to bring it back.",
     "lastSeen": "last seen {time}",
     "lastKnown": "last known",
     "state": {

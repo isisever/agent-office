@@ -1199,7 +1199,7 @@ test('v3.96 peer cache: last-known state, status, engine, account label and asOf
   const many = Array.from({ length: 150 }, (_, i) => ({ id: `p${i}`, name: `n${i}`, status: 'idle' }));
   assert.equal(HQ.mergePeerCache({}, [{ pub, name: 'm', online: true, projects: many }], 1)[pub].projects.length, 100);
   // v3.98 remote PROJECTS rows carry the cache's last-known fields
-  assert.deepEqual(Object.keys(HQ.remoteRows(cache, { [pub]: { online: false } })[0]).sort(), ['account', 'actions', 'asOf', 'buttons', 'engine', 'id', 'key', 'lastSeen', 'machine', 'name', 'online', 'remote', 'state', 'status']);
+  assert.deepEqual(Object.keys(HQ.remoteRows(cache, { [pub]: { online: false } })[0]).sort(), ['account', 'actions', 'asOf', 'buttons', 'engine', 'id', 'key', 'lastSeen', 'machine', 'name', 'online', 'pub', 'remote', 'state', 'status']);
 });
 
 test('v3.96 office_machines rows: online from snapshot + catalog, offline last-known, openTasks from this board', () => {
@@ -1333,7 +1333,7 @@ test('v3.98 remote rows: state, engine, account label, asOf, online and lastSeen
   const cacheOf = (manage, cat = catalog) => HQ.mergePeerCache({}, [{ pub, name: 'mini', online: true, manage, projects, catalog: cat, at: 100 }], 120);
   const live = { [pub]: { online: true, status: { p1: 'idle', p2: 'approval', p3: 'idle', p4: 'idle', p5: 'idle' } } };
   const rows = HQ.remoteRows(cacheOf(true), live);
-  assert.deepEqual(rows[0], { key: `${pub}:p1`, id: 'p1', name: 'site', machine: 'mini', online: true, lastSeen: 120, remote: true, state: 'running', status: 'idle', engine: 'claude', account: 'Work', asOf: 100,
+  assert.deepEqual(rows[0], { key: `${pub}:p1`, pub, id: 'p1', name: 'site', machine: 'mini', online: true, lastSeen: 120, remote: true, state: 'running', status: 'idle', engine: 'claude', account: 'Work', asOf: 100,
     actions: ['watch', 'board', 'reports', 'dispatch', 'start', 'wake', 'sleep', 'stop'], buttons: ['sleep', 'restart', 'stop'] });
   // running and busy: the live status wins over the cache; no sleep, restart and stop are refused over there while busy
   assert.equal(rows[1].status, 'approval');
@@ -1373,11 +1373,41 @@ test('v3.98 remote row operations: one allow-list, restart is stop then start', 
   const i = MAIN.indexOf("ipcMain.handle('hq:remoteOp'");
   const body = MAIN.slice(i, MAIN.indexOf('\n});', i));
   assert.match(body, /HQ\.remoteOpSteps\(row, op\)/);
-  assert.match(body, /r = await linkHost\.projOp\(k\.pub, k\.id, step\);\s+if \(!r\?\.ok\) break;/);
+  assert.match(body, /HQ\.runRemoteSteps\(steps, \(step\) => linkHost\.projOp\(k\.pub, k\.id, step\)\)/);
+  assert.match(body, /remoteOpBusy\.has\(key\)/);
   assert.doesNotMatch(body, /sendProjOp|manage\(/);
   // renderer: buttons only from the row's list and only while online; a header per machine
   const board = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'hq-board.js'), 'utf8');
   assert.match(board, /const buttons = online \? \(r\.buttons \|\| \[\]\)\.filter\(\(b\) => ROP\[b\]\) : \[\];/);
   assert.match(board, /flatMap\(\(g\) => \[machineHead\(g\[0\]\), \.\.\.g\.map\(remoteRow\)\]\)/);
   for (const k of ['hq.lastSeen', 'hq.lastKnown', 'hq.restart', 'hq.state.']) assert.ok(board.includes(k), k);
+});
+
+test('v3.98 restart: a start refused after the stop is retried, then reported as stopped', async () => {
+  const script = (answers) => { const calls = []; const waits = []; const run = async (step) => { calls.push(step); return answers[step].shift(); }; return { calls, waits, run, opts: { sleep: async (ms) => { waits.push(ms); } } }; };
+  // stop ok, start rate-limited once, then ok
+  let f = script({ stop: [{ ok: true }], start: [{ ok: false, reason: 'rate-limited' }, { ok: true }] });
+  assert.deepEqual(await HQ.runRemoteSteps(['stop', 'start'], f.run, f.opts), { ok: true });
+  assert.deepEqual([f.calls, f.waits], [['stop', 'start', 'start'], [3500]]);
+  // stop refused (busy): no start, not reported as stopped
+  f = script({ stop: [{ ok: false, reason: 'busy' }], start: [] });
+  assert.deepEqual(await HQ.runRemoteSteps(['stop', 'start'], f.run, f.opts), { ok: false, reason: 'busy' });
+  assert.deepEqual([f.calls, f.waits], [['stop'], []]);
+  // start fails three times: two retries (3.5 s, 11 s), then the stopped outcome
+  f = script({ stop: [{ ok: true }], start: [{ ok: false, reason: 'rate-limited' }, { ok: false, reason: 'rate-limited' }, { ok: false, reason: 'rate-limited' }] });
+  assert.deepEqual(await HQ.runRemoteSteps(['stop', 'start'], f.run, f.opts), { ok: false, reason: 'rate-limited', stopped: true });
+  assert.deepEqual([f.calls, f.waits], [['stop', 'start', 'start', 'start'], [3500, 11000]]);
+  // a reason that cannot pass is not retried, but the project is still stopped
+  f = script({ stop: [{ ok: true }], start: [{ ok: false, reason: 'locked' }] });
+  assert.deepEqual(await HQ.runRemoteSteps(['stop', 'start'], f.run, f.opts), { ok: false, reason: 'locked', stopped: true });
+  assert.deepEqual(f.waits, []);
+  // a single-step op is never retried and never "stopped"
+  f = script({ start: [{ ok: false, reason: 'rate-limited' }] });
+  assert.deepEqual(await HQ.runRemoteSteps(['start'], f.run, f.opts), { ok: false, reason: 'rate-limited' });
+});
+
+test('v3.98 remote rows carry their device key, also for a project id with a colon', () => {
+  const pub = 'cd'.repeat(32);
+  const rows = HQ.remoteRows(HQ.mergePeerCache({}, [{ pub, name: 'mini', online: true, manage: true, projects: [{ id: 'a:b', name: 'x' }] }]), { [pub]: { online: true } });
+  assert.deepEqual([rows[0].pub, rows[0].id, rows[0].key], [pub, 'a:b', `${pub}:a:b`]);
 });
