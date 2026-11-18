@@ -332,6 +332,18 @@ const deskWorktree = (userData, projectId, staffId, join = path.join) => ({
 });
 
 /**
+ * v3.94 the worktree of this desk tab when it is the one the app makes for it (exactly userData/work/<project>/<member>),
+ * else null: a tab without a worktree, or one whose recorded folder is anywhere else, is never the app's own.
+ */
+function appMadeWorktree(userData, projectId, tab) {
+  const root = tab && typeof tab.staffId === 'string' && tab.staffId && tab.worktree && typeof tab.worktree.root === 'string' ? tab.worktree.root : '';
+  if (!root || typeof userData !== 'string' || !userData || typeof projectId !== 'string' || !projectId) return null;
+  const segment = (s) => !/[\\/]/.test(s) && s !== '.' && s !== '..';   // an id is one path segment
+  if (!segment(projectId) || !segment(tab.staffId)) return null;
+  return path.resolve(root) === path.resolve(deskWorktree(userData, projectId, tab.staffId).root) ? root : null;
+}
+
+/**
  * Must HQ's task for this desk wait (the lock)? A project that does not allow parallel work has one desk (or its main
  * tab) at work at a time: the desk waits while another of the project's tabs is busy. busyOf(ptyId) → boolean.
  * @param {{ parallel?: boolean, tabs?: any[] } } project @param {string} deskPty @param {string[]} ptyIds the project's ptys
@@ -382,5 +394,5 @@ function findMember(staff, key) {
 module.exports = {
   personalDraft, personalTarget, setPersonalDraft, takePersonalDraft, routePersonalSetting, applyPersonalDraft, NOT_ALLOWED_HINT,
   STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
-  dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
+  dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, appMadeWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
 };

@@ -258,3 +258,72 @@ test('sync: a file git tracks in the worktree is never written; neither when git
   assert.equal(await DR.sync(d2.project, d2.desk, { git, tmpDir: d2.tmpDir }), 'tracked');   // not a repository
   assert.equal(fs.existsSync(d2.dst), false);
 });
+
+// --- v3.94 the project account's user-level rules for a desk on another account
+
+test('v3.94 accountRulesWanted: only a project staff desk on another account; never mail, a personal workspace or HQ', () => {
+  const base = { project: { id: 'p1' }, tab: { n: 2, staffId: 's-1' }, hasMail: false, projectConfigDir: null, deskConfigDir: '/acc/b' };
+  assert.equal(DR.accountRulesWanted(base), true);
+  assert.equal(DR.accountRulesWanted({ ...base, projectConfigDir: '/acc/a' }), true);
+  assert.equal(DR.accountRulesWanted({ ...base, deskConfigDir: null }), false, 'same account (Default): its rules are already there');
+  assert.equal(DR.accountRulesWanted({ ...base, projectConfigDir: '/acc/b' }), false, 'same account');
+  assert.equal(DR.accountRulesWanted({ ...base, hasMail: true }), false, 'a mail desk: the mail guard decides');
+  assert.equal(DR.accountRulesWanted({ ...base, project: { id: 'p1', staffOwner: 's-1' } }), false, 'a personal workspace');
+  assert.equal(DR.accountRulesWanted({ ...base, project: { id: 'hq', hq: true } }), false);
+  assert.equal(DR.accountRulesWanted({ ...base, tab: { n: 2 } }), false, 'not a staff desk');
+  assert.equal(DR.accountRulesWanted({ ...base, tab: null }), false, 'the main tab');
+});
+
+test('v3.94 withAccountRules: only allow/deny/ask cross, ahead of the session\'s own; every other key of the account stays behind', () => {
+  const account = {
+    model: 'opus', env: { SECRET: 'x' }, hooks: { PreToolUse: [] }, apiKeyHelper: '/bin/x', skipDangerousModePermissionPrompt: true,
+    permissions: { allow: ['Bash(npm test:*)', 'Read', 7, ''], deny: ['Bash(rm:*)'], ask: ['Bash(git push:*)'], defaultMode: 'bypassPermissions', additionalDirectories: ['/x'] },
+  };
+  const json = JSON.stringify({ statusLine: { type: 'command', command: 'x' }, autoMemoryDirectory: '/m', permissions: { allow: ['Read', 'Edit'] } });
+  const out = JSON.parse(DR.withAccountRules(json, account));
+  assert.deepEqual(out, {
+    statusLine: { type: 'command', command: 'x' }, autoMemoryDirectory: '/m',
+    permissions: { allow: ['Bash(npm test:*)', 'Read', 'Edit'], deny: ['Bash(rm:*)'], ask: ['Bash(git push:*)'] },
+  });
+  const text = DR.withAccountRules(json, account);
+  for (const never of ['defaultMode', 'bypassPermissions', 'SECRET', 'hooks', 'apiKeyHelper', 'additionalDirectories', 'skipDangerousModePermissionPrompt', 'opus']) assert.equal(text.includes(never), false, never);
+  // no session settings yet: only the rules
+  assert.deepEqual(JSON.parse(DR.withAccountRules(null, account)), { permissions: { allow: ['Bash(npm test:*)', 'Read'], deny: ['Bash(rm:*)'], ask: ['Bash(git push:*)'] } });
+  // nothing usable in the account: the JSON as given
+  assert.equal(DR.withAccountRules(json, { permissions: { defaultMode: 'acceptEdits' } }), json);
+  assert.equal(DR.withAccountRules(json, null), json);
+  assert.equal(DR.withAccountRules(null, null), null);
+  assert.equal(DR.withAccountRules('', { model: 'x' }), null);
+});
+
+test('v3.94 readSettings follows a symlink only when asked (an account\'s settings.json, read only); main passes the rules to the desk, never to a mail session', (t) => {
+  const d = dirs(t);
+  const real = path.join(d.root, 'real-settings.json');
+  const link = path.join(d.root, 'settings.json');
+  fs.writeFileSync(real, JSON.stringify({ permissions: { allow: ['Read'] } }));
+  const before = fs.readFileSync(real, 'utf8');
+  fs.symlinkSync(real, link);
+  assert.equal(DR.readSettings(link), null, 'the desk file path never follows a link');
+  assert.deepEqual(DR.readSettings(link, { follow: true }), { permissions: { allow: ['Read'] } });
+  assert.equal(DR.readSettings(path.join(d.root, 'missing.json'), { follow: true }), null);
+  assert.equal(fs.readFileSync(real, 'utf8'), before);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /const guarded = mailMcp \? MG\.guardSettings\(settings, [^\n]*\) : deskAccountRules\(r, account, settings\);/, 'a mail session keeps the guard\'s settings only');
+  const fn = src.slice(src.indexOf('function deskAccountRules('), src.indexOf('async function syncDeskRules('));
+  assert.match(fn, /P\.findProject\(state, r\.project\.id\)/, 'the project as stored: its own account');
+  assert.match(fn, /DR\.accountRulesWanted\(\{ project: own, tab: r\.tab, hasMail, projectConfigDir: from\.configDir, deskConfigDir: account\.configDir \}\)/);
+  assert.match(fn, /DR\.readSettings\(accountSettingsFile\(from\), \{ follow: true \}\)/);
+  assert.equal(/writeFile|writeJson|rename|mkdir/.test(fn), false, 'nothing is written for this');
+  assert.match(src, /guarded && \(IS_WIN \|\| guarded\.length > DR\.MAX_ARG_CHARS\) \? settingsFile\(usageKey\(id\), guarded\) : guarded/);
+});
+
+test('v3.94 the desk\'s rules are synced on every app-triggered start, whatever `start` says', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const open = src.slice(src.indexOf('async function openDesk('), src.indexOf('function personalFolderName('));
+  const sync = open.indexOf('if (!terms.has(id)) await syncDeskRules(p, have, m);');
+  const start = open.indexOf('if (start && !terms.has(id)) {');
+  assert.ok(sync > 0 && start > sync, 'an existing desk that is not running: synced before, and without, the start');
+  const at = src.indexOf('function startPty(');
+  const pty = src.slice(at, src.indexOf('const dir = pluginDir();', at));
+  assert.match(pty, /if \(tab\?\.staffId && tab\.worktree\) syncDeskRules\(P\.findProject\(state, project\.id\) \|\| project, tab, memberById\(tab\.staffId\)\)\.catch\(/, 'every start of a worktree desk (HQ, revive, wake)');
+});

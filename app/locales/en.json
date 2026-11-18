@@ -942,6 +942,8 @@
     "projectFilesRefused": "Agent Office left some files in “{name}” alone: a file of the same name that it didn't write (or that was changed after it did) is never overwritten or removed.",
     "hqAllow": "Dispatch",
     "hqDeny": "Cancel",
+    "hqAllowAlways": "Allow, and stop asking for my own requests",
+    "hqAllowAlwaysNote": "The third button also turns on two HQ settings on the Board, \"Dispatch to this machine's projects without asking\" and \"Let HQ continue an open request on its own\", which apply only to requests you type into HQ yourself.",
     "hqInitiativeSent": "HQ sent a follow-up on its own: {title} → {target}",
     "hqAsk": "HQ wants to give a task to {project}.",
     "hqAskStaff": "HQ wants to give {staff} a task in {project}.",

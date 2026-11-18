@@ -170,6 +170,16 @@ function consentFor({ setting, remote, request, minter, routineNoAsk = false }) 
 }
 
 /**
+ * v3.94 may the consent dialog offer its third button ("Allow, and stop asking for my own requests")? Only for a
+ * local target and only while the request id is the live one minted from a prompt the person typed into HQ: never a
+ * paired device, a routine's id, 'adhoc', or a turn the person did not type (an inbox row ends the liveness).
+ */
+const offersAlways = ({ remote, request, minter }) => !remote && isStr(request) && request !== ADHOC
+  && Boolean(minter?.isLive?.(request)) && (minter?.typedAt?.(request) || 0) > 0 && !minter?.isRoutine?.(request);
+/** v3.94 what that button turns on: the two existing settings, nothing else changed. */
+const allowAlways = (hq) => normalizeHq({ ...(hq && typeof hq === 'object' ? hq : {}), dispatchWithoutAsking: true, initiative: true });
+
+/**
  * v3.91 HQ's initiative (the `initiative` setting, default off): a dispatch that consentFor would ask about needs no
  * consent when ALL hold: the target is local; the request id was minted from a prompt the person typed (never a
  * routine's id, never 'adhoc'); it is younger than 2 h; EVERY target (`targets`: one per task, `{ projectId, staffId,
@@ -554,7 +564,7 @@ module.exports = {
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, MAX_INITIATIVE, INITIATIVE_MS, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
-  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, initiativeFor, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
+  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, offersAlways, allowAlways, initiativeFor, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
   taskFile, requestFile, reportMd, boardView, createPacer, mergePeerCache, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed,
 };

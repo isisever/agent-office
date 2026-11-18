@@ -502,3 +502,34 @@ test('applyPersonalDraft: the draft is applied to the new workspace and cleared 
   const none = ST.applyPersonalDraft({ ...state, staff: [{ id: 's-a1b2c3', name: 'Ada' }] }, 's-a1b2c3', 'p9', setters);
   assert.equal(none.projects[0].autoApprove, undefined, 'off when never chosen');
 });
+
+// --- v3.94 a desk worktree the app made is trusted in the account the desk runs on
+
+test('v3.94 appMadeWorktree: only the folder the app makes for that desk (userData/work/<project>/<member>)', () => {
+  const os = require('os');
+  const ud = path.join(os.tmpdir(), 'ao-ud');
+  const root = ST.deskWorktree(ud, 'p1', 's-a1b2c3').root;
+  assert.equal(ST.appMadeWorktree(ud, 'p1', { n: 2, staffId: 's-a1b2c3', worktree: { root } }), root);
+  assert.equal(ST.appMadeWorktree(ud, 'p1', { n: 2, staffId: 's-a1b2c3', worktree: { root: path.join(root, '.') } }), path.join(root, '.'));
+  assert.equal(ST.appMadeWorktree(ud, 'p1', { n: 2, staffId: 's-a1b2c3' }), null, 'a desk without a worktree works in the folder the person picked');
+  assert.equal(ST.appMadeWorktree(ud, 'p1', { n: 2, staffId: 's-a1b2c3', worktree: { root: path.join(os.homedir(), 'code', 'mine') } }), null, 'a folder elsewhere');
+  assert.equal(ST.appMadeWorktree(ud, 'p1', { n: 2, staffId: 's-a1b2c3', worktree: { root: path.join(root, 'sub') } }), null);
+  assert.equal(ST.appMadeWorktree(ud, 'p2', { n: 2, staffId: 's-a1b2c3', worktree: { root } }), null, 'another project\'s folder');
+  assert.equal(ST.appMadeWorktree(ud, 'p1', { n: 2, staffId: 's-other', worktree: { root } }), null, 'another member\'s folder');
+  assert.equal(ST.appMadeWorktree(ud, 'p1', { n: 2, worktree: { root } }), null, 'a plain worktree tab, not a desk');
+  assert.equal(ST.appMadeWorktree(ud, '..', { n: 2, staffId: '..', worktree: { root: path.resolve(ud, 'work', '..', '..') } }), null, 'an id is one path segment');
+  assert.equal(ST.appMadeWorktree(ud, 'p1', null), null);
+  assert.equal(ST.appMadeWorktree('', 'p1', { n: 2, staffId: 's-a1b2c3', worktree: { root } }), null);
+});
+
+test('v3.94 main trusts that worktree on every start, in the desk\'s account, only when the project itself is trusted', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /function startPty\([^\n]*\n[^\n]*\n {2}trustPersonalDesk\(id\);\n {2}trustDeskWorktree\(id\);/);
+  const fn = src.slice(src.indexOf('function trustDeskWorktree('), src.indexOf("ipcMain.handle('staff:personal'"));
+  assert.match(fn, /ST\.appMadeWorktree\(app\.getPath\('userData'\), r\.project\.id, r\.tab\)/);
+  const gate = fn.indexOf('if (!PD.projectPaths([own.dir]).some((d) => PD.trustedIn(given, d))) return;');
+  const trust = fn.indexOf("PD.trustFolder(A.accountOf(state, r.project).configDir, home, root)");
+  assert.ok(gate > 0 && trust > gate, 'the project account\'s trust is read first; the account the desk runs on gets the entry');
+  assert.equal(fn.includes('r.dir'), false, 'never a folder other than the app-made worktree');
+});
