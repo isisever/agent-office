@@ -314,7 +314,7 @@ test('v3.94 readSettings follows a symlink only when asked (an account\'s settin
   assert.match(fn, /DR\.accountRulesWanted\(\{ project: own, tab: r\.tab, hasMail, projectConfigDir: from\.configDir, deskConfigDir: account\.configDir \}\)/);
   assert.match(fn, /DR\.readSettings\(accountSettingsFile\(from\), \{ follow: true \}\)/);
   assert.equal(/writeFile|writeJson|rename|mkdir/.test(fn), false, 'nothing is written for this');
-  assert.match(src, /guarded && \(IS_WIN \|\| guarded\.length > DR\.MAX_ARG_CHARS\) \? settingsFile\(usageKey\(id\), guarded\) : guarded/);
+  assert.match(src, /if \(guarded && \(IS_WIN \|\| guarded\.length > DR\.MAX_ARG_CHARS\)\) \{\n\s+settingsArg = settingsFile\(usageKey\(id\), guarded\);/);
 });
 
 test('v3.94 the desk\'s rules are synced on every app-triggered start, whatever `start` says', () => {
@@ -326,4 +326,27 @@ test('v3.94 the desk\'s rules are synced on every app-triggered start, whatever 
   const at = src.indexOf('function startPty(');
   const pty = src.slice(at, src.indexOf('const dir = pluginDir();', at));
   assert.match(pty, /if \(tab\?\.staffId && tab\.worktree\) syncDeskRules\(P\.findProject\(state, project\.id\) \|\| project, tab, memberById\(tab\.staffId\)\)\.catch\(/, 'every start of a worktree desk (HQ, revive, wake)');
+});
+
+test('v3.94 readSettings never blocks on a FIFO and returns null', { skip: process.platform === 'win32' }, (t) => {
+  const d = dirs(t);
+  const fifo = path.join(d.root, 'settings.json');
+  execFileSync('mkfifo', [fifo]);
+  assert.equal(DR.readSettings(fifo), null);
+  assert.equal(DR.readSettings(fifo, { follow: true }), null);
+  const link = path.join(d.root, 'link.json');
+  fs.symlinkSync(fifo, link);
+  assert.equal(DR.readSettings(link, { follow: true }), null);
+});
+
+test('v3.94 a desk worktree is trusted only when the project\'s own folder is trusted in the project\'s account (nothing is written otherwise)', (t) => {
+  const PD = require('../src/project-data.js');
+  const d = dirs(t);
+  const key = 'hasTrustDialogAccepted';
+  assert.equal(PD.folderTrusted({}, d.project), false);
+  assert.equal(PD.folderTrusted(undefined, d.project), false);
+  assert.equal(PD.folderTrusted({ [d.project]: { [key]: false } }, d.project), false);
+  assert.equal(PD.folderTrusted({ [d.project]: { [key]: true } }, d.project), true);
+  assert.equal(PD.folderTrusted({ [d.root]: { [key]: true } }, d.project), true);   // a parent's entry counts
+  assert.equal(PD.folderTrusted({ [d.desk]: { [key]: true } }, d.project), false);   // another folder does not
 });
