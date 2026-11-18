@@ -2502,7 +2502,7 @@ async function hqDispatchStages(args, request, rrun) {
       return { projectId: p?.id || '', staffId: s.staff ? s.staffId || null : '', skip: hqTargetSkips(p, s.staff ? s.staffId || '' : '') };
     }) });
   // v3.94 the third button changes only this machine's two settings: never offered when the dialog names a paired machine
-  const askStages = () => confirmHqStages(asked, asked.some((s) => s.remote) ? {} : { request });
+  const askStages = () => confirmHqStages(asked, { request });
   let byInitiative = false;
   if (asks) {
     // decided and counted in one step: an overlapping dispatch sees the higher count before these stages are queued
