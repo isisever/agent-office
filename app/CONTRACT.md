@@ -2029,7 +2029,7 @@ call sites stay, so every gate is still in one place:
 | `mayRunUnattended` | a task into a project with Auto-approve or Skip permissions on (v3.97) | yes | no (`not-allowed`) |
 | `mayManage` | the catalog, `proj-op` start / wake / sleep / stop (v3.33), `revive` (v3.99), worker descriptions | yes | no (`not-allowed`, catalog withdrawn) |
 | `maySessions` | `sess-open` (v3.100) | yes | no (`not-allowed`; an open subscription ends at once) |
-| `mayHandoff` | `ho-offer`: its own opt-in `allowHandoff`, unchanged | opt-in | no |
+| `mayHandoff` | `ho-offer`, checked again at the person's answer and on every `ho-chunk`: its own opt-in `allowHandoff` | opt-in | no (`not-allowed`, also for one in flight) |
 | `mayAccounts` | the account list and the login relay: its own opt-in `allowAccounts`, unchanged | opt-in | no |
 
 **Pairing is confirmed on both machines.** Pairing was already deliberate on both (one machine shows a one-time
@@ -2041,7 +2041,8 @@ first and proves the code (`pair-hello`) only after a yes; the inviter is asked 
 `pair-ok` only after a yes. A no closes the code on that machine (`declined`). A pairing connection waits
 `PAIR_CONFIRM_MS` (2 min) for the two answers. With an older Agent Office on the other side the wire messages are
 the same; that side keeps its 20 s limit, so the answer here must come within it (the code stays open for a new try).
-A host without a dialog wired pairs nothing.
+Fail closed: a host without a dialog wired pairs nothing, and the link itself answers no when no confirm function is
+set (`Link.confirmPair`, also a constructor option).
 
 **One control: Pause.** The Devices popup shows per device its name, online or not, "Your computer: can run tasks,
 manage projects and read sessions here.", the switch "Pause this device", the two unchanged opt-ins (accept handoffs,
@@ -2049,7 +2050,13 @@ account sign-in) and Remove. Paused is stored as `own: false`. While paused noth
 commands, tasks, project actions and session reads are refused `not-allowed`, the catalog and the account list are
 withdrawn, a session it reads ends at once, a sign-in relay it started stops, entries it still has in a queue here
 are refused when the queue is next pumped (at once on the switch), and handoffs and sign-in relays are refused
-whatever their opt-ins say. The device stays paired and connected; this machine can still send to it if that machine
+whatever their opt-ins say. A handoff from that device that is in flight ends too: an offer still waiting for the
+person's answer is answered no (`ho-answer`, `not-allowed`) and a later yes is not taken, and a transfer still
+arriving is dropped (`ho-result`, `not-allowed`) and never applied. Only one that is already being applied finishes
+(stopping there could leave half a project). The same happens when "Accept handoffs" is turned off for that device.
+The switch also sends that device its state again at once, in both directions: the snapshot without worker
+descriptions and the withdrawn catalog when paused, the full ones when resumed, without waiting for the next change.
+The device stays paired and connected; this machine can still send to it if that machine
 has not paused this one. `res.trusted` (v3.97, display on the sender: `trustsUs`) now says "paired here and not paused".
 Only this machine's own Devices UI sets the state (`link:setPaused`): no link message and no office MCP tool does.
 
@@ -2059,8 +2066,27 @@ once by the migration. `devices.json` is a plain file: editing it can pause a de
 one (a device also needs its secret, which is in the sealed file) or run the migration again. A sealed set that is
 missing or malformed reads as paused.
 
-**Migration.** At the first start of this version (a keys file without `ownV`) every device paired before becomes
-`own`, whatever its old switches said, and the set and the marker are sealed right away, so it runs exactly once.
+**The own record.** A second keychain-encrypted file next to the keys file, `link/own.bin`, holds
+`{ v, own: [keys], paused: [keys] }`: the same marker and the current sets, written with every save (before the keys
+file). An older Agent Office rewrites the keys file without the marker but never touches this file, so it tells a
+keys file that lost its marker (an older copy put back, or a downgrade followed by an upgrade) from a first upgrade.
+At start:
+
+| Keys file | Own record | Result |
+| --- | --- | --- |
+| missing | any | fresh install: new keys, nothing to migrate, both files written with the marker |
+| no marker | missing | the one migration (below) |
+| no marker | readable | restored from the record: only the devices it lists as `own` are own; paused stays paused and a device it does not know stays paused, never own. No notice; `{ event: "own-restored", devices: [names] }` in `link/commands.log` |
+| marker | missing | the keys file's sealed set (the record is written) |
+| marker | readable | a device is own only when both files say so |
+| any | unreadable or malformed | every device is paused (fail closed), `{ event: "own-record-unreadable" }` in `link/commands.log`; the person resumes the ones that are theirs |
+
+After any row but "marker + readable" both files are written again at once. Limit: someone who can delete `own.bin`
+AND put back a keys file from before v3.101 gets the migration again (nothing on disk then says it ever ran).
+
+**Migration.** At the first start of this version (a keys file without `ownV` and no own record) every device
+paired before becomes `own`, whatever its old switches said, and the set and the marker are sealed right away in
+both files, so it runs exactly once and a rolled-back keys file does not run it again.
 A line `{ event: "own-migration", devices: [names] }` goes to `link/commands.log`, and one non-blocking notice
 lists them: "Paired computers now have full access to this computer: {names}. Open Devices to pause or remove one
 that is not yours." The old fields in `devices.json` (`allowCommands`, `allowManage`, `allowSessions`, `trusted`) are
