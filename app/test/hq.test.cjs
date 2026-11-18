@@ -1480,3 +1480,26 @@ test('v3.101 consent: a paired machine follows the same rules as a local target;
   assert.doesNotMatch(main, /dispatchRemoteWithoutAsking/);
   assert.match(main, /notifyRemoteSent\(pname, dv\.name\)/);   // the notice for a remote task sent without a dialog stays
 });
+
+test('v3.101 review: a paired machine\'s project gets initiative only when its catalog says it does not skip; the "stop asking" button covers it', () => {
+  const clock = { t: 1000 };
+  const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
+  const id = m.mint();
+  const PUB = 'ab'.repeat(32);
+  // the button is decided by the request alone, so a paired machine's target offers it like a local one
+  assert.equal(HQ.offersAlways({ request: id, minter: m }), true);
+  assert.match(fnBody('confirmHqDispatch'), /const always = HQ\.offersAlways\(\{ request, minter: hqMinter \}\);/);
+  assert.match(fnBody('hqDispatch'), /confirmHqDispatch\(args, remote, \{ request \}\)/);
+  let board = HQ.emptyBoard();
+  for (const p of ['p1', 'p2', 'p3']) board = HQ.addTask(board, { id: `t-${p}`, request: id, title: 'first', pub: PUB, machineName: 'Studio', project: p, projectId: p, status: 'reported', consented: true }, clock.t);
+  m.clear();
+  assert.equal(HQ.offersAlways({ request: id, minter: m }), false);   // no longer the typed turn
+  const cat = [{ id: 'p1', skips: true }, { id: 'p2', skips: false }, { id: 'p3' }];
+  const args = (projectId, catalog) => ({ initiative: true, remote: true, request: id, minter: m, targets: [{ machine: PUB, projectId, staffId: '', skip: HQ.remoteSkips(catalog, projectId) }], now: clock.t });
+  assert.deepEqual(['p1', 'p2', 'p3'].map((p) => HQ.initiativeFor({ ...args(p, cat), board })), [false, true, false]);
+  assert.equal(HQ.initiativeFor({ ...args('p2', undefined), board }), false);   // no catalog from that machine yet
+  // nothing is counted for a refused target
+  assert.deepEqual(['p1', 'p2', 'p3'].map((p) => HQ.takeInitiative(board, args(p, cat)).ok), [false, true, false]);
+  assert.equal(HQ.initiativeSent(HQ.takeInitiative(board, args('p1', cat)).board, id), 0);
+  assert.equal(HQ.initiativeSent(HQ.takeInitiative(board, args('p2', cat)).board, id), 1);
+});
