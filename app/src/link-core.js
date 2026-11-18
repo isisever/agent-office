@@ -6,9 +6,9 @@ const crypto = require('crypto');
 // v3.31: 2 = hello carries the app version and capabilities; a v1 peer gets no message type it does not know
 const PROTOCOL = 2;
 // what a peer may say it understands (hello.caps); unknown names are dropped
-const CAPS = ['res', 'catalog', 'manage', 'accounts', 'report', 'task-status', 'report2'];
+const CAPS = ['res', 'catalog', 'manage', 'accounts', 'report', 'task-status', 'report2', 'revive'];
 // what this build sends and understands (v3.32: res and catalog)
-const OUR_CAPS = ['res', 'catalog', 'report', 'manage', 'accounts', 'task-status', 'report2'];   // v3.48 'task-status' (task-status/task-query/task-cancel, cmd.ttl), 'report2' (larger reports, prs/artifacts/transcriptRef); v3.35 adds 'report', v3.33 'manage' (proj-op), v3.34 'accounts' (login relay)
+const OUR_CAPS = ['res', 'catalog', 'report', 'manage', 'accounts', 'task-status', 'report2', 'revive'];   // v3.48 'task-status' (task-status/task-query/task-cancel, cmd.ttl), 'report2' (larger reports, prs/artifacts/transcriptRef); v3.35 adds 'report', v3.33 'manage' (proj-op), v3.34 'accounts' (login relay)
 // v3.33 what a device allowed to manage may do to a project's boss tab here (proj-op), and why it may be refused
 const PROJ_OPS = ['start', 'wake', 'sleep', 'stop'];
 const PROJ_OP_REASONS = ['not-allowed', 'unknown-project', 'engine', 'busy', 'locked', 'rate-limited', 'removed', 'offline', 'no-manage', 'timeout', 'failed'];
@@ -183,7 +183,7 @@ class RateLimiter {
 
 const STATUS = ['working', 'idle', 'approval'];
 const CMD_STATUS = ['queued', 'delivered', 'rejected'];
-const REASONS = ['cancelled', 'not-allowed', 'unknown-project', 'engine', 'not-running', 'too-large', 'empty', 'not-text', 'rate-limited', 'queue-full', 'expired', 'removed', 'logged-out', 'offline', 'no-report', 'locked'];   // v3.35 reasons go only to peers with cap 'report'
+const REASONS = ['cancelled', 'not-allowed', 'unknown-project', 'engine', 'not-running', 'too-large', 'empty', 'not-text', 'rate-limited', 'queue-full', 'expired', 'removed', 'logged-out', 'offline', 'no-report', 'locked', 'stopped-here'];   // v3.35 reasons go only to peers with cap 'report'
 const isStr = (v, max) => typeof v === 'string' && v.length <= max;
 const isInt = (v, max = Number.MAX_SAFE_INTEGER) => Number.isInteger(v) && v >= 0 && v <= max;
 const isId = (v) => typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(v);
@@ -364,7 +364,7 @@ function validateMessage(m) {
       return isInt(m.seq) && snap ? { t: 'state', seq: m.seq, snap } : null;
     }
     case 'cmd':
-      return isId(m.id) && isId(m.project) && typeof m.text === 'string' && m.text.length <= MAX_COMMAND * 4 ? { t: 'cmd', id: m.id, project: m.project, text: m.text, ...(m.report === true ? { report: true } : {}), ...(isInt(m.ttl, TASK_TTL_MAX) && m.ttl > 0 ? { ttl: m.ttl } : {}) } : null;
+      return isId(m.id) && isId(m.project) && typeof m.text === 'string' && m.text.length <= MAX_COMMAND * 4 ? { t: 'cmd', id: m.id, project: m.project, text: m.text, ...(m.report === true ? { report: true } : {}), ...(isInt(m.ttl, TASK_TTL_MAX) && m.ttl > 0 ? { ttl: m.ttl } : {}), ...(m.revive === true ? { revive: true } : {}) } : null;   // v3.99 revive: only sent to a peer with cap 'revive'
     case 'cmd-report': {   // v3.35, only to a peer with cap 'report' (v3.48: always cleaned with the report2 limits)
       const report = cleanReport(m, true);
       return isId(m.id) && report ? { t: 'cmd-report', id: m.id, ...report } : null;

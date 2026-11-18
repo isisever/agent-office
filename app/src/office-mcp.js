@@ -19,7 +19,7 @@ const LINE_MAX = 512 * 1024;
 const TOOLS = [
   {
     name: 'office_machines',
-    description: 'Lists the machines of this Agent Office (this one and the paired devices, online or not) and the projects on each, by name. In team mode this machine also lists its staff: each member\'s role, department, the projects it may work on and its desks (busy or idle). A project on a paired device also gives `state` (running, asleep or stopped, when that device shares its catalog), `status` (idle, working or approval; left out when it is not running), `engine`, `account` (the account label, when shared), `openTasks` (open tasks of this machine\'s board for it) and `asOf` (ms, the time of that data); an offline machine gives the same fields as last known. Read only.',
+    description: 'Lists the machines of this Agent Office (this one and the paired devices, online or not) and the projects on each, by name. In team mode this machine also lists its staff: each member\'s role, department, the projects it may work on and its desks (busy or idle). A project on a paired device also gives `state` (running, asleep or stopped, when that device shares its catalog), `status` (idle, working or approval; left out when it is not running), `engine`, `account` (the account label, when shared), `openTasks` (open tasks of this machine\'s board for it) and `asOf` (ms, the time of that data); an offline machine gives the same fields as last known. A paired device also gives `trustsUs`: true when it runs this machine\'s tasks unattended in its Auto-approve or Skip-permissions projects, false when a permission prompt there waits for someone at that device, null when unknown. Read only.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {

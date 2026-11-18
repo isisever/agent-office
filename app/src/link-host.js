@@ -12,6 +12,7 @@ const { createLoginRelay } = require('./login-relay.js');
 const QUEUE_MAX = 5;                    // waiting commands per project
 const QUEUE_TTL_MS = 30 * 60 * 1000;    // a command that waited this long is dropped ('expired')
 const UNATTENDED = 'trusted-unattended';   // v3.97 commands.log marker: taken for a project that answers or skips its prompts, because the device is trusted
+const STOPPED_HERE_MS = 10 * 60 * 1000;   // v3.99 a project the person here stopped is not started for another device's task this long
 const SELF = 'self';                    // v3.35 the device of a task dispatched to a project of this machine
 const REPORT_POLL_MS = 5000;
 const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/starts its gone boss at most this often
@@ -30,6 +31,7 @@ const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks be
  *   answersPrompts?: (projectId: string) => boolean, confirmTrusted?: (device: string) => Promise<boolean>,   // v3.97 the dialog on this machine
  *   onReport?: (r: { id: string, machine: string, pub: string, report: any }) => void,
  *   asleep?: (projectId: string) => boolean, attentionOf?: (projectId: string) => string,   // v3.48 why a device's task waits / needs approval
+ *   stoppedHere?: (projectId: string) => number,   // v3.99 when the person at this machine last stopped that project themselves (0: never)
  *   manage?: (op: 'start' | 'wake' | 'sleep' | 'stop', projectId: string) => { ok: boolean, reason?: string } | Promise<{ ok: boolean, reason?: string }>,
  *   loginRelay?: { spawn: (account: any, id: string, devicePub?: string) => any, accounts: () => any[], checkAuth: (account: any) => Promise<{ ok: boolean, email?: string }>, localBusy?: (accountId: string) => boolean },
  *   openExternal?: (url: string) => void,
@@ -335,11 +337,15 @@ function setupLink(d) {
     if (unattended && !ownDevice(device)) return done('rejected', 'not-allowed');
     const q = queue.get(project) || [];
     if (q.length >= QUEUE_MAX) return done('rejected', 'queue-full');
-    q.push({ id, device, text, at: Date.now(), reply, report, ttl, revive: Boolean(revive) && device.pub === SELF });
+    // v3.99 another device's task keeps `revive` only as a task (report) from a device that may manage projects here
+    q.push({ id, device, text, at: Date.now(), reply, report, ttl, revive: Boolean(revive) && (device.pub === SELF || (report && mayRevive(device))) });
     queue.set(project, q);
     if (unattended) { log(device.name, p.name, text, `${report ? 'task:' : ''}queued:${UNATTENDED}`); reply('queued'); } else done('queued');
     pump();
   }
+  /** v3.99 may this device's task start a stopped project here? This machine's own always; a paired device only with
+   *  "manage projects" (allowManage) on, read fresh at every check. */
+  const mayRevive = (device) => device.pub === SELF || (Boolean(link) && C.mayManage(link.devices, link.secrets, device.pub));
   const reviveBudget = new Map();   // project -> { n tries, at last try, since first seen gone }
   const startingSince = new Map();  // project -> when the queue first saw its tab 'starting' (this spell)
   /** Hands one queued entry to the tab through `put(text, opts)` (typing, or main starting the tab with it as its first
@@ -377,7 +383,17 @@ function setupLink(d) {
         if (s === 'gone') {
           // v3.46 amendment: a local HQ task wakes a sleeping or starts a stopped boss (manage 'start'), a few times at
           // most, and waits for it; everything else (and a start that failed) is refused 'not-running' as before
-          if (c.revive && d.manage) {
+          // v3.99 another device's HQ task (cmd.revive) starts it too, only while that device may manage projects here
+          // (checked at accept and again here: the switch may have gone off while the task waited), never within
+          // STOPPED_HERE_MS of the person here stopping the project themselves; each start is logged and shown
+          const far = c.device.pub !== SELF;
+          if (far && c.revive && d.manage && mayRevive(c.device) && now - (d.stoppedHere?.(project) || 0) < STOPPED_HERE_MS) {
+            q.shift();
+            log(c.device.name, d.projects().find((x) => x.id === project)?.name || project, c.text, 'task:rejected:stopped-here');
+            c.reply('rejected', 'stopped-here');
+            continue;
+          }
+          if (c.revive && d.manage && mayRevive(c.device)) {
             // one budget per project, not per queued entry; the first try waits a minute after the queue first saw the tab gone
             let b = reviveBudget.get(project);
             if (b && now - Math.max(b.at, b.since) > REVIVE_STALE_MS) b = null;
@@ -392,12 +408,19 @@ function setupLink(d) {
             }
             // a desk is gone on purpose (HQ opens it without starting it): no minute's wait for its first start
             const isDesk = !b.n && String(project).includes(':') && Boolean(d.desk?.(project));
-            if (!isDesk && now - (b.n ? b.at : b.since) < REVIVE_GAP_MS) break;
+            // v3.99 nor for another device's task: nothing here started the project before it arrived
+            if (!isDesk && !(far && !b.n) && now - (b.n ? b.at : b.since) < REVIVE_GAP_MS) break;
             b.n += 1; b.at = now;
+            if (far) {
+              const name = d.projects().find((x) => x.id === project)?.name || project;
+              mlog({ device: c.device.name, op: 'start', project: name, outcome: 'ok', via: 'task', task: c.id });
+              try { d.notify(d.T('main.projOpNotice', { device: c.device.name, project: name, op: d.T('machines.op.start') }), ''); } catch { /* the notice is best effort */ }
+            }
             // v3.83 amendment: started with the task as its first prompt (a fresh session takes no typing, see 'starting')
             if (d.startWith) {
               let ok; try { ok = deliver(c, project, (text) => d.startWith(project, text)); } catch { ok = false; }
-              if (ok) { q.shift(); reviveBudget.delete(project); break; }
+              // v3.99 a device's budget is given back only when the tab is seen ready (below): it cannot loop starts
+              if (ok) { q.shift(); if (!far) reviveBudget.delete(project); break; }
             }
             let r; try { r = d.manage('start', project); } catch { r = { ok: false }; }
             if (r && typeof r.then !== 'function' && r.ok === false) { q.shift(); c.reply('rejected', r.reason === 'locked' ? 'locked' : 'not-running'); continue; }
@@ -410,7 +433,8 @@ function setupLink(d) {
         // v3.83 amendment: a tab of this machine's own that stays 'starting' (a fresh session never takes typed text
         // before its first prompt) is restarted by main with the HQ task as that first prompt; main refuses when the
         // tab had a prompt, the person is typing in it, or it was already started that way (then it keeps waiting)
-        if (s === 'starting' && c.revive && d.startWith) {
+        // v3.99 never for another device's task: a tab the person here just opened is not restarted for it
+        if (s === 'starting' && c.revive && c.device.pub === SELF && d.startWith) {
           if (!startingSince.has(project)) startingSince.set(project, now);
           if (now - startingSince.get(project) >= STARTING_MS) {
             let ok; try { ok = deliver(c, project, (text) => d.startWith(project, text)); } catch { ok = false; }
@@ -532,10 +556,10 @@ function setupLink(d) {
   }
   /** A task for a project of a paired device (cmd with report, cap 'report'). Offline: refused, nothing queued. */
   /** v3.48 o.hold: an offline device's task waits in the outbox (sent on its next hello); o.ttl: its queue wait there (cap task-status). */
-  function dispatchRemote(pub, projectId, text, { hold = false, ttl = 0, projectName = '' } = {}) {
+  function dispatchRemote(pub, projectId, text, { hold = false, ttl = 0, projectName = '', revive = false } = {}) {
     const l = link;
     if (!l || !l.devices.some((x) => x.pub === pub)) return { id: '', status: 'rejected', reason: 'unknown-machine' };
-    const rec = l.sendCommand(pub, projectId, text, { report: true, hold, ttl, projectName });
+    const rec = l.sendCommand(pub, projectId, text, { report: true, hold, ttl, projectName, revive });   // v3.99 revive: HQ tasks only (main)
     return { id: rec.id, status: rec.status, ...(rec.reason ? { reason: rec.reason } : {}) };
   }
   /** The reports the plugin wrote (<data dir>/reports/<id>.json): sent to the dispatcher, or handed to main. */

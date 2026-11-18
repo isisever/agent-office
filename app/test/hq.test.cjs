@@ -1036,8 +1036,8 @@ test('initiative wiring: decided and counted by HQ.takeInitiative, final before 
   assert.match(d, /notifyInitiative\(args\.title/);
   const s = fnBody('hqDispatchStages');
   assert.equal((s.match(/HQ\.takeInitiative\(loadHqBoard\(\), initiativeArgs\(false\)\)/g) || []).length, 1);
-  assert.ok(s.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') > s.indexOf('await confirmHqDispatch(s, true)'));   // after the remote dialogs
-  assert.match(s, /for \(const s of stages\.filter\(\(x\) => x\.remote\)\) if \(!\(await confirmHqDispatch\(s, true\)\)\) return no\('declined'/);
+  assert.ok(s.indexOf('HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })') > s.indexOf('await askStages()'));   // after the one dialog
+  assert.equal(s.includes('confirmHqDispatch('), false);   // v3.99 a remote stage opens no dialog of its own: one rule for the chain
   assert.match(fnBody('notifyInitiative'), /notify\(T\('main\.hqInitiativeSent'/);
   assert.match(fnBody('inboxRow'), /hqMinter\.clear\(\)/);
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'hq.js'), 'utf8'), /isLive\(id\) \{ return Boolean\(current\) && current\.id === id && now\(\) - current\.at <= MINT_MS; \}/);
@@ -1155,7 +1155,7 @@ test('v3.94 allowAlways turns on the two existing settings and nothing else; mai
   // every other dialog call passes no request: remote stages, a released stage
   const calls = [...src.matchAll(/await confirmHqDispatch\(([^\n]*?)\)\)\)/g)].map((x) => x[1]);
   assert.equal(calls.filter((c) => c.includes('{ request }')).length, 1);
-  assert.ok(calls.length >= 3);
+  assert.ok(calls.length >= 2)   // v3.99 a remote stage no longer opens its own dialog;
   for (const c of calls) if (c.includes('{ request }')) assert.equal(c, 'args, remote, { request }');
   for (const lang of ['en', 'tr']) {
     const main = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${lang}.json`), 'utf8')).main;
@@ -1312,4 +1312,86 @@ test('v3.96 review: openTasks counts a waiting remote stage addressed by name (e
   const r = HQ.remoteProjects({ pub, online: true, live, catalog: null, at: 1, tasks, now: 2 });
   assert.equal(r[0].openTasks, 1);
   assert.equal(r[1].openTasks, 1);
+});
+
+// --- v3.99 remote targets are equal: the paired-machines setting and the machine + project target identity
+test('v3.99 consent matrix: typed/routine x local/remote x setting; the remote setting is its own and allowAlways never sets it', () => {
+  const m = HQ.createMinter({ now: () => 1000, rand: () => 'x' });
+  const id = m.mint();
+  for (const [setting, remoteSetting, remote, want] of [
+    [false, false, false, 'app'], [true, false, false, 'none'], [false, true, false, 'app'], [true, true, false, 'none'],
+    [false, false, true, 'app'], [true, false, true, 'app'], [false, true, true, 'none'], [true, true, true, 'none'],
+  ]) assert.equal(HQ.consentFor({ setting, remoteSetting, remote, request: id, minter: m }), want, `${setting} ${remoteSetting} ${remote}`);
+  assert.equal(HQ.consentFor({ setting: true, remoteSetting: 'yes', remote: true, request: id, minter: m }), 'app');   // only a boolean true
+  assert.equal(HQ.consentFor({ setting: true, remote: true, request: id, minter: m }), 'app');                           // default off
+  for (const request of ['rforged', '', HQ.ADHOC]) assert.equal(HQ.consentFor({ setting: true, remoteSetting: true, remote: true, request, minter: m }), 'app');
+  m.clear();   // a turn the person did not type: the same condition as the local no-ask
+  assert.equal(HQ.consentFor({ setting: true, remoteSetting: true, remote: true, request: id, minter: m }), 'app');
+  // routines: a remote dispatch stays held whatever the settings say; the local rule is unchanged
+  const routine = { isRoutine: () => true, isLiveRoutine: () => true, isLive: () => true };
+  assert.equal(HQ.consentFor({ setting: true, remoteSetting: true, remote: true, request: 'q1', minter: routine, routineNoAsk: true }), 'held');
+  assert.equal(HQ.consentFor({ setting: true, remoteSetting: true, remote: false, request: 'q1', minter: routine, routineNoAsk: false }), 'held');
+  assert.equal(HQ.consentFor({ setting: false, remoteSetting: false, remote: false, request: 'q1', minter: routine, routineNoAsk: true }), 'none');
+
+  // the setting: default off, kept only when true
+  assert.equal('dispatchRemoteWithoutAsking' in HQ.normalizeHq({}), false);
+  assert.equal('dispatchRemoteWithoutAsking' in HQ.normalizeHq({ dispatchRemoteWithoutAsking: 'yes' }), false);
+  assert.equal('dispatchRemoteWithoutAsking' in HQ.normalizeHq({ dispatchRemoteWithoutAsking: false }), false);
+  assert.equal(HQ.normalizeHq({ dispatchRemoteWithoutAsking: true }).dispatchRemoteWithoutAsking, true);
+  // the v3.94 "stop asking" button never sets it (and does not turn it off either)
+  assert.equal('dispatchRemoteWithoutAsking' in HQ.allowAlways(HQ.normalizeHq({})), false);
+  assert.equal('dispatchRemoteWithoutAsking' in HQ.allowAlways(undefined), false);
+  assert.equal('dispatchRemoteWithoutAsking' in HQ.allowAlways({ dispatchWithoutAsking: true, initiative: true }), false);
+  assert.equal(HQ.allowAlways({ dispatchRemoteWithoutAsking: true }).dispatchRemoteWithoutAsking, true);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.equal((src.match(/\{ dispatchRemoteWithoutAsking: /g) || []).length, 1, 'written only by hq:setSettings');
+  assert.match(src, /typeof o\.dispatchRemoteWithoutAsking === 'boolean' \? \{ dispatchRemoteWithoutAsking: o\.dispatchRemoteWithoutAsking \}/);
+  assert.equal(/dispatchRemoteWithoutAsking/.test(fnBody('hqAllowAlways')), false);
+  assert.equal(/dispatchRemoteWithoutAsking/.test(fnBody('confirmHqDispatch')), false);
+  // wiring: both consent calls pass the remote setting; the notice; revive only for HQ's tasks; HQ's information
+  assert.equal((src.match(/remoteSetting: state\.hq\?\.dispatchRemoteWithoutAsking === true/g) || []).length, 2);
+  assert.match(fnBody('hqDispatch'), /notifyRemoteSent\(pname, dv\.name\)/);
+  assert.match(fnBody('notifyRemoteSent'), /notify\(T\('main\.hqRemoteSent'/);
+  assert.match(fnBody('officeDispatch'), /revive: revive && tab === HQ\.HQ_ID/);
+  assert.match(fnBody('officeMachines'), /trustsUs: typeof dv\.trustsUs === 'boolean' \? dv\.trustsUs : null/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'office-mcp.js'), 'utf8'), /`trustsUs`/);
+  const board = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'hq-board.js'), 'utf8');
+  assert.match(board, /setSettings\(\{ dispatchRemoteWithoutAsking: remoteNoAsk\.checked \}\)/);
+  assert.match(board, /remoteNoAskRow\.style\.display = view\.paired \? '' : 'none'/);
+});
+
+test('v3.99 initiative: a paired machine target is machine key + project id, and only one consented in this request', () => {
+  const clock = { t: 1000 };
+  const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
+  const id = m.mint();
+  const PUB = 'ab'.repeat(32);
+  const OTHER = 'cd'.repeat(32);
+  const row = (over = {}) => ({ id: 't1', request: id, title: 'first', pub: PUB, machineName: 'Studio', project: 'api', projectId: 'p-api', status: 'reported', consented: true, ...over });
+  const board = HQ.addTask(HQ.emptyBoard(), row(), clock.t);
+  m.clear();
+  const ask = (target, over = {}) => HQ.initiativeFor({ initiative: true, remote: true, request: id, minter: m, board, targets: [target], now: clock.t, ...over });
+  assert.equal(ask({ machine: PUB, projectId: 'p-api', staffId: '', skip: false }), true);
+  assert.equal(ask({ machine: OTHER, projectId: 'p-api' }), false);          // the same project id on another machine
+  assert.equal(ask({ machine: PUB, projectId: 'p-other' }), false);          // another project on that machine
+  assert.equal(ask({ projectId: 'p-api' }), false);                          // a remote dispatch that names no machine
+  assert.equal(ask({ machine: 'self', projectId: 'p-api' }), false);
+  assert.equal(ask({ machine: '', projectId: '' }), false);                  // not resolved
+  assert.equal(ask({ projectId: 'p-api' }, { remote: false }), false);       // this machine's project of that id was never consented
+  assert.equal(ask({ machine: PUB, projectId: 'p-api' }, { initiative: false }), false);
+  assert.equal(ask({ machine: PUB, projectId: 'p-api' }, { now: clock.t + HQ.INITIATIVE_MS }), false);
+  assert.equal(HQ.consentedTarget(board, id, { machine: PUB, projectId: 'p-api' }), true);
+  assert.equal(HQ.consentedTarget(board, id, { projectId: 'p-api' }), false);
+  // a local consented row never covers a paired machine, a row sent by initiative or without consent covers nothing
+  for (const over of [{ pub: 'self' }, { consented: false }, { consented: false, byInitiative: true }]) {
+    const b = HQ.addTask(HQ.emptyBoard(), row(over), clock.t);
+    assert.equal(HQ.initiativeFor({ initiative: true, remote: true, request: id, minter: m, board: b, targets: [{ machine: PUB, projectId: 'p-api' }], now: clock.t }), false, JSON.stringify(over));
+  }
+  // mixed targets of one chain (remote: false, each target names its own machine): every one must be consented
+  const both = HQ.addTask(board, row({ id: 't2', pub: 'self', project: 'web', projectId: 'p-web' }), clock.t);
+  const mixed = (targets) => HQ.initiativeFor({ initiative: true, remote: false, request: id, minter: m, board: both, targets, now: clock.t });
+  assert.equal(mixed([{ projectId: 'p-web' }, { machine: PUB, projectId: 'p-api' }]), true);
+  assert.equal(mixed([{ projectId: 'p-web' }, { machine: OTHER, projectId: 'p-api' }]), false);
+  // main: the sender treats a paired machine's Skip permissions as unknown (false) and stamps its rows
+  assert.match(fnBody('hqDispatch'), /targets: \[remote \? \{ \.\.\.hqRemoteTarget\(key, machine, args\.project\), staffId: args\.staff \? null : '', skip: false \}/);
+  assert.match(fnBody('hqDispatch'), /\.\.\.\(byInitiative \? \{ byInitiative: true \} : \{\}\), \.\.\.\(consented && !byInitiative \? \{ consented: true \} : \{\}\)/);
 });

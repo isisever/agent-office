@@ -41,6 +41,9 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   const consent = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ dispatchWithoutAsking: consent.checked }); render(); } });
   // v3.91 HQ may send follow-up tasks of a request the person typed without asking (local only; default off)
   const initiative = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ initiative: initiative.checked }); render(); } });
+  // v3.99 requests typed into HQ go to projects on paired computers without the dialog here (its own setting, default off)
+  const remoteNoAsk = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ dispatchRemoteWithoutAsking: remoteNoAsk.checked }); render(); } });
+  const remoteNoAskRow = el('label', { title: t('hq.noAskRemoteHint') }, remoteNoAsk, ` ${t('hq.noAskRemote')}`);
   // HQ on/off (default on): off = no HQ pty; the row says "off" and keeps this toggle
   const onOff = el('input', { type: 'checkbox', class: 'hq-toggle', title: t('hq.enabled'), onclick: (e) => e.stopPropagation(),
     onchange: async () => { view = await api.hq.setSettings({ enabled: onOff.checked }); render(); } });
@@ -53,6 +56,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   const settings = el('div', { class: 'hq-settings', hidden: true },
     el('label', { title: t('hq.consentHint') }, consent, ` ${t('hq.consent')}`),
     el('label', { title: t('hq.initiativeHint') }, initiative, ` ${t('hq.initiative')}`),
+    remoteNoAskRow,
     ...(api.routines ? [el('label', {}, quietOn, ` ${t('routines.quiet')} `, quietFrom, '–', quietTo), el('label', {}, `${t('routines.dailyCap')} `, dailyCap)] : []),
     el('button', { class: 'hq-link', onclick: () => api.hq.openFolder() }, t('hq.openFolder')));
   const row = el('div', { class: 'hq-row', id: 'hq-row', role: 'button', tabindex: '0', title: t('hq.title'), onclick: () => onSelect() },
@@ -365,6 +369,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
       : `▶ ${tasks.filter((x) => OPEN.has(x.status)).length}  ● ${tasks.filter((x) => !x.read && !OPEN.has(x.status)).length}`;
     consent.checked = Boolean(view.settings?.dispatchWithoutAsking);
     initiative.checked = Boolean(view.settings?.initiative);
+    remoteNoAsk.checked = Boolean(view.settings?.dispatchRemoteWithoutAsking);
+    remoteNoAskRow.style.display = view.paired ? '' : 'none';   // only with at least one paired computer
     row.classList.toggle('active', selected);
     board.hidden = !selected || showOffice;
     if (office) office.hidden = selected && !showOffice;
