@@ -2213,7 +2213,7 @@ computer, for a single dispatch, a staged dispatch (`then` / `after`, one answer
 | --- | --- | --- |
 | Typed turn: the live id minted from the prompt the person typed into HQ | `'none'`: sent, no dialog, also into a project with Skip permissions or Auto-approve on; row `consented`; the target is remembered for the request (below) | `'app'`: the dialog |
 | Later turn: an id the person typed less than 2 h ago (`INITIATIVE_MS`) that is no longer live (a report arrived) | `'follow'`: sent, no dialog, bound by `HQ.followRefusal` (below); refused with its reason, never asked; row `byInitiative` | `'app'`: the dialog (the id resolves only within its 30 min TTL, as before) |
-| A routine run's id | unchanged (v3.47): `'none'` only for a local dispatch with the routine's own no-ask checkbox on and the run's id live, else `'held'` (a card on the Board); stages: `stages-routine` | same |
+| A routine run's id | v3.107: `'none'` for a local dispatch while the run's id is live (a project routine: only into its own project), else `'held'` (a card on the Board); stages: `stages-routine` | as v3.47: `'none'` only for a local dispatch with the routine's own no-ask checkbox on and the run's id live, else `'held'`; stages: `stages-routine` |
 | `adhoc`, unknown, foreign or expired id (no id the app minted from a typed prompt) | `'app'`: the dialog, exactly as before | `'app'`: the dialog |
 
 ### Later-turn follow-ups (`HQ.followRefusal`, the v3.91 limits for any target of the request)
@@ -2367,3 +2367,24 @@ states start again first. The panel shows the same reset confirm before them whe
 nothing) and then passes `{ reset: true }`; only with it do they reset and continue, the answer then carrying
 `resetDone: true` (`devices.resetDone`), or `recovered: true` when the start again worked. Never at startup on its own.
 Tests: `test/link-errors.test.cjs`.
+
+## Routines follow "Ask me before the manager hands out a task" (v3.107)
+
+Amends v3.47, v3.49 and v3.103. A routine the person saved is the person's request, so a routine run's dispatch follows
+`state.hq.askBeforeDispatch` like a typed request:
+
+- **Off (default)**: a local dispatch of a routine run goes without the approval card (`HQ.consentFor` returns
+  `'none'`, the row is `consented`), whatever the routine's own no-ask checkbox says.
+  `ROUT.routineNoAsk(routine, { remote, projectId, ask })` is true for `ask: false` under the same scope rules as before
+  (`ask` defaults to true, the v3.47 rule).
+- **On**: unchanged: the card, unless the routine's own no-ask checkbox is on (v3.47).
+- **Limits that stay** (either setting): a routine for a paired machine (target `remote`, or a dispatch of a routine
+  run to another computer) always gets the held card (v3.49); a project routine goes without the card only into its
+  own project (a dispatch elsewhere is held); only while the run's id is live (after its dispatch, or after an HQ
+  routine turn is over, a dispatch with that id is held); while an HQ routine turn's id is live, a dispatch without
+  that id is held (`holdsOffId`); a staged dispatch (`then` / `after`) of a routine run is refused with
+  `stages-routine`; the routine plan's gates (`maxPerDay`, the daily cap, quiet hours, overlap) and the Board caps
+  (12 open, 8 per request) are unchanged.
+- **Strings** (en, tr): `hq.askBeforeDispatchHint` says routines follow the setting; `routines.noAskHint` says the
+  checkbox matters only while the setting is on.
+- Tests: `test/routines.test.cjs`, `test/hq-chain.test.cjs`.

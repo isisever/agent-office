@@ -129,12 +129,12 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
   const env = { board: HQ.emptyBoard(), sent: [], dialogs: [], remoteDialogs: 0, rows: [], notices: [], n: 0, allow, dir,
     state: { projects: [{ id: 'pa', name: 'office', dir: '/w/office' }, { id: 'pb', name: 'erp', dir: '/w/erp' }], hq: { enabled: true, ...(ask ? { askBeforeDispatch: true } : {}) }, routines: [] }, link };
   const prelude = `
-    const { HQ, CH, LC, SF, P, fs, path, crypto } = env.mods; const state = env.state; const OM = { TASK_MAX: 8192 };
+    const { HQ, CH, LC, SF, P, ROUT, fs, path, crypto } = env.mods; const state = env.state; const OM = { TASK_MAX: 8192 };
     const hqMinter = HQ.createMinter(); env.minter = hqMinter; const hqPacer = HQ.createPacer();
     const win = { isFocused: () => true, isDestroyed: () => false }; const T = (k, v) => k + (v ? JSON.stringify(v) : '');
     const dialog = { showMessageBox: async (_w, o) => { env.dialogs.push(o); return { response: env.response ?? (env.allow ? 0 : 1) }; } };
     ${realConfirm ? '' : 'const confirmHqDispatch = async () => { env.remoteDialogs++; return env.allow; };'}   // the stub counts single-dispatch dialogs in env.remoteDialogs
-    const rt = () => ({ runs: [] }); const saveRt = () => {}; const hqDir = () => env.dir;
+    const rt = () => ({ runs: env.runs || [] }); const saveRt = () => {}; const hqDir = () => env.dir;
     const loadHqBoard = () => env.board; const saveHqBoard = (b) => { env.board = b; };
     const loadDispatches = () => new Map(); const saveDispatches = () => {};
     const selfName = () => 'Mac1'; const peerCache = () => ({}); const notify = (title) => { env.notices.push(title); }; const routinesOnDone = (d) => d;
@@ -151,7 +151,7 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
       const own = { id: 'own-' + m.id, name: personalFolderName(m), dir: '/w/own', staffOwner: m.id, ...ST.personalDraft(m.personal) }; state.projects.push(own); return own; };
     const officeDispatch = (tab, args, o) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task, ...(args.machine ? { machine: args.machine, revive: o?.revive === true } : {}) }); return { id, status: 'queued' }; };
   `;
-  env.mods = { ST: require('../src/staff.js'), HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
+  env.mods = { ST: require('../src/staff.js'), ROUT: require('../src/routines.js'), HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
   const api = new Function('env', `${prelude}\n${src}\nreturn { hqDispatch, hqChainSweep, hqStatus, hqStages };`)(env);
   return { env, api };
 }
@@ -1050,12 +1050,32 @@ test('matrix: a paired machine in the typed turn is sent without a dialog and an
   }
 });
 
-test('matrix: a routine\'s request is still held (single) or refused (stages), whatever the setting', async () => {
+test('matrix: a routine\'s request without a run record is held (single) or refused (stages), whatever the setting', async () => {
   for (const ask of [false, true]) {
     const { env, api } = stageHarness({ ask });
     const request = env.minter.mint({ origin: 'routine', run: 'run1' });
     assert.deepEqual(await api.hqDispatch({ project: 'office', task: 'routine', request }), { status: 'held' });
     assert.equal((await api.hqDispatch({ project: 'office', task: 'a', request, then: [{ project: 'erp', task: 'b' }] })).reason, 'stages-routine');
     assert.deepEqual([env.sent.length, env.dialogs.length, env.remoteDialogs], [0, 0, 0]);
+  }
+});
+
+test('v3.107 a routine run follows askBeforeDispatch: off → sent without a card or dialog; on → held unless its own checkbox', async () => {
+  const ROUT = require('../src/routines.js');
+  const routine = (o) => ROUT.normalizeRoutine({ id: 'rt0000000b', name: 'Efforts', prompt: 'Enter the efforts', target: { kind: 'project', projectId: 'pa' }, schedule: { kind: 'daily', at: '09:00' }, ...o });
+  for (const ask of [false, true]) for (const noAsk of [false, true]) {
+    const { env, api } = stageHarness({ ask });
+    env.state.routines = [routine({ noAsk })];
+    const request = env.minter.mint({ origin: 'routine', run: 'run1' });
+    env.runs = [{ id: 'run1', routine: 'rt0000000b', name: 'Efforts', kind: 'project', request, status: 'typed', tasks: [] }];
+    const r = await api.hqDispatch({ project: 'office', task: 'routine', request });
+    const free = !ask || noAsk;
+    assert.equal(r.status, free ? 'queued' : 'held', `ask=${ask} noAsk=${noAsk}`);
+    assert.equal(env.sent.length, free ? 1 : 0);
+    if (free) assert.equal(rowOf(env, r.id).consented, true);
+    // limits that stay: a project routine into another project is held; stages are refused; never a dialog
+    assert.deepEqual(await api.hqDispatch({ project: 'erp', task: 'elsewhere', request }), { status: 'held' });
+    assert.equal((await api.hqDispatch({ project: 'office', task: 'a', request, then: [{ project: 'erp', task: 'b' }] })).reason, 'stages-routine');
+    assert.deepEqual([env.dialogs.length, env.remoteDialogs], [0, 0]);
   }
 });

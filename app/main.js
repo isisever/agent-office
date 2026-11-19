@@ -2316,7 +2316,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     if (c.reason) return { status: 'rejected', reason: c.reason, ...(c.hint ? { hint: c.hint } : {}) };
     args = { ...args, staffName: c.staffName, ...(c.targetName ? { targetName: c.targetName } : {}) };
   }
-  const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '' });   // a project routine: only its own project
+  const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '', ask });   // a project routine: only its own project; v3.107 follows askBeforeDispatch
   const consent = approved ? 'none' : HQ.consentFor({ ask, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
   if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal

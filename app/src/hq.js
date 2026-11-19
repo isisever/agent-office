@@ -180,8 +180,9 @@ const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && 
  * Who consents to an HQ dispatch (v3.103). office_dispatch is always auto-allowed at the Claude level, so the app is
  * the only gate. `ask` is the person's `askBeforeDispatch` setting (default off). The same answer for a target on this
  * machine and on a paired one (the person's own computer).
- * - a routine run's request: 'none' only for a local dispatch with the routine's own checkbox on and the run's id
- *   still live, else 'held' (a card on the Board, never a modal). Unchanged since v3.47; `ask` does not apply.
+ * - a routine run's request: 'none' only for a local dispatch that `routineNoAsk` allows (main computes it with
+ *   ROUT.routineNoAsk; v3.107: every local routine with `ask` off, only its own checkbox with `ask` on) and the run's
+ *   id still live, else 'held' (a card on the Board, never a modal).
  * - `ask` on: 'app' (the app's dialog), always.
  * - 'adhoc' or no id (resolveRequest found no id the app minted): 'app'. The dialog stays for exactly this case.
  * - the live id minted from the prompt the person typed (their turn): 'none'.

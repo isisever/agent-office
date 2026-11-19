@@ -305,6 +305,15 @@ test('a project run id stops being live after its dispatch; no-ask for a project
   assert.equal(ROUT.routineNoAsk(proj, { remote: true, projectId: 'p1' }), false);
   assert.equal(ROUT.routineNoAsk(rt({ noAsk: true }), { projectId: 'p9' }), true);   // an HQ routine: any local project
   assert.equal(ROUT.routineNoAsk(rt({ noAsk: false }), { projectId: 'p9' }), false);
+  // v3.107 with askBeforeDispatch off every routine goes without its card, within the same scope; remote never
+  const plain = rt({ noAsk: false, target: { kind: 'project', projectId: 'p1' } });
+  assert.equal(ROUT.routineNoAsk(plain, { projectId: 'p1', ask: false }), true);
+  assert.equal(ROUT.routineNoAsk(plain, { projectId: 'p1', ask: true }), false);
+  assert.equal(ROUT.routineNoAsk(plain, { projectId: 'p2', ask: false }), false);
+  assert.equal(ROUT.routineNoAsk(plain, { remote: true, projectId: 'p1', ask: false }), false);
+  assert.equal(ROUT.routineNoAsk(rt({ noAsk: false }), { projectId: 'p9', ask: false }), true);
+  assert.equal(ROUT.routineNoAsk(rt({ noAsk: false, target: { kind: 'remote', pub: 'ab'.repeat(16), projectId: 'x' } }), { ask: false }), false);
+  assert.equal(ROUT.routineNoAsk(null, { ask: false }), false);
   assert.match(mainFn('deliverRun'), /await hqDispatch\(\{[^\n]*\n\s*hqMinter\.endLive\(run\.request\)/);
 });
 
@@ -439,6 +448,7 @@ test('remote routine run → a held "awaiting approval" card + notification; nev
   const { env, api, routine, newRun } = remoteHarness();
   assert.equal(routine.noAsk, true);   // ticked, but it applies to local targets only
   assert.equal(ROUT.routineNoAsk(routine, { remote: false, projectId: 'web' }), false);
+  assert.equal(ROUT.routineNoAsk(routine, { remote: false, projectId: 'web', ask: false }), false);   // v3.107 the setting off: still the card
   assert.equal(api.routineProblem(routine), '');
   const run = newRun();
   await api.deliverRun(run, Date.now());

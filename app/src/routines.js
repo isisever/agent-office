@@ -233,8 +233,11 @@ function hqTurn({ status, tab, typedAt = 0, now }) {
   if (status === 'typed' && now - (typedAt || now) < 2 * 60 * 1000) return 'wait';
   return 'over';
 }
-/** A routine's own no-ask: an HQ routine for any local project; a project routine only for its own project. */
-const routineNoAsk = (routine, { remote = false, projectId = '' } = {}) => Boolean(routine?.noAsk) && !remote && routine.target?.kind !== 'remote'
+/** A routine's dispatch without a card: an HQ routine for any local project; a project routine only for its own project.
+ *  v3.107 with `askBeforeDispatch` off (`ask: false`) every routine goes without its card (a saved routine is the
+ *  person's request); with it on only a routine with its own no-ask checkbox. Remote targets always keep the card. */
+const routineNoAsk = (routine, { remote = false, projectId = '', ask = true } = {}) => Boolean(routine) && (Boolean(routine.noAsk) || ask !== true)
+  && !remote && routine.target?.kind !== 'remote'
   && (routine.target?.kind !== 'project' || (Boolean(projectId) && routine.target.projectId === projectId));
 /** At startup: runs waiting for consent whose held cards are all gone (not on the board as awaiting-consent). */
 const staleHeldRuns = (runs, heldIds) => runs.filter((r) => r.status === 'awaiting-consent' && !(r.held || []).some((id) => heldIds.has(id)));
