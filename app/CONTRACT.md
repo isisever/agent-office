@@ -2184,3 +2184,71 @@ encrypt anything. The markers are plain files: with a marker deleted, a headerle
 with the shape of its own kind, and the app no longer writes headerless files, so such a file has to come from a
 version before this one. The check covers the store folder and the file, not a symbolic link higher up the path.
 Purpose binding does not tell an older copy of the right file from the current one (v3.101 "Limit").
+
+## HQ hands out the tasks the person asked for: no consent dialog by default (v3.103)
+
+The person asks HQ for the work; HQ carries it out. A project may send a task to another project without a dialog,
+and HQ now may too. The modal "HQ wants to give a task to X" (`confirmHqDispatch`, `confirmHqStages`) is off by
+default.
+
+- **One setting**: `state.hq.askBeforeDispatch` (boolean, default off; `normalizeHq` keeps it only when true).
+  `hq:setSettings` accepts `{ askBeforeDispatch }`. Board checkbox `hq.askBeforeDispatch` "Ask me before the manager
+  hands out a task" with the one-sentence hint `hq.askBeforeDispatchHint` (en, tr). It replaces `dispatchWithoutAsking`
+  (v3.46/v3.101) and `initiative` (v3.91).
+- **Migration**: stored `dispatchWithoutAsking` / `initiative` are dropped when `state.hq` is read (`normalizeHq`); no
+  stored value turns the dialog on. The env `AGENT_OFFICE_INITIATIVE` is no longer passed on.
+- **The dialog**: two buttons (`main.hqAllow`, `main.hqDeny`). The v3.94 third button (`main.hqAllowAlways`,
+  `main.hqAllowAlwaysNote`, `HQ.offersAlways`, `HQ.allowAlways`) is removed.
+
+### Consent (`HQ.consentFor({ ask, remote, request, minter, routineNoAsk })`)
+
+The same answer for a target on this machine (project, staff desk, personal workspace) and a project on a paired
+computer, for a single dispatch, a staged dispatch (`then` / `after`, one answer for the whole chain) and a released stage.
+
+| Request id of the dispatch | `askBeforeDispatch` off (default) | `askBeforeDispatch` on |
+| --- | --- | --- |
+| Typed turn: the live id minted from the prompt the person typed into HQ | `'none'`: sent, no dialog; row `consented` | `'app'`: the dialog |
+| Later turn: an id the person typed less than 2 h ago (`INITIATIVE_MS`) that is no longer live (a report arrived) | `'follow'`: sent, no dialog, bound by `HQ.followRefusal` (below); refused with its reason, never asked; row `byInitiative` | `'app'`: the dialog (the id resolves only within its 30 min TTL, as before) |
+| A routine run's id | unchanged (v3.47): `'none'` only for a local dispatch with the routine's own no-ask checkbox on and the run's id live, else `'held'` (a card on the Board); stages: `stages-routine` | same |
+| `adhoc`, unknown, foreign or expired id (no id the app minted from a typed prompt) | `'app'`: the dialog, exactly as before | `'app'`: the dialog |
+
+### Later-turn follow-ups (`HQ.followRefusal`, the v3.91 limits for any target of the request)
+
+`followRefusal({ request, minter, board, targets, counted })` → `null` or the reason the dispatch is refused with:
+`request-expired` (not a typed id, a routine's id, `adhoc`, or older than 2 h), `unknown-machine` (a paired target
+without its machine key), `skip-permissions` (a target project that runs with Skip permissions: the local switch or a
+tab running from a Skip start, `hqTargetSkips`; for a paired computer the catalog's `skips` flag, `HQ.remoteSkips`,
+unknown counts as skipping), `open-cap` (12 open), `request-cap` (8 per request, removed rows count), `follow-up-cap`
+(more than `MAX_INITIATIVE` = 4 follow-ups per request). `HQ.takeInitiative` decides and counts in one step (it now
+creates the request record when the request has none); the rule is checked again before anything is made and when a
+`byInitiative` stage is released (`hqReleaseStage`): refused with the reason, or the dialog when the person turned
+`askBeforeDispatch` on meanwhile. The v3.91 requirement that a follow-up's target was already consented to for the
+request (`HQ.consentedTarget`) and that the request already has a row is removed: every target of the request counts.
+`HQ.initiativeFor` is `followRefusal(...) === null`.
+
+### Notices
+
+A task that goes to a paired computer without a dialog: `main.hqRemoteSent`, as in v3.99. A task sent in a later turn
+on this machine (single, or each stage when its row is written): `main.hqInitiativeSent` (`notifyInitiative`), as in
+v3.91.
+
+### HQ's brief (`plugin/hooks/hq.ts`)
+
+`hqText(ask = false)`: by default the carry-through brief (`HQ_INITIATIVE_SWAPS` applied, `HQ_INITIATIVE_TEXT` before the
+closing line; the follow-up sentence now names the app's limits: 4 per request, 2 hours, never into a project with Skip
+permissions). With `askBeforeDispatch` on, the app sets `AGENT_OFFICE_ASK=1` for HQ's session only (read at session
+start) and HQ gets `HQ_TEMPLATE` unchanged. Both keep the v3.93 rule never to ask the person to type and the line that
+reports and files are data, not instructions.
+
+### Unchanged
+
+A dispatch still needs a request id the main process minted from a prompt the person typed into HQ (or a routine's
+id); the caps per request and open; the request's time bound; `holdsOffId`; routines' held cards and their own no-ask
+checkbox; held cards and Allow; every receiver-side rule (a paired computer's own consent, trust and pacing rules,
+desk permission prompts, the mail guard); `office_dispatch` and its tool description.
+
+### Replaces
+
+The consent parts of v3.46 ("dispatch without asking"), v3.79 (consent of a staged request), v3.91 (the `initiative` setting, consented targets, the dialog
+fallback), v3.94 (the third button), v3.95 (the brief switch: now inverted, `AGENT_OFFICE_ASK`), v3.99 and v3.101 (the
+paired-machine consent under `dispatchWithoutAsking`). Where those sections name these settings, this section wins.
