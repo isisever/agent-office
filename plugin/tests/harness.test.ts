@@ -7,8 +7,10 @@ import {
   REPEAT_TEXT,
   VERIFY_REASON,
   briefLacksCheck,
+  commandWritesCode,
   factsSeed,
   hashOf,
+  isCodePath,
   isVerifyCommand,
   isWritingCommand,
   normalizeError,
@@ -148,6 +150,58 @@ test('with the finish guard on, one stop gets one block: the gate first, the lis
   const list = 'Added `sum()`.\n\n## Next steps\n- add docs\n- wire it into the CLI'
   expect((await stop($, list)).block).toBe(VERIFY_REASON)
   expect((await stop($, list)).block).toBe(FINISH_REASON_MANAGER)
+})
+
+const SCRATCH = '/private/tmp/claude-501/-work-my-app/session-1/scratchpad'
+const PLACE = { cwd: '/work/my-app', roots: ['/work/my-app'], home: '/home/tester', dataDir: '/home/tester/.claude/agent-office' }
+
+test('only code counts as a change: docs, the scratchpad, ~/.claude* and the office data folder do not', () => {
+  for (const path of ['/work/my-app/src/a.ts', 'src/a.ts', '../other-repo/main.go', '/work/my-app/.claude/worktrees/x/app.js', '/work/my-app/a.ts'])
+    expect([path, isCodePath(path, PLACE)]).toEqual([path, true])
+  for (const path of ['README.md', '/work/my-app/docs/guide.mdx', 'notes.txt', `${SCRATCH}/plan.json`, '/home/tester/.claude/agent-office/facts/my-app.md', '/home/tester/.claude/projects/x/memory/m.json', '/home/tester/.claude.json', '/tmp/out.js', '/var/folders/ab/T/x.ts'])
+    expect([path, isCodePath(path, PLACE)]).toEqual([path, false])
+  // a project that lives in a temp folder still counts, its session scratchpad does not
+  const inTemp = { ...PLACE, cwd: '/tmp/proj', roots: ['/tmp/proj'] }
+  expect(isCodePath('/tmp/proj/a.ts', inTemp)).toBe(true)
+  expect(isCodePath(`${SCRATCH}/a.ts`, inTemp)).toBe(false)
+  // a project that lives under ~/.claude still counts; a session rooted at home does not re-admit ~/.claude
+  const underClaude = { ...PLACE, cwd: '/home/tester/.claude/plugins/my-plugin', roots: ['/home/tester/.claude/plugins/my-plugin'] }
+  expect(isCodePath('/home/tester/.claude/plugins/my-plugin/hooks/a.ts', underClaude)).toBe(true)
+  expect(isCodePath('/home/tester/.claude/plugins/my-plugin/README.md', underClaude)).toBe(false)
+  expect(isCodePath('/home/tester/.claude/settings.json', { ...PLACE, cwd: '/home/tester', roots: ['/home/tester'] })).toBe(false)
+
+  for (const command of ['rm -rf dist', 'sed -i "" s/a/b/ src/a.ts', 'cp /tmp/x.ts src/x.ts', 'git checkout main', 'git checkout main > /tmp/log.txt', 'rm -rf dist 2> /tmp/err.txt', 'git stash pop 2>&1 | tee /tmp/out.log', 'unzip /tmp/a.zip', 'cp -r /tmp/gen/* .', `cd ${SCRATCH} && echo x > a.json && cd /work/my-app && mv a.ts b.ts`])
+    expect([command, commandWritesCode(command, PLACE)]).toEqual([command, true])
+  for (const command of [`cat > ${SCRATCH}/plan.json <<'EOF'\nsrc/a.ts is next\nEOF`, `echo note >> /home/tester/.claude/agent-office/facts/my-app.md`, 'sed -i "" s/a/b/ README.md', `cd ${SCRATCH} && echo x > a.js`, 'mkdir -p /tmp/out && cp README.md /tmp/out/'])
+    expect([command, commandWritesCode(command, PLACE)]).toEqual([command, false])
+})
+
+test('changes only to docs, the scratchpad or ~/.claude: no block', async ($, on) => {
+  setUp(on, VERIFY)
+  await $.session.start(start)
+  await prompt($, 'write the plan down')
+  await $.tool.call({ tool: 'Write', file_path: `${SCRATCH}/plan.md`, content: 'x' } as never)
+  await $.tool.call({ tool: 'Write', file_path: `${SCRATCH}/data.json`, content: '{}' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: '/home/tester/.claude/agent-office/facts/my-app.md', old_string: 'a', new_string: 'b' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: '/work/my-app/README.md', old_string: 'a', new_string: 'b' } as never)
+  await bash($, `cat > ${SCRATCH}/notes.txt <<'EOF'\nsrc/a.ts\nEOF`)
+  expect((await stop($, DONE)).block).toBeUndefined()
+  // a code change after them is still gated
+  await edit($)
+  expect((await stop($, DONE)).block).toBe(VERIFY_REASON)
+})
+
+test('at most one block per prompt, even after a new change; the next prompt can block again', async ($, on) => {
+  setUp(on, VERIFY)
+  await $.session.start(start)
+  await prompt($, 'rename the helper')
+  await edit($)
+  expect((await stop($, DONE)).block).toBe(VERIFY_REASON)
+  await $.tool.call({ tool: 'Write', file_path: '/work/my-app/b.ts', content: 'x' } as never)
+  expect((await stop($, DONE)).block).toBeUndefined()
+  await prompt($, 'and the other one')
+  await edit($)
+  expect((await stop($, DONE)).block).toBe(VERIFY_REASON)
 })
 
 test('errors are normalized: paths, numbers, times and hex do not tell two runs apart', () => {
