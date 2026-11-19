@@ -2579,9 +2579,10 @@ async function hqReleaseStage({ id, after, resumed = false }) {
       board: { ...fresh, tasks: fresh.tasks.filter((x) => x.id !== id) },   // the row does not count against itself
       targets: [st.remote ? { ...hqRemoteTarget(st.key || null, String(st.machine || '').trim(), st.project), staffId: '' }
         : { projectId: p?.id || '', staffId: st.staff ? m?.id || null : '', skip: hqTargetSkips(p, st.staff ? m?.id || '' : '') }] });
-    if (why) {
-      // v3.103 refused with the reason, not asked; the dialog only when the person turned `askBeforeDispatch` on meanwhile
-      if (state.hq?.askBeforeDispatch !== true) { hqStatus(id, 'rejected', why); hqChainSweep(); return; }
+    // v3.103 setting off: refused with the reason, not asked. The person turned `askBeforeDispatch` on meanwhile: the
+    // dialog for this stage (as for every dispatch with the setting on)
+    if (why || state.hq?.askBeforeDispatch === true) {
+      if (why && state.hq?.askBeforeDispatch !== true) { hqStatus(id, 'rejected', why); hqChainSweep(); return; }
       if (!(await confirmHqDispatch({ machine: st.machine, project: p ? p.name : project, title: st.title, task: text, ...(st.staff ? { staff: st.staff, staffName: st.staff } : {}) }, st.remote === true))) {
         hqStatus(id, 'rejected', 'declined');
         hqChainSweep();

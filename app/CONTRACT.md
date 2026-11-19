@@ -2221,8 +2221,8 @@ tab running from a Skip start, `hqTargetSkips`; for a paired computer the catalo
 unknown counts as skipping), `open-cap` (12 open), `request-cap` (8 per request, removed rows count), `follow-up-cap`
 (more than `MAX_INITIATIVE` = 4 follow-ups per request). `HQ.takeInitiative` decides and counts in one step (it now
 creates the request record when the request has none); the rule is checked again before anything is made and when a
-`byInitiative` stage is released (`hqReleaseStage`): refused with the reason, or the dialog when the person turned
-`askBeforeDispatch` on meanwhile. The v3.91 requirement that a follow-up's target was already consented to for the
+`byInitiative` stage is released (`hqReleaseStage`): refused with the reason; when the person turned
+`askBeforeDispatch` on meanwhile, the stage gets the dialog at its release (whether or not the re-check holds). The v3.91 requirement that a follow-up's target was already consented to for the
 request (`HQ.consentedTarget`) and that the request already has a row is removed: every target of the request counts.
 `HQ.initiativeFor` is `followRefusal(...) === null`.
 
