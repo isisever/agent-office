@@ -3,6 +3,8 @@
 // the tab's terminal like a prompt (chat:send), so the session, its plugin and HQ work exactly as with the terminal.
 // Claude Code's own menus (approvals, AskUserQuestion, /model, …) are drawn only in the terminal: the chat reads the open
 // one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
+// v3.108 GUI chat: a tab that runs claude on its SDK protocol (chat:read returns `gui`) has no terminal to read: its
+// permission requests, questions and plans come as data and are answered with chat:answer; Stop is chat:interrupt.
 import { t } from './i18n.js';
 import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
@@ -82,6 +84,15 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   const input = h('textarea', { class: 'chat-input', rows: '1' });
   const send = h('button', { class: 'chat-send', onclick: () => submit() });
   const term = h('button', { class: 'chat-term', onclick: () => onTerminal() });
+  const stop = h('button', { class: 'chat-stop', onclick: () => interrupt() });
+  stop.hidden = true;
+  // v3.108 a GUI tab whose claude ended by itself: why (exit code, the end of its stderr) and Start again
+  const endText = h('div', { class: 'chat-end-title' });
+  const endPre = h('pre', { class: 'chat-dialog chat-end-text' });
+  const endBtn = h('button', { class: 'chat-send', onclick: () => { endBox.hidden = true; endShown = ''; api.pty.restart(ptyId); setTimeout(poll, 500); } });
+  const endBox = h('div', { class: 'chat-end' }, endText, endPre, h('div', { class: 'chat-menu-nav' }, endBtn));
+  endBox.hidden = true;
+  let endShown = '';
   const why = h('span', { class: 'chat-why' });
   const card = h('div', { class: 'chat-menu' });
   // the "/" list above the input (Claude Code's commands for this tab, chat:commands)
@@ -97,9 +108,9 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   // once it is complete, so this is the live part
   const live = h('div', { class: 'chat-live' });
   live.hidden = true;
-  const form = h('div', { class: 'chat-form' }, slash, input, send, term);
+  const form = h('div', { class: 'chat-form' }, slash, input, stop, send, term);
   form.hidden = Boolean(source);
-  el.append(banner, list, empty, live, card, replyBar, form, why);
+  el.append(banner, list, empty, live, card, endBox, replyBar, form, why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -115,12 +126,20 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   let cursor = null;
   let sid;   // undefined until the first read
   const tools = new Map();   // tool call id → its line (marked done/failed by its result)
+  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number } }} */
+  let gui = null;   // v3.108 a GUI chat tab's open requests and live line (null: a terminal tab)
+  let askShown = '';   // the open request's id, as drawn
+  const answered = new Set();   // requests answered here: not drawn again while main's list catches up
 
   function texts() {
     input.placeholder = t('chat.placeholder');
     send.textContent = t('chat.send');
     term.textContent = t('chat.terminal');
-    term.title = t('chat.terminalTitle');
+    term.title = t(gui ? 'chat.gui.terminalTitle' : 'chat.terminalTitle');
+    stop.textContent = t('chat.gui.stop');
+    endBtn.textContent = t('chat.gui.restart');
+    endShown = '';
+    stop.title = t('chat.gui.stopTitle');
     bannerText.textContent = t('chat.permission');
     bannerBtn.textContent = t('chat.terminal');
     empty.textContent = t('chat.empty');
@@ -282,7 +301,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   }
   const atBottomNow = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   function checkMenu() {
-    if (!shown) return;
+    if (!shown || gui) return;   // v3.108 a GUI tab has no screen to read
     let m = null;
     try {
       m = openOnScreen(screen());
@@ -309,10 +328,125 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
         sid = r.sid;
         cursor = r.cursor;
         append(r.items || []);
+        setGui(r.gui || null);
         if (!r.more || !shown) break;
       }
       empty.hidden = list.childElementCount > 0;
     } catch (e) { console.error(e); } finally { reading = false; }
+  }
+
+  // ---- v3.108 GUI chat: the open request as a card, the live line, Stop
+  function setGui(g) {
+    const was = Boolean(gui);
+    gui = g ? { ...g, asks: (g.asks || []).filter((a) => !answered.has(a.id)) } : null;
+    if (gui && !was) { menu = null; menuShown = ''; texts(); }
+    if (!gui) { if (was) { askShown = ''; card.hidden = true; card.replaceChildren(); stop.hidden = true; endBox.hidden = true; texts(); } return; }
+    drawEnd(gui.ended || null);
+    const first = gui.asks[0] || null;
+    banner.hidden = true;   // another tab's request is no terminal dialog to open here: the badge shows it
+    if ((first?.id || '') !== askShown) drawAsk(first);
+    const l = gui.live;
+    stop.hidden = !l.busy && !first;
+    live.hidden = !l.busy || Boolean(first);
+    const txt = l.text ? l.text.slice(-300).replace(/\s+/g, ' ') : l.tool ? t('chat.gui.running', { tool: l.tool }) : t('chat.working');
+    if (live.textContent !== txt) live.textContent = txt;
+  }
+  function drawEnd(e) {
+    const key = e ? `${e.at}` : '';
+    if (key === endShown) return;
+    endShown = key;
+    endBox.hidden = !e;
+    if (!e) return;
+    endText.textContent = t(e.code === 0 ? 'chat.gui.ended' : 'chat.gui.endedError', { code: e.code });
+    endPre.textContent = e.text || '';
+    endPre.hidden = !e.text;
+    if (atBottomNow()) list.scrollTop = list.scrollHeight;
+  }
+  async function answer(ask, a) {
+    answered.add(ask.id);
+    for (const b of card.querySelectorAll('button, input, textarea')) b.disabled = true;
+    let r;
+    try { r = await api.chat.answer(ptyId, ask.id, a); } catch (e) { console.error(e); r = 'error'; }
+    // 'gone': claude withdrew it. Anything else failed: the card comes back so it can still be answered
+    if (r !== 'ok' && r !== 'gone') { answered.delete(ask.id); note(t(`chat.why.${['not-running', 'locked'].includes(r) ? r : 'other'}`)); }
+    askShown = '';
+    setTimeout(poll, 100);
+  }
+  /** A text box for "tell Claude what to do instead", shown on Deny / Keep planning; Enter sends it. */
+  function withMessage(ask, label, allow) {
+    const box = h('textarea', { class: 'chat-free', rows: '2', placeholder: t('chat.gui.denyPlaceholder') });
+    const go = () => answer(ask, { allow, message: box.value });
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); go(); } });
+    card.querySelector('.chat-menu-nav')?.replaceWith(h('div', { class: 'chat-free-row' }, box, h('button', { class: 'chat-send', onclick: go }, label)));
+    box.focus();
+  }
+  function questionCard(ask) {
+    /** @type {Map<string, Set<string>>} */
+    const picked = new Map();
+    const other = new Map();   // question → its "Other" text box
+    const parts = ask.questions.map((q) => {
+      picked.set(q.question, new Set());
+      const rows = q.options.map((o) => {
+        const row = h('button', { class: 'chat-opt', title: o.description || '' },
+          h('span', { class: 'chat-opt-n' }, q.multiSelect ? '☐' : '○'), h('span', { class: 'chat-opt-label' }, o.label),
+          o.description ? h('span', { class: 'chat-opt-desc' }, o.description) : null);
+        row.addEventListener('click', () => {
+          const set = picked.get(q.question);
+          if (!q.multiSelect) { set.clear(); for (const b of row.parentElement.children) { b.classList.remove('checked'); const n = b.querySelector('.chat-opt-n'); if (n) n.textContent = '○'; } }
+          if (set.has(o.label)) set.delete(o.label); else set.add(o.label);
+          row.classList.toggle('checked', set.has(o.label));
+          row.querySelector('.chat-opt-n').textContent = q.multiSelect ? (set.has(o.label) ? '☑' : '☐') : (set.has(o.label) ? '●' : '○');
+          if (!q.multiSelect && ask.questions.length === 1) submitAnswers();   // one question, one choice: done
+        });
+        return row;
+      });
+      const box = h('input', { class: 'chat-free', type: 'text', placeholder: t('chat.gui.other') });
+      box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submitAnswers(); } });
+      other.set(q.question, box);
+      return h('div', { class: 'chat-question' }, q.header ? h('div', { class: 'chat-menu-ctx' }, q.header) : null,
+        h('div', { class: 'chat-menu-q' }, q.question), h('div', { class: 'chat-opts' }, ...rows), box);
+    });
+    function submitAnswers() {
+      const answers = {};
+      for (const q of ask.questions) {
+        const typed = other.get(q.question)?.value.trim();
+        const labels = [...picked.get(q.question)];
+        const a = typed || labels.join(', ');
+        if (a) answers[q.question] = a;
+      }
+      if (Object.keys(answers).length < ask.questions.length) { note(t('chat.gui.answerAll')); return; }
+      note('');
+      answer(ask, { allow: true, answers });
+    }
+    return [...parts, h('div', { class: 'chat-menu-nav' },
+      h('button', { class: 'chat-nav', onclick: () => answer(ask, { allow: false }) }, t('chat.gui.skip')),
+      h('button', { class: 'chat-send', onclick: () => submitAnswers() }, t('chat.gui.submit')))];
+  }
+  function drawAsk(ask) {
+    askShown = ask?.id || '';
+    card.hidden = !ask;
+    if (!ask) { card.replaceChildren(); return; }
+    const more = gui && gui.asks.length > 1 ? h('div', { class: 'chat-menu-ctx' }, t('chat.gui.more', { count: gui.asks.length - 1 })) : null;
+    let kids;
+    if (ask.kind === 'question') kids = questionCard(ask);
+    else if (ask.kind === 'plan') {
+      kids = [h('div', { class: 'chat-menu-q' }, t('chat.gui.planTitle')), h('div', { class: 'chat-plan' }, mdBody(ask.plan || '')),
+        h('div', { class: 'chat-menu-nav' },
+          h('button', { class: 'chat-nav', onclick: () => withMessage(ask, t('chat.gui.keepPlanning'), false) }, t('chat.gui.keepPlanning')),
+          h('button', { class: 'chat-send', onclick: () => answer(ask, { allow: true }) }, t('chat.gui.approvePlan')))];
+    } else {
+      kids = [h('div', { class: 'chat-menu-q' }, t(ask.agent ? 'chat.gui.agentWants' : 'chat.gui.wants', { tool: ask.name })),
+        ask.detail ? h('pre', { class: 'chat-dialog' }, ask.detail) : null,
+        h('div', { class: 'chat-menu-nav' },
+          h('button', { class: 'chat-nav', onclick: () => withMessage(ask, t('chat.gui.deny'), false) }, t('chat.gui.deny')),
+          h('button', { class: 'chat-send', onclick: () => answer(ask, { allow: true }) }, t('chat.gui.allow')))];
+    }
+    card.replaceChildren(...[more, ...kids].filter(Boolean));
+    if (atBottomNow()) list.scrollTop = list.scrollHeight;
+  }
+  async function interrupt() {
+    try { await api.chat.interrupt(ptyId); } catch (e) { console.error(e); }
+    setTimeout(poll, 200);
   }
 
   function replyTo(text) {
@@ -329,7 +463,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   async function submit() {
     const text = input.value;
     if (!text.trim()) return;
-    if (menu) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
+    if (menu && !gui) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
     // a slash command is sent as typed (a quote in front would stop it being a command)
     const out = replying && !/^\s*\//.test(text) ? withReply(replying, text) : text;
     let r;
@@ -409,6 +543,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     // Enter sends, Shift+Enter is a new line; not while an input method is composing (Turkish/CJK IMEs)
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
     else if (e.key === 'Escape' && replying) { e.preventDefault(); replyTo(''); }
+    else if (e.key === 'Escape' && gui?.live.busy) { e.preventDefault(); interrupt(); }   // v3.108 Esc stops the turn, as in the terminal
   });
 
   return {
@@ -429,8 +564,10 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
       window.clearInterval(menuTimer);
     },
     /** The project's attention ('permission' shows the banner: Claude Code waits for an answer in the terminal). */
-    setAttention(a) { attention = a; banner.hidden = hidesBanner() || a !== 'permission'; },
-    texts() { texts(); menuShown = ''; drawMenu(); },
+    setAttention(a) { attention = a; banner.hidden = Boolean(gui) || hidesBanner() || a !== 'permission'; },
+    texts() { texts(); if (gui) { askShown = ''; setGui(gui); return; } menuShown = ''; drawMenu(); },
+    /** v3.108 is this tab a GUI chat (as of the last read)? */
+    isGui: () => Boolean(gui),
     focus() { input.focus(); },
     destroy() { shown = false; window.clearInterval(timer); window.clearInterval(menuTimer); el.remove(); },
   };

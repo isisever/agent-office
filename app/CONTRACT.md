@@ -1549,6 +1549,7 @@ A Claude Code tab can be shown as a conversation instead of its terminal. Off by
 - **Personal workspace, review fixes** (v3.83 / v3.87 review): (1) *Trust only what the app made.* `ensurePersonal` marks the project `appMade: true` (kept by `normalizeState`) only when `mkdirSync` created the folder in that call or it is a real, empty directory (`PD.appMadeFolder`, `lstat`: never a symlink); an existing folder with content or a symlink is used as before but never trusted by the app, and `PD.trustFolder` itself refuses anything that is not a real directory. Workspaces made before this fix carry no mark: they keep the trust they got then and get none in another account. (2) *Trust in the account the desk runs on.* The entry is written by `trustPersonalDesk` each time the desk is opened (`openDesk`), into the account `P.resolvePty` gives the desk (the member's own current account, else the project's), not the account the workspace had when it was made. A member without an account still means the Default account's `~/.claude.json` (read-modify-rename, as `mergeClaudeJson`; left as is). (3) *A removed member gets nothing.* After the consent dialog, the single path and the staged path look the member up again (`memberById`, `teamOn()`) before `ensurePersonal` → `unknown-staff`, nothing created. (4) *A later stage's workspace is made at release.* A waiting stage for a workspace that does not exist yet stores `personalStaff` (the member id) in `stage.json`; `hqReleaseStage` makes it then, or refuses the stage (`unknown-staff`, `desk-failed`).
 - **Task watch** (amendment to v3.35/v3.46/v3.83, 2026-11-17, `src/task-watch.js`): every 5 s main looks at each of this machine's own open dispatched tasks (`dispatches.json` records with `pub: 'self'` now keep `into`, the tab the task went to: the project's main tab or a desk) in that tab (`tabLive`: the pid file's `waiting` → `permission`; `R.isTurnBusy` → `busy`; else `idle`; no pty → `gone`). The board shows `running` while the tab works and `needs-approval` while a prompt or dialog is open (`delivered` while idle). A task whose session never reports, idle 3 min (`IDLE_MS`, also 3 min after delivery) or its tab gone 1 min (`GONE_MS`), is ended by the app: it writes `reports/<id>.json` where the plugin writes reports (not when that file is already there), `{ ok: false, partial: true, summary: "[Agent Office] The session … without writing its report …" + the session's last answer (`CHAT.lastAnswer`: the newest assistant text of the tab's transcript), commits: [] }`, and the queue's report scan takes it like any other: board `partial`, HQ's report-ready and request-done prompts, a routine's run ends. A later plugin report for that id is ignored (the task is no longer the queue's). `office_reports` gives a local task's live board status, `partial` for a partial report, and `tab` (`<project> · <member>`) for a desk. HQ's brief (plugin `hooks/hq.ts`) adds: follow the tasks with office_reports, answer the person when told a report or request ended without being asked, and treat the app's partial report as "stopped or waiting for the person" with the tab to open.
 - **HQ: Board or Office** (amendment to v3.46, 2026-11-17): while HQ is selected a bar above the view switches between the Board and the office (every project's agents and desks, as for a project); the choice is kept in the window's `localStorage` (`hq.view`). Strings `hq.view.board`, `hq.view.office`.
+- **GUI chat** (amended in v3.108): on macOS and Linux, a Claude Code tab other than HQ that starts while the chat view is on runs claude on its SDK protocol instead of in a terminal (see "Chat view runs on Claude Code's SDK protocol (v3.108)"). For such a tab the menu reading, `chat:keys`, the screen's live line and the `permission`/`draft` refusals of `chat:send` do not apply; HQ, Windows and tabs switched to the terminal keep everything above.
 
 ## 3D office (v3.81)
 
@@ -2397,3 +2398,99 @@ on this machine and on a paired one. This supersedes v3.49's "a remote run ALWAY
 - **Strings** (en, tr): `hq.askBeforeDispatchHint` says routines follow the setting, a paired computer alike;
   `routines.noAskHint` and `routines.noAskRemote` say the checkbox and the remote card apply only while the setting is on.
 - Tests: `test/routines.test.cjs` (remote runs with the setting off and on), `test/hq-chain.test.cjs`, `test/hq.test.cjs`.
+
+## Chat view runs on Claude Code's SDK protocol (v3.108)
+
+The v3.80 chat view read the transcript and found Claude Code's menus by parsing the hidden terminal's screen, then
+answered them by typing keys. That broke whenever the screen did not look as expected (a cut approval, a dialog, a menu
+redrawn under the card), and approvals often had to be answered in the terminal. With the chat view on, a Claude Code
+tab now runs claude the way the VS Code extension does: no terminal, one JSON object a line each way
+(`claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages
+--permission-prompt-tool stdio`, then the tab's usual arguments). Claude Code asks the app before every tool call that
+would open a permission dialog (`control_request` `can_use_tool`, AskUserQuestion and ExitPlanMode included); the chat
+draws each request from its data and the app answers allow or deny. The conversation itself is still read from the
+transcript (v3.80 `chat:read`), so history, resume, sleep, tokens and the usage-limit backup work as before.
+
+```ts
+agentOffice.chat.read(id, cursor)      // v3.80 result + gui: null | { asks: Ask[], live: { busy: boolean, text: string, tool: string } }
+agentOffice.chat.answer(id, askId, { allow: boolean, message?: string, answers?: { [question: string]: string } })
+                                       // 'chat:answer' → 'ok' | 'gone' | 'bad-answer' | 'locked' | 'not-running'
+agentOffice.chat.interrupt(id)         // 'chat:interrupt' (Stop, Esc) → 'ok' | 'not-running'
+agentOffice.chat.mode(id, 'terminal' | 'gui')   // 'chat:mode' → 'ok' (view only) | 'moved' | 'busy' | 'locked' | 'unsupported'
+agentOffice.chat.onMoved(cb)           // event 'chat:moved' (id): the chat view setting moved an idle tab to the other mode
+type Ask = { id: string; kind: 'permission' | 'question' | 'plan'; tool: string; name: string; detail: string;
+  reason: string; agent: boolean; questions?: { question, header, multiSelect, options: { label, description }[] }[];
+  plan?: string; since: number }      // the tool's full input stays in main
+```
+
+- **Which tabs** (`GS.guiEligible`): `state.chatView` on, Claude Code engine, not a shell tab, not HQ (its keys are held
+  and minted, v3.46/v3.47), not on Windows (claude is a `.cmd` shim there; pipes untested), and not switched to the
+  terminal by the person (`termTabs`, kept in memory for this run of the app). Main tab, extra tabs, worktree tabs and
+  staff desks alike. Everything else starts in a pty exactly as before.
+- **Start** (`startPty`): the same argv, env, `--settings`, MCP file, skill packs, account and resume arguments as a
+  terminal start; `GS.guiArgs` puts the protocol flags first. Spawned with `child_process.spawn` through the same login
+  shell line (`$SHELL -l -i -c '<exports>; exec claude "$@"'`) in its own process group (`detached`; a stop signals the
+  whole group, as a pty's hangup does, so claude's shells and MCP servers end with it), so the process pid is claude's and Claude Code's pid file
+  (`<config>/sessions/<pid>.json`, `status` `busy`/`idle`, checked with 2.1.311) drives `isTurnBusy`, `canTypePrompt`,
+  sleep, marks and `restartIdle` unchanged. A start prompt (resume, `startWithPrompt`, routines, the carry-on after a
+  move) is sent as the first message instead of the positional argument. `src/gui-proc.js` `spawnGui` gives the process
+  the shape of a pty (`pid`, `onData`/`onExit` returning IDisposables through `attachPty`, `kill`; `write` and `resize`
+  do nothing), so `terms`, `killPty`, the exit and resume-grace handling are shared. claude's stderr goes to the tab's
+  terminal; the terminal gets one dim line `main.guiTerminalNote`.
+- **Typing in** (`typePrompt`): a GUI tab takes the text as a `user` message (claude queues one sent mid-turn), so HQ
+  dispatch, remote tasks, routines and "Resume unfinished work" reach it unchanged. `chat:send` refuses only `empty`,
+  `too-long`, `locked`, `not-running` for a GUI tab (no draft, no menu a text could answer). Keys from the hidden xterm
+  (`pty:write`) go nowhere and are no draft.
+- **Permission requests**: a request becomes an `Ask` (`GS.askOf`). The app answers allow without a card only when
+  `GS.autoAllows` says so: the project's Auto-approve is on (v3.71), the tab is not a mail desk (v3.85), the tool is not
+  AskUserQuestion/ExitPlanMode, and `canAutoApprove` allows it. `canAutoApprove` is the plugin's own rule set:
+  `app/src/auto-approve.mjs` is generated from `plugin/hooks/auto-approve.ts` by `app/scripts/sync-core.mjs`
+  (`node:module` `stripTypeScriptTypes`, one header line; never edited by hand; a test compares it) and loaded at start;
+  until it is loaded every request goes to the person. `sync-core.mjs` warns when the Node it runs on cannot generate the
+  copy; the test requires it on CI. Skip permissions (v3.72) still passes
+  `--dangerously-skip-permissions`, so Claude Code asks almost nothing. Everything else waits for the person, at most
+  `ASKS_MAX` (20) per tab (more are denied); a request that cannot be read is denied, never left open. Claude's
+  `control_cancel_request` and the turn's `result` close open cards. An open card counts as the project's `waiting`
+  (`N.withWaits` into `nextAttention`), so the badge and the notification work as for a terminal dialog.
+- **HQ's tasks** (v3.83/v3.87 task watch, remote tasks): `tabLive` reads a GUI tab with an open card as `permission`, so
+  a dispatched task in it shows `needs-approval` exactly as a terminal dialog would (the pid file does not say
+  `waiting` for a request the app holds).
+- **Answers** (`GS.answerLine`): permission → allow (the original input) or deny with the person's optional text; question
+  → allow with `answers` (`{ [question]: label(s) or typed text }`, every question answered, control characters
+  dropped, ≤ 2000 characters); plan → allow, or deny with a message ("Keep planning"). Answering is refused while the
+  project is handed off (`locked`). Nothing is ever added to Claude Code's permission rules.
+- **Terminal ↔ chat** (`chat:mode`): only while nothing runs: `idleSession` gives a session id (the `restartIdle` test:
+  no turn, no agent or background shell, no draft), no open card, no live turn, and for a terminal tab no project
+  approval waiting; else `busy` and the tab stays as it is. Otherwise claude restarts in the other mode with
+  `--resume <sid>` and the renderer resets the terminal (`moved`). A stopped or sleeping tab only notes the choice for its next start. HQ and Windows switch the view only.
+- **Chat view setting**: turning it on or off moves idle Claude Code tabs at once (`guiSwitchIdle`, `chat:moved`); a busy
+  tab keeps its mode and is moved by `checkTurns` once idle. Never a busy tab, never a draft, never a tab under a
+  handoff lock (rule: busy work is not restarted).
+- **An end in the chat**: when a GUI tab's claude ends by itself (not a kill: those are silent), main keeps
+  `{ code, text, at }` (`guiEnded`; `text` = `GS.endNote` of its stderr: escapes and blank lines dropped, the last 800
+  characters) and `chat:read` returns it as `gui.ended` while the tab is stopped; a new start clears it. The chat shows
+  `chat.gui.ended` (exit 0) or `chat.gui.endedError` with the text, and `chat.gui.restart` (`pty:restart`, the same as
+  Enter in an ended terminal). Dev-mock `?chat&gui=ended`.
+- **Activity and sleep**: every message claude writes counts as the tab's activity (`activity.at`, sleep's idle
+  clock). `sleepIdle` never puts a GUI tab with an open card or a live turn to sleep. The text of a failed turn's
+  `result` and of an API error message (`GS.errorText`) goes to `watchLimit` as a terminal's output would (v3.77).
+- **Remote devices** (v3.48/v3.71/v3.72/v3.97): unchanged. `answersPrompts` is read from the project's switches as
+  before; a device's task never answers a card.
+- **UI**: `renderer/chat.js`: cards for permission (Allow / Deny with an optional message), question (options, multi
+  select, "Other" text, Submit / Skip; one single-choice question sends on click), plan (rendered markdown, Approve /
+  Keep planning); "N more waiting"; the live line (the answer being written, else `Running {tool}…`); Stop
+  (`chat:interrupt`, also Esc in the input while a turn runs). Locale keys `chat.gui.*`, `main.guiTerminalNote`.
+  Dev-mock: `?chat&gui`, `?gui=perm|q|plan`.
+- **Not done here**: HQ in GUI mode; Windows; "allow always" (`permission_suggestions`); slash commands that open a
+  screen of their own (`/model`, `/mcp`, …) still need the terminal (switch with Terminal when idle); images in the chat
+  input.
+- **Unverified**: checked with Claude Code 2.1.311 in headless runs: `can_use_tool` arrives for a Bash write and runs on
+  allow; AskUserQuestion answers reach the model through `updatedInput.answers`; `interrupt` ends the turn
+  (`[Request interrupted by user]`) and the session goes on; the pid file reads `busy`/`idle` in this mode; the login
+  shell line keeps stdout clean. Not tried in the packaged Electron app, on Linux, or with a mail desk's ask rules; the
+  plugin's `PermissionRequest` hook did not answer in this mode (its `stats.waiting` is not set: the app's own
+  `withWaits` covers attention). Whether the v3.77 compaction-failure text reaches `result` / an API error message in
+  this mode is not verified (the transcript-based limit check is unchanged). A GUI tab shows no "another tab waits"
+  banner: the project's badge shows it.
+- **Tests**: `app/test/gui-session.test.cjs` (eligibility, argv, protocol lines, line splitting, cards, auto answers,
+  the generated rules copy, answers, the live line, the pty-shaped wrapper with a fake process, attention).

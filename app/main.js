@@ -22,6 +22,8 @@ const Z = require('./src/sleep.js');
 const TR = require('./src/transfer.js');
 const TIO = require('./src/transfer-io.js');
 const CHAT = require('./src/chat.js');
+const GS = require('./src/gui-session.js');   // v3.108 GUI chat: the SDK protocol
+const GP = require('./src/gui-proc.js');
 const TW = require('./src/task-watch.js');
 const SC = require('./src/shared-config.js');
 const PF = require('./src/project-files.js');
@@ -162,7 +164,7 @@ function notify(title, body, projectId) {
 }
 function updateAttention() {
   if (!lastOffice) return;
-  const r = N.nextAttention(attnState, state.projects, lastOffice, seenId(), sessionAliases());
+  const r = N.nextAttention(attnState, state.projects, N.withWaits(lastOffice, guiWaits()), seenId(), sessionAliases());
   attnState = r.state;
   for (const ev of r.events) {
     const p = P.findProject(state, ev.id);
@@ -495,6 +497,7 @@ function checkTurns() {
   setMarks(next);
   syncKeepAwake(working + routineRunsBusy());
   checkMcp();
+  guiSwitchIdle();   // v3.108 a tab left in the other mode by a chat view change moves once it is idle
   checkModelLeak();
   checkLimits();
 }
@@ -1202,11 +1205,42 @@ const RESUME_GRACE_MS = 8000; // if --continue ends with an error within this ti
 // prompt: submitted as claude's positional prompt, only when the start resumes a session (interrupted work).
 // A tab of an Antigravity project starts `agy` instead (startAgy, contract v3.22); a Command Code project starts
 // `commandcode` (startCommandCode, contract v3.25).
+// --- v3.108 GUI chat (src/gui-session.js, src/gui-proc.js): with the chat view on, a Claude Code tab runs claude on its
+// SDK protocol, the way the VS Code extension does; the person can switch one tab to its terminal (chat:mode)
+const termTabs = new Set();   // pty ids the person switched to the terminal (this run of the app)
+const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
+/** Does this tab start as a GUI chat? */
+function guiTab(id, r) {
+  return GS.guiEligible({ chatView: state.chatView === true, terminal: termTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
+}
+/** A GUI tab's permission request: true when the app answers it (Auto-approve, v3.71 rules); else it waits for the person. */
+function guiAsk(id, ask, input, { autoApprove, mailGuard }) {
+  if (GS.autoAllows({ tool: ask.tool, input, autoApprove, mailGuard, canAutoApprove: AA ? AA.canAutoApprove : null })) return true;
+  const a = activity.get(id);
+  if (a) a.at = Date.now();
+  setImmediate(() => { if (lastOffice) updateAttention(); });   // the project waits for the person (badge, notification)
+  return false;
+}
+/** v3.108 the open requests of every GUI tab, as the plugin's `waiting` of the project they belong to (attention). */
+function guiWaits() {
+  const out = new Map();   // project name → { tool, since }
+  for (const [id, t] of terms) {
+    if (!t.gui) continue;
+    const first = t.asks()[0];
+    const p = first && P.resolvePty(state, id)?.project;
+    if (!p) continue;
+    const old = out.get(p.name);
+    if (!old || first.since < old.since) out.set(p.name, { tool: first.tool, since: first.since });
+  }
+  return out;
+}
+
 function startPty(id, { resume = false, sessionId = null, imported = false, prompt = '', forcePrompt = false } = {}) {
   // every start of a personal desk (open, restore, wake, restart on another account): its folder is trusted in the account it runs on
   trustPersonalDesk(id);
   trustDeskWorktree(id);   // v3.94 the same for a desk's worktree the app made
   stoppedHere.delete(id);   // v3.99 started again: the person's earlier stop no longer holds
+  guiEnded.delete(id);      // v3.108 a new start: the last end's note goes
   killPty(id);
   const r = P.resolvePty(state, id);
   if (!r || !win || !isLoaded) return broadcast();
@@ -1276,6 +1310,10 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     else if (!settingsArg) console.error('desk starts without the extra account rules: the oversize settings file could not be written');
   }
   const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(mailMcp ? ['--strict-mcp-config'] : []), ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
+  // v3.108 GUI chat: claude on the SDK protocol (no terminal); a start prompt goes in as its first message instead of
+  // the positional argument, always the last one claudeArgs adds (stream-json input takes no prompt argument)
+  const gui = guiTab(id, r);
+  const guiPrompt = gui && (resumeArgs.length > 0 || forcePrompt) && R.promptArg(prompt) ? prompt : '';
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
@@ -1330,11 +1368,18 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   }
   if (IS_WIN) env = windowsStatusLineEnv(env, sl);
   let t;
+  let guiProc = null;   // v3.108 the same object as t when the tab runs as a GUI chat
   try {
     // Windows: claude starts directly in a ConPTY (CLAUDE_CONFIG_DIR is already in env: no rc files to override it)
     const win32 = IS_WIN ? windowsClaude(args, env) : null;
     if (IS_WIN && !win32) { sendNoClaude(id); return broadcast(); }
-    t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', cmd, 'claude', ...args], {
+    if (gui) {
+      t = guiProc = GP.spawnGui(spawn, shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args)], {
+        cwd: isDir(cwd) ? cwd : app.getPath('home'),
+        env,
+      }, { onAsk: (ask, input) => guiAsk(id, ask, input, { autoApprove: !project.hq && P.autoApproveOf(project), mailGuard: Boolean(mailMcp) }) });
+      if (!t.pid) throw new Error('claude did not start');
+    } else t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', cmd, 'claude', ...args], {
       name: 'xterm-256color',
       cols, rows,
       cwd: isDir(cwd) ? cwd : app.getPath('home'),
@@ -1354,6 +1399,17 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // v3.77: a prompt given as claude's argument (the carry-on after a move) is an Enter at the start
   ptyLimit.set(id, { scan: { tail: '' }, hitAt: 0, input: FB.startInput({ prompt: args.includes(R.promptArg(prompt)) ? prompt : '', startedAt, sessionId }) });
   if (sessionId) lastSid.set(id, sessionId); else lastSid.delete(id);
+  if (guiPrompt) guiProc?.sendUser(guiPrompt);
+  // v3.108 no terminal output: claude's messages are the tab's activity (sleep's idle clock), and an error's text goes to
+  // the usage-limit watch as a terminal line would (v3.77)
+  guiProc?.onMessage((m) => {
+    if (terms.get(id) !== guiProc) return;
+    const a = activity.get(id);
+    if (a) a.at = Date.now();
+    const text = GS.errorText(m);
+    if (text) watchLimit(id, text, startedAt);
+  });   // v3.108 read once claude is up (stdin waits for it)
+  if (gui) send('pty:data', id, `\x1b[2m${T('main.guiTerminalNote')}\x1b[0m\r\n`);   // its terminal stays empty otherwise
   attachPty(terms, id, t, {
     onData: (d) => {
       const a = activity.get(id);
@@ -1373,6 +1429,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       if (last) lastSid.set(id, last);
       setMarks(R.clearInterrupted(marks(), [id])); // claude ended while the app runs: nothing to resume later
       removeMcpFile(id);
+      // v3.108 a GUI tab has no terminal on show: how it ended (exit code, the end of claude's stderr) goes to its chat
+      if (guiProc) guiEnded.set(id, { code: exitCode, text: GS.endNote(guiProc.stderr()), at: Date.now() });
       // the session to resume was not found or could not be opened: start fresh without showing the exit to the user
       if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) {
         if (!imported) return startPty(id);
@@ -1761,6 +1819,14 @@ function typePrompt(id, text, { taskId = '' } = {}) {
     const dir = path.join(app.getPath('home'), '.claude', 'agent-office', 'tasks');
     if (sid) try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, `${sid}.json`), JSON.stringify({ id: taskId, at: Date.now() }), { mode: 0o600 }); } catch (e) { console.error('task id:', e.message); }
   }
+  // v3.108 a GUI chat tab takes the text as a message (claude queues one sent mid-turn); never HQ
+  if (t.gui) {
+    if (!t.sendUser(text)) return false;
+    noteInput(id, '\r');
+    const a = activity.get(id);
+    if (a) { a.at = Date.now(); a.draft = false; }
+    return true;
+  }
   if (P.isHqId(id)) hqGate.hold();   // v3.47 the person's HQ keystrokes wait until the pasted prompt's Enter
   t.write(R.typedPrompt(text));
   setTimeout(() => {
@@ -2010,6 +2076,7 @@ function tabLive(id) {
   const r = P.resolvePty(state, id);
   const t = terms.get(id);
   if (!r || !t) return 'gone';
+  if (t.gui && t.asks().length > 0) return 'permission';   // v3.108 a GUI tab's open card: HQ's task reads needs-approval
   const claude = readJson(Z.claudePidFile(A.accountOf(state, r.project).configDir, app.getPath('home'), t.pid));
   if (claude?.status === 'waiting') return 'permission';
   const sid = validSid(claude?.sessionId);
@@ -3383,6 +3450,7 @@ function sleepIdle() {
     const r = P.resolvePty(state, id);
     if (!r || r.tab?.shell) continue; // a shell has no idle to detect: it never sleeps
     if (r.project.hq) continue; // v3.46 HQ never sleeps
+    if (t.gui && (t.asks().length > 0 || t.live().busy)) continue;   // v3.108 an open card or a live turn is work
     const { configDir } = A.accountOf(state, r.project);
     const a = activity.get(id) || { at: now, draft: false };
     const base = { now, idleMs: minutes * 60000, lastActivityAt: a.at, hasDraft: a.draft, isActive: r.project.id === state.activeId };
@@ -4607,6 +4675,22 @@ function restartIdle(p) {
   }
   return restarted;
 }
+/** v3.108 the chat view setting changed: idle Claude Code tabs continue their session in the other mode at once; busy
+ * ones (and drafts) keep their mode until their next start. */
+function guiSwitchIdle() {
+  for (const p of state.projects) {
+    if (p.hq || P.engineOf(p) !== 'claude') continue;
+    for (const pid of P.ptyIdsOf(p)) {
+      const t = terms.get(pid);
+      const r = P.resolvePty(state, pid);
+      if (!t || !r || Boolean(t.gui) === guiTab(pid, r) || handoffLocked(pid)) continue;
+      const sid = idleSession(pid);
+      if (!sid || (t.gui && (t.asks().length > 0 || t.live().busy))) continue;
+      startPty(pid, { sessionId: sid, resume: true });
+      send('chat:moved', pid);
+    }
+  }
+}
 /** A running tab's session id when its claude can restart without losing anything, else ''. */
 function idleSession(pid) {
   const t = terms.get(pid);
@@ -5100,6 +5184,7 @@ ipcMain.on('pty:write', (_e, id, d) => {
   if (P.isHqId(id)) { hqLastKey = Date.now(); if (hqGate.queue(d)) return; }   // v3.47 held during a routine prompt's paste→Enter
   if (P.isHqId(id) && HQ.submitsTyped(activity.get(id)?.draft, d)) hqMinter.mint();   // v3.46 the person typed an HQ request
   if (!terms.has(id)) wake(id);
+  if (terms.get(id)?.gui) return;   // v3.108 a GUI chat tab has no terminal: keys from its hidden xterm are no draft
   const a = activity.get(id);
   if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); }
   noteInput(id, d);
@@ -5157,15 +5242,15 @@ ipcMain.handle('chat:read', (_e, id, cursor) => {
   if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return { unsupported: true };
   const { configDir } = A.accountOf(state, r.project);
   const sid = chatSession(id, r, configDir);
-  if (!sid) return { sid: null, cursor: null, items: [], reset: true, more: false };
+  if (!sid) return { sid: null, cursor: null, items: [], reset: true, more: false, gui: guiInfo(id) };
   let known = chatFiles.get(id);
   if (!known || known.sid !== sid || !fs.existsSync(known.file)) {
     const f = TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file;
-    if (!f) return { sid, cursor: null, items: [], reset: true, more: false };   // written with the first prompt
+    if (!f) return { sid, cursor: null, items: [], reset: true, more: false, gui: guiInfo(id) };   // written with the first prompt
     known = { sid, file: f };
     chatFiles.set(id, known);
   }
-  return { sid, ...CHAT.readChat(known.file, cursor && typeof cursor === 'object' ? cursor : null) };
+  return { sid, ...CHAT.readChat(known.file, cursor && typeof cursor === 'object' ? cursor : null), gui: guiInfo(id) };
 });
 // A chat-view menu button (an approval, a question): its keys go straight to the tab, a step every 250 ms so Claude
 // Code's menu takes each one; not through pty:write (they are no draft and mint no HQ request).
@@ -5197,10 +5282,54 @@ ipcMain.handle('chat:send', (_e, id, text) => {
   id = String(id);
   const r = P.resolvePty(state, id);
   if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return 'unsupported';
-  const why = CHAT.sendRefused({ text, running: terms.has(id), locked: handoffLocked(id), draft: Boolean(activity.get(id)?.draft), permission: attention.get(r.project.id) === 'permission' });
+  // v3.108 a GUI tab has no draft and no menu a text could answer: its open cards are answered on their own
+  const gui = Boolean(terms.get(id)?.gui);
+  const why = CHAT.sendRefused({ text, running: terms.has(id), locked: handoffLocked(id), draft: !gui && Boolean(activity.get(id)?.draft), permission: !gui && attention.get(r.project.id) === 'permission' });
   if (why) { if (why === 'locked') lockedNotice(id); return why; }
   if (P.isHqId(id)) { hqLastKey = Date.now(); hqMinter.mint(); }
   return typePrompt(id, String(text).trim()) ? 'ok' : 'not-running';
+});
+// --- v3.108 GUI chat: what the chat shows besides the transcript, the person's answers, Stop, and terminal ↔ chat
+/** null for a terminal tab; else { asks, live, gui: true } (the tab may be stopped: then nothing is open). */
+function guiInfo(id) {
+  const t = terms.get(id);
+  if (t?.gui) return { asks: t.asks(), live: t.live() };
+  const r = P.resolvePty(state, id);
+  if (!r || terms.has(id) || !guiTab(id, r)) return null;
+  const ended = guiEnded.get(id);
+  return { asks: [], live: { busy: false, text: '', tool: '' }, ...(ended ? { ended } : {}) };
+}
+ipcMain.handle('chat:answer', (_e, id, askId, answer) => {
+  id = String(id);
+  const t = terms.get(id);
+  if (!t?.gui) return 'not-running';
+  if (handoffLocked(id)) { lockedNotice(id); return 'locked'; }
+  const r = t.answer(String(askId || ''), answer && typeof answer === 'object' ? answer : {});
+  if (r === 'ok') { const a = activity.get(id); if (a) a.at = Date.now(); setImmediate(() => { if (lastOffice) updateAttention(); }); }
+  return r;
+});
+ipcMain.handle('chat:interrupt', (_e, id) => {
+  const t = terms.get(String(id));
+  if (!t?.gui) return 'not-running';
+  return t.interrupt() ? 'ok' : 'not-running';
+});
+// The person switches a tab between the GUI chat and its terminal: the same session goes on in the other (claude
+// --resume), only while nothing runs in it (rule 4: never restart busy work). A stopped or sleeping tab only notes it.
+ipcMain.handle('chat:mode', (_e, id, mode) => {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude' || r.project.hq) return 'unsupported';
+  const had = termTabs.has(id);
+  if (mode === 'terminal') termTabs.add(id); else termTabs.delete(id);
+  const t = terms.get(id);
+  if (!t || Boolean(t.gui) === guiTab(id, r)) return 'ok';   // stopped, or already in that mode (Windows: always a terminal)
+  const undo = () => { if (had) termTabs.add(id); else termTabs.delete(id); };
+  if (handoffLocked(id)) { undo(); lockedNotice(id); return 'locked'; }
+  // the same test as restartIdle (no turn, agents, shells or draft; a session id to resume), plus an open card or turn
+  const sid = idleSession(id);
+  if (!sid || (t.gui && (t.asks().length > 0 || t.live().busy)) || (!t.gui && attention.get(r.project.id) === 'permission')) { undo(); return 'busy'; }
+  startPty(id, { sessionId: sid, resume: true });
+  return 'moved';
 });
 // the renderer shows a tab: a sleeping one starts (lazy start, wake from sleep)
 ipcMain.on('pty:wake', (_e, id) => { shownTab = String(id); wake(id); });
@@ -5321,7 +5450,11 @@ let AP = null; // src/appearance.mjs (contract v3.74), loaded with the themes li
 async function loadThemesLib() {
   try { TH = await import('./src/themes.mjs'); } catch {}
   try { AP = await import('./src/appearance.mjs'); } catch {}
+  // v3.108 the plugin's auto-approve rules (a generated copy): until loaded, a GUI tab asks the person
+  try { AA = await import('./src/auto-approve.mjs'); } catch (e) { console.error('auto-approve rules:', e.message); }
 }
+/** @type {{ canAutoApprove(tool: unknown, input: unknown): boolean } | null} */
+let AA = null;
 /** @type {unknown[] | null} */
 let galleryFiles = null; // read once: the gallery ships with the app and does not change while it runs
 function readGalleryFiles() {
@@ -5525,7 +5658,7 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp });
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
-  if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) commit({ ...state, chatView: p.chatView });   // v3.80 chat view (the renderer switches)
+  if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) { commit({ ...state, chatView: p.chatView }); guiSwitchIdle(); }   // v3.80 chat view (the renderer switches); v3.108 idle tabs move to / from the GUI chat
   if (p && typeof p.office3d === 'boolean' && p.office3d !== prefs().office3d) commit({ ...state, office3d: p.office3d });   // v3.81 3D office (the renderer switches)
   if (p && typeof p.teamMode === 'boolean' && p.teamMode !== prefs().teamMode) commit({ ...state, teamMode: p.teamMode });   // v3.83 the TEAM panel
   for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (p && typeof p[k] === 'boolean' && p[k] !== prefs()[k]) commit({ ...state, [k]: p[k] });

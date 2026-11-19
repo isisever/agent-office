@@ -63,6 +63,8 @@ jobs:
         run: node --test app/test/hq-chain.test.cjs
       - name: Chat view (transcript items, menus, "/" commands, replies)
         run: node --test app/test/chat.test.cjs app/test/tui-menu.test.mjs app/test/slash-commands.test.cjs
+      - name: GUI chat (SDK protocol, permission cards, auto-approve copy)
+        run: node --test app/test/gui-session.test.cjs
       - name: 3D office (scene boxes)
         run: node --test app/test/office3d.test.mjs
       - name: MCP tools for several projects

@@ -228,7 +228,20 @@ function chatCapable(id) {
   if (!p || (p.engine && p.engine !== 'claude')) return false;
   return !n || !tabsOf(p).find((x) => x.n === Number(n))?.shell;
 }
-function setChatMode(id, on) {
+// v3.108 a GUI chat tab has no terminal of its own: main continues its session in a terminal (or back in the GUI chat)
+// only while nothing runs in it; HQ (and Windows) switch the view only, as before
+const switching = new Set();
+async function setChatMode(id, on) {
+  if (switching.has(id)) return;
+  switching.add(id);
+  let r = 'ok';
+  try { r = String(id).split(':')[0] === HQ_ROW.id ? 'ok' : await api.chat.mode(id, on ? 'gui' : 'terminal'); } catch (e) { console.error(e); r = 'ok'; } finally { switching.delete(id); }
+  if (r === 'busy' || r === 'locked') {
+    hint(id, t(r === 'busy' ? 'chat.gui.busySwitch' : 'chat.why.locked'));
+    setTimeout(() => hint(id, ''), 4000);
+    return;
+  }
+  if (r === 'moved') panes.get(id)?.term.reset({ restarting: true });
   if (on) chatOff.delete(id); else chatOff.add(id);
   syncChat();
   focusActive();
@@ -394,6 +407,7 @@ api.pty.onData((id, d) => {
   pending.set(id, buf);
 });
 api.pty.onReloaded?.((id) => panes.get(id)?.term.reloaded());
+api.chat?.onMoved?.((id) => panes.get(id)?.term.reset({ restarting: true }));   // v3.108 the chat view setting moved an idle tab
 api.pty.onSleep?.((id) => {
   panes.get(id)?.term.sleep();
   pending.delete(id);
