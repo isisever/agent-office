@@ -2337,3 +2337,33 @@ and the error is thrown.
 
 Unchanged: no state rewrites or regenerates keys.bin (or own.bin) on its own; the person resets the link and pairs again.
 Tests: `test/link-errors.test.cjs`.
+
+## Resetting a link whose keys cannot be read (v3.106)
+
+Amends v3.105. In the states `keys-decrypt` and `keys-format`, and in `keys-file` only when keys.bin has the wrong
+shape (a folder, a symbolic link or junction, anything but a regular file) inside a plain link folder, the link view
+carries `canReset: true` and the Devices error box shows a "Reset link" button (`devices.reset`) with a confirm
+(`devices.resetConfirm`: paired devices must remove this computer and pair again). `keys-file` from a read error on a
+regular file (EBUSY, EPERM, EACCES, EMFILE: a scanner or indexer holding it) is transient and never resettable: the view
+carries `canRetry: true` (true in all three states) and the box shows "Try again" (`devices.retry`) instead.
+
+IPC `link:reset` (preload `link.reset(o?)`, `o.retryOnly` for Try again) → `{ ok, recovered?, reason?, code?, folder?,
+view }`; refused with `reason: 'not-needed'` in any other state, a running link included. It first clears the sticky
+state and starts again (a locked keychain or a denied Safe Storage prompt may be gone now): when that works nothing is
+reset, the answer carries `recovered: true` and the panel shows `devices.linkBack`. Only when the same resettable state
+comes back (and not with `retryOnly`) does the reset run; otherwise `reason` is the state now.
+
+A reset moves, never deletes, `keys.bin`, then its marker `keys.bin.ao1`, `own.bin`, `own.bin.ao1`, `devices.json`,
+`keys.bin.tmp` and `own.bin.tmp` into a new folder `link/unreadable-<ISO time>/` (created non-recursively, so an
+existing path or a planted link fails it; a link at a file name is moved as the link). A move that fails puts back
+every file already moved (best effort, newest first), removes the then empty folder and keeps the error state
+(`reason: 'move'`). This machine's name is written back to a new `devices.json` with no devices. It logs
+`{ at, event: 'link-reset', state, moved, folder }` (or `link-reset-failed` with `code`, `message`, `moved`,
+`restored`, `stuck`; `link-retry` when the start again worked) to `link/commands.log`, clears the sticky error and
+starts again, which makes a fresh key pair.
+
+Add device (`link:invite`, preload `invite(o?)`) and Pair with a code (`link:join`, `join(code, o?)`) in one of these
+states start again first. The panel shows the same reset confirm before them whenever `canReset` is true (cancel does
+nothing) and then passes `{ reset: true }`; only with it do they reset and continue, the answer then carrying
+`resetDone: true` (`devices.resetDone`), or `recovered: true` when the start again worked. Never at startup on its own.
+Tests: `test/link-errors.test.cjs`.

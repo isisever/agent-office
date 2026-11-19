@@ -172,8 +172,9 @@ contextBridge.exposeInMainWorld('agentOffice', {
   // v3.28: this user's other Agent Offices (src/link-host.js); every call returns the LinkView
   link: {
     get: () => ipcRenderer.invoke('link:get'),
-    invite: () => ipcRenderer.invoke('link:invite'),
-    join: (code) => ipcRenderer.invoke('link:join', code),          // { ok, error?, view }
+    invite: (o) => ipcRenderer.invoke('link:invite', o),            // v3.106 o: { reset: true } after the reset confirm
+    join: (code, o) => ipcRenderer.invoke('link:join', code, o),    // { ok, error?, view, resetDone?, recovered? }
+    reset: (o) => ipcRenderer.invoke('link:reset', o),              // v3.106 o: { retryOnly? } → { ok, recovered?, reason?, code?, folder?, view }
     cancel: () => ipcRenderer.invoke('link:cancel'),
     setName: (name) => ipcRenderer.invoke('link:setName', name),
     rename: (id, name) => ipcRenderer.invoke('link:rename', id, name),

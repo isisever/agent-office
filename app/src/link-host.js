@@ -15,6 +15,10 @@ const QUEUE_MAX = 5;                    // waiting commands per project
 const QUEUE_TTL_MS = 30 * 60 * 1000;    // a command that waited this long is dropped ('expired')
 const UNATTENDED = 'trusted-unattended';   // v3.97 commands.log marker: taken for a project that answers or skips its prompts, because the device is trusted
 const STOPPED_HERE_MS = 10 * 60 * 1000;   // v3.99 a project the person here stopped is not started for another device's task this long
+const RESETTABLE = new Set(['keys-decrypt', 'keys-format', 'keys-file']);   // v3.106 states the Reset button repairs
+// v3.106 what a reset moves aside: keys.bin first and its marker right after (a rollback covers a failure between
+// them), then own.bin and its marker, the pairings and leftover temp files
+const SET_ASIDE = ['keys.bin', 'keys.bin.ao1', 'own.bin', 'own.bin.ao1', 'devices.json', 'keys.bin.tmp', 'own.bin.tmp'];
 const SELF = 'self';                    // v3.35 the device of a task dispatched to a project of this machine
 const REPORT_POLL_MS = 5000;
 const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/starts its gone boss at most this often
@@ -206,6 +210,80 @@ function setupLink(d) {
     }
     return link;
   }
+  /**
+   * v3.106 keys-file is repaired by a reset only when keys.bin has the wrong shape (a folder, a symbolic link or
+   * junction, anything but a regular file) inside a plain link folder; a read error on a regular file (EBUSY, EPERM,
+   * EACCES, EMFILE: a scanner or indexer holding it) is transient and never resets.
+   */
+  function keysShapeBad() {
+    if (!S.plainDir(dir)) return false;
+    try { return !fs.lstatSync(keysFile).isFile(); } catch { return false; }
+  }
+  /** @param {string | null} state */
+  const resettable = (state) => Boolean(state && RESETTABLE.has(state) && (state !== 'keys-file' || keysShapeBad()));
+  const rlog = (o) => { try { fs.appendFileSync(logFile, `${JSON.stringify({ at: new Date().toISOString(), ...o })}\n`, { mode: 0o600 }); } catch { /* best effort */ } };
+  /**
+   * v3.106 Reset of a link whose keys cannot be read (keys-decrypt, keys-format, keys-file): only from the person's own
+   * action (the Reset button, or Add device / Pair after the same confirm), never on its own and never while the link
+   * runs. It first clears the sticky state and starts again (a locked keychain or a denied prompt may be gone now): when
+   * that works nothing is reset (`recovered`). Only when the same resettable state comes back are the sealed files and
+   * devices.json (whose pairings need the old secrets) MOVED, never deleted, into link/unreadable-<time>/; a move that
+   * fails puts back what was already moved and keeps the error state. This machine's name is kept. Then start() makes a
+   * fresh key pair; every paired device must pair again. `retryOnly`: the start again, never the reset.
+   * @param {{ retryOnly?: boolean }} [o]
+   * @returns {{ ok: boolean, recovered?: boolean, reason?: string, code?: string | null, folder?: string }}
+   */
+  function resetKeys({ retryOnly = false } = {}) {
+    if (link || !error || !RESETTABLE.has(error)) return { ok: false, reason: 'not-needed' };
+    const from = error;
+    error = null;
+    errorCode = null;
+    if (start()) { rlog({ event: 'link-retry', state: from, outcome: 'recovered' }); return { ok: true, recovered: true }; }
+    if (retryOnly || error !== from || !resettable(error)) return { ok: false, reason: error || 'start', code: errorCode };
+    const saved = readJson(devicesFile);
+    const name = saved && typeof saved.name === 'string' ? saved.name : '';
+    const folder = `unreadable-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    const aside = path.join(dir, folder);
+    /** @type {string[]} */
+    const moved = [];
+    let created = false;
+    try {
+      fs.mkdirSync(aside, { mode: 0o700 });   // not recursive: an existing path (or a link planted there) throws
+      created = true;
+      if (!fs.lstatSync(aside).isDirectory()) throw new Error('the aside folder is not a plain folder');
+      // a link planted at a name is moved as the link itself (rename never follows it)
+      for (const n of SET_ASIDE) { const f = path.join(dir, n); if (S.present(f)) { S.renameRetry(f, path.join(aside, n)); moved.push(n); } }
+    } catch (e) {
+      const code = /** @type {any} */ (e)?.code || null;
+      // best effort rollback, newest first: a marked file is never left aside without its marker, nor the link half moved
+      const restored = [];
+      const stuck = [];
+      for (const n of [...moved].reverse()) {
+        try { S.renameRetry(path.join(aside, n), path.join(dir, n)); restored.push(n); } catch { stuck.push(n); }
+      }
+      if (created && !stuck.length) { try { fs.rmdirSync(aside); } catch { /* best effort */ } }
+      rlog({ event: 'link-reset-failed', state: from, code, moved, restored, stuck, folder, message: C.cleanLine(String(/** @type {any} */ (e)?.message), 200) });
+      if (stuck.length) console.error('link: reset rollback left files in', aside, stuck.join(', '));
+      return { ok: false, reason: 'move', code };
+    }
+    if (name) { try { fs.writeFileSync(devicesFile, JSON.stringify({ name, devices: [] }, null, 2), { mode: 0o600, flag: 'wx' }); } catch { /* the name falls back to the host name */ } }
+    rlog({ event: 'link-reset', state: from, moved, folder });
+    error = null;
+    errorCode = null;
+    const l = start();
+    return l ? { ok: true, folder } : { ok: false, reason: error || 'start', code: errorCode };
+  }
+  /**
+   * start(), and when the keys cannot be read: a start again, and the reset only with the person's consent (the panel
+   * showed the reset confirm before Add device / Pair). → the link (or null), whether it was reset or came back.
+   * @param {boolean} consent
+   */
+  function startForPairing(consent) {
+    const l = start();
+    if (l || !error || !RESETTABLE.has(error)) return { l, reset: false, recovered: false };
+    const r = resetKeys({ retryOnly: !consent });
+    return { l: link, reset: r.ok && !r.recovered, recovered: Boolean(r.recovered) };
+  }
   const C_Link = require('./link.js').Link;
 
   const withTargets = (v) => ({ ...v, handoffs: { ...v.handoffs, in: v.handoffs.in.map((x) => ({ ...x, target: targetFor(x.id), answered: answered.has(x.id) })) } });
@@ -214,7 +292,7 @@ function setupLink(d) {
     return defaults.get(id);
   }
   const opStatus = new Map();            // v3.33 `${devicePub}/${projectId}` → { op, state: 'sent'|'ok'|'failed', reason?, at } (our asks)
-  const view = () => ({ projOps: Object.fromEntries(opStatus), sessReaders: [...readers.values()].map((r) => ({ device: r.device, project: r.project })), ...(link ? { ...withTargets(link.view()), error: null, errorCode: null } : { name: os.hostname(), id: '', pairing: null, devices: [], remotes: [], outgoing: [], handoffs: { out: [], in: [] }, self: { app: '', res: null, catalog: [] }, error: error || 'off', errorCode }), owners: ownersView() });
+  const view = () => ({ projOps: Object.fromEntries(opStatus), sessReaders: [...readers.values()].map((r) => ({ device: r.device, project: r.project })), ...(link ? { ...withTargets(link.view()), error: null, errorCode: null } : { name: os.hostname(), id: '', pairing: null, devices: [], remotes: [], outgoing: [], handoffs: { out: [], in: [] }, self: { app: '', res: null, catalog: [] }, error: error || 'off', errorCode, canReset: resettable(error), canRetry: Boolean(error && RESETTABLE.has(error)) }), owners: ownersView() });
   let pushTimer = null;
   function push() {
     if (pushTimer) return;
@@ -735,12 +813,23 @@ function setupLink(d) {
 
   const ipc = (ch, fn) => d.ipcMain.handle(ch, async (_e, ...a) => { const l = start(); if (!l) return view(); await fn(l, ...a); return view(); });
   d.ipcMain.handle('link:get', () => { start(); return view(); });
-  ipc('link:invite', (l) => l.invite());
-  d.ipcMain.handle('link:join', async (_e, code) => {
-    const l = start();
-    if (!l) return { ok: false, error: error || 'off', view: view() };
-    try { await l.join(code); return { ok: true, view: view() }; } catch (e) { return { ok: false, error: String(e.message || e), view: view() }; }
+  // v3.106 Add device and Pair while the keys cannot be read start again first, and reset only with { reset: true }
+  // (the panel asked the reset confirm); resetDone / recovered tell the panel which happened
+  const pairExtra = (reset, recovered) => ({ ...(reset ? { resetDone: true } : {}), ...(recovered ? { recovered: true } : {}) });
+  d.ipcMain.handle('link:invite', async (_e, o) => {
+    const { l, reset, recovered } = startForPairing(o?.reset === true);
+    if (l) await l.invite();
+    return { ...view(), ...pairExtra(reset, recovered) };
   });
+  d.ipcMain.handle('link:join', async (_e, code, o) => {
+    const { l, reset, recovered } = startForPairing(o?.reset === true);
+    const extra = pairExtra(reset, recovered);
+    if (!l) return { ok: false, error: error || 'off', view: view(), ...extra };
+    try { await l.join(code); return { ok: true, view: view(), ...extra }; } catch (e) { return { ok: false, error: String(e.message || e), view: view(), ...extra }; }
+  });
+  // v3.106 the Reset button (and Try again with { retryOnly: true }): refused (reason 'not-needed') unless the link is
+  // off because its keys cannot be read; starts again first and resets only when the same resettable state comes back
+  d.ipcMain.handle('link:reset', (_e, o) => { start(); const r = resetKeys({ retryOnly: o?.retryOnly === true }); return { ...r, view: view() }; });
   ipc('link:cancel', (l) => l.cancelPairing());
   ipc('link:setName', (l, name) => l.setName(String(name || '')));
   ipc('link:rename', (l, id, name) => l.rename(String(id), String(name || '')));
