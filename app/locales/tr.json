@@ -1030,6 +1030,7 @@
     "pair": "Eşle",
     "pairing": "Eşleniyor…",
     "pairFailed": "Eşleme olmadı: {error}",
+    "errorDetails": "Ayrıntı: {code}",
     "online": "çevrimiçi",
     "offline": "çevrimdışı",
     "ownNote": "Bilgisayarınız: burada görev çalıştırabilir, projeleri yönetebilir ve oturumları okuyabilir.",
@@ -1087,7 +1088,11 @@
     },
     "error": {
       "no-keychain": "Cihaz anahtarlarını güvenle saklayacak sistem anahtarlığı yok: cihaz bağlantısı kapalı",
-      "keys": "Cihaz anahtarları okunamadı: cihaz bağlantısı kapalı",
+      "keys-decrypt": "Bu bilgisayar cihaz anahtarlarının şifresini artık çözemiyor (Windows kullanıcısı veya profili değişti), bu yüzden cihaz bağlantısı kapalı: diğer bilgisayarınızda bu cihazı kaldırın, buradaki bağlantıyı sıfırlayın ve yeniden eşleştirin.",
+      "keys-format": "Cihaz anahtarları dosyası geçerli bir bağlantı anahtarı dosyası değil, bu yüzden cihaz bağlantısı kapalı: buradaki bağlantıyı sıfırlayın ve yeniden eşleştirin.",
+      "keys-file": "Cihaz anahtarları dosyası veya klasörü okunamıyor (düz dosya değil ya da erişim reddedildi), bu yüzden cihaz bağlantısı kapalı: Agent Office veri klasörünü kullanan programları kapatın veya link klasörünü kaldırıp yeniden eşleştirin.",
+      "keys-save": "Cihaz anahtarları kaydedilemedi, bu yüzden cihaz bağlantısı kapalı: Agent Office veri klasörünün yazılabilir olduğunu ve antivirüs ya da yedekleme yazılımınca kilitlenmediğini kontrol edip uygulamayı yeniden başlatın.",
+      "start": "Cihaz bağlantısı başlatılamadı, bu yüzden kapalı: uygulamayı yeniden başlatın; tekrar olursa link/commands.log dosyasının son satırını gönderin.",
       "off": "Kapalı"
     },
     "allowHandoff": "Bu cihazdan devirleri kabul et",

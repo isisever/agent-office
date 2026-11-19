@@ -102,6 +102,20 @@ function readPlain(file, fsx = fs) {
     return fsx.readFileSync(fd);
   } finally { fsx.closeSync(fd); }
 }
+const RENAME_WAITS_MS = [100, 300, 700];              // v3.105 waits before the 1st, 2nd and 3rd retry of a rename
+const TRANSIENT = new Set(['EPERM', 'EACCES', 'EBUSY']);   // Windows: a scanner or indexer briefly holds the target open
+const sleepMs = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+/** renameSync that retries up to 3 times on a transient Windows error; any other error, or the last one, is thrown. `fsx.sleepMs` replaces the wait (tests). */
+function renameRetry(from, to, fsx = fs) {
+  for (let i = 0; ; i++) {
+    try { return fsx.renameSync(from, to); } catch (e) {
+      if (i >= RENAME_WAITS_MS.length || !TRANSIENT.has(/** @type {any} */ (e)?.code)) throw e;
+      (/** @type {any} */ (fsx).sleepMs || sleepMs)(RENAME_WAITS_MS[i]);
+    }
+  }
+}
+/** Marks where a sealed-file read failed: 'file' (not a plain file, read error) or 'decrypt' (the keychain refused). */
+const stageOf = (e, stage) => { if (e && typeof e === 'object' && !e.sealStage) e.sealStage = stage; return e; };
 /**
  * Writes through a new temp file and a rename (0600): a half write never truncates the old file, and a symbolic link
  * planted at the path or at the temp name is replaced, never followed.
@@ -111,7 +125,7 @@ function writePlain(file, data, fsx = fs) {
   try {
     fsx.rmSync(tmp, { force: true });
     fsx.writeFileSync(tmp, data, { mode: 0o600, flag: 'wx' });
-    fsx.renameSync(tmp, file);
+    renameRetry(tmp, file, fsx);
   } catch (e) { try { fsx.rmSync(tmp, { force: true }); } catch { /* best effort */ } throw e; }
 }
 
@@ -123,7 +137,12 @@ function sealer(safe, fsx = fs) {
   /** → the encrypted bytes of `plaintext`, bound to `purpose`. @param {string} purpose @param {string} plaintext */
   const seal = (purpose, plaintext) => safe.encryptString(wrap(purpose, plaintext));
   /** Decrypts and looks at the header (see `unwrap`). Throws when the bytes do not decrypt. @param {string} purpose @param {Buffer} bytes */
-  const inspect = (purpose, bytes) => unwrap(purpose, String(safe.decryptString(bytes) ?? ''));
+  const inspect = (purpose, bytes) => {
+    let text;
+    try { text = safe.decryptString(bytes); } catch (e) { throw stageOf(e, 'decrypt'); }
+    if (typeof text !== 'string') throw stageOf(refused('EINVAL', 'the decrypted bytes are not text'), 'decrypt');
+    return unwrap(purpose, text);
+  };
   /**
    * → the payload, or null when the header is missing or names another purpose. Throws when the bytes do not decrypt
    * (the keychain is locked, another build): that says nothing about the file, so the caller keeps it.
@@ -152,7 +171,8 @@ function sealer(safe, fsx = fs) {
    * @param {string} file @param {string} purpose @param {(text: string) => boolean} shape
    */
   const openFile = (file, purpose, shape) => {
-    const bytes = readPlain(file, fsx);
+    let bytes;
+    try { bytes = readPlain(file, fsx); } catch (e) { throw stageOf(e, 'file'); }
     if (!present(markerOf(file), fsx)) return openLegacy(purpose, bytes, shape);
     const payload = open(purpose, bytes);
     return payload === null ? null : { payload, legacy: false };
@@ -167,5 +187,5 @@ function sealer(safe, fsx = fs) {
 
 module.exports = {
   PURPOSE, TOKEN_MAX, header, wrap, unwrap, isLinkKeys, isOwnRecord, linkKeysText, ownRecordText, tokenProblem,
-  present, plainDir, readPlain, writePlain, sealer,
+  present, plainDir, readPlain, writePlain, renameRetry, sealer,
 };

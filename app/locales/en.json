@@ -1058,6 +1058,7 @@
     "pair": "Pair",
     "pairing": "Pairing…",
     "pairFailed": "Pairing failed: {error}",
+    "errorDetails": "Details: {code}",
     "online": "online",
     "offline": "offline",
     "ownNote": "Your computer: can run tasks, manage projects and read sessions here.",
@@ -1115,7 +1116,11 @@
     },
     "error": {
       "no-keychain": "No system keychain to keep the device keys safely: the device link is off",
-      "keys": "The device keys could not be read: the device link is off",
+      "keys-decrypt": "This computer can no longer decrypt its device keys (the Windows user or profile changed), so the device link is off: remove this device on your other computer, reset the link here and pair again.",
+      "keys-format": "The device keys file is not a valid link keys file, so the device link is off: reset the link here and pair again.",
+      "keys-file": "The device keys file or its folder cannot be read (not a plain file, or access denied), so the device link is off: close any program using the Agent Office data folder, or remove the link folder and pair again.",
+      "keys-save": "The device keys could not be saved, so the device link is off: check that the Agent Office data folder is writable and not locked by antivirus or backup software, then restart the app.",
+      "start": "The device link could not start, so it is off: restart the app, and send the latest line of link/commands.log if it happens again.",
       "off": "Off"
     },
     "allowHandoff": "Accept handoffs from this device",

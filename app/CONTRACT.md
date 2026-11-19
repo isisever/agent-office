@@ -2311,3 +2311,29 @@ HQ task to a local project wait a minute, so the first start now depends on why 
 
 Unchanged: at most 3 starts per project (`REVIVE_MAX`), the 2nd and 3rd at least one minute after the previous start,
 the budget given back only when the tab is seen ready, and the refusal `not-running` after the third try's minute.
+
+## A failing device link says why (v3.105)
+
+Amends v3.28 and v3.102. `start()` no longer maps every exception to `keys`. Each state is set where the failure
+happens (`fail` in `src/link-host.js`) and the first one wins:
+
+| State | Cause |
+|---|---|
+| `no-keychain` | unchanged: no usable system keychain |
+| `keys-decrypt` | `safeStorage.decryptString` threw for keys.bin, or returned something that is not text |
+| `keys-format` | decrypted, but the purpose header or marker does not match, the payload is not JSON, or it fails the shape check |
+| `keys-file` | the link folder or keys.bin is not a plain folder or regular file (symlink, junction), or it cannot be read |
+| `keys-save` | the start-time write of keys.bin, own.bin or devices.json failed |
+| `start` | anything else thrown while starting |
+
+Every failure writes one line to `link/commands.log`: `{ at, event: 'link-start-failed', state, code, message }`
+(`e.code` and the first 200 characters of `e.message`, never file contents or keys) and keeps the stderr line. The link
+view carries `errorCode`; the Devices panel shows the state's text (`devices.error.<state>`, en + tr) and, when there is
+a code (EPERM, ELOOP ...), a "Details" line (`devices.errorDetails`).
+
+`writePlain` retries its rename up to 3 times, after 100, 300 and 700 ms, on EPERM, EACCES and EBUSY (a scanner or
+indexer holding the target on Windows); other errors are not retried. After the last failure the temp file is removed
+and the error is thrown.
+
+Unchanged: no state rewrites or regenerates keys.bin (or own.bin) on its own; the person resets the link and pairs again.
+Tests: `test/link-errors.test.cjs`.
