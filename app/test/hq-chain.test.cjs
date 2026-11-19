@@ -120,7 +120,7 @@ const path = require('path');
 const MAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 function stageHarness({ ask = false, allow = true, link = null, realConfirm = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-chain-'));
-  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips', 'hqLocalTarget', 'hqRemoteTarget', 'notifyRemoteSent', ...(realConfirm ? ['confirmHqDispatch'] : [])];   // realConfirm: main's own single-dispatch dialog
+  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips', 'hqLocalTarget', 'hqLocalKey', 'hqTargetAuto', 'hqRemoteTarget', 'notifyRemoteSent', ...(realConfirm ? ['confirmHqDispatch'] : [])];   // realConfirm: main's own single-dispatch dialog
   const lines = ['const isHere', 'const byName', 'const officeName', 'const routineRunOfRequest', 'const openHqRoutineRequest', 'const routineById', 'const readJson'];
   const src = [
     ...lines.map((l) => { const x = MAIN_SRC.split('\n').find((y) => y.startsWith(l)); assert.ok(x, l); return x; }),
@@ -138,7 +138,7 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
     const loadHqBoard = () => env.board; const saveHqBoard = (b) => { env.board = b; };
     const loadDispatches = () => new Map(); const saveDispatches = () => {};
     const selfName = () => 'Mac1'; const peerCache = () => ({}); const notify = (title) => { env.notices.push(title); }; const routinesOnDone = (d) => d;
-    const holdDispatch = () => ({ status: 'held' }); const projectOp = () => {}; const terms = new Map([['pa', {}], ['pb', {}]]); const skipStarted = new Set(); env.skipStarted = skipStarted;
+    const holdDispatch = () => ({ status: 'held' }); const projectOp = () => {}; const terms = new Map([['pa', {}], ['pb', {}]]); const skipStarted = new Set(); env.skipStarted = skipStarted; const promptless = new Set(); env.promptless = promptless;
     const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
     const linkHost = { link: () => env.link || ({ devices: [], conns: new Set(), remotes: new Map(), outgoing: [] }) };
     const hqWaits = () => env.waits || {};   // v3.93 why a queued task waits (main reads the queue and the tab)
@@ -429,6 +429,70 @@ test('personal workspace not made yet, later turn: a released stage whose draft 
   await settled();
   assert.deepEqual([rowOf(env, chain.stages[1]).status, rowOf(env, chain.stages[1]).reason], ['rejected', 'skip-permissions']);
   assert.deepEqual([env.made || 0, env.sent.length, env.dialogs.length + env.remoteDialogs], [0, 2, 0]);
+});
+
+// --- review fix: a later-turn follow-up may go into a target that approves by itself (Auto-approve, or a tab started
+// that way) only when the person's own typed turn sent a task of this request to that same target (main memory)
+test('Auto-approve: a target of the typed turn takes a follow-up; a new Auto-approve target is refused; an ordinary one goes', async () => {
+  const { env, api } = stageHarness();
+  env.state.projects[0].autoApprove = true;                                  // office approves by itself
+  const request = env.minter.mint();
+  await api.hqDispatch({ project: 'office', task: 'first', request });       // the typed turn sends it there
+  env.minter.clear();
+  const back = await api.hqDispatch({ project: 'office', task: 'fix', request });
+  assert.deepEqual([back.status, rowOf(env, back.id).byInitiative], ['queued', true]);
+  const plain = await api.hqDispatch({ project: 'erp', task: 'ordinary', request });   // asks its own prompts: reachable
+  assert.equal(plain.status, 'queued');
+  env.state.projects[1].autoApprove = true;                                  // erp: never a target of the typed turn
+  const fresh = await api.hqDispatch({ project: 'erp', task: 'new', request });
+  assert.deepEqual([fresh.status, fresh.reason], ['rejected', 'new-unattended-target']);
+  env.state.projects[1].autoApprove = false;
+  env.promptless.add('pb');                                                  // its tab still runs from an Auto-approve start
+  const tab = await api.hqDispatch({ project: 'erp', task: 'new', request });
+  assert.deepEqual([tab.status, tab.reason], ['rejected', 'new-unattended-target']);
+  const chain = await api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });
+  assert.deepEqual([chain.status, chain.reason], ['rejected', 'new-unattended-target']);   // one such stage refuses the chain
+  assert.equal(env.dialogs.length + env.remoteDialogs, 0);
+  // another request's typed turn does not count for this one
+  const other = env.minter.mint();
+  await api.hqDispatch({ project: 'erp', task: 'other', request: other });
+  env.minter.clear();
+  assert.equal((await api.hqDispatch({ project: 'erp', task: 'again', request })).reason, 'new-unattended-target');
+  assert.equal((await api.hqDispatch({ project: 'erp', task: 'again', request: other })).status, 'queued');
+});
+
+test('Auto-approve: the stages of the typed turn are its targets; a waiting follow-up stage into a new one is refused at release', async () => {
+  const { env, api } = stageHarness();
+  env.state.projects[1].autoApprove = true;
+  const request = env.minter.mint();
+  await api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });   // typed: erp is a target
+  env.minter.clear();
+  assert.equal((await api.hqDispatch({ project: 'erp', task: 'fix', request })).status, 'queued');
+  // a later-turn chain accepted while erp asked, released after it turned Auto-approve on: refused, never asked
+  const h = stageHarness();
+  const r2 = h.env.minter.mint();
+  await h.api.hqDispatch({ project: 'office', task: 'first', request: r2 });
+  h.env.minter.clear();
+  const chain = await h.api.hqDispatch({ project: 'office', task: 's1', request: r2, then: [{ project: 'erp', task: 's2' }] });
+  h.env.state.projects[1].autoApprove = true;
+  report(h.env, chain.stages[0]);
+  h.api.hqChainSweep();
+  await settled();
+  assert.deepEqual([rowOf(h.env, chain.stages[1]).status, rowOf(h.env, chain.stages[1]).reason], ['rejected', 'new-unattended-target']);
+  assert.equal(h.env.dialogs.length + h.env.remoteDialogs, 0);
+});
+
+test('minter: typed-turn targets only for typed ids, kept per request', () => {
+  const m = HQ.createMinter();
+  const id = m.mint();
+  const rt = m.mint({ origin: 'routine', run: 'x' });
+  m.addTarget(id, 'self|pa|');
+  m.addTarget(rt, 'self|pa|');
+  m.addTarget('nope', 'self|pa|');
+  assert.deepEqual([m.hasTarget(id, 'self|pa|'), m.hasTarget(id, 'self|pb|'), m.hasTarget(rt, 'self|pa|'), m.hasTarget('nope', 'self|pa|')], [true, false, false, false]);
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board: HQ.emptyBoard(), targets: [{ projectId: 'pa', auto: true, seen: false }] }), 'new-unattended-target');
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board: HQ.emptyBoard(), targets: [{ projectId: 'pa', auto: true, seen: true }] }), null);
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board: HQ.emptyBoard(), targets: [{ projectId: 'pa', auto: true, seen: true, skip: true }] }), 'skip-permissions');
 });
 
 // --- v3.91 fix: consent is stamped on the row, and a stage HQ queued on its own is checked again at its release

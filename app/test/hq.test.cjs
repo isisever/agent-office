@@ -999,7 +999,7 @@ test('follow-up wiring: decided and counted by HQ.takeInitiative, final before a
   assert.ok(d.indexOf(RECHECK) < d.indexOf('ensurePersonal(m)'));
   assert.ok(d.indexOf(RECHECK) > d.indexOf('{ open: false }'));   // after the staff check's wait
   assert.ok(d.indexOf(RECHECK) < d.indexOf('officeDispatch(HQ.HQ_ID'));  // before queueing
-  assert.match(fnBody('hqLocalTarget'), /skip: p \? hqTargetSkips\(p, /);
+  assert.match(fnBody('hqLocalTarget'), /skip: hqTargetSkips\(p, staffId \|\| ''\), auto: hqTargetAuto\(p, /);
   assert.match(fnBody('hqLocalTarget'), /ST\.personalDraft\(personal\.personal\)/);   // a workspace not made yet: its draft
   assert.match(fnBody('hqTargetSkips'), /!p \|\| P\.skipPermissionsArgs\(p\)\.length > 0/);
   assert.match(fnBody('hqTargetSkips'), /terms\.has\(tab\) && skipStarted\.has\(tab\)/);

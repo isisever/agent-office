@@ -2232,12 +2232,29 @@ function hqTargetSkips(p, staffId) {
  *  personal workspace that is not made yet (`p` null, `personal` the member) is judged by the switches its draft
  *  applies when it is made (ST.personalDraft, applied by ensurePersonal), so a follow-up into it is refused BEFORE
  *  anything is created. A project not known here has no switch: the dispatch's own checks decide. */
-function hqLocalTarget(p, staffId, personal = null) {
+// review fix: `auto` (the target approves by itself: Auto-approve, or its tab started that way) and `seen` (a task of
+// this request went to that same target in the person's typed turn, hqMinter.hasTarget): a later-turn follow-up may
+// go into such a target only when seen (HQ.followRefusal 'new-unattended-target').
+function hqLocalTarget(request, p, staffId, personal = null) {
   if (!p && personal) {
     const d = ST.personalDraft(personal.personal);
-    return { projectId: '', staffId: personal.id, skip: d.skipPermissions === true };
+    return { projectId: '', staffId: personal.id, skip: d.skipPermissions === true, auto: d.autoApprove === true, seen: hqMinter.hasTarget(request, hqLocalKey(null, personal.id)) };
   }
-  return { projectId: p?.id || '', staffId, skip: p ? hqTargetSkips(p, staffId || '') : false };
+  if (!p) return { projectId: '', staffId, skip: false };
+  return { projectId: p.id, staffId, skip: hqTargetSkips(p, staffId || ''), auto: hqTargetAuto(p, staffId || ''), seen: hqMinter.hasTarget(request, hqLocalKey(p, staffId)) };
+}
+/** A local target's identity (machine + project + staff member); a member's personal workspace by its owner, so the
+ *  one not made yet and the one made later are the same target. */
+function hqLocalKey(p, staffId) {
+  return `self|${p ? (p.staffOwner ? `personal:${p.staffOwner}` : p.id) : `personal:${staffId || ''}`}|${staffId || ''}`;
+}
+/** Does the target approve its permission prompts by itself? The project's Auto-approve switch, or the target tab
+ *  (the member's desk, else the boss tab) running right now from a start with Auto-approve or Skip on. */
+function hqTargetAuto(p, staffId) {
+  if (P.autoApproveOf(p)) return true;
+  const desk = staffId ? P.deskOf(p, staffId) : null;
+  const tab = staffId ? (desk ? P.tabPtyId(p.id, desk.n) : '') : p.id;
+  return Boolean(tab) && terms.has(tab) && promptless.has(tab);
 }
 /** v3.99 a remote target's identity: the paired machine's key and the project's id there, read fresh from the link.
  *  Empty parts when the machine or the project is not known (then nothing matches a consented row). */
@@ -2310,7 +2327,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     return { request, minter: hqMinter, counted,
       targets: [remote ? { ...hqRemoteTarget(key, machine, args.project), staffId: args.staff ? null : '' }
         // a personal workspace that is not made yet: by its member's draft switches (hqLocalTarget)
-        : hqLocalTarget(p, args.staff ? m?.id || null : '', !p && personal ? memberById(personal.id) || personal : null)] };
+        : hqLocalTarget(request, p, args.staff ? m?.id || null : '', !p && personal ? memberById(personal.id) || personal : null)] };
   };
   const askPerson = async () => {
     if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
@@ -2375,6 +2392,8 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     const startId = args.desk || p?.id;   // v3.83 a staff member's desk, else the project's boss tab
     if (startId && !terms.has(startId)) projectOp('start', startId);   // a stopped or sleeping target starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
+    // review fix: a target of the person's own typed turn (main memory, hqMinter): later follow-ups may go back there
+    if (p && !approved && consent === 'none' && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') hqMinter.addTarget(request, hqLocalKey(p, staffId));
     if (p) {
       row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName, ...(staffId ? { staffId } : {}) } : {}) });
       // v3.91 no dialog was shown: the person is told at the moment it is sent
@@ -2502,9 +2521,9 @@ async function hqDispatchStages(args, request, rrun) {
     // decided and counted in one step: an overlapping dispatch sees the higher count before these stages are queued
     const took = HQ.takeInitiative(loadHqBoard(), { request, minter: hqMinter, counted: false, targets: stages.map((s) => {
       if (s.remote) return { ...hqRemoteTarget(s.key, String(s.machine || '').trim(), s.project), staffId: '' };
-      if (s.personalFor) return hqLocalTarget(null, s.staffId, memberById(s.personalFor.id) || s.personalFor);   // not made yet: its draft decides
+      if (s.personalFor) return hqLocalTarget(request, null, s.staffId, memberById(s.personalFor.id) || s.personalFor);   // not made yet: its draft decides
       const p = !s.projectId ? null : P.findProject(state, s.projectId);
-      return hqLocalTarget(p, s.staff ? s.staffId || null : '');
+      return hqLocalTarget(request, p, s.staff ? s.staffId || null : '');
     }) });
     if (!took.ok) return no(took.reason);
     saveHqBoard(took.board);
@@ -2523,6 +2542,8 @@ async function hqDispatchStages(args, request, rrun) {
   for (const s of stages.filter((x) => x.personalFor)) if (!teamOn() || !memberById(s.personalFor.id)) return no('unknown-staff', { stage: s.n });
   const ids = [];
   let prev = after;
+  // review fix: the stages of the person's own typed turn are targets of that turn (later follow-ups may go back there)
+  const mark = (s) => { if (consent === 'none' && !s.remote) hqMinter.addTarget(request, s.personalFor ? hqLocalKey(null, s.staffId) : hqLocalKey(P.findProject(state, s.projectId), s.staff ? s.staffId : '')); };
   for (const s of stages) {
     if (!prev) {   // the first stage without `after` goes now, the normal way
       if (s.personalFor) {
@@ -2534,8 +2555,10 @@ async function hqDispatchStages(args, request, rrun) {
       }
       /** @type {any} */ const r = await hqDispatch({ machine: s.machine, project: s.project, title: s.title, request, task: s.task, ...(s.staff ? { staff: s.staff } : {}) }, { approved: true, sentByInitiative: s.byInitiative === true, consentGiven: s.consented === true, noDialog: s.noDialog === true });   // consent was just given (or not needed)
       if (!r.id || r.status === 'rejected') return { ...r, request };   // nothing after it is created
+      mark(s);
       ids.push(r.id); prev = r.id; continue;
     }
+    mark(s);
     prev = hqWaitRow(s, request, prev);
     ids.push(prev);
   }
@@ -2588,8 +2611,8 @@ async function hqReleaseStage({ id, after, resumed = false }) {
     return HQ.followRefusal({ request: t.request, minter: hqMinter, counted: true,
       board: { ...fresh, tasks: fresh.tasks.filter((x) => x.id !== id) },   // the row does not count against itself
       targets: [st.remote ? { ...hqRemoteTarget(st.key || null, String(st.machine || '').trim(), st.project), staffId: '' }
-        : member ? hqLocalTarget(null, member.id, memberById(member.id) || member)
-          : p ? hqLocalTarget(p, st.staff ? m?.id || null : '') : { projectId: '', staffId: '', skip: true }] });
+        : member ? hqLocalTarget(t.request, null, member.id, memberById(member.id) || member)
+          : p ? hqLocalTarget(t.request, p, st.staff ? m?.id || null : '') : { projectId: '', staffId: '', skip: true }] });
   };
   // v3.91 fix: a stage HQ queued on its own (no dialog) is checked again now, at its release: the request is still
   // inside its 2 h window, the caps, the target does not run with Skip permissions. No longer true: refused with the

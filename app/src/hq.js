@@ -126,6 +126,10 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
   /** v3.91 the ids minted from the person's typed prompt, with their time (the last 50): never a routine's id */
   /** @type {Map<string, number>} */
   const typed = new Map();
+  /** review fix: per typed id, the targets (machine|project|staff keys) a task of that request went to in the person's
+   *  own typed turn. Main memory only (never board.json, which a session can edit); gone with the app, as are follow-ups. */
+  /** @type {Map<string, Set<string>>} */
+  const targets = new Map();
   const fresh = (e) => Boolean(e) && now() - e.at <= e.ttl;
   const endRoutines = () => { for (const e of all.values()) if (e.origin === 'routine') e.live = false; };
   return {
@@ -152,6 +156,15 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
     issued(id) { return isStr(id) && fresh(all.get(id)); },
     /** v3.91 when the person typed the prompt this id was minted from; 0 for any other id (a routine's, a foreign one) */
     typedAt(id) { return (isStr(id) && typed.get(id)) || 0; },
+    /** records a target of a typed id's own turn (ignored for any other id) */
+    addTarget(id, key) {
+      if (!isStr(id) || !typed.has(id) || !isStr(key) || !key) return;
+      let s = targets.get(id);
+      if (!s) { s = new Set(); targets.set(id, s); if (targets.size > 50) targets.delete(targets.keys().next().value); }
+      s.add(key);
+    },
+    /** did a task of this typed id go to that target in the person's own turn? */
+    hasTarget(id, key) { return isStr(id) && isStr(key) && Boolean(targets.get(id)?.has(key)); },
   };
 }
 /** The request a dispatch belongs to: an id the minter issued, else the current one, else the capped 'adhoc' bucket. */
@@ -189,8 +202,11 @@ function consentFor({ ask = false, remote, request, minter, routineNoAsk = false
  * - 'request-expired': the id was not minted from a prompt the person typed (a routine's, 'adhoc', unknown) or the
  *   prompt is older than INITIATIVE_MS;
  * - 'unknown-machine': a target on a paired machine (`remote: true`) without that machine's key;
- * - 'skip-permissions': a target (`targets`: one per task, `{ projectId, staffId, skip, remote?, machine? }`) whose
- *   project runs with Skip permissions (v3.91; for a paired machine the catalog's flag, unknown counts as yes);
+ * - 'skip-permissions': a target (`targets`: one per task, `{ projectId, staffId, skip, auto?, seen?, remote?, machine? }`)
+ *   whose project runs with Skip permissions (v3.91; for a paired machine the catalog's flag, which covers "skips or
+ *   answers its prompts", unknown counts as yes);
+ * - 'new-unattended-target': a local target that approves by itself (`auto`: Auto-approve on, or its tab started that
+ *   way) that did not get a task of this request in the person's own typed turn (`seen`, minter.hasTarget);
  * - 'open-cap' / 'request-cap': the caps (12 open, 8 per request counting removed rows) leave no room for the tasks;
  * - 'follow-up-cap': more than MAX_INITIATIVE tasks would have been sent this way for the request (counted on the
  *   request record, so a removed row still counts). `counted`: these tasks are already in that count (takeInitiative
@@ -201,6 +217,7 @@ function followRefusal({ request, minter, board, targets, counted = false, now =
   if (!isStr(request) || request === ADHOC || n < 1 || minter?.isRoutine?.(request) || !typedWithin(minter, request, now)) return 'request-expired';
   if (targets.some((t) => !t || (t.remote === true && !(typeof t.machine === 'string' && t.machine && t.machine !== 'self')))) return 'unknown-machine';
   if (targets.some((t) => t.skip === true)) return 'skip-permissions';
+  if (targets.some((t) => t.auto === true && t.seen !== true)) return 'new-unattended-target';
   const b = { tasks: Array.isArray(board?.tasks) ? board.tasks : [], requests: Array.isArray(board?.requests) ? board.requests : [] };
   if (openTasks(b).length + n > MAX_OPEN) return 'open-cap';
   if (b.tasks.filter((t) => t.request === request).length + removedOf(b, request) + n > MAX_PER_REQUEST) return 'request-cap';
