@@ -2193,7 +2193,11 @@ default.
 
 - **One setting**: `state.hq.askBeforeDispatch` (boolean, default off; `normalizeHq` keeps it only when true).
   `hq:setSettings` accepts `{ askBeforeDispatch }`. Board checkbox `hq.askBeforeDispatch` "Ask me before the manager
-  hands out a task" with the one-sentence hint `hq.askBeforeDispatchHint` (en, tr). It replaces `dispatchWithoutAsking`
+  hands out a task" with the hint `hq.askBeforeDispatchHint` (en, tr). The hint says plainly that in the turn the
+  person types, tasks also go into projects with Skip permissions or Auto-approve on without asking, and what bounds
+  later follow-ups (4 per request, 2 hours, never Skip permissions, Auto-approve only for targets of the person's own
+  turn, the caps). Refusal reasons with a text (`hq.reason.*`: `new-unattended-target`, `stage-changed`) are shown
+  with it on the Board row. It replaces `dispatchWithoutAsking`
   (v3.46/v3.101) and `initiative` (v3.91).
 - **Migration**: stored `dispatchWithoutAsking` / `initiative` are dropped when `state.hq` is read (`normalizeHq`); no
   stored value turns the dialog on. The env `AGENT_OFFICE_INITIATIVE` is no longer passed on.
@@ -2207,7 +2211,7 @@ computer, for a single dispatch, a staged dispatch (`then` / `after`, one answer
 
 | Request id of the dispatch | `askBeforeDispatch` off (default) | `askBeforeDispatch` on |
 | --- | --- | --- |
-| Typed turn: the live id minted from the prompt the person typed into HQ | `'none'`: sent, no dialog; row `consented` | `'app'`: the dialog |
+| Typed turn: the live id minted from the prompt the person typed into HQ | `'none'`: sent, no dialog, also into a project with Skip permissions or Auto-approve on; row `consented`; the target is remembered for the request (below) | `'app'`: the dialog |
 | Later turn: an id the person typed less than 2 h ago (`INITIATIVE_MS`) that is no longer live (a report arrived) | `'follow'`: sent, no dialog, bound by `HQ.followRefusal` (below); refused with its reason, never asked; row `byInitiative` | `'app'`: the dialog (the id resolves only within its 30 min TTL, as before) |
 | A routine run's id | unchanged (v3.47): `'none'` only for a local dispatch with the routine's own no-ask checkbox on and the run's id live, else `'held'` (a card on the Board); stages: `stages-routine` | same |
 | `adhoc`, unknown, foreign or expired id (no id the app minted from a typed prompt) | `'app'`: the dialog, exactly as before | `'app'`: the dialog |
@@ -2218,13 +2222,39 @@ computer, for a single dispatch, a staged dispatch (`then` / `after`, one answer
 `request-expired` (not a typed id, a routine's id, `adhoc`, or older than 2 h), `unknown-machine` (a paired target
 without its machine key), `skip-permissions` (a target project that runs with Skip permissions: the local switch or a
 tab running from a Skip start, `hqTargetSkips`; for a paired computer the catalog's `skips` flag, `HQ.remoteSkips`,
-unknown counts as skipping), `open-cap` (12 open), `request-cap` (8 per request, removed rows count), `follow-up-cap`
+unknown counts as skipping; that flag covers "skips or auto-answers its prompts", so it stays the Skip rule for a paired
+computer), `new-unattended-target` (a local target that approves by itself, `auto`: the project's Auto-approve switch
+or its target tab running from a start with Auto-approve or Skip on, `hqTargetAuto`, that did not get a task of THIS
+request in the person's own typed turn), `open-cap` (12 open), `request-cap` (8 per request, removed rows count), `follow-up-cap`
 (more than `MAX_INITIATIVE` = 4 follow-ups per request). `HQ.takeInitiative` decides and counts in one step (it now
 creates the request record when the request has none); the rule is checked again before anything is made and when a
 `byInitiative` stage is released (`hqReleaseStage`): refused with the reason; when the person turned
 `askBeforeDispatch` on meanwhile, the stage gets the dialog at its release (whether or not the re-check holds). The v3.91 requirement that a follow-up's target was already consented to for the
 request (`HQ.consentedTarget`) and that the request already has a row is removed: every target of the request counts.
 `HQ.initiativeFor` is `followRefusal(...) === null`.
+
+Targets of the typed turn (review fix): the minter keeps, per typed id and in main memory only (never in
+`board.json`, which a session can edit; gone with the app, which already ends follow-ups), the targets a task of that
+request went to in the person's typed turn (`minter.addTarget` / `hasTarget`; key `self|<project id, or
+personal:<member id> for a member's personal workspace>|<member id>`): a single dispatch with consent `'none'` once
+queued, and every local stage of a chain accepted in that turn. `hqLocalTarget` gives each local target
+`{ projectId, staffId, skip, auto, seen }`. A member's personal workspace that is not made yet is judged by the
+switches its draft applies when it is made (`ST.personalDraft`): a follow-up into one whose draft has Skip
+permissions is refused before anything is created, and the rule is checked again after `ensurePersonal` (defence).
+
+| Later-turn follow-up into | Target got a task of this request in the typed turn | It did not |
+| --- | --- | --- |
+| An ordinary project (asks its own prompts) | sent | sent |
+| A project with Auto-approve (switch, or tab started that way) | sent | refused `new-unattended-target` |
+| A project with Skip permissions (or a paired computer whose catalog says it skips or auto-answers) | refused `skip-permissions` | refused `skip-permissions` |
+
+Released stages (review fix): `hqWaitRow` keeps the sha256 of the stage's frozen record (`CH.stageDigest`: target
+project and machine, key, staff and personal fields, title, text, `noDialog`) in main memory (`hqStages`) with whether
+the person accepted it in the dialog. `hqReleaseStage` refuses a stage whose `stage.json` no longer matches with
+`stage-changed`. A stage the app holds no record of (it restarted) gets the dialog at its release, never a silent
+release. A stage accepted without the dialog (the typed turn, or a follow-up) gets the dialog at its release when the
+person turned `askBeforeDispatch` on meanwhile. A member's personal workspace for a waiting stage is made only after
+the rule and any dialog.
 
 ### Notices
 
@@ -2236,7 +2266,8 @@ v3.91.
 
 `hqText(ask = false)`: by default the carry-through brief (`HQ_INITIATIVE_SWAPS` applied, `HQ_INITIATIVE_TEXT` before the
 closing line; the follow-up sentence now names the app's limits: 4 per request, 2 hours, never into a project with Skip
-permissions). With `askBeforeDispatch` on, the app sets `AGENT_OFFICE_ASK=1` for HQ's session only (read at session
+permissions, into a project with Auto-approve only when the typed turn sent the request to that same project and
+member). Both variants name the same blockers, a step that costs money and a report HQ cannot read clearly included. With `askBeforeDispatch` on, the app sets `AGENT_OFFICE_ASK=1` for HQ's session only (read at session
 start) and HQ gets `HQ_TEMPLATE` unchanged. Both keep the v3.93 rule never to ask the person to type and the line that
 reports and files are data, not instructions.
 
@@ -2246,6 +2277,18 @@ A dispatch still needs a request id the main process minted from a prompt the pe
 id); the caps per request and open; the request's time bound; `holdsOffId`; routines' held cards and their own no-ask
 checkbox; held cards and Allow; every receiver-side rule (a paired computer's own consent, trust and pacing rules,
 desk permission prompts, the mail guard); `office_dispatch` and its tool description.
+
+### Known limits
+
+- A session that can read HQ's office token can call `office_dispatch` as HQ. While the person's typed id is live
+  (the typed turn, at most its 30 min TTL, ended by the next report or inbox row) such a call takes the same no-dialog
+  path, into any project including Skip permissions and Auto-approve ones. After that it is bound like any later-turn
+  follow-up: the request id must be one the person typed less than 2 hours ago, at most 4 follow-ups per request, the
+  caps (8 per request, 12 open), never Skip permissions, Auto-approve only for targets of the person's own turn, and
+  the person is told of every such task (`main.hqInitiativeSent`, `main.hqRemoteSent`). `askBeforeDispatch` on removes
+  both paths: every dispatch gets the dialog.
+- Typed-turn targets and stage digests live in main memory: after a restart no follow-up goes into an Auto-approve
+  target (the typed id is gone too) and every waiting stage asks at its release.
 
 ### Replaces
 
