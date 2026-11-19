@@ -180,8 +180,9 @@ const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && 
  * Who consents to an HQ dispatch (v3.103). office_dispatch is always auto-allowed at the Claude level, so the app is
  * the only gate. `ask` is the person's `askBeforeDispatch` setting (default off). The same answer for a target on this
  * machine and on a paired one (the person's own computer).
- * - a routine run's request: 'none' only for a local dispatch with the routine's own checkbox on and the run's id
- *   still live, else 'held' (a card on the Board, never a modal). Unchanged since v3.47; `ask` does not apply.
+ * - a routine run's request: 'none' only for a dispatch that `routineNoAsk` allows (main computes it with
+ *   ROUT.routineNoAsk; v3.107: with `ask` off every routine in its scope, a paired computer alike; with `ask` on only
+ *   its own checkbox, never remote) and the run's id still live, else 'held' (a card on the Board, never a modal).
  * - `ask` on: 'app' (the app's dialog), always.
  * - 'adhoc' or no id (resolveRequest found no id the app minted): 'app'. The dialog stays for exactly this case.
  * - the live id minted from the prompt the person typed (their turn): 'none'.
@@ -190,7 +191,7 @@ const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && 
  * - any other id: 'app'.
  */
 function consentFor({ ask = false, remote, request, minter, routineNoAsk = false, now = Date.now() }) {
-  if (minter?.isRoutine?.(request)) return !remote && routineNoAsk && minter.isLiveRoutine(request) ? 'none' : 'held';
+  if (minter?.isRoutine?.(request)) return (!remote || ask !== true) && routineNoAsk && minter.isLiveRoutine(request) ? 'none' : 'held';
   if (ask === true || !isStr(request) || request === ADHOC) return 'app';
   if (minter?.isLive?.(request)) return 'none';
   return typedWithin(minter, request, now) ? 'follow' : 'app';

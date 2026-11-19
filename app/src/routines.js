@@ -233,9 +233,18 @@ function hqTurn({ status, tab, typedAt = 0, now }) {
   if (status === 'typed' && now - (typedAt || now) < 2 * 60 * 1000) return 'wait';
   return 'over';
 }
-/** A routine's own no-ask: an HQ routine for any local project; a project routine only for its own project. */
-const routineNoAsk = (routine, { remote = false, projectId = '' } = {}) => Boolean(routine?.noAsk) && !remote && routine.target?.kind !== 'remote'
-  && (routine.target?.kind !== 'project' || (Boolean(projectId) && routine.target.projectId === projectId));
+/** A routine's dispatch without a card. With `askBeforeDispatch` on (`ask`, the default): only a routine with its own
+ *  no-ask checkbox, only local (an HQ routine for any local project; a project routine only for its own project).
+ *  v3.107 with it off (`ask: false`) every routine goes without its card (a saved routine is the person's request), a
+ *  paired computer alike (v3.101/v3.103: the person's own computer): an HQ routine for any target; a project routine only
+ *  for its own local project; a remote routine only for its own device and project (`pub`, `projectId` of the dispatch). */
+function routineNoAsk(routine, { remote = false, projectId = '', pub = '', ask = true } = {}) {
+  const tg = routine?.target;
+  if (!routine || !tg) return false;
+  if (ask === true) return Boolean(routine.noAsk) && !remote && tg.kind !== 'remote' && (tg.kind !== 'project' || (Boolean(projectId) && tg.projectId === projectId));
+  if (tg.kind === 'remote') return remote && Boolean(pub) && Boolean(projectId) && tg.pub === pub && tg.projectId === projectId;
+  return tg.kind !== 'project' || (!remote && Boolean(projectId) && tg.projectId === projectId);
+}
 /** At startup: runs waiting for consent whose held cards are all gone (not on the board as awaiting-consent). */
 const staleHeldRuns = (runs, heldIds) => runs.filter((r) => r.status === 'awaiting-consent' && !(r.held || []).some((id) => heldIds.has(id)));
 /** Allow/Decline: a run waiting on its card runs again; an Allow restarts its clock (the no-report timeout). */

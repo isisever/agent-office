@@ -2213,7 +2213,7 @@ computer, for a single dispatch, a staged dispatch (`then` / `after`, one answer
 | --- | --- | --- |
 | Typed turn: the live id minted from the prompt the person typed into HQ | `'none'`: sent, no dialog, also into a project with Skip permissions or Auto-approve on; row `consented`; the target is remembered for the request (below) | `'app'`: the dialog |
 | Later turn: an id the person typed less than 2 h ago (`INITIATIVE_MS`) that is no longer live (a report arrived) | `'follow'`: sent, no dialog, bound by `HQ.followRefusal` (below); refused with its reason, never asked; row `byInitiative` | `'app'`: the dialog (the id resolves only within its 30 min TTL, as before) |
-| A routine run's id | unchanged (v3.47): `'none'` only for a local dispatch with the routine's own no-ask checkbox on and the run's id live, else `'held'` (a card on the Board); stages: `stages-routine` | same |
+| A routine run's id | v3.107: `'none'` while the run's id is live, a paired machine alike (a project routine: only into its own local project; a remote routine: only to its own device and project), else `'held'` (a card on the Board); stages: `stages-routine` | as v3.47: `'none'` only for a local dispatch with the routine's own no-ask checkbox on and the run's id live, else `'held'`; stages: `stages-routine` |
 | `adhoc`, unknown, foreign or expired id (no id the app minted from a typed prompt) | `'app'`: the dialog, exactly as before | `'app'`: the dialog |
 
 ### Later-turn follow-ups (`HQ.followRefusal`, the v3.91 limits for any target of the request)
@@ -2367,3 +2367,33 @@ states start again first. The panel shows the same reset confirm before them whe
 nothing) and then passes `{ reset: true }`; only with it do they reset and continue, the answer then carrying
 `resetDone: true` (`devices.resetDone`), or `recovered: true` when the start again worked. Never at startup on its own.
 Tests: `test/link-errors.test.cjs`.
+
+## Routines follow "Ask me before the manager hands out a task" (v3.107)
+
+Amends v3.47, v3.49 and v3.103. A routine the person saved is the person's request, and a paired device is the person's
+own computer (v3.101/v3.103), so a routine run's dispatch follows `state.hq.askBeforeDispatch` like a typed request,
+on this machine and on a paired one. This supersedes v3.49's "a remote run ALWAYS needs the person's approval".
+
+- **Off (default)**: a routine run's dispatch goes without the approval card (`HQ.consentFor` returns `'none'`, the row
+  is `consented`), whatever the routine's own no-ask checkbox says, also to a paired computer.
+  `ROUT.routineNoAsk(routine, { remote, projectId, pub, ask })` with `ask: false`: an HQ routine for any target; a
+  project routine only into its own local project; a remote routine only to its own device and project (`pub` and
+  `projectId` of the dispatch's `<pub>:<id>` key). `consentFor` answers `'none'` for a remote routine dispatch only with
+  `ask` off.
+- **On**: unchanged (v3.47/v3.49): the card, unless the routine's own no-ask checkbox is on, and never without the card
+  for a paired computer. `ask` defaults to true in `routineNoAsk`.
+- **The checks still run without the card**: a remote run goes through HQ's remote path exactly as after an Allow:
+  `routineProblem` before the dispatch (unpaired device or a project not in its last-known list → the run fails
+  `target-gone`); in `hqDispatch` the device must be paired (`unknown-machine`) and the project in the online device's
+  snapshot (`unknown-project`); an offline device → the outbox (`hold`, 24 h); online → the pacer; a paused device's
+  entries are refused by the link as before (v3.101). The record carries `routine: <run id>` (`tagRoutineRec`), and
+  the person gets the v3.99 notice that a task went to another computer without a dialog (`notifyRemoteSent`).
+- **Limits that stay** (either setting): a project routine goes without the card only into its own project (a
+  dispatch elsewhere is held); only while the run's id is live (after its dispatch, or after an HQ routine turn is
+  over, a dispatch with that id is held); while an HQ routine turn's id is live, a dispatch without that id is held
+  (`holdsOffId`); a staged dispatch (`then` / `after`) of a routine run is refused with `stages-routine`; the routine
+  plan's gates (`maxPerDay`, the daily cap, quiet hours, overlap) and the Board caps (12 open, 8 per request) are
+  unchanged. A routine never opens a modal.
+- **Strings** (en, tr): `hq.askBeforeDispatchHint` says routines follow the setting, a paired computer alike;
+  `routines.noAskHint` and `routines.noAskRemote` say the checkbox and the remote card apply only while the setting is on.
+- Tests: `test/routines.test.cjs` (remote runs with the setting off and on), `test/hq-chain.test.cjs`, `test/hq.test.cjs`.
