@@ -357,7 +357,8 @@ test('v3.109 pasted images: checked types, count and size; image blocks for a GU
   assert.deepEqual(CHAT.cleanImages([{ type: 'image/tiff', data: png }]), { error: 'image-type' });
   assert.deepEqual(CHAT.cleanImages([{ type: 'image/png', data: 'not base64!' }]), { error: 'image-type' });
   assert.deepEqual(CHAT.cleanImages(Array.from({ length: 6 }, () => ({ type: 'image/png', data: png }))), { error: 'too-many-images' });
-  assert.deepEqual(CHAT.cleanImages([{ type: 'image/jpeg', data: 'A'.repeat(Math.ceil(CHAT.IMAGE_MAX * 4 / 3) + 8) }]), { error: 'image-size' });
+  assert.deepEqual(CHAT.cleanImages([{ type: 'image/jpeg', data: 'A'.repeat(CHAT.IMAGE_MAX + 4) }]), { error: 'image-size' }, 'the base64 text counts (as the API counts it)');
+  assert.equal(CHAT.cleanImages([{ type: 'image/jpeg', data: 'A'.repeat(CHAT.IMAGE_MAX) }]).images.length, 1);
   const withImg = JSON.parse(GS.userLine('look', [{ type: 'image/png', data: png }]));
   assert.deepEqual(withImg.message.content, [{ type: 'text', text: 'look' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }]);
   assert.deepEqual(JSON.parse(GS.userLine('', [{ type: 'image/png', data: png }])).message.content.map((b) => b.type), ['image'], 'an image alone');
@@ -371,5 +372,10 @@ test('v3.109 pasted images: checked types, count and size; image blocks for a GU
   assert.match(save, /mkdirSync\(dir, \{ recursive: true, mode: 0o700 \}\)/);
   assert.match(save, /\{ mode: 0o600, flag: 'wx' \}/);
   assert.match(save, /7 \* 864e5/);
+  assert.match(send, /for \(const p of paths\) \{ try \{ fs\.rmSync\(p\); \}/, 'files of a message that was not typed go at once');
+  // a mode switch never cuts a prompt just typed in, nor a task that has not reported
+  assert.match(MAIN, /if \(Date\.now\(\) - \(activity\.get\(pid\)\?\.at \|\| 0\) < 15000\) return true;/);
+  assert.match(MAIN, /handoffLocked\(pid\) \|\| guiHolds\(pid\)\) continue;/);
+  assert.match(MAIN, /if \(!sid \|\| guiHolds\(id\) \|\|/);
   assert.match(MAIN, /if \(!t\.sendUser\(text, images\)\) return false;/);
 });

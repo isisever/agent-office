@@ -128,7 +128,8 @@ function readChat(file, cursor, fsm = fs) {
   return { cursor: { file, ino: st.ino, size: from + used }, items, reset: !same, more: to < st.size };
 }
 
-// v3.109 images pasted into the chat input: the types Claude takes, at most IMAGES_MAX of at most IMAGE_MAX bytes each
+// v3.109 images pasted into the chat input: the types Claude takes, at most IMAGES_MAX of at most IMAGE_MAX characters
+// of base64 each (the API counts its 5 MB on that text; the renderer scales a bigger image down before it comes here)
 const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 const IMAGES_MAX = 5;
 const IMAGE_MAX = 5 * 1024 * 1024;
@@ -145,7 +146,7 @@ function cleanImages(list) {
     if (!IMAGE_TYPES[type]) return { error: 'image-type' };
     const data = typeof it.data === 'string' ? it.data : '';
     if (!data || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return { error: 'image-type' };
-    if (Math.floor((data.length * 3) / 4) > IMAGE_MAX) return { error: 'image-size' };
+    if (data.length > IMAGE_MAX) return { error: 'image-size' };
     images.push({ type, data, ext: IMAGE_TYPES[type] });
   }
   return { images };

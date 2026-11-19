@@ -2459,6 +2459,9 @@ type Ask = { id: string; kind: 'permission' | 'question' | 'plan'; tool: string;
   → allow with `answers` (`{ [question]: label(s) or typed text }`, every question answered, control characters
   dropped, ≤ 2000 characters); plan → allow, or deny with a message ("Keep planning"). Answering is refused while the
   project is handed off (`locked`). Nothing is ever added to Claude Code's permission rules.
+- **Not while it was just used** (`guiHolds`): neither `chat:mode` nor the setting's automatic switch restarts a tab
+  written to in the last 15 s (a prompt typed by HQ, a routine or a paired device may still wait for its Enter or its
+  turn) or one with a task of this machine that has not reported, whatever the pid file says.
 - **Terminal ↔ chat** (`chat:mode`): only while nothing runs: `idleSession` gives a session id (the `restartIdle` test:
   no turn, no agent or background shell, no draft), no open card, no live turn, and for a terminal tab no project
   approval waiting; else `busy` and the tab stays as it is. Otherwise claude restarts in the other mode with
@@ -2482,8 +2485,8 @@ type Ask = { id: string; kind: 'permission' | 'question' | 'plan'; tool: string;
   (`chat:interrupt`, also Esc in the input while a turn runs). Locale keys `chat.gui.*`, `main.guiTerminalNote`.
   Dev-mock: `?chat&gui`, `?gui=perm|q|plan`.
 - **Not done here**: HQ in GUI mode; Windows; "allow always" (`permission_suggestions`); slash commands that open a
-  screen of their own (`/model`, `/mcp`, …) still need the terminal (switch with Terminal when idle); images in the chat
-  input.
+  screen of their own (`/model`, `/mcp`, …) still need the terminal (switch with Terminal when idle). (Images in the
+  chat input: v3.109.)
 - **Unverified**: checked with Claude Code 2.1.311 in headless runs: `can_use_tool` arrives for a Bash write and runs on
   allow; AskUserQuestion answers reach the model through `updatedInput.answers`; `interrupt` ends the turn
   (`[Request interrupted by user]`) and the session goes on; the pid file reads `busy`/`idle` in this mode; the login
@@ -2520,14 +2523,17 @@ agentOffice.chat.reveal(ptyId, path): Promise<'ok' | 'outside'>       // 'chat:r
   Else `outside` (`chat.revealOutside` in the chat's note line).
 - **Drop**: files dropped on the chat input go in as `@<full path>` each (quoted with spaces), at the caret.
   `webUtils.getPathForFile` (preload `pathForFile`); the rest of the window still ignores drops.
-- **Paste an image**: an image pasted into the chat input (⌘V / Ctrl+V; PNG, JPEG, GIF, WebP; at most 5, each at
-  most 5 MB) shows as a small preview above it (✕ removes it) and goes with the next message, which may be the
-  images alone. `chat:send(id, text, images: [{ type, data: base64 }])`; main checks them first (`CHAT.cleanImages`:
-  `too-many-images`, `image-type`, `image-size`, each shown as `chat.why.*`). A GUI chat tab (v3.108) gets them as
+- **Paste an image**: an image pasted into the chat input (⌘V / Ctrl+V; PNG, JPEG, GIF, WebP; at most 5) shows as a
+  small preview above it (✕ removes it) and goes with the next message, which may be the images alone; a message
+  sent while an image is still being read waits for it. An image whose base64 text is over 5 MB, or with a side over
+  8000 px (the API's limits), is scaled down first (long side 2000 px, JPEG 0.85). `chat:send(id, text, images:
+  [{ type, data: base64 }])`; main checks them first (`CHAT.cleanImages`: `too-many-images`, `image-type`,
+  `image-size` on the base64 length, each shown as `chat.why.*`). A GUI chat tab (v3.108) gets them as
   image blocks of the user message (`GS.userLine(text, images)`), nothing written to disk. A terminal tab (HQ, Windows,
   a tab switched to its terminal) gets each image as a file of the app's (`userData/chat-images/<random>.<ext>`, 0600,
-  folder 0700, created only new, files older than 7 days removed at the next write) and `@<path>` in the message,
-  which Claude Code attaches (`image-save` when it cannot be written). Both checked with Claude Code 2.1.311 with
+  folder 0700, created only new, files older than 7 days removed at the next write; removed at once when the message
+  could not be typed) and `@<path>` in the message, which Claude Code attaches (`image-save` when it cannot be written).
+  Show in Finder never shows in a paired device's read-only chat (`source`). Both checked with Claude Code 2.1.311 with
   `--tools ''` (the model named the colour of an image it could not open itself). A text paste that also carries an
   image keeps the text and adds the image.
 - **Dev-mock**: `?chat` lists five sample files for "@"; Show in Finder logs to the console; a message with images is

@@ -4684,13 +4684,23 @@ function guiSwitchIdle() {
     for (const pid of P.ptyIdsOf(p)) {
       const t = terms.get(pid);
       const r = P.resolvePty(state, pid);
-      if (!t || !r || Boolean(t.gui) === guiTab(pid, r) || handoffLocked(pid)) continue;
+      if (!t || !r || Boolean(t.gui) === guiTab(pid, r) || handoffLocked(pid) || guiHolds(pid)) continue;
       const sid = idleSession(pid);
       if (!sid || (t.gui && (t.asks().length > 0 || t.live().busy))) continue;
       startPty(pid, { sessionId: sid, resume: true });
       send('chat:moved', pid);
     }
   }
+}
+/**
+ * v3.108 not now for a mode switch, whatever the pid file says: the tab was written to in the last 15 s (a prompt typed
+ * by HQ, a routine or a paired device may still be waiting for its Enter, or for the turn it starts), or a task this
+ * machine dispatched into it has not reported yet.
+ */
+function guiHolds(pid) {
+  if (Date.now() - (activity.get(pid)?.at || 0) < 15000) return true;
+  for (const x of loadDispatches().values()) if (x.pub === 'self' && x.into === pid && !x.report) return true;
+  return false;
 }
 /** A running tab's session id when its claude can restart without losing anything, else ''. */
 function idleSession(pid) {
@@ -5324,7 +5334,9 @@ ipcMain.handle('chat:send', (_e, id, text, images) => {
   // a terminal tab: each image goes to a file of the app's (0600) and in as @path, which Claude Code attaches
   const paths = saveChatImages(img.images);
   if (!paths) return 'image-save';
-  return typePrompt(id, [body, ...paths.map(FM.mention)].filter(Boolean).join(' ')) ? 'ok' : 'not-running';
+  if (typePrompt(id, [body, ...paths.map(FM.mention)].filter(Boolean).join(' '))) return 'ok';
+  for (const p of paths) { try { fs.rmSync(p); } catch { /* gone */ } }   // nothing was typed: its files go at once
+  return 'not-running';
 });
 const chatImagesDir = () => path.join(app.getPath('userData'), 'chat-images');
 /** v3.109 a terminal tab's pasted images as files (0600, folder 0700); those older than 7 days go. → paths | null */
@@ -5378,7 +5390,7 @@ ipcMain.handle('chat:mode', (_e, id, mode) => {
   if (handoffLocked(id)) { undo(); lockedNotice(id); return 'locked'; }
   // the same test as restartIdle (no turn, agents, shells or draft; a session id to resume), plus an open card or turn
   const sid = idleSession(id);
-  if (!sid || (t.gui && (t.asks().length > 0 || t.live().busy)) || (!t.gui && attention.get(r.project.id) === 'permission')) { undo(); return 'busy'; }
+  if (!sid || guiHolds(id) || (t.gui && (t.asks().length > 0 || t.live().busy)) || (!t.gui && attention.get(r.project.id) === 'permission')) { undo(); return 'busy'; }
   startPty(id, { sessionId: sid, resume: true });
   return 'moved';
 });

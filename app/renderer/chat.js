@@ -201,7 +201,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     if (it.kind === 'error') return message('error', it.text, textBody(it.text));
     if (it.kind === 'tool') {
       // v3.109 a file the tool worked on: Show in Finder (main allows only a path inside the tab's folder)
-      const reveal = it.path ? h('button', { class: 'chat-reveal', title: revealLabel(), onclick: async (e) => {
+      const reveal = it.path && !source ? h('button', { class: 'chat-reveal', title: revealLabel(), onclick: async (e) => {
         e.stopPropagation();
         let r = 'outside';
         try { r = await api.chat.reveal(ptyId, it.path); } catch (err) { console.error(err); }
@@ -538,24 +538,44 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     imgBar.hidden = !images.length;
   }
   const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  const B64_MAX = 5 * 1024 * 1024;   // the API's limit, on the base64 text (main checks the same)
+  const EDGE_MAX = 8000;             // the API's largest side
+  const readUrl = (blob) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result || '')); r.onerror = () => bad(r.error); r.readAsDataURL(blob); });
+  const b64 = (url) => url.slice(url.indexOf(',') + 1);
+  /** An image as it goes out: as it is when within the API's limits, else scaled down (long side 2000 px, JPEG). */
+  async function prepare(f) {
+    const url = await readUrl(f);
+    let bmp = null;
+    try { bmp = await window.createImageBitmap(f); } catch { return null; }
+    const big = Math.max(bmp.width, bmp.height);
+    if (b64(url).length <= B64_MAX && big <= EDGE_MAX) { bmp.close?.(); return { type: f.type, data: b64(url) }; }
+    const k = Math.min(1, 2000 / big);
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+    c.getContext('2d')?.drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close?.();
+    const data = b64(c.toDataURL('image/jpeg', 0.85));
+    return data.length <= B64_MAX ? { type: 'image/jpeg', data } : null;
+  }
+  /** @type {Promise<void>[]} */
+  const imageReads = [];   // pastes still being read: a message waits for them
   input.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
     if (!files.length) return;   // text: the input's own paste
     if (!(e.clipboardData?.getData('text/plain') || '').trim()) e.preventDefault();
     for (const f of files) {
-      if (images.length >= 5) { note(t('chat.why.too-many-images')); break; }
+      if (images.length + imageReads.length >= 5) { note(t('chat.why.too-many-images')); break; }
       if (!IMAGE_TYPES.includes(f.type)) { note(t('chat.why.image-type')); continue; }
-      if (f.size > 5 * 1024 * 1024) { note(t('chat.why.image-size')); continue; }
-      const r = new FileReader();
-      r.onload = () => {
-        const url = String(r.result || '');
-        const data = url.slice(url.indexOf(',') + 1);
-        if (data && images.length < 5) { images.push({ type: f.type, data }); drawImages(); }
-      };
-      r.readAsDataURL(f);
+      const job = prepare(f).then((im) => {
+        if (!im) note(t('chat.why.image-size'));
+        else if (images.length < 5) { images.push(im); drawImages(); }
+      }).catch((err) => { console.error(err); note(t('chat.why.image-type')); })
+        .finally(() => { imageReads.splice(imageReads.indexOf(job), 1); });
+      imageReads.push(job);
     }
   });
   async function submit() {
+    if (imageReads.length) await Promise.all(imageReads.slice());   // an image pasted a moment ago goes with this message
     const text = input.value;
     if (!text.trim() && !images.length) return;
     if (menu && !gui) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
