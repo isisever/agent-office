@@ -51,7 +51,7 @@ function userText(s, base) {
 /**
  * Transcript lines (JSONL text, whole lines) → chat items, in order:
  *   { kind: 'user', text, images? } | { kind: 'assistant', text } | { kind: 'error', text }
- *   | { kind: 'tool', id, name, detail } | { kind: 'toolDone', id, error } | { kind: 'command', text }
+ *   | { kind: 'tool', id, name, detail, path? } | { kind: 'toolDone', id, error } | { kind: 'command', text }
  *   | { kind: 'note', note: 'compact' | 'task' | 'interrupted' | 'message' }
  * each with key (unique per line and block) and at (ms, 0 when unknown). A bad line is skipped.
  */
@@ -85,7 +85,11 @@ function chatItems(text) {
       content.forEach((b, n) => {
         const k = `${key}:${n}`;
         if (b?.type === 'text' && String(b.text || '').trim()) out.push({ key: k, at, kind: j.isApiErrorMessage ? 'error' : 'assistant', text: cut(String(b.text).trim(), TEXT_MAX) });
-        else if (b?.type === 'tool_use') out.push({ key: k, at, kind: 'tool', id: String(b.id || ''), name: toolName(b.name), detail: toolDetail(b.name, b.input) });
+        else if (b?.type === 'tool_use') {
+          // v3.109 the file a tool worked on (the chat can show it in Finder: main checks it is inside the tab's folder)
+          const fp = ['file_path', 'notebook_path'].map((k2) => b.input?.[k2]).find((v) => typeof v === 'string' && v.trim() && v.length <= 4096);
+          out.push({ key: k, at, kind: 'tool', id: String(b.id || ''), name: toolName(b.name), detail: toolDetail(b.name, b.input), ...(fp ? { path: fp } : {}) });
+        }
       });
     }
   }

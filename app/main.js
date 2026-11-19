@@ -29,6 +29,7 @@ const SC = require('./src/shared-config.js');
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
 const ST = require('./src/staff.js');
+const FM = require('./src/file-match.js');           // v3.109 "@" files and Show in Finder in the chat
 const RW = require('./src/role-wizard.js');
 // v3.85 mail: accounts, the outbox, the read-only readers, the guard and the desk's mail server
 const MG = require('./src/mail/guard.js');
@@ -5275,6 +5276,34 @@ ipcMain.handle('chat:keys', (_e, id, steps, expect) => {
   const a = activity.get(id);
   if (a) a.at = Date.now();
   keys.forEach((k, n) => setTimeout(() => { if (terms.get(id) === t) t.write(k); }, n * MENU_STEP_MS));
+  return 'ok';
+});
+// --- v3.109 "@" in the chat: the tab's project files (git's list, else a bounded walk; cached 30 s per folder), ranked
+// against the query; Show in Finder for a tool line's file: only inside the tab's folder
+const fileCache = new Map();   // folder → { at, files }
+function folderFiles(dir) {
+  const hit = fileCache.get(dir);
+  if (hit && Date.now() - hit.at < 30000) return Promise.resolve(hit.files);
+  return new Promise((resolve) => {
+    execFile('git', ['ls-files', '-co', '--exclude-standard', '-z'], { cwd: dir, timeout: 5000, maxBuffer: 32 << 20, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, out) => {
+      const files = err ? FM.walkFiles(dir) : FM.parseGitFiles(out);
+      fileCache.set(dir, { at: Date.now(), files });
+      if (fileCache.size > 30) fileCache.delete(fileCache.keys().next().value);
+      resolve(files);
+    });
+  });
+}
+ipcMain.handle('chat:files', async (_e, id, query) => {
+  const r = P.resolvePty(state, String(id || ''));
+  if (!r || r.tab?.shell || !isDir(r.dir)) return [];
+  const files = await folderFiles(r.dir);
+  return FM.rankFiles(files, typeof query === 'string' ? query.slice(0, 200) : '', 30).map((p) => ({ path: p, insert: FM.mention(p) }));
+});
+ipcMain.handle('chat:reveal', (_e, id, p) => {
+  const r = P.resolvePty(state, String(id || ''));
+  const real = r && isDir(r.dir) ? FM.insidePath(r.dir, p) : '';
+  if (!real) return 'outside';
+  eShell.showItemInFolder(real);
   return 'ok';
 });
 // The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).

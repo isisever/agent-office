@@ -185,7 +185,7 @@ const chatOf = (id) => {
     const at = Date.now();
     mockChats.set(id, [
       { key: `${id}-1`, at, kind: 'user', text: 'README için kısa bir kurulum bölümü yaz.' },
-      { key: `${id}-2`, at, kind: 'tool', id: `${id}-t1`, name: 'Read', detail: '/Users/me/web/README.md' },
+      { key: `${id}-2`, at, kind: 'tool', id: `${id}-t1`, name: 'Read', detail: '/Users/me/web/README.md', path: '/Users/me/web/README.md' },
       { key: `${id}-3`, at, kind: 'toolDone', id: `${id}-t1`, error: false },
       { key: `${id}-4`, at, kind: 'tool', id: `${id}-t2`, name: 'Bash', detail: 'npm test' },
       { key: `${id}-5`, at, kind: 'toolDone', id: `${id}-t2`, error: true },
@@ -571,6 +571,10 @@ window.agentOffice = {
       { name: 'superpowers:brainstorming', description: 'Use when the user asks to design or plan', source: 'plugin' },
       { name: 'office', description: 'Agent Office: ofis özeti ve istatistikler', source: 'plugin' },
     ],
+    // v3.109 the "@" list (a few sample files, ranked like main: name first) and Show in Finder (a note in the console)
+    files: async (_id, q) => ['README.md', 'src/app.js', 'src/login/form.js', 'test/login.test.js', 'docs/setup guide.md']
+      .filter((f) => !q || f.toLowerCase().includes(String(q).toLowerCase())).map((f) => ({ path: f, insert: /\s/.test(f) ? `@"${f}"` : `@${f}` })),
+    reveal: async (_id, p) => { console.log('mock: show in Finder', p); return 'ok'; },
     read: async (id, cursor) => {
       if (String(id).startsWith('login:')) return { unsupported: true };
       const items = chatOf(id);

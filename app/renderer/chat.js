@@ -98,6 +98,9 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   // the "/" list above the input (Claude Code's commands for this tab, chat:commands)
   const slash = h('ul', { class: 'chat-slash', role: 'listbox' });
   slash.hidden = true;
+  // v3.109 the "@" list: the tab's project files (chat:files); the pick goes in as @path, which Claude Code attaches
+  const atList = h('ul', { class: 'chat-slash chat-at', role: 'listbox' });
+  atList.hidden = true;
   // the message being replied to, above the input (✕ drops it)
   const replyText = h('span', { class: 'chat-reply-text' });
   const replyBar = h('div', { class: 'chat-reply' }, h('span', { class: 'chat-reply-label' }), replyText,
@@ -108,7 +111,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   // once it is complete, so this is the live part
   const live = h('div', { class: 'chat-live' });
   live.hidden = true;
-  const form = h('div', { class: 'chat-form' }, slash, input, stop, send, term);
+  const form = h('div', { class: 'chat-form' }, slash, atList, input, stop, send, term);
   form.hidden = Boolean(source);
   el.append(banner, list, empty, live, card, endBox, replyBar, form, why);
   card.hidden = true;
@@ -192,7 +195,14 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     if (it.kind === 'assistant') return message('assistant', it.text, mdBody(it.text));
     if (it.kind === 'error') return message('error', it.text, textBody(it.text));
     if (it.kind === 'tool') {
-      const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''));
+      // v3.109 a file the tool worked on: Show in Finder (main allows only a path inside the tab's folder)
+      const reveal = it.path ? h('button', { class: 'chat-reveal', title: revealLabel(), onclick: async (e) => {
+        e.stopPropagation();
+        let r = 'outside';
+        try { r = await api.chat.reveal(ptyId, it.path); } catch (err) { console.error(err); }
+        if (r !== 'ok') note(t('chat.revealOutside'));
+      } }, '⌕') : null;
+      const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''), reveal);
       if (it.id) tools.set(it.id, line);
       return line;
     }
@@ -449,6 +459,62 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     setTimeout(poll, 200);
   }
 
+  const revealLabel = () => t(api.platform === 'darwin' ? 'chat.revealMac' : 'chat.reveal');
+  // ---- v3.109 "@": files of the tab's project
+  /** @type {{ path: string, insert: string }[]} */
+  let atShown = [];
+  let atPick = 0;
+  let atSeq = 0;
+  /** The "@…" word the caret is in (after a space or at the start), or null. */
+  function atQuery() {
+    const caret = input.selectionStart ?? input.value.length;
+    const before = input.value.slice(0, caret);
+    const m = /(?:^|\s)@([^\s@"]{0,200})$/.exec(before);
+    return m ? m[1] : null;
+  }
+  function closeAt() { atList.hidden = true; atShown = []; }
+  function drawAt() {
+    atList.replaceChildren(...atShown.map((f, i) => h('li', {
+      class: `chat-slash-row${i === atPick ? ' on' : ''}`, role: 'option',
+      onmousedown: (e) => { e.preventDefault(); atPick = i; completeAt(); },
+    }, h('span', { class: 'chat-slash-name' }, f.path.slice(f.path.lastIndexOf('/') + 1)), h('span', { class: 'chat-slash-desc' }, f.path))));
+    atList.hidden = !atShown.length;
+    atList.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+  }
+  async function updateAt() {
+    const q = atQuery();
+    if (q === null || !api.chat.files) { closeAt(); return; }
+    const seq = ++atSeq;
+    let list = [];
+    try { list = await api.chat.files(ptyId, q); } catch (e) { console.error(e); }
+    if (seq !== atSeq || atQuery() === null) return;   // a newer key, or the word is gone
+    atShown = list || []; atPick = 0;
+    drawAt();
+  }
+  function completeAt() {
+    const f = atShown[atPick];
+    if (!f) return;
+    const caret = input.selectionStart ?? input.value.length;
+    const before = input.value.slice(0, caret).replace(/@[^\s@"]*$/, '');
+    const after = input.value.slice(caret);
+    input.value = `${before}${f.insert} ${after.replace(/^\s+/, '')}`;
+    const pos = before.length + f.insert.length + 1;
+    input.setSelectionRange(pos, pos);
+    closeAt(); fitInput(); input.focus();
+  }
+  // ---- v3.109 a file dropped on the input goes in as @path (its full path)
+  input.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+  input.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const paths = [...(e.dataTransfer?.files || [])].map((f) => { try { return api.pathForFile?.(f) || ''; } catch { return ''; } }).filter(Boolean);
+    if (!paths.length) return;
+    const add = paths.map((p) => (/\s/.test(p) ? `@"${p.replace(/"/g, '')}"` : `@${p}`)).join(' ');
+    const caret = input.selectionStart ?? input.value.length;
+    const sep = caret > 0 && !/\s$/.test(input.value.slice(0, caret)) ? ' ' : '';
+    input.value = `${input.value.slice(0, caret)}${sep}${add} ${input.value.slice(caret)}`;
+    fitInput(); input.focus();
+  });
+
   function replyTo(text) {
     replying = text;
     replyBar.hidden = !text;
@@ -527,9 +593,14 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     fitInput();
     input.focus();
   }
-  input.addEventListener('input', () => { fitInput(); note(''); updateSlash(); });
-  input.addEventListener('blur', () => setTimeout(closeSlash, 150));
+  input.addEventListener('input', () => { fitInput(); note(''); updateSlash(); updateAt(); });
+  input.addEventListener('blur', () => setTimeout(() => { closeSlash(); closeAt(); }, 150));
   input.addEventListener('keydown', (e) => {
+    if (!atList.hidden && atShown.length && !e.isComposing) {   // v3.109 the "@" list first
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); atPick = (atPick + (e.key === 'ArrowDown' ? 1 : -1) + atShown.length) % atShown.length; drawAt(); return; }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); completeAt(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); closeAt(); return; }
+    }
     if (!slash.hidden && shownCmds.length && !e.isComposing) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); pick = (pick + (e.key === 'ArrowDown' ? 1 : -1) + shownCmds.length) % shownCmds.length; drawSlash(); return; }
       if (e.key === 'Tab') { e.preventDefault(); complete(); return; }

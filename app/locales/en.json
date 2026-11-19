@@ -727,6 +727,9 @@
     "reply": "Reply",
     "replyingTo": "Replying to:",
     "working": "Working…",
+    "reveal": "Show in folder",
+    "revealMac": "Show in Finder",
+    "revealOutside": "This file is not inside the project folder (or is gone): it cannot be shown here.",
     "gui": {
       "terminalTitle": "Continue this session in the terminal (when Claude is not working)",
       "stop": "Stop",

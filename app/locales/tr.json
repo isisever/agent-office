@@ -717,6 +717,9 @@
     "reply": "Yanıtla",
     "replyingTo": "Yanıtlanan:",
     "working": "Çalışıyor…",
+    "reveal": "Klasörde göster",
+    "revealMac": "Finder'da göster",
+    "revealOutside": "Bu dosya proje klasörünün içinde değil (ya da silinmiş): burada gösterilemez.",
     "gui": {
       "terminalTitle": "Bu oturuma terminalde devam et (Claude çalışmıyorken)",
       "stop": "Durdur",

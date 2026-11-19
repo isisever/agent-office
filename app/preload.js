@@ -138,6 +138,8 @@ contextBridge.exposeInMainWorld('agentOffice', {
     send: (id, text) => ipcRenderer.invoke('chat:send', id, text),       // → 'ok' | why not ('empty', 'not-running', 'permission', 'draft', 'locked', …)
     keys: (id, steps, expect) => ipcRenderer.invoke('chat:keys', id, steps, expect),     // expect: the key of the menu the card shows; a menu answer: ['2'] | ['3', { text }, '\r'] | ['\x1b'] …; → 'ok' | why not
     commands: (id) => ipcRenderer.invoke('chat:commands', id),           // the "/" list → [{ name, description, source, ui? }]
+    files: (id, query) => ipcRenderer.invoke('chat:files', id, query),   // v3.109 the "@" list → [{ path, insert }] (the tab's project files)
+    reveal: (id, path) => ipcRenderer.invoke('chat:reveal', id, path),   // v3.109 Show in Finder → 'ok' | 'outside' (only inside the tab's folder)
     // v3.108 GUI chat: read also returns gui: null | { asks: [{ id, kind, tool, name, detail, questions?, plan?, since }], live: { busy, text, tool } }
     answer: (id, askId, answer) => ipcRenderer.invoke('chat:answer', id, askId, answer),   // answer: { allow, message?, answers? } → 'ok' | 'gone' | 'bad-answer' | 'locked' | 'not-running'
     interrupt: (id) => ipcRenderer.invoke('chat:interrupt', id),         // stop the running turn → 'ok' | 'not-running'

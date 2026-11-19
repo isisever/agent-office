@@ -605,6 +605,10 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
 /* v3.108 GUI chat: Stop, a question's block, a plan to approve */
 .chat-stop { cursor: pointer; font: inherit; font-size: 12px; padding: 5px 10px; border-radius: var(--radius); border: 1px solid var(--danger); color: var(--danger); background: var(--raised); }
 .chat-stop[hidden] { display: none; }
+/* v3.109 Show in Finder on a tool line; the "@" file list (same look as the "/" list) */
+.chat-reveal { cursor: pointer; font: inherit; font-size: 11px; margin-left: 6px; padding: 0 5px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted); background: transparent; opacity: 0; }
+.chat-tool:hover .chat-reveal, .chat-reveal:focus { opacity: 1; }
+.chat-reveal:hover { color: var(--text); border-color: var(--line-strong); }
 .chat-question { display: flex; flex-direction: column; gap: 4px; }
 .chat-question + .chat-question { padding-top: 6px; border-top: 1px solid var(--border); }
 .chat-end { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--danger); border-radius: 8px; background: var(--raised); }

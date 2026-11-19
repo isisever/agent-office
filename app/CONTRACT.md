@@ -2494,3 +2494,32 @@ type Ask = { id: string; kind: 'permission' | 'question' | 'plan'; tool: string;
   banner: the project's badge shows it.
 - **Tests**: `app/test/gui-session.test.cjs` (eligibility, argv, protocol lines, line splitting, cards, auto answers,
   the generated rules copy, answers, the live line, the pty-shaped wrapper with a fake process, attention).
+
+## Files in the chat: "@" mentions, Show in Finder, drop a file (v3.109)
+
+Three things the VS Code extension has, for the chat view (GUI chat tabs and the terminal-based chat alike).
+
+```ts
+agentOffice.chat.files(ptyId, query): Promise<{ path, insert }[]>    // 'chat:files'; ≤ 30, best first; insert: @path or @"path with spaces"
+agentOffice.chat.reveal(ptyId, path): Promise<'ok' | 'outside'>       // 'chat:reveal'; Show in Finder (macOS) / in its folder
+// chat items: a tool line gains path? (its input's file_path or notebook_path, ≤ 4096 characters)
+```
+
+- **"@"** (`renderer/chat.js`, `src/file-match.js`): typing `@` after a space or at the start of the input opens a list
+  of the tab's project files like the "/" list (↑/↓, Tab or Enter picks, Esc closes; a reply to an older query is
+  dropped). Main lists the folder with `git ls-files -co --exclude-standard -z` (tracked plus untracked, not ignored;
+  5 s, 32 MB), else walks it (depth ≤ 8, no dot folders, no `node_modules`, `dist`, `build`, … , links not followed),
+  at most 20 000 paths, cached 30 s per folder (≤ 30 folders). Ranking (`rankFiles`): the file name starting with the
+  query, then containing it, then the path containing it, then its letters in order; shorter paths first. The pick
+  goes in as `@path`, which Claude Code attaches to the message: checked with Claude Code 2.1.311 in the SDK protocol
+  (`--tools ''`: the answer quoted a word from the file it could not read itself). Only names cross to the renderer,
+  never file contents.
+- **Show in Finder**: a tool line with a file shows a small button on hover (`chat.revealMac` on macOS, else
+  `chat.reveal`). Main resolves the path (relative to the tab's folder, or absolute), follows links (`realpath`) and
+  shows it only when it exists inside the tab's folder (`FM.insidePath`): `shell.showItemInFolder`, never opened or run.
+  Else `outside` (`chat.revealOutside` in the chat's note line).
+- **Drop**: files dropped on the chat input go in as `@<full path>` each (quoted with spaces), at the caret.
+  `webUtils.getPathForFile` (preload `pathForFile`); the rest of the window still ignores drops.
+- **Dev-mock**: `?chat` lists five sample files for "@"; Show in Finder logs to the console.
+- **Tests**: `app/test/chat.test.cjs` (git output, the walk, ranking, mentions, insidePath with `..`, absolute, missing
+  and a link out of the folder; tool items carry their file; main reveals only, never opens).
