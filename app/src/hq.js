@@ -180,7 +180,7 @@ const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && 
  * Who consents to an HQ dispatch (v3.103). office_dispatch is always auto-allowed at the Claude level, so the app is
  * the only gate. `ask` is the person's `askBeforeDispatch` setting (default off). The same answer for a target on this
  * machine and on a paired one (the person's own computer).
- * - a routine run's request: 'none' only for a local dispatch that `routineNoAsk` allows (main computes it with
+ * - a routine run's request: 'none' only for a dispatch that `routineNoAsk` allows (main computes it with
  *   ROUT.routineNoAsk; v3.107: with `ask` off every routine in its scope, a paired computer alike; with `ask` on only
  *   its own checkbox, never remote) and the run's id still live, else 'held' (a card on the Board, never a modal).
  * - `ask` on: 'app' (the app's dialog), always.
