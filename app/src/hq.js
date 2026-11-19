@@ -69,15 +69,16 @@ const redact = (text) => SECRET_PATTERNS.reduce((out, [re, to]) => out.replace(/
 /** The HQ boss model: a listed Claude Code model or a valid custom id (the project boss model check for the claude engine), else null. */
 const hqBossModel = (v) => (isStr(v) ? require('./projects.js').bossModelValue(v, 'claude') : null); // lazy: projects.js requires this file
 
-/** state.hq: the HQ's account and boss model, and the consent setting (default: ask). */
+/** state.hq: the HQ's account and boss model, and the consent setting. v3.103 the consent dialog is off by default:
+ *  `askBeforeDispatch` is kept only when true. The settings it replaces (`dispatchWithoutAsking`, `initiative`) are
+ *  dropped when read: absent means no dialog. */
 function normalizeHq(raw) {
   const o = isObj(raw) ? raw : {};
   return {
     accountId: isStr(o.accountId) ? o.accountId : 'default',
     enabled: o.enabled !== false,
     ...(hqBossModel(o.bossModel) ? { bossModel: o.bossModel } : {}),
-    dispatchWithoutAsking: o.dispatchWithoutAsking === true,
-    ...(o.initiative === true ? { initiative: true } : {}),   // v3.91 HQ may continue an open typed request on its own (off: absent)
+    ...(o.askBeforeDispatch === true ? { askBeforeDispatch: true } : {}),
   };
 }
 
@@ -154,95 +155,78 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
   };
 }
 /** The request a dispatch belongs to: an id the minter issued, else the current one, else the capped 'adhoc' bucket. */
-// v3.91 with the initiative setting on, an id the person typed stays usable for INITIATIVE_MS (past its 30 min TTL)
+// v3.91 an id the person typed stays usable for INITIATIVE_MS (past its 30 min TTL); v3.103 unless the person wants
+// to be asked (`ask`: the `askBeforeDispatch` setting), where it ends with its TTL as before
 const typedWithin = (minter, id, now) => { const at = minter?.typedAt?.(id) || 0; return at > 0 && now - at < INITIATIVE_MS; };
-const resolveRequest = (minter, id, { initiative = false, now = Date.now() } = {}) => (minter.issued(id) || (initiative && typedWithin(minter, id, now)) ? id : minter.current() || ADHOC);
+const resolveRequest = (minter, id, { ask = false, now = Date.now() } = {}) => (minter.issued(id) || (!ask && typedWithin(minter, id, now)) ? id : minter.current() || ADHOC);
 /** v3.47 a dispatch without the routine's id is held only while an HQ routine turn's id is still live (never the
  *  person's own typed requests after that turn ended). */
 const holdsOffId = ({ approved, request, minter, openRoutine }) => !approved && !minter.isRoutine(request) && Boolean(openRoutine) && minter.isLiveRoutine(openRoutine);
 
 /**
- * Who consents to an HQ dispatch. office_dispatch is always auto-allowed at the Claude level, so the app is the only
- * gate: 'none' only for a local dispatch with the setting on and the live request id minted from the person's typed
- * prompt; everything else (setting off, remote, 'adhoc', or a request that is not the live one) → 'app' (the app's dialog).
- * A foreign or missing id never reaches here as such: resolveRequest maps it to the minter's current id, which is live
- * (so no dialog) unless it expired or was cleared, then 'adhoc' (dialog).
- * v3.101 a target on a paired machine (the person's own computer) follows the SAME rule and the same `setting` as a
- * local one (the separate v3.99 `dispatchRemoteWithoutAsking` is gone). A routine's remote dispatch stays held.
+ * Who consents to an HQ dispatch (v3.103). office_dispatch is always auto-allowed at the Claude level, so the app is
+ * the only gate. `ask` is the person's `askBeforeDispatch` setting (default off). The same answer for a target on this
+ * machine and on a paired one (the person's own computer).
+ * - a routine run's request: 'none' only for a local dispatch with the routine's own checkbox on and the run's id
+ *   still live, else 'held' (a card on the Board, never a modal). Unchanged since v3.47; `ask` does not apply.
+ * - `ask` on: 'app' (the app's dialog), always.
+ * - 'adhoc' or no id (resolveRequest found no id the app minted): 'app'. The dialog stays for exactly this case.
+ * - the live id minted from the prompt the person typed (their turn): 'none'.
+ * - an id the person typed less than INITIATIVE_MS ago, in a later turn (a report arrived, the id is no longer the
+ *   live one): 'follow': no dialog, bound by followRefusal (refused with its reason, never asked).
+ * - any other id: 'app'.
  */
-function consentFor({ setting, remote, request, minter, routineNoAsk = false }) {
-  // v3.47 a routine run's request: never a modal; no-ask only for a local dispatch, the routine's own checkbox on and
-  // the run's id still live (the global setting does not apply); else a held card the person approves on the Board
+function consentFor({ ask = false, remote, request, minter, routineNoAsk = false, now = Date.now() }) {
   if (minter?.isRoutine?.(request)) return !remote && routineNoAsk && minter.isLiveRoutine(request) ? 'none' : 'held';
-  return setting === true && request && request !== ADHOC && minter?.isLive(request) ? 'none' : 'app';
+  if (ask === true || !isStr(request) || request === ADHOC) return 'app';
+  if (minter?.isLive?.(request)) return 'none';
+  return typedWithin(minter, request, now) ? 'follow' : 'app';
 }
 
 /**
- * v3.94 may the consent dialog offer its third button ("Allow, and stop asking for my own requests")? Only while the
- * request id is the live one minted from a prompt the person typed into HQ: never a routine's id, 'adhoc', or a turn
- * the person did not type (an inbox row ends the liveness). v3.101 a paired machine's target offers it like a local one.
+ * v3.103 (the v3.91 initiative limits, now for any target of the request): may HQ send these tasks unattended, in a
+ * turn the person did not type? → null, or the reason the dispatch is refused with:
+ * - 'request-expired': the id was not minted from a prompt the person typed (a routine's, 'adhoc', unknown) or the
+ *   prompt is older than INITIATIVE_MS;
+ * - 'unknown-machine': a target on a paired machine (`remote: true`) without that machine's key;
+ * - 'skip-permissions': a target (`targets`: one per task, `{ projectId, staffId, skip, remote?, machine? }`) whose
+ *   project runs with Skip permissions (v3.91; for a paired machine the catalog's flag, unknown counts as yes);
+ * - 'open-cap' / 'request-cap': the caps (12 open, 8 per request counting removed rows) leave no room for the tasks;
+ * - 'follow-up-cap': more than MAX_INITIATIVE tasks would have been sent this way for the request (counted on the
+ *   request record, so a removed row still counts). `counted`: these tasks are already in that count (takeInitiative
+ *   ran; the re-check after a wait).
  */
-const offersAlways = ({ request, minter }) => isStr(request) && request !== ADHOC
-  && Boolean(minter?.isLive?.(request)) && (minter?.typedAt?.(request) || 0) > 0 && !minter?.isRoutine?.(request);
-/** v3.94 what that button turns on: the two existing settings, nothing else changed. v3.101 they cover paired
- *  machines too (a paired device is the person's own computer). */
-const allowAlways = (hq) => normalizeHq({ ...(hq && typeof hq === 'object' ? hq : {}), dispatchWithoutAsking: true, initiative: true });
-
-/**
- * v3.91 HQ's initiative (the `initiative` setting, default off): a dispatch that consentFor would ask about needs no
- * consent when ALL hold: the target is local, or (v3.99) on a paired machine and named by that machine's key; the request id was minted from a prompt the person typed (never a
- * routine's id, never 'adhoc'); it is younger than 2 h; EVERY target (`targets`: one per task, `{ projectId, staffId,
- * skip, remote? }`) is one the person already consented to for this request (consentedTarget) and its project does not run
- * with Skip permissions (`skip`); the caps (8 per request counting removed rows, 12 open) leave room for the tasks;
- * and at most MAX_INITIATIVE tasks were sent this way for the request (counted on the request record, so a removed
- * row still counts). `counted`: these tasks are already in that count (takeInitiative ran; the re-check after a wait).
- * Anything else → false: consentFor's answer stands.
- */
-function initiativeFor({ initiative, remote, request, minter, board, targets, counted = false, now = Date.now() }) {
+function followRefusal({ request, minter, board, targets, counted = false, now = Date.now() }) {
   const n = Array.isArray(targets) ? targets.length : 0;
-  if (initiative !== true || !isStr(request) || request === ADHOC || n < 1) return false;
-  // v3.99 a dispatch to a paired machine: every target names that machine (its key); consentedTarget matches machine + project
-  if (remote && !targets.every((t) => typeof t?.machine === 'string' && t.machine && t.machine !== 'self')) return false;
-  if (minter?.isRoutine?.(request) || !typedWithin(minter, request, now)) return false;
-  const mine = (board?.tasks || []).filter((t) => t.request === request);
-  if (!mine.length) return false;
-  if (!targets.every((t) => t && t.skip !== true && consentedTarget(board, request, t))) return false;
-  if (openTasks(board).length + n > MAX_OPEN || mine.length + removedOf(board, request) + n > MAX_PER_REQUEST) return false;
-  return initiativeSent(board, request) + (counted ? 0 : n) <= MAX_INITIATIVE;
+  if (!isStr(request) || request === ADHOC || n < 1 || minter?.isRoutine?.(request) || !typedWithin(minter, request, now)) return 'request-expired';
+  if (targets.some((t) => !t || (t.remote === true && !(typeof t.machine === 'string' && t.machine && t.machine !== 'self')))) return 'unknown-machine';
+  if (targets.some((t) => t.skip === true)) return 'skip-permissions';
+  const b = { tasks: Array.isArray(board?.tasks) ? board.tasks : [], requests: Array.isArray(board?.requests) ? board.requests : [] };
+  if (openTasks(b).length + n > MAX_OPEN) return 'open-cap';
+  if (b.tasks.filter((t) => t.request === request).length + removedOf(b, request) + n > MAX_PER_REQUEST) return 'request-cap';
+  return initiativeSent(b, request) + (counted ? 0 : n) <= MAX_INITIATIVE ? null : 'follow-up-cap';
 }
-/**
- * v3.91 a target the person consented to for this request (v3.99 its identity is machine + project: `target.machine`
- * is a paired machine's key, absent for this machine): a row for that machine of the SAME request that carries
- * `consented: true` (stamped when the consent is known: an accepted dialog, consentFor's 'none', a consented stage
- * chain: each of its stages' rows, a held card the person allowed) and was not sent by initiative went to the same
- * project id and the same staff member id (or both without a member). A member's personal workspace is a project
- * like any other here, so it counts only after a consented row went to that workspace for that member; one that is
- * not made yet has no project id and never counts. A row with a member but no recorded id (older rows) matches nothing.
- * A row without the flag counts for nothing whatever its status: a held card that was declined, ignored or expired,
- * and every row written before the flag existed.
- */
-function consentedTarget(board, request, target) {
-  const pid = typeof target?.projectId === 'string' ? target.projectId : '';
-  const sid = target?.staffId === undefined ? '' : target.staffId;
-  const machine = typeof target?.machine === 'string' && target.machine ? target.machine : 'self';   // v3.99 a paired machine's key, else this machine
-  if (!pid || typeof sid !== 'string') return false;
-  return (board?.tasks || []).some((t) => t.request === request && t.consented === true && t.byInitiative !== true && t.machine === machine && t.projectId === pid
-    && (t.staff ? t.staffId || null : '') === sid);
-}
+/** followRefusal as a yes/no. */
+const initiativeFor = (o) => followRefusal(o || {}) === null;
 /** v3.101 does that project of a paired machine answer or skip its permission prompts? From the catalog the machine
  *  shares (`skips` per project); unknown (an older Agent Office there, no catalog, not in it) counts as yes. */
 const remoteSkips = (catalog, projectId) => { const f = (Array.isArray(catalog) ? catalog : []).find((p) => p && p.id === projectId)?.skips; return typeof f === 'boolean' ? f : true; };
 /** v3.91 the tasks HQ sent on its own for a request (kept on the request record: removing a row does not lower it). */
 const initiativeSent = (board, request) => Math.max(0, Number((board?.requests || []).find((r) => r.id === request)?.initiative) || 0);
 /**
- * v3.91 decide and count in one step: when initiativeFor holds, the request record's `initiative` goes up by the
- * number of targets at once, so a second call that overlaps (its task not queued yet) sees the higher count. The count
- * is not given back when the task is refused later or the re-check falls back to the dialog. → { ok, board }.
+ * v3.91 decide and count in one step: when followRefusal has no objection, the request record's `initiative` goes up
+ * by the number of targets at once, so a second call that overlaps (its task not queued yet) sees the higher count.
+ * v3.103 a request that has no task yet gets its record here (no tasks: finishRequests leaves it alone). The count is
+ * not given back when the task is refused later. → { ok, board, reason? }.
  */
-function takeInitiative(board, o) {
+function takeInitiative(board, o, now = Date.now()) {
   const targets = Array.isArray(o?.targets) ? o.targets : [];
-  if (!initiativeFor({ ...o, board, targets, counted: false }) || !(board.requests || []).some((r) => r.id === o.request)) return { ok: false, board };
-  return { ok: true, board: { ...board, requests: board.requests.map((r) => (r.id === o.request ? { ...r, initiative: initiativeSent(board, o.request) + targets.length } : r)) } };
+  const reason = followRefusal({ ...o, board, targets, counted: false });
+  if (reason) return { ok: false, board, reason };
+  const requests = Array.isArray(board?.requests) ? board.requests : [];
+  const count = initiativeSent(board, o.request) + targets.length;
+  return { ok: true, board: { ...board, requests: requests.some((r) => r.id === o.request) ? requests.map((r) => (r.id === o.request ? { ...r, initiative: count } : r))
+    : [{ id: o.request, at: now, prompt: '', tasks: [], done: false, initiative: count }, ...requests] } };
 }
 
 /** Typed-prompt detection for the HQ pty: true when this write submits a typed line (Enter after typed text). */
@@ -702,7 +686,7 @@ module.exports = {
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, MAX_INITIATIVE, INITIATIVE_MS, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,
-  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, offersAlways, allowAlways, initiativeFor, remoteSkips, consentedTarget, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
+  redact, normalizeHq, hqProject, launchArgs, createMinter, consentFor, followRefusal, initiativeFor, remoteSkips, takeInitiative, initiativeSent, holdsOffId, submitsTyped,
   emptyBoard, loadBoard, openTasks, capReason, depthRefused, addTask, setStatus, extractPrs, applyReport, finishRequests, markLost, prune,
   taskFile, requestFile, reportMd, boardView, remoteWaitFields, reportWaitFields, createPacer, mergePeerCache, remoteProjects, remoteKey, parseRemoteKey, remoteRows, remoteActionAllowed, remoteButtons, remoteOpSteps, runRemoteSteps, RETRY_REASONS, RESTART_RETRY_MS,
 };
