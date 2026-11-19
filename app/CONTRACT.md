@@ -2184,3 +2184,19 @@ encrypt anything. The markers are plain files: with a marker deleted, a headerle
 with the shape of its own kind, and the app no longer writes headerless files, so such a file has to come from a
 version before this one. The check covers the store folder and the file, not a symbolic link higher up the path.
 Purpose binding does not tell an older copy of the right file from the current one (v3.101 "Limit").
+
+## First start of a gone boss is not delayed a minute (v3.104)
+
+Amends v3.46 (HQ task starts a gone boss) and v3.99. The minute that `757cf12` put before the first start was meant
+so that a boss that had just stopped is not restarted at once. With tabs sleeping after idle time it made nearly every
+HQ task to a local project wait a minute, so the first start now depends on why the tab is gone:
+
+| Tab | First start of a local HQ task |
+|---|---|
+| Asleep | at once (in the dispatch call) |
+| Stopped, not stopped by the person here in the last 10 minutes | after `REVIVE_SETTLE_MS` (3 s) of being seen gone, so a tab that is still shutting down is not raced |
+| Stopped by the person here within `STOPPED_HERE_MS` (10 min) | after the old minute (`REVIVE_GAP_MS`); another device's task is still refused `stopped-here` |
+| Staff desk, or another device's task | unchanged (at once) |
+
+Unchanged: at most 3 starts per project (`REVIVE_MAX`), the 2nd and 3rd at least one minute after the previous start,
+the budget given back only when the tab is seen ready, and the refusal `not-running` after the third try's minute.
