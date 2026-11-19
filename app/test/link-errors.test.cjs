@@ -269,7 +269,14 @@ test('pairing in an unreadable-keys state resets first and continues (Pair with 
   await w.healthy();
   let r = w.boot(broken);
   assert.equal(r.view.error, 'keys-decrypt');
-  const j = await r.handlers['link:join']({}, 'not a code');
+  // without the consent of the reset confirm: started again, never reset
+  const n = await r.handlers['link:join']({}, 'not a code');
+  assert.equal(n.ok, false);
+  assert.equal(n.resetDone, undefined);
+  assert.equal(n.view.error, 'keys-decrypt');
+  assert.equal((await r.handlers['link:invite']({})).error, 'keys-decrypt');
+  assert.deepEqual(asideDirs(w), []);
+  const j = await r.handlers['link:join']({}, 'not a code', { reset: true });
   assert.equal(j.resetDone, true);
   assert.equal(j.ok, false);
   assert.equal(j.error, 'bad-code');   // the pairing itself ran: the link is up
@@ -284,12 +291,12 @@ test('pairing in an unreadable-keys state resets first and continues (Pair with 
   t.after(() => { Link.prototype.invite = realInvite; });
   r = w.boot();
   assert.equal(r.view.error, 'keys-format');
-  const v = await r.handlers['link:invite']();
+  const v = await r.handlers['link:invite']({}, { reset: true });
   assert.equal(v.resetDone, true);
   assert.equal(v.error, null);
   assert.equal(asideDirs(w).length, 2);
   // a healthy link pairs without a reset
-  const v2 = await r.handlers['link:invite']();
+  const v2 = await r.handlers['link:invite']({}, { reset: true });
   assert.equal(v2.resetDone, undefined);
   assert.equal(asideDirs(w).length, 2);
 });
@@ -297,7 +304,134 @@ test('pairing in an unreadable-keys state resets first and continues (Pair with 
 test('locales: the reset texts exist in en and tr', () => {
   for (const lang of ['en', 'tr']) {
     const j = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${lang}.json`), 'utf8'));
-    for (const k of ['reset', 'resetConfirm', 'resetDone']) assert.ok(typeof j.devices[k] === 'string' && j.devices[k].length > 5, `${lang} ${k}`);
+    for (const k of ['reset', 'resetConfirm', 'resetDone', 'retry', 'linkBack']) assert.ok(typeof j.devices[k] === 'string' && j.devices[k].length > 5, `${lang} ${k}`);
     assert.match(j.devices.resetFailed, /\{reason\}/);
   }
+});
+
+const failLines = (w) => fs.readFileSync(w.f('commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.event === 'link-reset-failed');
+const LINK_FILES = ['keys.bin', 'keys.bin.ao1', 'own.bin', 'own.bin.ao1', 'devices.json'];
+const snapshot = (w) => Object.fromEntries(LINK_FILES.map((n) => [n, fs.readFileSync(w.f(n))]));
+const sameAll = (w, before) => { for (const n of LINK_FILES) same(fs.readFileSync(w.f(n)), before[n]); };
+
+test('reset: a move failing on the Nth file puts back every file already moved and keeps the error state', async (t) => {
+  for (const nth of [1, 2, 3, 5]) {
+    const w = world(t);
+    await w.healthy();
+    const before = snapshot(w);
+    const r = w.boot(broken);
+    const realRename = fs.renameSync;
+    let calls = 0;
+    fs.renameSync = function (from, to) {
+      if (String(to).includes('unreadable-') && ++calls === nth) throw coded('EIO', 'i/o error');
+      return realRename.call(this, from, to);
+    };
+    let res;
+    try { res = await r.handlers['link:reset'](); } finally { fs.renameSync = realRename; }
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, 'move');
+    assert.equal(res.code, 'EIO');
+    assert.equal(res.view.error, 'keys-decrypt');
+    assert.equal(res.view.canReset, true);
+    sameAll(w, before);
+    assert.deepEqual(asideDirs(w), []);   // emptied by the rollback and removed
+    const [line] = failLines(w);
+    assert.equal(line.moved.length, nth - 1);
+    assert.deepEqual([...line.restored].sort(), [...line.moved].sort());
+    assert.deepEqual(line.stuck, []);
+    if (nth === 2) assert.deepEqual(line.moved, ['keys.bin']);   // keys.bin first, its marker right after
+  }
+});
+
+test('reset: an aside folder that already exists (EEXIST) moves nothing and leaves that folder alone', async (t) => {
+  const w = world(t);
+  await w.healthy();
+  const before = snapshot(w);
+  const r = w.boot(broken);
+  const realMkdir = fs.mkdirSync;
+  fs.mkdirSync = function (p, o) {
+    if (String(p).includes('unreadable-')) { realMkdir.call(this, p); fs.writeFileSync(path.join(String(p), 'theirs'), 'x'); }
+    return realMkdir.call(this, p, o);
+  };
+  let res;
+  try { res = await r.handlers['link:reset'](); } finally { fs.mkdirSync = realMkdir; }
+  assert.equal(res.ok, false);
+  assert.equal(res.code, 'EEXIST');
+  assert.equal(res.view.error, 'keys-decrypt');
+  sameAll(w, before);
+  const aside = asideDirs(w);
+  assert.equal(aside.length, 1);
+  assert.deepEqual(fs.readdirSync(w.f(aside[0])), ['theirs']);
+  assert.deepEqual(failLines(w)[0].moved, []);
+});
+
+test('reset: keys-file from a transient read error (EBUSY, EACCES) is never resettable; Try again recovers', async (t) => {
+  for (const code of ['EBUSY', 'EACCES']) {
+    const w = world(t);
+    await w.healthy();
+    const before = snapshot(w);
+    const realOpen = fs.openSync;
+    let held = true;
+    fs.openSync = function (p, ...a) {
+      if (held && String(p).endsWith(`${path.sep}keys.bin`)) throw coded(code, `${code}: resource busy or locked`);
+      return realOpen.call(this, p, ...a);
+    };
+    t.after(() => { fs.openSync = realOpen; });
+    const r = w.boot();
+    assert.equal(r.view.error, 'keys-file');
+    assert.equal(r.view.errorCode, code);
+    assert.equal(r.view.canReset, false);
+    assert.equal(r.view.canRetry, true);
+    const res = await r.handlers['link:reset']();
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, 'keys-file');
+    assert.equal(res.view.error, 'keys-file');
+    // Add device / Pair even with { reset: true } does not reset it either
+    const j = await r.handlers['link:join']({}, 'not a code', { reset: true });
+    assert.equal(j.resetDone, undefined);
+    assert.equal(j.view.error, 'keys-file');
+    assert.deepEqual(asideDirs(w), []);
+    held = false;
+    sameAll(w, before);
+    const back = await r.handlers['link:reset']({}, { retryOnly: true });
+    fs.openSync = realOpen;
+    assert.equal(back.ok, true);
+    assert.equal(back.recovered, true);
+    assert.equal(back.view.error, null);
+    sameAll(w, before);
+  }
+});
+
+test('reset: a transient decrypt failure that recovers on the start again resets nothing', async (t) => {
+  const w = world(t);
+  await w.healthy();
+  const before = snapshot(w);
+  const secret = w.keysHex();
+  let locked = true;
+  const flaky = { ...good, decryptString: (b) => { if (locked) throw coded('ERR_DECRYPT', 'the keychain is locked'); return good.decryptString(b); } };
+  const r = w.boot(flaky);
+  assert.equal(r.view.error, 'keys-decrypt');
+  assert.equal(r.view.canReset, true);
+  locked = false;
+  const res = await r.handlers['link:reset']();
+  assert.equal(res.ok, true);
+  assert.equal(res.recovered, true);
+  assert.equal(res.folder, undefined);
+  assert.equal(res.view.error, null);
+  sameAll(w, before);
+  assert.equal(w.keysHex(), secret);
+  assert.deepEqual(asideDirs(w), []);
+  assert.equal(fs.readFileSync(w.f('commands.log'), 'utf8').includes('"link-reset"'), false);
+  // the pairing path: the same start again first, with or without consent
+  await r.host.destroy();
+  locked = true;
+  const p = w.boot(flaky);
+  assert.equal(p.view.error, 'keys-decrypt');
+  locked = false;
+  const j = await p.handlers['link:join']({}, 'not a code', { reset: true });
+  assert.equal(j.recovered, true);
+  assert.equal(j.resetDone, undefined);
+  assert.equal(j.error, 'bad-code');
+  assert.equal(w.keysHex(), secret);
+  assert.deepEqual(asideDirs(w), []);
 });

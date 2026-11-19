@@ -2340,19 +2340,30 @@ Tests: `test/link-errors.test.cjs`.
 
 ## Resetting a link whose keys cannot be read (v3.106)
 
-Amends v3.105. In the states `keys-decrypt`, `keys-format` and `keys-file` the link view carries `canReset: true` and
-the Devices error box shows a "Reset link" button (`devices.reset`) with a confirm (`devices.resetConfirm`: paired
-devices must remove this computer and pair again). IPC `link:reset` (preload `link.reset()`) →
-`{ ok, reason?, code?, folder?, view }`; it is refused with `reason: 'not-needed'` in any other state, a running link
-included, and with `keys-file` when the link folder itself is not a plain folder.
+Amends v3.105. In the states `keys-decrypt` and `keys-format`, and in `keys-file` only when keys.bin has the wrong
+shape (a folder, a symbolic link or junction, anything but a regular file) inside a plain link folder, the link view
+carries `canReset: true` and the Devices error box shows a "Reset link" button (`devices.reset`) with a confirm
+(`devices.resetConfirm`: paired devices must remove this computer and pair again). `keys-file` from a read error on a
+regular file (EBUSY, EPERM, EACCES, EMFILE: a scanner or indexer holding it) is transient and never resettable: the view
+carries `canRetry: true` (true in all three states) and the box shows "Try again" (`devices.retry`) instead.
 
-A reset moves, never deletes, `keys.bin.tmp`, `own.bin`, `own.bin.ao1`, `own.bin.tmp`, `devices.json`, `keys.bin.ao1`
-and `keys.bin` (last: a move that fails part way leaves the error state) into a new folder `link/unreadable-<ISO time>/`
-(created non-recursively, so an existing path or a planted link fails it; a link at a file name is moved as the link).
-This machine's name is written back to a new `devices.json` with no devices. It logs
-`{ at, event: 'link-reset', state, moved, folder }` (or `link-reset-failed` with `code` and `message`) to
-`link/commands.log`, clears the sticky error and starts again, which makes a fresh key pair.
+IPC `link:reset` (preload `link.reset(o?)`, `o.retryOnly` for Try again) → `{ ok, recovered?, reason?, code?, folder?,
+view }`; refused with `reason: 'not-needed'` in any other state, a running link included. It first clears the sticky
+state and starts again (a locked keychain or a denied Safe Storage prompt may be gone now): when that works nothing is
+reset, the answer carries `recovered: true` and the panel shows `devices.linkBack`. Only when the same resettable state
+comes back (and not with `retryOnly`) does the reset run; otherwise `reason` is the state now.
 
-Add device (`link:invite`) and Pair with a code (`link:join`) in one of these states reset first and then continue;
-the answer then carries `resetDone: true` and the panel shows `devices.resetDone`. Never at startup on its own.
+A reset moves, never deletes, `keys.bin`, then its marker `keys.bin.ao1`, `own.bin`, `own.bin.ao1`, `devices.json`,
+`keys.bin.tmp` and `own.bin.tmp` into a new folder `link/unreadable-<ISO time>/` (created non-recursively, so an
+existing path or a planted link fails it; a link at a file name is moved as the link). A move that fails puts back
+every file already moved (best effort, newest first), removes the then empty folder and keeps the error state
+(`reason: 'move'`). This machine's name is written back to a new `devices.json` with no devices. It logs
+`{ at, event: 'link-reset', state, moved, folder }` (or `link-reset-failed` with `code`, `message`, `moved`,
+`restored`, `stuck`; `link-retry` when the start again worked) to `link/commands.log`, clears the sticky error and
+starts again, which makes a fresh key pair.
+
+Add device (`link:invite`, preload `invite(o?)`) and Pair with a code (`link:join`, `join(code, o?)`) in one of these
+states start again first. The panel shows the same reset confirm before them whenever `canReset` is true (cancel does
+nothing) and then passes `{ reset: true }`; only with it do they reset and continue, the answer then carrying
+`resetDone: true` (`devices.resetDone`), or `recovered: true` when the start again worked. Never at startup on its own.
 Tests: `test/link-errors.test.cjs`.
