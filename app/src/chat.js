@@ -128,6 +128,29 @@ function readChat(file, cursor, fsm = fs) {
   return { cursor: { file, ino: st.ino, size: from + used }, items, reset: !same, more: to < st.size };
 }
 
+// v3.109 images pasted into the chat input: the types Claude takes, at most IMAGES_MAX of at most IMAGE_MAX bytes each
+const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const IMAGES_MAX = 5;
+const IMAGE_MAX = 5 * 1024 * 1024;
+/**
+ * The images of a chat message, checked: [{ type, data (base64) }] → { images: [{ type, data, ext }] } | { error:
+ * 'too-many-images' | 'image-type' | 'image-size' }. Not an array (or empty): no images.
+ */
+function cleanImages(list) {
+  if (!Array.isArray(list) || !list.length) return { images: [] };
+  if (list.length > IMAGES_MAX) return { error: 'too-many-images' };
+  const images = [];
+  for (const it of list) {
+    const type = typeof it?.type === 'string' ? it.type.toLowerCase() : '';
+    if (!IMAGE_TYPES[type]) return { error: 'image-type' };
+    const data = typeof it.data === 'string' ? it.data : '';
+    if (!data || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return { error: 'image-type' };
+    if (Math.floor((data.length * 3) / 4) > IMAGE_MAX) return { error: 'image-size' };
+    images.push({ type, data, ext: IMAGE_TYPES[type] });
+  }
+  return { images };
+}
+
 /** Why a message typed in the chat can't go to the tab now → a reason, or null (it can). */
 function sendRefused({ text, running, locked, draft, permission }) {
   if (!String(text || '').trim()) return 'empty';
@@ -196,4 +219,4 @@ function linkItems(items, { redact = (s) => require('./hq.js').redact(s), toolDe
   return out;
 }
 
-module.exports = { TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };
+module.exports = { IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };

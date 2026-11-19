@@ -101,6 +101,11 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   // v3.109 the "@" list: the tab's project files (chat:files); the pick goes in as @path, which Claude Code attaches
   const atList = h('ul', { class: 'chat-slash chat-at', role: 'listbox' });
   atList.hidden = true;
+  // v3.109 images pasted into the input: small previews above it (✕ drops one); they go with the next message
+  /** @type {{ type: string, data: string }[]} */
+  const images = [];
+  const imgBar = h('div', { class: 'chat-images-bar' });
+  imgBar.hidden = true;
   // the message being replied to, above the input (✕ drops it)
   const replyText = h('span', { class: 'chat-reply-text' });
   const replyBar = h('div', { class: 'chat-reply' }, h('span', { class: 'chat-reply-label' }), replyText,
@@ -113,7 +118,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   live.hidden = true;
   const form = h('div', { class: 'chat-form' }, slash, atList, input, stop, send, term);
   form.hidden = Boolean(source);
-  el.append(banner, list, empty, live, card, endBox, replyBar, form, why);
+  el.append(banner, list, empty, live, card, endBox, replyBar, imgBar, form, why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -526,16 +531,42 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     why.textContent = text;
     why.hidden = !text;
   }
+  function drawImages() {
+    imgBar.replaceChildren(...images.map((im, i) => h('span', { class: 'chat-image-chip' },
+      h('img', { src: `data:${im.type};base64,${im.data}`, alt: t('chat.imageAlt') }),
+      h('button', { class: 'chat-image-x', title: t('chat.imageRemove'), onclick: () => { images.splice(i, 1); drawImages(); input.focus(); } }, '✕'))));
+    imgBar.hidden = !images.length;
+  }
+  const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  input.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;   // text: the input's own paste
+    if (!(e.clipboardData?.getData('text/plain') || '').trim()) e.preventDefault();
+    for (const f of files) {
+      if (images.length >= 5) { note(t('chat.why.too-many-images')); break; }
+      if (!IMAGE_TYPES.includes(f.type)) { note(t('chat.why.image-type')); continue; }
+      if (f.size > 5 * 1024 * 1024) { note(t('chat.why.image-size')); continue; }
+      const r = new FileReader();
+      r.onload = () => {
+        const url = String(r.result || '');
+        const data = url.slice(url.indexOf(',') + 1);
+        if (data && images.length < 5) { images.push({ type: f.type, data }); drawImages(); }
+      };
+      r.readAsDataURL(f);
+    }
+  });
   async function submit() {
     const text = input.value;
-    if (!text.trim()) return;
+    if (!text.trim() && !images.length) return;
     if (menu && !gui) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
     // a slash command is sent as typed (a quote in front would stop it being a command)
     const out = replying && !/^\s*\//.test(text) ? withReply(replying, text) : text;
     let r;
-    try { r = await api.chat.send(ptyId, out); } catch (e) { console.error(e); r = 'error'; }
+    const sent = images.slice();
+    try { r = await api.chat.send(ptyId, out, sent); } catch (e) { console.error(e); r = 'error'; }
     if (r === 'ok') {
-      echo(out);
+      echo(sent.length ? `${out}${out.trim() ? '\n\n' : ''}${t('chat.images', { count: sent.length })}` : out);
+      images.length = 0; drawImages();
       input.value = '';
       replyTo('');
       fitInput();
@@ -547,7 +578,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
       if (cmd && commands?.some((c) => c.name === cmd && c.ui)) setTimeout(() => onTerminal(), 400);
       return;
     }
-    note(t(`chat.why.${['not-running', 'permission', 'draft', 'locked', 'too-long'].includes(r) ? r : 'other'}`));
+    note(t(`chat.why.${['not-running', 'permission', 'draft', 'locked', 'too-long', 'too-many-images', 'image-type', 'image-size', 'image-save'].includes(r) ? r : 'other'}`));
   }
   const fitInput = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; };
 

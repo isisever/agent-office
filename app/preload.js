@@ -135,7 +135,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
   // v3.80 chat view: a Claude Code tab's conversation read from its transcript; a message is typed into the tab
   chat: {
     read: (id, cursor) => ipcRenderer.invoke('chat:read', id, cursor),   // → { unsupported } | { sid, cursor, items, reset, more }
-    send: (id, text) => ipcRenderer.invoke('chat:send', id, text),       // → 'ok' | why not ('empty', 'not-running', 'permission', 'draft', 'locked', …)
+    send: (id, text, images) => ipcRenderer.invoke('chat:send', id, text, images),   // → 'ok' | why not ('empty', 'not-running', 'permission', 'draft', 'locked', …); v3.109 images: [{ type, data (base64) }] ≤ 5, ≤ 5 MB each ('too-many-images', 'image-type', 'image-size', 'image-save')
     keys: (id, steps, expect) => ipcRenderer.invoke('chat:keys', id, steps, expect),     // expect: the key of the menu the card shows; a menu answer: ['2'] | ['3', { text }, '\r'] | ['\x1b'] …; → 'ok' | why not
     commands: (id) => ipcRenderer.invoke('chat:commands', id),           // the "/" list → [{ name, description, source, ui? }]
     files: (id, query) => ipcRenderer.invoke('chat:files', id, query),   // v3.109 the "@" list → [{ path, insert }] (the tab's project files)

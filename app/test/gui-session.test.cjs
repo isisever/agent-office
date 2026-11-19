@@ -248,7 +248,7 @@ test('GUI chat: main wiring (source text): a card is a waiting approval for HQ, 
   assert.match(MAIN, /if \(guiProc\) guiEnded\.set\(id, \{ code: exitCode, text: GS\.endNote\(guiProc\.stderr\(\)\)/);
   assert.match(fnBody('startPty'), /guiEnded\.delete\(id\)/);
   // typed prompts (HQ dispatch, routines, remote tasks) reach a GUI tab as a message
-  assert.match(fnBody('typePrompt'), /if \(t\.gui\) \{\s+if \(!t\.sendUser\(text\)\) return false;/);
+  assert.match(fnBody('typePrompt'), /if \(t\.gui\) \{\s+if \(!t\.sendUser\(text, images\)\) return false;/);
   // HQ never runs as a GUI chat; auto answers go through the plugin's rules
   assert.match(fnBody('guiTab'), /hq: Boolean\(r\.project\.hq\)/);
   assert.match(fnBody('guiAsk'), /GS\.autoAllows\(/);

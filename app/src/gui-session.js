@@ -30,8 +30,10 @@ function guiEligible({ chatView, terminal, engine, hq, shell, platform }) {
 const guiArgs = (args) => [...GUI_FLAGS, ...args];
 
 const line = (o) => `${JSON.stringify(o)}\n`;
-/** The person's (or the app's) message. */
-const userLine = (text) => line({ type: 'user', message: { role: 'user', content: String(text) } });
+/** The person's (or the app's) message; v3.109 with images (checked by chat.js cleanImages) as content blocks. */
+const userLine = (text, images = []) => line({ type: 'user', message: { role: 'user', content: images.length
+  ? [...(String(text).trim() ? [{ type: 'text', text: String(text) }] : []), ...images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.type, data: i.data } }))]
+  : String(text) } });
 /** Stop the running turn (Esc in the terminal). */
 const interruptLine = (requestId) => line({ type: 'control_request', request_id: String(requestId), request: { subtype: 'interrupt' } });
 const allowLine = (requestId, input) => line({ type: 'control_response', response: { subtype: 'success', request_id: String(requestId), response: { behavior: 'allow', updatedInput: input && typeof input === 'object' ? input : {} } } });

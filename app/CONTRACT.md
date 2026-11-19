@@ -2495,9 +2495,9 @@ type Ask = { id: string; kind: 'permission' | 'question' | 'plan'; tool: string;
 - **Tests**: `app/test/gui-session.test.cjs` (eligibility, argv, protocol lines, line splitting, cards, auto answers,
   the generated rules copy, answers, the live line, the pty-shaped wrapper with a fake process, attention).
 
-## Files in the chat: "@" mentions, Show in Finder, drop a file (v3.109)
+## Files and images in the chat: "@" mentions, Show in Finder, drop a file, paste an image (v3.109)
 
-Three things the VS Code extension has, for the chat view (GUI chat tabs and the terminal-based chat alike).
+Four things the VS Code extension has, for the chat view (GUI chat tabs and the terminal-based chat alike).
 
 ```ts
 agentOffice.chat.files(ptyId, query): Promise<{ path, insert }[]>    // 'chat:files'; ≤ 30, best first; insert: @path or @"path with spaces"
@@ -2520,6 +2520,18 @@ agentOffice.chat.reveal(ptyId, path): Promise<'ok' | 'outside'>       // 'chat:r
   Else `outside` (`chat.revealOutside` in the chat's note line).
 - **Drop**: files dropped on the chat input go in as `@<full path>` each (quoted with spaces), at the caret.
   `webUtils.getPathForFile` (preload `pathForFile`); the rest of the window still ignores drops.
-- **Dev-mock**: `?chat` lists five sample files for "@"; Show in Finder logs to the console.
+- **Paste an image**: an image pasted into the chat input (⌘V / Ctrl+V; PNG, JPEG, GIF, WebP; at most 5, each at
+  most 5 MB) shows as a small preview above it (✕ removes it) and goes with the next message, which may be the
+  images alone. `chat:send(id, text, images: [{ type, data: base64 }])`; main checks them first (`CHAT.cleanImages`:
+  `too-many-images`, `image-type`, `image-size`, each shown as `chat.why.*`). A GUI chat tab (v3.108) gets them as
+  image blocks of the user message (`GS.userLine(text, images)`), nothing written to disk. A terminal tab (HQ, Windows,
+  a tab switched to its terminal) gets each image as a file of the app's (`userData/chat-images/<random>.<ext>`, 0600,
+  folder 0700, created only new, files older than 7 days removed at the next write) and `@<path>` in the message,
+  which Claude Code attaches (`image-save` when it cannot be written). Both checked with Claude Code 2.1.311 with
+  `--tools ''` (the model named the colour of an image it could not open itself). A text paste that also carries an
+  image keeps the text and adds the image.
+- **Dev-mock**: `?chat` lists five sample files for "@"; Show in Finder logs to the console; a message with images is
+  shown with its image count.
 - **Tests**: `app/test/chat.test.cjs` (git output, the walk, ranking, mentions, insidePath with `..`, absolute, missing
-  and a link out of the folder; tool items carry their file; main reveals only, never opens).
+  and a link out of the folder; tool items carry their file; main reveals only, never opens; images: types, count,
+  size, image blocks, the terminal tab's files and their modes by source text).

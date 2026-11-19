@@ -92,8 +92,8 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
       try { if (child.pid) killGroup(-child.pid, signal); else child.kill(signal); } catch { try { child.kill(signal); } catch {} }
     },
     /** The person's or the app's message; false when claude is gone. */
-    sendUser: (text) => {
-      const ok = put(GS.userLine(text));
+    sendUser: (text, images = []) => {
+      const ok = put(GS.userLine(text, images));
       if (ok) live = { ...live, busy: true };
       return ok;
     },

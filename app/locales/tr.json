@@ -697,6 +697,10 @@
       "message": "Başka bir oturumdan mesaj geldi."
     },
     "why": {
+      "too-many-images": "Bir mesajda en fazla 5 görsel olabilir.",
+      "image-type": "Yalnızca PNG, JPEG, GIF ve WebP görseller gönderilebilir.",
+      "image-size": "Bir görsel en fazla 5 MB olabilir.",
+      "image-save": "Görsel terminal sekmesi için kaydedilemedi.",
       "not-running": "Oturum henüz çalışmıyor; birazdan tekrar deneyin.",
       "permission": "Claude bir onay bekliyor: önce terminalde yanıtlayın.",
       "draft": "Terminalin yazı kutusunda gönderilmemiş metin var: önce orada gönderin ya da silin.",
@@ -718,6 +722,8 @@
     "replyingTo": "Yanıtlanan:",
     "working": "Çalışıyor…",
     "reveal": "Klasörde göster",
+    "imageAlt": "Yapıştırılan görsel",
+    "imageRemove": "Bu görseli kaldır",
     "revealMac": "Finder'da göster",
     "revealOutside": "Bu dosya proje klasörünün içinde değil (ya da silinmiş): burada gösterilemez.",
     "gui": {

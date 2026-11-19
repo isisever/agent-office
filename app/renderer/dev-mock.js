@@ -608,8 +608,9 @@ window.agentOffice = {
       chatOf(id).push({ key: `${id}-k${at}`, at, kind: 'note', note: 'message' }, { key: `${id}-r${at}`, at, kind: 'assistant', text: `(sahte) tuşlar: ${JSON.stringify(steps)}` });
       return 'ok';
     },
-    send: async (id, text) => {
+    send: async (id, text, images) => {   // v3.109 images are counted, as the transcript would show them
       if (q.has('asking')) return 'permission';
+      if ((images || []).length) { const at = Date.now(); chatOf(id).push({ key: `${id}-i${at}`, at, kind: 'user', text: String(text || '').trim(), images: images.length }); return 'ok'; }
       const items = chatOf(id);
       const at = Date.now();
       items.push({ key: `${id}-u${at}`, at, kind: 'user', text: String(text).trim() });

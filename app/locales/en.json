@@ -707,6 +707,10 @@
       "message": "A message from another session arrived."
     },
     "why": {
+      "too-many-images": "At most 5 images in one message.",
+      "image-type": "Only PNG, JPEG, GIF and WebP images can be sent.",
+      "image-size": "An image may be at most 5 MB.",
+      "image-save": "The image could not be saved for the terminal tab.",
       "not-running": "The session is not running yet; try again in a moment.",
       "permission": "Claude is waiting for an approval: answer it in the terminal first.",
       "draft": "The terminal's input box has unsent text: send or clear it there first.",
@@ -728,6 +732,8 @@
     "replyingTo": "Replying to:",
     "working": "Working…",
     "reveal": "Show in folder",
+    "imageAlt": "Pasted image",
+    "imageRemove": "Remove this image",
     "revealMac": "Show in Finder",
     "revealOutside": "This file is not inside the project folder (or is gone): it cannot be shown here.",
     "gui": {

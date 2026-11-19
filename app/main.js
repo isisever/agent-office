@@ -1811,7 +1811,7 @@ function hqWriteTyped(id, d) {
 /** Types the prompt into a running claude's input box and submits it. */
 /** → false when nothing was typed (no tab, or the project is being handed off). taskId (v3.35): the dispatched task's id
  *  is written to ~/.claude/agent-office/tasks/<session>.json first, so the plugin knows it even without the marker. */
-function typePrompt(id, text, { taskId = '' } = {}) {
+function typePrompt(id, text, { taskId = '', images = [] } = {}) {
   const t = terms.get(id);
   if (!t || handoffLocked(id)) return false;
   if (taskId) {
@@ -1822,7 +1822,7 @@ function typePrompt(id, text, { taskId = '' } = {}) {
   }
   // v3.108 a GUI chat tab takes the text as a message (claude queues one sent mid-turn); never HQ
   if (t.gui) {
-    if (!t.sendUser(text)) return false;
+    if (!t.sendUser(text, images)) return false;   // v3.109 pasted images go in as image blocks
     noteInput(id, '\r');
     const a = activity.get(id);
     if (a) { a.at = Date.now(); a.draft = false; }
@@ -5307,17 +5307,39 @@ ipcMain.handle('chat:reveal', (_e, id, p) => {
   return 'ok';
 });
 // The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).
-ipcMain.handle('chat:send', (_e, id, text) => {
+ipcMain.handle('chat:send', (_e, id, text, images) => {
   id = String(id);
   const r = P.resolvePty(state, id);
   if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return 'unsupported';
+  // v3.109 pasted images: checked here (types, count, size); a message may be images alone
+  const img = CHAT.cleanImages(images);
+  if (img.error) return img.error;
+  const body = typeof text === 'string' ? text.trim() : '';
   // v3.108 a GUI tab has no draft and no menu a text could answer: its open cards are answered on their own
   const gui = Boolean(terms.get(id)?.gui);
-  const why = CHAT.sendRefused({ text, running: terms.has(id), locked: handoffLocked(id), draft: !gui && Boolean(activity.get(id)?.draft), permission: !gui && attention.get(r.project.id) === 'permission' });
+  const why = CHAT.sendRefused({ text: body || (img.images.length ? 'image' : ''), running: terms.has(id), locked: handoffLocked(id), draft: !gui && Boolean(activity.get(id)?.draft), permission: !gui && attention.get(r.project.id) === 'permission' });
   if (why) { if (why === 'locked') lockedNotice(id); return why; }
   if (P.isHqId(id)) { hqLastKey = Date.now(); hqMinter.mint(); }
-  return typePrompt(id, String(text).trim()) ? 'ok' : 'not-running';
+  if (gui || !img.images.length) return typePrompt(id, body, { images: img.images }) ? 'ok' : 'not-running';
+  // a terminal tab: each image goes to a file of the app's (0600) and in as @path, which Claude Code attaches
+  const paths = saveChatImages(img.images);
+  if (!paths) return 'image-save';
+  return typePrompt(id, [body, ...paths.map(FM.mention)].filter(Boolean).join(' ')) ? 'ok' : 'not-running';
 });
+const chatImagesDir = () => path.join(app.getPath('userData'), 'chat-images');
+/** v3.109 a terminal tab's pasted images as files (0600, folder 0700); those older than 7 days go. → paths | null */
+function saveChatImages(images) {
+  const dir = chatImagesDir();
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    for (const f of fs.readdirSync(dir)) { try { const p = path.join(dir, f); if (Date.now() - fs.statSync(p).mtimeMs > 7 * 864e5) fs.rmSync(p); } catch { /* gone */ } }
+    return images.map((i) => {
+      const p = path.join(dir, `${crypto.randomBytes(8).toString('hex')}.${i.ext}`);
+      fs.writeFileSync(p, Buffer.from(i.data, 'base64'), { mode: 0o600, flag: 'wx' });   // a new random name: never over another file
+      return p;
+    });
+  } catch (e) { console.error('chat images:', e.message); return null; }
+}
 // --- v3.108 GUI chat: what the chat shows besides the transcript, the person's answers, Stop, and terminal ↔ chat
 /** null for a terminal tab; else { asks, live, gui: true } (the tab may be stopped: then nothing is open). */
 function guiInfo(id) {

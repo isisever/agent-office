@@ -148,7 +148,7 @@ test('toolDetail: an AskUserQuestion call shows its questions', () => {
 
 test('main.js: chat:send types through typePrompt; chatView is written only once set', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  const send = src.slice(src.indexOf("ipcMain.handle('chat:send'"), src.indexOf("ipcMain.handle('chat:send'") + 900);
+  const send = src.slice(src.indexOf("ipcMain.handle('chat:send'"), src.indexOf("ipcMain.handle('chat:send'") + 2400);   // v3.109 images are checked first
   assert.match(send, /CHAT\.sendRefused\(/);
   assert.match(send, /typePrompt\(id,/);
   assert.match(src, /\.\.\.\(typeof raw\.chatView === 'boolean' \? \{ chatView: raw\.chatView \} : \{\}\)/);
@@ -345,4 +345,31 @@ test('v3.109 "@" files: git list, walk, ranking, mentions; tool lines carry thei
   assert.match(reveal, /FM\.insidePath\(r\.dir, p\)/);
   assert.match(reveal, /if \(!real\) return 'outside';\s+eShell\.showItemInFolder\(real\);/);
   assert.doesNotMatch(reveal, /openPath|openExternal/, 'shown in its folder, never opened');
+});
+
+test('v3.109 pasted images: checked types, count and size; image blocks for a GUI tab, @path files for a terminal tab', () => {
+  const CHAT = require('../src/chat.js');
+  const GS = require('../src/gui-session.js');
+  const fs = require('node:fs'); const path = require('node:path');
+  const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64');
+  assert.deepEqual(CHAT.cleanImages(undefined), { images: [] });
+  assert.deepEqual(CHAT.cleanImages([{ type: 'IMAGE/PNG', data: png }]).images, [{ type: 'image/png', data: png, ext: 'png' }]);
+  assert.deepEqual(CHAT.cleanImages([{ type: 'image/tiff', data: png }]), { error: 'image-type' });
+  assert.deepEqual(CHAT.cleanImages([{ type: 'image/png', data: 'not base64!' }]), { error: 'image-type' });
+  assert.deepEqual(CHAT.cleanImages(Array.from({ length: 6 }, () => ({ type: 'image/png', data: png }))), { error: 'too-many-images' });
+  assert.deepEqual(CHAT.cleanImages([{ type: 'image/jpeg', data: 'A'.repeat(Math.ceil(CHAT.IMAGE_MAX * 4 / 3) + 8) }]), { error: 'image-size' });
+  const withImg = JSON.parse(GS.userLine('look', [{ type: 'image/png', data: png }]));
+  assert.deepEqual(withImg.message.content, [{ type: 'text', text: 'look' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }]);
+  assert.deepEqual(JSON.parse(GS.userLine('', [{ type: 'image/png', data: png }])).message.content.map((b) => b.type), ['image'], 'an image alone');
+  assert.equal(JSON.parse(GS.userLine('plain')).message.content, 'plain', 'no images: a plain string as before');
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const send = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:send'"), MAIN.indexOf('const chatImagesDir'));
+  assert.ok(send.indexOf('CHAT.cleanImages(images)') < send.indexOf('typePrompt('), 'checked before anything is sent');
+  assert.match(send, /if \(gui \|\| !img\.images\.length\) return typePrompt\(id, body, \{ images: img\.images \}\)/);
+  assert.match(send, /paths\.map\(FM\.mention\)/);
+  const save = MAIN.slice(MAIN.indexOf('function saveChatImages('), MAIN.indexOf('function saveChatImages(') + 900);
+  assert.match(save, /mkdirSync\(dir, \{ recursive: true, mode: 0o700 \}\)/);
+  assert.match(save, /\{ mode: 0o600, flag: 'wx' \}/);
+  assert.match(save, /7 \* 864e5/);
+  assert.match(MAIN, /if \(!t\.sendUser\(text, images\)\) return false;/);
 });
