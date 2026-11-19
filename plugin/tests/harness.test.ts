@@ -164,8 +164,13 @@ test('only code counts as a change: docs, the scratchpad, ~/.claude* and the off
   const inTemp = { ...PLACE, cwd: '/tmp/proj', roots: ['/tmp/proj'] }
   expect(isCodePath('/tmp/proj/a.ts', inTemp)).toBe(true)
   expect(isCodePath(`${SCRATCH}/a.ts`, inTemp)).toBe(false)
+  // a project that lives under ~/.claude still counts; a session rooted at home does not re-admit ~/.claude
+  const underClaude = { ...PLACE, cwd: '/home/tester/.claude/plugins/my-plugin', roots: ['/home/tester/.claude/plugins/my-plugin'] }
+  expect(isCodePath('/home/tester/.claude/plugins/my-plugin/hooks/a.ts', underClaude)).toBe(true)
+  expect(isCodePath('/home/tester/.claude/plugins/my-plugin/README.md', underClaude)).toBe(false)
+  expect(isCodePath('/home/tester/.claude/settings.json', { ...PLACE, cwd: '/home/tester', roots: ['/home/tester'] })).toBe(false)
 
-  for (const command of ['rm -rf dist', 'sed -i "" s/a/b/ src/a.ts', 'cp /tmp/x.ts src/x.ts', 'git checkout main', `cd ${SCRATCH} && echo x > a.json && cd /work/my-app && mv a.ts b.ts`])
+  for (const command of ['rm -rf dist', 'sed -i "" s/a/b/ src/a.ts', 'cp /tmp/x.ts src/x.ts', 'git checkout main', 'git checkout main > /tmp/log.txt', 'rm -rf dist 2> /tmp/err.txt', 'git stash pop 2>&1 | tee /tmp/out.log', 'unzip /tmp/a.zip', 'cp -r /tmp/gen/* .', `cd ${SCRATCH} && echo x > a.json && cd /work/my-app && mv a.ts b.ts`])
     expect([command, commandWritesCode(command, PLACE)]).toEqual([command, true])
   for (const command of [`cat > ${SCRATCH}/plan.json <<'EOF'\nsrc/a.ts is next\nEOF`, `echo note >> /home/tester/.claude/agent-office/facts/my-app.md`, 'sed -i "" s/a/b/ README.md', `cd ${SCRATCH} && echo x > a.js`, 'mkdir -p /tmp/out && cp README.md /tmp/out/'])
     expect([command, commandWritesCode(command, PLACE)]).toEqual([command, false])

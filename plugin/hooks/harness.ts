@@ -128,14 +128,16 @@ export function isCodePath(path: string, place: VerifyPlace) {
   if (!at) return true // cannot tell where: counted
   if (DOC_FILE.test(at)) return false
   const home = place.home ? resolvePath(place.home, '/', '') : ''
+  // inside a project folder (not the home folder itself): counts, even under ~/.claude or a temp folder
+  const inRoot = place.roots.some(root => {
+    const dir = root ? resolvePath(root, place.cwd, place.home) : ''
+    return Boolean(dir) && dir !== home && dir !== '/' && isUnder(at, dir)
+  })
+  if (inRoot && !SESSION_TEMP.test(at)) return true
   if (home && home !== '/' && isUnder(at, home) && /^\.claude/.test(at.slice(home.length + 1))) return false
   if (place.dataDir && isUnder(at, resolvePath(place.dataDir, place.cwd, place.home))) return false
-  if (TEMP_DIR.test(at)) {
-    // a temp folder counts only when the project itself lives there
-    if (SESSION_TEMP.test(at)) return false
-    return place.roots.some(root => Boolean(root) && isUnder(at, resolvePath(root, place.cwd, place.home)))
-  }
-  return true
+  // a temp folder counts only when the project itself lives there (above)
+  return !TEMP_DIR.test(at)
 }
 
 // a shell command's words, quotes taken off ("a b" is one word)
@@ -162,7 +164,7 @@ const looksLikePath = (word: string) =>
   !word.startsWith('-') &&
   !/^[a-z]+:\/\//i.test(word) &&
   !SED_SCRIPT.test(word) &&
-  (/[\\/]/.test(word) || word.startsWith('~') || /\.\w{1,8}$/.test(word))
+  (word === '.' || word === '..' || /[\\/]/.test(word) || word.startsWith('~') || /\.\w{1,8}$/.test(word))
 
 /** True when a writing command may write code (isCodePath); a write whose targets cannot be told counts. */
 export function commandWritesCode(command: string, place: VerifyPlace) {
@@ -175,10 +177,14 @@ export function commandWritesCode(command: string, place: VerifyPlace) {
       if (to) cwd = to
       continue
     }
-    // redirections into a file: `> f`, `>> f`, `>f`, `2> f`
+    // redirections into a file: `> f`, `>> f`, `>f`, `2> f` (the word after a bare `>` is its target, not an argument)
+    const redirected = new Set<number>()
     words.forEach((word, i) => {
       const redirect = /^\d?>>?(.*)$/.exec(word)
-      if (!redirect || word.includes('&')) return
+      if (!redirect) return
+      redirected.add(i)
+      if (word.includes('&')) return
+      if (!redirect[1]) redirected.add(i + 1)
       const target = redirect[1] || words[i + 1] || ''
       if (target && target !== '/dev/null') targets.push({ path: target, cwd })
     })
@@ -188,7 +194,10 @@ export function commandWritesCode(command: string, place: VerifyPlace) {
       .replace(/^(?:[A-Za-z_]\w*=\S*\s+)+/, '')
       .replace(/^(?:time|env|sudo)\s+/, '')
     if (!WRITING.some(write => write.test(plain))) continue
-    for (const word of words.slice(1)) if (looksLikePath(word) && !/^\d?>/.test(word) && word !== '/dev/null') targets.push({ path: word, cwd })
+    const own = words.filter((word, i) => i > 0 && !redirected.has(i) && word !== '/dev/null' && looksLikePath(word))
+    for (const word of own) targets.push({ path: word, cwd })
+    // fail-safe: a write with no path of its own, and any git/unzip/tar write, may change the working folder
+    if (!own.length || /^(?:git|unzip|tar)\b/.test(plain)) targets.push({ path: '.', cwd })
   }
   if (!targets.length) return true
   return targets.some(target => isCodePath(target.path, { ...place, cwd: target.cwd }))
