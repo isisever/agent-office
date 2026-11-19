@@ -19,7 +19,8 @@ const SELF = 'self';                    // v3.35 the device of a task dispatched
 const REPORT_POLL_MS = 5000;
 const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/starts its gone boss at most this often
 const REVIVE_STALE_MS = 10 * 60 * 1000;  // a budget untouched this long starts over
-const REVIVE_GAP_MS = 60 * 1000;          // ... and not more than once a minute
+const REVIVE_GAP_MS = 60 * 1000;          // between the start tries of one budget (and the first one after the person's own stop, see pump)
+const REVIVE_SETTLE_MS = 3000;            // v3.104 a stopped (not asleep) tab may still be shutting down: its first start waits this long
 const PUMP_MS = 1500;
 const STARTING_MS = 20 * 1000;              // v3.83 amendment: a tab 'starting' this long gets HQ's task as its first prompt
 const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks between gone-sightings = a new gone spell
@@ -462,7 +463,7 @@ function setupLink(d) {
             continue;
           }
           if (c.revive && d.manage && mayRevive(c.device)) {
-            // one budget per project, not per queued entry; the first try waits a minute after the queue first saw the tab gone
+            // one budget per project, not per queued entry; the first try is at once (asleep) or after a short settle (stopped), see v3.104
             let b = reviveBudget.get(project);
             if (b && now - Math.max(b.at, b.since) > REVIVE_STALE_MS) b = null;
             if (!b) { b = { n: 0, at: 0, since: now, seen: now }; reviveBudget.set(project, b); }
@@ -477,7 +478,11 @@ function setupLink(d) {
             // a desk is gone on purpose (HQ opens it without starting it): no minute's wait for its first start
             const isDesk = !b.n && String(project).includes(':') && Boolean(d.desk?.(project));
             // v3.99 nor for another device's task: nothing here started the project before it arrived
-            if (!isDesk && !(far && !b.n) && now - (b.n ? b.at : b.since) < REVIVE_GAP_MS) break;
+            // v3.104 the first start is at once for a sleeping tab and, for a stopped one, after a short settle time (it may still
+            // be shutting down); only the person's own recent stop here keeps the old minute. Retries keep the minute.
+            const mine = !far && now - (d.stoppedHere?.(project) || 0) < STOPPED_HERE_MS;
+            const gap = b.n ? REVIVE_GAP_MS : d.asleep?.(project) ? 0 : mine ? REVIVE_GAP_MS : REVIVE_SETTLE_MS;
+            if (!isDesk && !(far && !b.n) && now - (b.n ? b.at : b.since) < gap) break;
             b.n += 1; b.at = now;
             // v3.99 manage.log and the notice are written after the start ran, with its real outcome
             const startNote = (reason) => {
