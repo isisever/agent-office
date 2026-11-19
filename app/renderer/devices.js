@@ -46,6 +46,8 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
   /** @type {any} */
   let view = { name: '', devices: [], remotes: [], outgoing: [], pairing: null, error: null };
   let joinState = /** @type {{ busy: boolean, error: string }} */ ({ busy: false, error: '' });
+  // v3.106 a reset of unreadable keys: 'done' shows a one-line notice, any other text is why it failed
+  let resetState = '';
   let editing = /** @type {string | null} */ (null);
 
   const section = h('details', { class: 'sb-devices sb-panel', id: 'sb-devices' });   // a panel like the sidebar's others (v3.43)
@@ -137,13 +139,13 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
         h('div', { class: 'sb-pair-code', id: 'sb-pair-code' }, p.code),
         h('div', { class: 'sb-note' }, t('devices.codeHint', { min: Math.max(0, Math.ceil((p.expiresAt - Date.now()) / 60000)) })),
         h('button', { class: 'sb-x', onclick: () => apply(api.link.cancel()) }, t('devices.cancel')))
-      : h('button', { class: 'sb-add', id: 'sb-dev-add', disabled: Boolean(p) || Boolean(view.error && view.error !== 'off'), onclick: () => apply(api.link.invite()) }, t('devices.add'));
+      : h('button', { class: 'sb-add', id: 'sb-dev-add', disabled: Boolean(p) || Boolean(view.error && view.error !== 'off' && !view.canReset), onclick: () => apply(api.link.invite().then((/** @type {any} */ v) => { if (v?.resetDone) resetState = 'done'; return v; })) }, t('devices.add'));
     const join = h('form', { class: 'sb-join', onsubmit: (/** @type {Event} */ e) => {
       e.preventDefault();
       const input = /** @type {HTMLInputElement} */ (/** @type {HTMLFormElement} */ (e.target).elements.namedItem('code'));
       joinState = { busy: true, error: '' };
       render();
-      api.link.join(input.value).then((/** @type {any} */ r) => { joinState = { busy: false, error: r.ok ? '' : r.error }; view = r.view; render(); });
+      api.link.join(input.value).then((/** @type {any} */ r) => { joinState = { busy: false, error: r.ok ? '' : r.error }; if (r.resetDone) resetState = 'done'; view = r.view; render(); });
     } },
     h('input', { name: 'code', id: 'sb-join-code', placeholder: t('devices.enterCode'), autocomplete: 'off', spellcheck: 'false', disabled: joinState.busy }),
     h('button', { class: 'sb-x', type: 'submit', disabled: joinState.busy }, t(joinState.busy ? 'devices.pairing' : 'devices.pair')));
@@ -151,7 +153,9 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
     const summary = h('summary', { class: 'sb-head sb-head-row' },
       h('span', {}, t('devices.title') + (view.devices.length ? ` (${view.devices.filter((/** @type {any} */ d) => d.online).length}/${view.devices.length})` : '')));
     const body = h('div', { class: 'sb-panel-body sb-dev-body' }, ...[
-      view.error && view.error !== 'off' ? h('div', { class: 'sb-note warn' }, t(`devices.error.${view.error}`), view.errorCode ? h('div', { class: 'sb-dev-details' }, t('devices.errorDetails', { code: view.errorCode })) : null) : null,
+      view.error && view.error !== 'off' ? h('div', { class: 'sb-note warn' }, t(`devices.error.${view.error}`), view.errorCode ? h('div', { class: 'sb-dev-details' }, t('devices.errorDetails', { code: view.errorCode })) : null,
+        view.canReset ? h('div', { class: 'sb-row' }, h('button', { class: 'sb-x', id: 'sb-dev-reset', onclick: resetLink }, t('devices.reset'))) : null) : null,
+      resetState === 'done' ? h('div', { class: 'sb-note' }, t('devices.resetDone')) : resetState ? h('div', { class: 'sb-note warn' }, t('devices.resetFailed', { reason: resetState })) : null,
       h('label', { class: 'sb-row sb-dev-self' }, h('span', {}, t('devices.thisDevice')),
         h('input', { class: 'sb-dev-name', value: view.name, maxlength: 40, onchange: (/** @type {Event} */ e) => apply(api.link.setName(val(e))) })),
       view.devices.length ? h('ul', { class: 'sb-list' }, list) : h('div', { class: 'sb-note' }, t('devices.none')),
@@ -165,6 +169,11 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
     /** @type {HTMLDetailsElement} */ (section).open = wasOpen || Boolean(p) || joinState.busy || ho.in.length > 0;
   }
 
+  /** v3.106 the Reset button in the error box: moves the unreadable keys aside (main keeps them) and starts with new ones. */
+  function resetLink() {
+    if (!confirm(t('devices.resetConfirm'))) return;
+    api.link.reset().then((/** @type {any} */ r) => { resetState = r.ok ? 'done' : (r.code || r.reason || 'unknown'); view = r.view; render(); }).catch((/** @type {any} */ e) => console.error(e));
+  }
   function render() {
     for (const cb of watchers) cb(view);
     renderDevices();

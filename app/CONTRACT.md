@@ -2337,3 +2337,22 @@ and the error is thrown.
 
 Unchanged: no state rewrites or regenerates keys.bin (or own.bin) on its own; the person resets the link and pairs again.
 Tests: `test/link-errors.test.cjs`.
+
+## Resetting a link whose keys cannot be read (v3.106)
+
+Amends v3.105. In the states `keys-decrypt`, `keys-format` and `keys-file` the link view carries `canReset: true` and
+the Devices error box shows a "Reset link" button (`devices.reset`) with a confirm (`devices.resetConfirm`: paired
+devices must remove this computer and pair again). IPC `link:reset` (preload `link.reset()`) →
+`{ ok, reason?, code?, folder?, view }`; it is refused with `reason: 'not-needed'` in any other state, a running link
+included, and with `keys-file` when the link folder itself is not a plain folder.
+
+A reset moves, never deletes, `keys.bin.tmp`, `own.bin`, `own.bin.ao1`, `own.bin.tmp`, `devices.json`, `keys.bin.ao1`
+and `keys.bin` (last: a move that fails part way leaves the error state) into a new folder `link/unreadable-<ISO time>/`
+(created non-recursively, so an existing path or a planted link fails it; a link at a file name is moved as the link).
+This machine's name is written back to a new `devices.json` with no devices. It logs
+`{ at, event: 'link-reset', state, moved, folder }` (or `link-reset-failed` with `code` and `message`) to
+`link/commands.log`, clears the sticky error and starts again, which makes a fresh key pair.
+
+Add device (`link:invite`) and Pair with a code (`link:join`) in one of these states reset first and then continue;
+the answer then carries `resetDone: true` and the panel shows `devices.resetDone`. Never at startup on its own.
+Tests: `test/link-errors.test.cjs`.

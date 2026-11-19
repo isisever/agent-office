@@ -173,7 +173,8 @@ contextBridge.exposeInMainWorld('agentOffice', {
   link: {
     get: () => ipcRenderer.invoke('link:get'),
     invite: () => ipcRenderer.invoke('link:invite'),
-    join: (code) => ipcRenderer.invoke('link:join', code),          // { ok, error?, view }
+    join: (code) => ipcRenderer.invoke('link:join', code),          // { ok, error?, view, resetDone? }
+    reset: () => ipcRenderer.invoke('link:reset'),                  // v3.106 → { ok, reason?, code?, folder?, view }
     cancel: () => ipcRenderer.invoke('link:cancel'),
     setName: (name) => ipcRenderer.invoke('link:setName', name),
     rename: (id, name) => ipcRenderer.invoke('link:rename', id, name),

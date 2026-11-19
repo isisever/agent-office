@@ -35,7 +35,7 @@ function world(t) {
     });
     hosts.push(host);
     host.devices();   // starts the link
-    return { host, view: handlers['link:get']() };
+    return { host, handlers, view: handlers['link:get']() };
   };
   t.after(async () => { for (const h of hosts) await h.destroy(); });
   const log = () => (fs.existsSync(f('commands.log')) ? fs.readFileSync(f('commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.event === 'link-start-failed') : []);
@@ -180,4 +180,124 @@ test('writePlain: after 3 retries the error is thrown, the target is unchanged a
   assert.deepEqual(waits, [100, 300, 700]);
   assert.equal(fs.readFileSync(file, 'utf8'), 'old');
   assert.equal(fs.existsSync(`${file}.tmp`), false);
+});
+
+// --- v3.106 resetting a link whose keys cannot be read ---
+
+const broken = { ...good, decryptString: () => { throw coded('ERR_DECRYPT', 'Error while decrypting the ciphertext'); } };
+const asideDirs = (w) => fs.readdirSync(w.f('.')).filter((n) => n.startsWith('unreadable-'));
+const resetLines = (w) => fs.readFileSync(w.f('commands.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.event === 'link-reset');
+
+test('reset: in keys-decrypt the files are moved aside unchanged, the name is kept and the next start makes new keys', async (t) => {
+  const w = world(t);
+  await w.healthy();
+  const devs = JSON.parse(fs.readFileSync(w.f('devices.json'), 'utf8'));
+  devs.name = 'Desk PC';
+  fs.writeFileSync(w.f('devices.json'), JSON.stringify(devs));
+  const oldSecret = w.keysHex();
+  const names = ['keys.bin', 'keys.bin.ao1', 'own.bin', 'own.bin.ao1', 'devices.json'];
+  const before = Object.fromEntries(names.map((n) => [n, fs.readFileSync(w.f(n))]));
+  const r = w.boot(broken);
+  assert.equal(r.view.error, 'keys-decrypt');
+  assert.equal(r.view.canReset, true);
+  const res = await r.handlers['link:reset']();
+  assert.equal(res.ok, true);
+  assert.equal(res.view.error, null);
+  assert.equal(res.view.name, 'Desk PC');
+  const aside = asideDirs(w);
+  assert.deepEqual(aside, [res.folder]);
+  for (const n of names) same(fs.readFileSync(path.join(w.f(aside[0]), n)), before[n]);
+  assert.notEqual(w.keysHex(), oldSecret);   // a fresh key pair, sealed again with its header and marker
+  assert.ok(fs.existsSync(w.f('keys.bin.ao1')) && fs.existsSync(w.f('own.bin')));
+  const lines = resetLines(w);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].state, 'keys-decrypt');
+  assert.deepEqual([...lines[0].moved].sort(), [...names].sort());
+  assert.ok(!JSON.stringify(lines).includes(oldSecret));
+  // a later start with a working keychain reads the new keys
+  await r.host.destroy();
+  const again = w.boot();
+  assert.equal(again.view.error, null);
+});
+
+test('reset: refused while the link runs, and in states it does not repair; nothing moves', async (t) => {
+  const w = world(t);
+  const r = w.boot();
+  assert.equal(r.view.error, null);
+  assert.notEqual(r.view.canReset, true);
+  const keys = fs.readFileSync(w.f('keys.bin'));
+  const res = await r.handlers['link:reset']();
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'not-needed');
+  same(fs.readFileSync(w.f('keys.bin')), keys);
+  assert.deepEqual(asideDirs(w), []);
+  await r.host.destroy();
+  const nk = w.boot({ ...good, isEncryptionAvailable: () => false });
+  assert.equal(nk.view.canReset, false);
+  assert.equal((await nk.handlers['link:reset']()).reason, 'not-needed');
+  assert.deepEqual(asideDirs(w), []);
+});
+
+test('reset: keys-file with keys.bin a folder moves it aside; a symbolic link is moved as the link, its target untouched', async (t) => {
+  const w = world(t);
+  await w.healthy();
+  fs.rmSync(w.f('keys.bin'));
+  fs.mkdirSync(w.f('keys.bin'));
+  let r = w.boot();
+  assert.equal(r.view.error, 'keys-file');
+  let res = await r.handlers['link:reset']();
+  assert.equal(res.ok, true);
+  assert.ok(fs.lstatSync(path.join(w.f(res.folder), 'keys.bin')).isDirectory());
+  assert.ok(fs.lstatSync(w.f('keys.bin')).isFile());
+  if (process.platform !== 'win32') {
+    await r.host.destroy();
+    const target = path.join(w.dir, 'elsewhere.bin');
+    fs.writeFileSync(target, 'outside');
+    fs.rmSync(w.f('keys.bin'));
+    fs.symlinkSync(target, w.f('keys.bin'));
+    r = w.boot();
+    assert.equal(r.view.error, 'keys-file');
+    res = await r.handlers['link:reset']();
+    assert.equal(res.ok, true);
+    assert.ok(fs.lstatSync(path.join(w.f(res.folder), 'keys.bin')).isSymbolicLink());
+    assert.equal(fs.readFileSync(target, 'utf8'), 'outside');
+  }
+});
+
+test('pairing in an unreadable-keys state resets first and continues (Pair with a code and Add device)', async (t) => {
+  const w = world(t);
+  await w.healthy();
+  let r = w.boot(broken);
+  assert.equal(r.view.error, 'keys-decrypt');
+  const j = await r.handlers['link:join']({}, 'not a code');
+  assert.equal(j.resetDone, true);
+  assert.equal(j.ok, false);
+  assert.equal(j.error, 'bad-code');   // the pairing itself ran: the link is up
+  assert.equal(j.view.error, null);
+  assert.equal(asideDirs(w).length, 1);
+  await r.host.destroy();
+
+  // Add device: the same, with the pairing stubbed (no network)
+  fs.writeFileSync(w.f('keys.bin'), good.encryptString(S.wrap(S.PURPOSE.MAIL_SECRET, '{}')));
+  const realInvite = Link.prototype.invite;
+  Link.prototype.invite = async function () { return { code: 'x', expiresAt: 0 }; };
+  t.after(() => { Link.prototype.invite = realInvite; });
+  r = w.boot();
+  assert.equal(r.view.error, 'keys-format');
+  const v = await r.handlers['link:invite']();
+  assert.equal(v.resetDone, true);
+  assert.equal(v.error, null);
+  assert.equal(asideDirs(w).length, 2);
+  // a healthy link pairs without a reset
+  const v2 = await r.handlers['link:invite']();
+  assert.equal(v2.resetDone, undefined);
+  assert.equal(asideDirs(w).length, 2);
+});
+
+test('locales: the reset texts exist in en and tr', () => {
+  for (const lang of ['en', 'tr']) {
+    const j = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${lang}.json`), 'utf8'));
+    for (const k of ['reset', 'resetConfirm', 'resetDone']) assert.ok(typeof j.devices[k] === 'string' && j.devices[k].length > 5, `${lang} ${k}`);
+    assert.match(j.devices.resetFailed, /\{reason\}/);
+  }
 });
