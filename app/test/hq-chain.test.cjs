@@ -120,7 +120,7 @@ const path = require('path');
 const MAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 function stageHarness({ ask = false, allow = true, link = null, realConfirm = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-chain-'));
-  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips', 'hqRemoteTarget', 'notifyRemoteSent', ...(realConfirm ? ['confirmHqDispatch'] : [])];   // realConfirm: main's own single-dispatch dialog
+  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips', 'hqLocalTarget', 'hqRemoteTarget', 'notifyRemoteSent', ...(realConfirm ? ['confirmHqDispatch'] : [])];   // realConfirm: main's own single-dispatch dialog
   const lines = ['const isHere', 'const byName', 'const officeName', 'const routineRunOfRequest', 'const openHqRoutineRequest', 'const routineById', 'const readJson'];
   const src = [
     ...lines.map((l) => { const x = MAIN_SRC.split('\n').find((y) => y.startsWith(l)); assert.ok(x, l); return x; }),
@@ -142,9 +142,16 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
     const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
     const linkHost = { link: () => env.link || ({ devices: [], conns: new Set(), remotes: new Map(), outgoing: [] }) };
     const hqWaits = () => env.waits || {};   // v3.93 why a queued task waits (main reads the queue and the tab)
+    // v3.83 team: members and their personal workspaces (ensurePersonal applies the member's draft switches, as main does)
+    const ST = env.mods.ST; const teamOn = () => state.teamMode === true && (state.staff || []).length > 0;
+    const memberById = (id) => (state.staff || []).find((m) => m.id === id) || null;
+    const personalFolderName = (m) => m.name + ' - personal';
+    const hqStaffDesk = async (args) => ({ desk: '', staffName: args.staffName || args.staff });
+    const ensurePersonal = (m) => { const have = ST.personalOf(state.projects, m.id); if (have) return have; env.made = (env.made || 0) + 1;
+      const own = { id: 'own-' + m.id, name: personalFolderName(m), dir: '/w/own', staffOwner: m.id, ...ST.personalDraft(m.personal) }; state.projects.push(own); return own; };
     const officeDispatch = (tab, args, o) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task, ...(args.machine ? { machine: args.machine, revive: o?.revive === true } : {}) }); return { id, status: 'queued' }; };
   `;
-  env.mods = { HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
+  env.mods = { ST: require('../src/staff.js'), HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
   const api = new Function('env', `${prelude}\n${src}\nreturn { hqDispatch, hqChainSweep, hqStatus };`)(env);
   return { env, api };
 }
@@ -261,7 +268,7 @@ test('stageProject: a frozen stage is released to its project by id; a gone id i
   assert.equal(CH.stageProject({ projectId: 'p1' }, null), '');
   const src = fs.readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(src, /\.\.\.\(!s\.remote && s\.projectId \? \{ projectId: s\.projectId \} : \{\}\)/, 'stage.json stores the id');
-  assert.match(src, /const project = st\.remote \? st\.project : CH\.stageProject\(st, state\.projects\);\n {2}if \(!project\) \{ hqStatus\(id, 'rejected', 'unknown-project'\); return; \}/);
+  assert.match(src, /let project = st\.remote \? st\.project : member \? '' : CH\.stageProject\(st, state\.projects\);\n {2}if \(!project && !member\) \{ hqStatus\(id, 'rejected', 'unknown-project'\); return; \}/);
 });
 
 test('v3.87 review fix: a stage HQ closed on the person\'s word (office_task done) never releases the stages after it', () => {
@@ -297,8 +304,9 @@ test('v3.83 review fix: a removed member gets no workspace after the dialog; a l
   assert.ok(st.indexOf('ensurePersonal(') > st.indexOf('if (!prev) {'), 'only the stage that goes now gets its workspace');
   assert.match(fn('hqWaitRow'), /\.\.\.\(s\.personalFor \? \{ personalStaff: s\.personalFor\.id \} : \{\}\)/);
   const rel = fn('hqReleaseStage');
-  assert.match(rel, /const m = teamOn\(\) \? memberById\(st\.personalStaff\) : null;\n {4}if \(!m\) \{ hqStatus\(id, 'rejected', 'unknown-staff'\); return; \}\n {4}const own = ensurePersonal\(m\);/);
-  assert.ok(rel.indexOf('ensurePersonal(m)') < rel.indexOf("HQ.setStatus(b, id, 'queued', 'released')"));
+  assert.match(rel, /member = teamOn\(\) \? memberById\(st\.personalStaff\) : null;\n {4}if \(!member\) \{ hqStatus\(id, 'rejected', 'unknown-staff'\); return; \}/);
+  // made only after the follow-up rule and any dialog, and the member is looked up again first
+  assert.ok(rel.indexOf('ensurePersonal(m)') > rel.indexOf('confirmHqDispatch(') && rel.indexOf('ensurePersonal(m)') > rel.indexOf('const why = followWhy();'));
   // a stage with only a member id in stage.json resolves to the workspace made at release
   assert.equal(CH.stageProject({ personalStaff: 's-a1b2c3', projectId: 'own1' }, [{ id: 'own1', name: 'A - personal' }]), 'own1');
   assert.equal(CH.stageProject({ personalStaff: 's-a1b2c3', project: '' }, [{ id: 'own1', name: 'A - personal' }]), '', 'never by name');
@@ -380,6 +388,47 @@ test('later turn: a chain with one stage into a Skip project is refused whole an
   assert.equal(on.env.dialogs.length, 1);                                                 // the whole chain, once
   assert.deepEqual(chain.stages.map((id) => [rowOf(on.env, id).consented, rowOf(on.env, id).byInitiative]), [[true, undefined], [true, undefined]]);
   assert.equal(HQ.initiativeSent(on.env.board, r2), 0);
+});
+
+// --- review fix: a member's personal workspace that is not made yet is judged by its draft switches (ST.personalDraft)
+// before anything is created; a later-turn follow-up into one whose draft has Skip permissions is refused, nothing made
+function teamHarness(draft) {
+  const h = stageHarness();
+  Object.assign(h.env.state, { teamMode: true, staff: [{ id: 's1', name: 'Ada', personal: draft }] });
+  const request = h.env.minter.mint();
+  return { ...h, request };
+}
+test('personal workspace not made yet, later turn: a draft with Skip permissions is refused before it is made (single dispatch)', async () => {
+  const { env, api, request } = teamHarness({ skipPermissions: true });
+  await api.hqDispatch({ project: 'office', task: 'first', request });
+  env.minter.clear();
+  const r = await api.hqDispatch({ staff: 'Ada', task: 'draft it', title: 'Draft', request });
+  assert.deepEqual([r.status, r.reason, env.made || 0, env.sent.length], ['rejected', 'skip-permissions', 0, 1]);
+  assert.equal(env.state.projects.some((p) => p.staffOwner === 's1'), false);
+  // without Skip in the draft the follow-up goes and the workspace is made then
+  env.state.staff[0].personal = {};
+  const ok = await api.hqDispatch({ staff: 'Ada', task: 'draft it', title: 'Draft', request });
+  assert.deepEqual([ok.status, env.made], ['queued', 1]);
+});
+test('personal workspace not made yet, later turn: the first stage of a follow-up chain is refused before anything is made', async () => {
+  const { env, api, request } = teamHarness({ skipPermissions: true });
+  await api.hqDispatch({ project: 'office', task: 'first', request });
+  env.minter.clear();
+  const r = await api.hqDispatch({ staff: 'Ada', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });
+  assert.deepEqual([r.status, r.reason, env.made || 0, env.sent.length, env.board.tasks.length], ['rejected', 'skip-permissions', 0, 1, 1]);
+});
+test('personal workspace not made yet, later turn: a released stage whose draft gained Skip is refused at release, nothing made', async () => {
+  const { env, api, request } = teamHarness({});
+  await api.hqDispatch({ project: 'office', task: 'first', request });
+  env.minter.clear();
+  const chain = await api.hqDispatch({ project: 'office', task: 's1', request, then: [{ staff: 'Ada', task: 's2' }] });
+  assert.equal(rowOf(env, chain.stages[1]).byInitiative, true);
+  env.state.staff[0].personal = { skipPermissions: true };                    // chosen in the member's popup meanwhile
+  report(env, chain.stages[0]);
+  api.hqChainSweep();
+  await settled();
+  assert.deepEqual([rowOf(env, chain.stages[1]).status, rowOf(env, chain.stages[1]).reason], ['rejected', 'skip-permissions']);
+  assert.deepEqual([env.made || 0, env.sent.length, env.dialogs.length + env.remoteDialogs], [0, 2, 0]);
 });
 
 // --- v3.91 fix: consent is stamped on the row, and a stage HQ queued on its own is checked again at its release

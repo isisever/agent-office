@@ -991,14 +991,16 @@ test('follow-up wiring: decided and counted by HQ.takeInitiative, final before a
   assert.match(d, /HQ\.resolveRequest\(hqMinter, [^\n]*\{ ask \}\)/);
   assert.equal((d.match(/HQ\.takeInitiative\(loadHqBoard\(\), followArgs\(false\)\)/g) || []).length, 1);
   assert.match(d, /if \(!took\.ok\) return \{ status: 'rejected', reason: took\.reason \};/);
-  assert.equal(d.split(RECHECK).length - 1, 1);
+  assert.equal(d.split(RECHECK).length - 1, 2);   // the final check, and the defence after a personal workspace is made
+  assert.ok(d.lastIndexOf(RECHECK) > d.indexOf('ensurePersonal(m)'));
   assert.match(d, /if \(why && state\.hq\?\.askBeforeDispatch !== true\) return \{ status: 'rejected', reason: why \};/);
   // the re-check is final before the desk tab, its worktree or a personal workspace is made
   assert.ok(d.indexOf(RECHECK) < d.lastIndexOf('await hqStaffDesk('));
   assert.ok(d.indexOf(RECHECK) < d.indexOf('ensurePersonal(m)'));
   assert.ok(d.indexOf(RECHECK) > d.indexOf('{ open: false }'));   // after the staff check's wait
   assert.ok(d.indexOf(RECHECK) < d.indexOf('officeDispatch(HQ.HQ_ID'));  // before queueing
-  assert.match(d, /skip: p \? hqTargetSkips\(p, /);
+  assert.match(fnBody('hqLocalTarget'), /skip: p \? hqTargetSkips\(p, /);
+  assert.match(fnBody('hqLocalTarget'), /ST\.personalDraft\(personal\.personal\)/);   // a workspace not made yet: its draft
   assert.match(fnBody('hqTargetSkips'), /!p \|\| P\.skipPermissionsArgs\(p\)\.length > 0/);
   assert.match(fnBody('hqTargetSkips'), /terms\.has\(tab\) && skipStarted\.has\(tab\)/);
   assert.match(fnBody('approveHeld'), /hqDispatch\(h\.args, \{ approved: true, excludeId: heldId, consentGiven: true \}\)/);
