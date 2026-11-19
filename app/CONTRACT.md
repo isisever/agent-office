@@ -2252,3 +2252,19 @@ desk permission prompts, the mail guard); `office_dispatch` and its tool descrip
 The consent parts of v3.46 ("dispatch without asking"), v3.79 (consent of a staged request), v3.91 (the `initiative` setting, consented targets, the dialog
 fallback), v3.94 (the third button), v3.95 (the brief switch: now inverted, `AGENT_OFFICE_ASK`), v3.99 and v3.101 (the
 paired-machine consent under `dispatchWithoutAsking`). Where those sections name these settings, this section wins.
+
+## First start of a gone boss is not delayed a minute (v3.104)
+
+Amends v3.46 (HQ task starts a gone boss) and v3.99. The minute that `757cf12` put before the first start was meant
+so that a boss that had just stopped is not restarted at once. With tabs sleeping after idle time it made nearly every
+HQ task to a local project wait a minute, so the first start now depends on why the tab is gone:
+
+| Tab | First start of a local HQ task |
+|---|---|
+| Asleep | at once (in the dispatch call) |
+| Stopped, not stopped by the person here in the last 10 minutes | after `REVIVE_SETTLE_MS` (3 s) of being seen gone, so a tab that is still shutting down is not raced |
+| Stopped by the person here within `STOPPED_HERE_MS` (10 min) | after the old minute (`REVIVE_GAP_MS`); another device's task is still refused `stopped-here` |
+| Staff desk, or another device's task | unchanged (at once) |
+
+Unchanged: at most 3 starts per project (`REVIVE_MAX`), the 2nd and 3rd at least one minute after the previous start,
+the budget given back only when the tab is seen ready, and the refusal `not-running` after the third try's minute.

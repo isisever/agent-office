@@ -458,13 +458,11 @@ test('v3.46 amendment: an HQ task wakes/starts a gone boss, waits for it, then i
   const seen = [];
   const r = host.dispatchLocal('p1', 'scan the repo', 'HQ', (id, s, why) => seen.push([s, why]), { ttl: 3600000, revive: true });
   assert.equal(r.status, 'queued');
-  assert.deepEqual(ops, []);   // a boss just stopped is not restarted at once
-  adv(30000);
-  assert.equal(ops.length, 0);
-  adv(31000);
+  assert.deepEqual(ops, []);   // a stopped tab gets a short settle time (it may still be shutting down), not a minute
+  adv(4500);
   assert.deepEqual(ops, [['start', 'p1']]);
-  host.pump();
-  assert.equal(ops.length, 1);   // not again within a minute
+  adv(50000);
+  assert.equal(ops.length, 1);   // the second start is not before the gap
   const w = host.waitInfo(r.id);
   assert.deepEqual([w.project, w.pos, w.len, w.expiresAt], ['p1', 1, 1, w.expiresAt]);
   tab = 'starting'; host.pump();
@@ -478,9 +476,36 @@ test('v3.46 amendment: an HQ task wakes/starts a gone boss, waits for it, then i
   const seen2 = [];
   host.dispatchLocal('p1', 'again', 'HQ', (id, s, why) => seen2.push([s, why]), { ttl: 3600000, revive: true });
   host.pump(); assert.equal(ops.length, 0);
+  adv(4500); assert.equal(ops.length, 1);
   adv(6 * 61000);
-  assert.equal(ops.length, 3);
+  assert.equal(ops.length, 3);   // budget unchanged: 3 starts in all, a minute apart
   assert.deepEqual(seen2.at(-1), ['rejected', 'not-running']);
+});
+
+test('v3.104: the first start of a sleeping tab is at once; of a stopped tab after the settle time; retries keep the minute', (t) => {
+  const real = Date.now; let clock = real(); Date.now = () => clock;
+  t.after(() => { Date.now = real; });
+  const adv = (ms) => { for (let e = 0; e < ms; e += 1500) { clock += 1500; host.pump(); } };
+  const ops = [];
+  const { host } = waitHost(t, { tabState: () => 'gone', asleep: () => true, manage: (op, id) => { ops.push([op, id]); return { ok: true }; } });
+  host.dispatchLocal('p1', 'x', 'HQ', () => {}, { ttl: 3600000, revive: true });
+  assert.deepEqual(ops, [['start', 'p1']], 'asleep: started in the dispatch call itself');
+  adv(57000); assert.equal(ops.length, 1);
+  adv(4500); assert.equal(ops.length, 2, 'second start after the minute');
+  adv(57000); assert.equal(ops.length, 2);
+  adv(4500); assert.equal(ops.length, 3);
+  adv(3 * 61000); assert.equal(ops.length, 3, 'no fourth start');
+});
+
+test('v3.104: a tab the person stopped here within 10 minutes keeps the old minute before the first start', (t) => {
+  const real = Date.now; let clock = real(); Date.now = () => clock;
+  t.after(() => { Date.now = real; });
+  const adv = (ms) => { for (let e = 0; e < ms; e += 1500) { clock += 1500; host.pump(); } };
+  const ops = [];
+  const { host } = waitHost(t, { tabState: () => 'gone', stoppedHere: () => clock - 60000, manage: (op, id) => { ops.push([op, id]); return { ok: true }; } });
+  host.dispatchLocal('p1', 'x', 'HQ', () => {}, { ttl: 3600000, revive: true });
+  adv(57000); assert.equal(ops.length, 0);
+  adv(6000); assert.equal(ops.length, 1);
 });
 
 test('v3.46 amendment: the revive budget is per project: several queued HQ tasks start the boss 3 times in all, then all are refused', (t) => {
@@ -504,13 +529,13 @@ test('v3.46 amendment: a cancelled wait does not carry its gone-spell start over
   const ops = [];
   const { host } = waitHost(t, { tabState: () => 'gone', manage: (op, id) => { ops.push([op, id]); return { ok: true }; } });
   const a = host.dispatchLocal('p1', 'x', 'HQ', () => {}, { ttl: 3600000, revive: true });
-  adv(3000);                      // the queue saw the tab gone
+  adv(1500);                      // the queue saw the tab gone (inside the settle time)
   assert.equal(host.cancel(a.id), true);
   adv(5 * 60000);                 // the person ran and stopped the boss meanwhile; nothing queued, no pumps see it
   host.dispatchLocal('p1', 'y', 'HQ', () => {}, { ttl: 3600000, revive: true });
-  adv(57000);
-  assert.equal(ops.length, 0);    // not restarted within a minute
-  adv(6000);
+  host.pump();
+  assert.equal(ops.length, 0);    // a fresh gone spell: the settle time starts again, nothing is carried over
+  adv(4500);
   assert.equal(ops.length, 1);
 });
 
