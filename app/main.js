@@ -2086,6 +2086,9 @@ const peerCacheFile = () => path.join(app.getPath('userData'), 'link', 'peer-cac
 let hqBoard = null;
 let peerCacheMem = null;
 const hqMinter = HQ.createMinter();
+// review fix: waiting stage id → { digest of its stage.json record (CH.stageDigest), asked: the person accepted it in
+// the dialog }. Main memory only: after a restart a stage has no entry and gets the dialog at its release.
+const hqStages = new Map();
 const hqGate = ROUT.createWriteGate({ holdMs: ENTER_DELAY_MS + 1000 });
 let hqLastKey = 0;       // v3.47 last keystroke in HQ's terminal (a routine waits 15 s after it)
 let shownTab = '';       // the tab the renderer shows (pty:wake / hq:open)
@@ -2534,6 +2537,7 @@ async function hqDispatchStages(args, request, rrun) {
     if (byInitiative) s.byInitiative = true;
     else s.consented = true;   // the dialog was accepted, or the person's own typed turn needed none
     if (s.remote && consent !== 'app') s.noDialog = true;   // v3.99 the person is told when it is sent
+    if (consent === 'app') s.asked = true;   // accepted in the dialog: no second dialog at release
   }
   if (caps()) return no(caps());   // dialogs can overlap: the caps again on the fresh board
   // consent given. The dialogs were open meanwhile: every member a personal stage is for must still be there and the
@@ -2575,7 +2579,9 @@ function hqWaitRow(s, request, after) {
   if (f) try {
     fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
     SF.writeAtomic(f, `# ${LC.cleanLine(s.title || '', 80)}\n\nProject: ${s.projectName} (${s.machineName})\nAfter: #${after}\n\n${s.task}\n`);
-    SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify({ machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}), ...(s.personalFor ? { personalStaff: s.personalFor.id } : {}), ...(s.remote && s.noDialog ? { noDialog: true } : {}) }));
+    const rec = { machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}), ...(s.personalFor ? { personalStaff: s.personalFor.id } : {}), ...(s.remote && s.noDialog ? { noDialog: true } : {}) };
+    SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify(rec));
+    hqStages.set(id, { digest: CH.stageDigest(JSON.parse(JSON.stringify(rec))), asked: s.asked === true });   // compared at release
   } catch (e) { console.error('hq stage:', e.message); }
   return id;
 }
@@ -2587,6 +2593,10 @@ async function hqReleaseStage({ id, after, resumed = false }) {
   if (!t || t.status !== CH.WAITING) return;
   const st = readJson(HQ.taskFile(hqDir(), id, 'stage.json'));
   if (!st || typeof st.task !== 'string' || !st.task) { hqStatus(id, 'rejected', 'stage-lost'); return; }
+  // review fix: stage.json is a file a session can edit: its record must be the one accepted (digest kept in memory)
+  const known = hqStages.get(id);
+  hqStages.delete(id);
+  if (known && known.digest !== CH.stageDigest(st)) { hqStatus(id, 'rejected', 'stage-changed'); hqChainSweep(); return; }
   // v3.83 fix: a stage for a member's personal workspace that did not exist at consent: checked now (the member is
   // still there, the team on) and made only after the follow-up rule and any dialog below, never before
   /** @type {any} */ let member = null;
@@ -2619,24 +2629,25 @@ async function hqReleaseStage({ id, after, resumed = false }) {
   // reason (v3.103), or with `askBeforeDispatch` turned on meanwhile the normal dialog for this stage (nothing is made
   // before it); declined: the stage is rejected and the stages behind it block as usual.
   // v3.99 the same for a stage on a paired machine (its target: machine key + project id)
+  // review fix: the dialog also for a stage the app holds no record of (the app restarted: never a silent release),
+  // and for any stage accepted without the dialog once the person turned `askBeforeDispatch` on meanwhile
   let follow = t.byInitiative === true;
-  if (follow) {
-    const why = followWhy();
-    if (why || state.hq?.askBeforeDispatch === true) {
-      if (why && state.hq?.askBeforeDispatch !== true) { hqStatus(id, 'rejected', why); hqChainSweep(); return; }
-      const shown = member ? personalFolderName(member) : (P.findProject(state, project)?.name || project);
-      if (!(await confirmHqDispatch({ machine: st.machine, project: shown, title: st.title, task: text, ...(st.staff ? { staff: st.staff, staffName: st.staff } : {}) }, st.remote === true))) {
-        hqStatus(id, 'rejected', 'declined');
-        hqChainSweep();
-        return;
-      }
-      const after2 = loadHqBoard();
-      if (after2.tasks.find((x) => x.id === id)?.status !== 'queued') return;   // removed or ended while the dialog was open
-      // the person consented to this stage now: its row says so
-      saveHqBoard({ ...after2, tasks: after2.tasks.map((x) => { if (x.id !== id) return x; const y = { ...x, consented: true }; delete y.byInitiative; return y; }) });
-      st.noDialog = false;   // v3.99 a dialog was shown for it after all
-      follow = false;
+  const askOn = state.hq?.askBeforeDispatch === true;
+  const why = follow ? followWhy() : null;
+  if (why && !askOn) { hqStatus(id, 'rejected', why); hqChainSweep(); return; }
+  if (why || !known || (askOn && !known.asked)) {
+    const shown = member ? personalFolderName(member) : (P.findProject(state, project)?.name || project);
+    if (!(await confirmHqDispatch({ machine: st.machine, project: shown, title: st.title, task: text, ...(st.staff ? { staff: st.staff, staffName: st.staff } : {}) }, st.remote === true))) {
+      hqStatus(id, 'rejected', 'declined');
+      hqChainSweep();
+      return;
     }
+    const after2 = loadHqBoard();
+    if (after2.tasks.find((x) => x.id === id)?.status !== 'queued') return;   // removed or ended while the dialog was open
+    // the person consented to this stage now: its row says so
+    saveHqBoard({ ...after2, tasks: after2.tasks.map((x) => { if (x.id !== id) return x; const y = { ...x, consented: true }; delete y.byInitiative; return y; }) });
+    st.noDialog = false;   // v3.99 a dialog was shown for it after all
+    follow = false;
   }
   if (member) {
     // only now is the workspace made (the dialog was open meanwhile: the member is looked up again)

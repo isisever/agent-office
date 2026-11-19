@@ -121,7 +121,7 @@ const MAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 function stageHarness({ ask = false, allow = true, link = null, realConfirm = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-chain-'));
   const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips', 'hqLocalTarget', 'hqLocalKey', 'hqTargetAuto', 'hqRemoteTarget', 'notifyRemoteSent', ...(realConfirm ? ['confirmHqDispatch'] : [])];   // realConfirm: main's own single-dispatch dialog
-  const lines = ['const isHere', 'const byName', 'const officeName', 'const routineRunOfRequest', 'const openHqRoutineRequest', 'const routineById', 'const readJson'];
+  const lines = ['const hqStages', 'const isHere', 'const byName', 'const officeName', 'const routineRunOfRequest', 'const openHqRoutineRequest', 'const routineById', 'const readJson'];
   const src = [
     ...lines.map((l) => { const x = MAIN_SRC.split('\n').find((y) => y.startsWith(l)); assert.ok(x, l); return x; }),
     ...names.map((n) => { const i = MAIN_SRC.search(new RegExp(`^(async )?function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return MAIN_SRC.slice(i, MAIN_SRC.indexOf('\n}\n', i) + 2); }),
@@ -152,7 +152,7 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
     const officeDispatch = (tab, args, o) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task, ...(args.machine ? { machine: args.machine, revive: o?.revive === true } : {}) }); return { id, status: 'queued' }; };
   `;
   env.mods = { ST: require('../src/staff.js'), HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
-  const api = new Function('env', `${prelude}\n${src}\nreturn { hqDispatch, hqChainSweep, hqStatus };`)(env);
+  const api = new Function('env', `${prelude}\n${src}\nreturn { hqDispatch, hqChainSweep, hqStatus, hqStages };`)(env);
   return { env, api };
 }
 const report = (env, id, partial = false) => {
@@ -306,7 +306,7 @@ test('v3.83 review fix: a removed member gets no workspace after the dialog; a l
   const rel = fn('hqReleaseStage');
   assert.match(rel, /member = teamOn\(\) \? memberById\(st\.personalStaff\) : null;\n {4}if \(!member\) \{ hqStatus\(id, 'rejected', 'unknown-staff'\); return; \}/);
   // made only after the follow-up rule and any dialog, and the member is looked up again first
-  assert.ok(rel.indexOf('ensurePersonal(m)') > rel.indexOf('confirmHqDispatch(') && rel.indexOf('ensurePersonal(m)') > rel.indexOf('const why = followWhy();'));
+  assert.ok(rel.indexOf('ensurePersonal(m)') > rel.indexOf('confirmHqDispatch(') && rel.indexOf('ensurePersonal(m)') > rel.indexOf('const why = follow ? followWhy() : null;'));
   // a stage with only a member id in stage.json resolves to the workspace made at release
   assert.equal(CH.stageProject({ personalStaff: 's-a1b2c3', projectId: 'own1' }, [{ id: 'own1', name: 'A - personal' }]), 'own1');
   assert.equal(CH.stageProject({ personalStaff: 's-a1b2c3', project: '' }, [{ id: 'own1', name: 'A - personal' }]), '', 'never by name');
@@ -595,22 +595,74 @@ test('later-turn release, askBeforeDispatch turned on meanwhile and the re-check
   }
 });
 
-test('a consented chain is released without a dialog whatever the setting, Skip permissions or the window say', async () => {
+test('a consented chain is released whatever Skip permissions or the window say; one accepted without the dialog asks once the setting is on', async () => {
   for (const ask of [false, true]) {
     const { env, api } = stageHarness({ ask });
     const request = env.minter.mint();
     const chain = await api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });
     assert.equal(env.dialogs.length, ask ? 1 : 0);
     env.minter.clear();
-    env.state.hq.askBeforeDispatch = !ask;                                     // flipped meanwhile: no effect on a consented stage
+    env.state.hq.askBeforeDispatch = !ask;                                     // flipped meanwhile
     env.state.projects[1].skipPermissions = true;
     env.skipStarted.add('pb');
     report(env, chain.stages[0]);
     api.hqChainSweep();
     await settled();
     assert.equal(env.sent.length, 2);
-    assert.equal(env.dialogs.length + env.remoteDialogs, ask ? 1 : 0);
+    // accepted in the typed turn with the setting off, released with it on: the dialog for that stage (once);
+    // accepted in the dialog with the setting on, released with it off: no second dialog
+    assert.deepEqual([env.dialogs.length, env.remoteDialogs], ask ? [1, 0] : [0, 1]);
   }
+});
+
+// --- review fix: a released stage's stage.json must be the record accepted (digest in main memory); after a restart
+// (no record) the stage gets the dialog, never a silent release
+async function typedChain(h = stageHarness()) {
+  const request = h.env.minter.mint();
+  const chain = await h.api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });
+  return { ...h, request, chain };
+}
+test('stage.json changed after acceptance (target or text): refused with stage-changed, nothing sent, the stage behind blocks', async () => {
+  for (const change of [(st) => ({ ...st, task: 'rm -rf everything' }), (st) => ({ ...st, projectId: 'pa', project: 'office' }), (st) => ({ ...st, staff: 'Ada' })]) {
+    const h = stageHarness();
+    const request = h.env.minter.mint();
+    const chain = await h.api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }, { project: 'office', task: 's3' }] });
+    const f = HQ.taskFile(h.env.dir, chain.stages[1], 'stage.json');
+    fs.writeFileSync(f, JSON.stringify(change(JSON.parse(fs.readFileSync(f, 'utf8')))));
+    report(h.env, chain.stages[0]);
+    h.api.hqChainSweep();
+    await settled();
+    assert.deepEqual([rowOf(h.env, chain.stages[1]).status, rowOf(h.env, chain.stages[1]).reason], ['rejected', 'stage-changed']);
+    assert.equal(rowOf(h.env, chain.stages[2]).status, 'blocked');
+    assert.deepEqual([h.env.sent.length, h.env.dialogs.length + h.env.remoteDialogs], [1, 0]);
+  }
+  // unchanged: released as before, no dialog
+  const { env, api, chain } = await typedChain();
+  report(env, chain.stages[0]);
+  api.hqChainSweep();
+  await settled();
+  assert.deepEqual([env.sent.length, env.remoteDialogs], [2, 0]);
+});
+test('no in-memory record (the app restarted): the stage asks at release; yes sends it as consented, no rejects it', async () => {
+  for (const allow of [true, false]) {
+    const { env, api, chain } = await typedChain();
+    api.hqStages.clear();                                                      // what a restart leaves
+    env.allow = allow;
+    report(env, chain.stages[0]);
+    api.hqChainSweep();
+    await settled();
+    assert.equal(env.remoteDialogs, 1);
+    if (allow) assert.deepEqual([env.sent.length, rowOf(env, 'c2').consented], [2, true]);
+    else assert.deepEqual([env.sent.length, rowOf(env, chain.stages[1]).reason], [1, 'declined']);
+  }
+});
+test('stageDigest: every field of the record counts; field order does not', () => {
+  const st = { machine: '', project: 'erp', projectId: 'pb', title: 'T', task: 'x', remote: false, key: null };
+  const d = CH.stageDigest(st);
+  assert.equal(CH.stageDigest({ ...st }), d);
+  assert.equal(CH.stageDigest(JSON.parse(JSON.stringify({ task: 'x', remote: false, key: null, title: 'T', projectId: 'pb', project: 'erp', machine: '' }))), d);
+  for (const k of ['project', 'projectId', 'title', 'task', 'machine']) assert.notEqual(CH.stageDigest({ ...st, [k]: 'other' }), d, k);
+  for (const extra of [{ staff: 'Ada' }, { personalStaff: 's1' }, { remote: true }, { noDialog: true }]) assert.notEqual(CH.stageDigest({ ...st, ...extra }), d, JSON.stringify(extra));
 });
 
 test('resumable: only a stage blocked by how the one before it ended; never one behind another blocked stage', () => {

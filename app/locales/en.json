@@ -1204,7 +1204,7 @@
     "settings": "HQ settings",
     "askBeforeDispatch": "Ask me before the manager hands out a task",
     "askBeforeDispatchHint": "With this off, the manager hands out the tasks of a request you typed without asking you. In the turn you type, that includes projects with Skip permissions or Auto-approve on. Later follow-ups (after a report came in) are bounded: at most 4 per request, within 2 hours of your prompt, never into a project with Skip permissions, and into a project with Auto-approve only where you sent that request in your own turn. Always at most 8 tasks per request and 12 open; another computer still applies its own rules.",
-    "reason": { "new-unattended-target": "Not sent: a follow-up may go into a project that approves by itself only if you sent the request there yourself" },
+    "reason": { "stage-changed": "Not sent: the stage's saved target or text was changed after it was accepted", "new-unattended-target": "Not sent: a follow-up may go into a project that approves by itself only if you sent the request there yourself" },
     "byInitiative": "HQ sent this on its own",
     "openFolder": "Open HQ folder",
     "board": "HQ board",

@@ -186,4 +186,15 @@ function stageProject(st, projects) {
   return hits.length === 1 ? hits[0].id : '';
 }
 
-module.exports = { ADHOC, WAITING, BLOCKED, WAIT_MS, RESUME_MS, THEN_MAX, REPORT_MAX, stagesOf, hasCycle, afterRefused, stageState, settle, resumeRefused, resumable, resume, stageText, cutBytes, renameAfter, consentLines, capFor, stageProject };
+/**
+ * Review fix: the digest of a waiting stage's frozen record (stage.json: target project and machine, staff and
+ * personal fields, title and text). The app keeps it in main memory when the stage is accepted and compares it at
+ * release: stage.json is a file a session can edit, so a changed record is refused (`stage-changed`).
+ */
+const STAGE_FIELDS = ['remote', 'machine', 'key', 'project', 'projectId', 'staff', 'personalStaff', 'title', 'task', 'noDialog'];
+function stageDigest(st) {
+  const o = st && typeof st === 'object' ? st : {};
+  return require('crypto').createHash('sha256').update(JSON.stringify(STAGE_FIELDS.map((k) => [k, o[k] === undefined ? null : o[k]]))).digest('hex');
+}
+
+module.exports = { stageDigest, ADHOC, WAITING, BLOCKED, WAIT_MS, RESUME_MS, THEN_MAX, REPORT_MAX, stagesOf, hasCycle, afterRefused, stageState, settle, resumeRefused, resumable, resume, stageText, cutBytes, renameAfter, consentLines, capFor, stageProject };
