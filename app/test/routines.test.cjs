@@ -225,7 +225,7 @@ test('consentFor matrix: typed/routine × local/remote × ask × routine checkbo
     const typed = m.mint();
     const rid = m.mint({ origin: 'routine' });
     assert.equal(HQ.consentFor({ ask, remote, request: typed, minter: m, routineNoAsk: noAsk }), ask ? 'app' : 'none');   // v3.103 no dialog unless askBeforeDispatch; a paired machine alike; routines keep their rule (next line)
-    assert.equal(HQ.consentFor({ ask, remote, request: rid, minter: m, routineNoAsk: noAsk }), noAsk && !remote ? 'none' : 'held');
+    assert.equal(HQ.consentFor({ ask, remote, request: rid, minter: m, routineNoAsk: noAsk }), noAsk && (!remote || !ask) ? 'none' : 'held');   // v3.107 remote only with ask off
   }
 });
 
@@ -310,9 +310,15 @@ test('a project run id stops being live after its dispatch; no-ask for a project
   assert.equal(ROUT.routineNoAsk(plain, { projectId: 'p1', ask: false }), true);
   assert.equal(ROUT.routineNoAsk(plain, { projectId: 'p1', ask: true }), false);
   assert.equal(ROUT.routineNoAsk(plain, { projectId: 'p2', ask: false }), false);
-  assert.equal(ROUT.routineNoAsk(plain, { remote: true, projectId: 'p1', ask: false }), false);
+  assert.equal(ROUT.routineNoAsk(plain, { remote: true, projectId: 'p1', ask: false }), false);   // a project routine: only its own local project
   assert.equal(ROUT.routineNoAsk(rt({ noAsk: false }), { projectId: 'p9', ask: false }), true);
-  assert.equal(ROUT.routineNoAsk(rt({ noAsk: false, target: { kind: 'remote', pub: 'ab'.repeat(16), projectId: 'x' } }), { ask: false }), false);
+  assert.equal(ROUT.routineNoAsk(rt({ noAsk: false }), { remote: true, projectId: 'x', pub: 'cd'.repeat(16), ask: false }), true);   // an HQ routine: a paired machine alike
+  const rem = rt({ noAsk: false, target: { kind: 'remote', pub: 'ab'.repeat(16), projectId: 'x' } });
+  assert.equal(ROUT.routineNoAsk(rem, { remote: true, projectId: 'x', pub: 'ab'.repeat(16), ask: false }), true);   // a remote routine: its own device and project
+  assert.equal(ROUT.routineNoAsk(rem, { remote: true, projectId: 'y', pub: 'ab'.repeat(16), ask: false }), false);
+  assert.equal(ROUT.routineNoAsk(rem, { remote: true, projectId: 'x', pub: 'cd'.repeat(16), ask: false }), false);
+  assert.equal(ROUT.routineNoAsk(rem, { remote: false, projectId: 'x', ask: false }), false);
+  assert.equal(ROUT.routineNoAsk(rem, { remote: true, projectId: 'x', pub: 'ab'.repeat(16), ask: true }), false);   // the setting on: the card
   assert.equal(ROUT.routineNoAsk(null, { ask: false }), false);
   assert.match(mainFn('deliverRun'), /await hqDispatch\(\{[^\n]*\n\s*hqMinter\.endLive\(run\.request\)/);
 });
@@ -390,7 +396,7 @@ test('routines.json: a tick alone (lastTickAt) is written at most once a minute;
 // --- v3.49 remote targets: the real main.js functions (deliverRun, hqDispatch, holdDispatch, approveHeld, the report and
 // status paths) run against stubs for the link, the board file and Electron. No real link, userData or ~/.claude.
 const PUB = 'ab'.repeat(16);
-function remoteHarness({ online = true } = {}) {
+function remoteHarness({ online = true, ask = true } = {}) {
   const os = require('os');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-remote-'));
   const names = ['tagRoutineRec', 'hqDispatch', 'holdDispatch', 'approveHeld', 'routineProblem', 'finishRun', 'routinesOnDone', 'routinesOnSummary',
@@ -402,7 +408,7 @@ function remoteHarness({ online = true } = {}) {
   ].join('\n');
   const env = {
     HQ, ROUT, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto'), T: t,
-    state: { projects: [], routines: [], hq: { enabled: true } }, file: { runs: [], held: {}, sched: {} }, board: HQ.emptyBoard(), dispatches: new Map(),
+    state: { projects: [], routines: [], hq: { enabled: true, ...(ask ? { askBeforeDispatch: true } : {}) } }, file: { runs: [], held: {}, sched: {} }, board: HQ.emptyBoard(), dispatches: new Map(),
     notes: [], sent: [], dialogs: 0, added: [], rows: [], records: new Map(), online, n: 0,
   };
   const link = { devices: [{ pub: PUB, name: 'Mac2' }], get conns() { return new Set(env.online ? [PUB] : []); },
@@ -419,6 +425,7 @@ function remoteHarness({ online = true } = {}) {
     const loadDispatches = () => env.dispatches; const saveDispatches = () => {};
     const selfName = () => 'Mac1'; const peerCache = () => ({ [${JSON.stringify(PUB)}]: { name: 'Mac2', projects: [{ id: 'web', name: 'Web' }] } });
     const notify = (title, body) => env.notes.push({ title, body });
+    const notifyRemoteSent = (project, machine) => env.notes.push({ title: 'remote-sent ' + project + ' @ ' + machine });   // v3.99 the no-dialog notice
     const confirmHqDispatch = async () => { env.dialogs++; return true; };
     const projectOp = () => {}; const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
     const linkHost = { link: () => env.link, remoteTask: (id) => env.records.get(id) || null, knows: () => false };
@@ -464,7 +471,7 @@ test('remote routine run → a held "awaiting approval" card + notification; nev
   env.state.hq.askBeforeDispatch = true;
   const m = HQ.createMinter();
   const id = m.mint({ origin: 'routine', run: 'x' });
-  for (const ask of [false, true]) assert.equal(HQ.consentFor({ ask, remote: true, request: id, minter: m, routineNoAsk: true }), 'held');
+  for (const ask of [false, true]) assert.equal(HQ.consentFor({ ask, remote: true, request: id, minter: m, routineNoAsk: true }), ask ? 'held' : 'none');   // v3.107 remote follows the setting (main computes routineNoAsk)
 });
 
 test('approve a remote held card → sent through the pacer; the record names the run; an OK report ends the run ok', async () => {
@@ -643,6 +650,43 @@ test('Allow on a held card older than 12 h → refused and expired, the run ends
   b.env.setWin(null);
   await b.api.routinesTick();
   assert.deepEqual([b.env.board.tasks[0].status, run2.status, run2.reason, b.env.sent.length], ['expired', 'attention', 'expired', 0]);
+});
+
+test('v3.107 askBeforeDispatch off: a remote routine run is sent with no card and the remote-sent notice; on: the held card', async () => {
+  const off = remoteHarness({ ask: false });
+  const run = off.newRun();
+  await off.api.deliverRun(run, Date.now());
+  assert.equal(off.env.sent.length, 1);
+  assert.deepEqual([off.env.sent[0].args.machine, off.env.sent[0].args.project, off.env.sent[0].hold], [PUB, 'web', false]);
+  assert.match(off.env.sent[0].args.task, /^\[routine /);
+  const row = off.env.board.tasks[0];
+  assert.deepEqual([row.status !== 'awaiting-consent', row.consented, row.machineName, row.project], [true, true, 'Mac2', 'Web']);
+  assert.deepEqual([run.status, run.tasks], ['running', [off.env.sent[0].id]]);
+  assert.deepEqual(off.env.notes.map((n) => n.title), ['remote-sent Web @ Mac2']);
+  assert.deepEqual(Object.keys(off.env.file.held), []);
+  assert.equal(off.env.dialogs, 0);
+  const on = remoteHarness({ ask: true });
+  const run2 = on.newRun();
+  await on.api.deliverRun(run2, Date.now());
+  assert.deepEqual([on.env.sent.length, on.env.board.tasks[0].status, run2.status], [0, 'awaiting-consent', 'awaiting-consent']);
+});
+
+test('v3.107 askBeforeDispatch off, the checks still run without a card: offline → the outbox; unpaired → target-gone; project gone → refused', async () => {
+  const a = remoteHarness({ ask: false, online: false });
+  const run = a.newRun();
+  await a.api.deliverRun(run, Date.now());
+  assert.deepEqual([a.env.sent.length, a.env.sent[0].hold, a.env.board.tasks[0].reason], [1, true, 'offline']);
+  assert.equal(run.status, 'running');
+  const b = remoteHarness({ ask: false });
+  b.env.link.devices = [];
+  const run2 = b.newRun();
+  await b.api.deliverRun(run2, Date.now());
+  assert.deepEqual([b.env.sent.length, run2.status, run2.reason], [0, 'failed', 'target-gone']);   // the pairing check before the dispatch (ROUT.remoteProblem)
+  const c = remoteHarness({ ask: false });
+  c.env.link.remotes.get(PUB).snap.projects = [{ id: 'api', name: 'Api' }];   // online, snapshot without 'web'
+  const run3 = c.newRun();
+  await c.api.deliverRun(run3, Date.now());
+  assert.deepEqual([c.env.sent.length, run3.status, run3.reason], [0, 'failed', 'unknown-project']);
 });
 
 test('Allow after the device was unpaired → unknown-machine; after its project is gone → unknown-project; nothing sent', async () => {

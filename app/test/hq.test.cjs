@@ -1450,11 +1450,11 @@ test('v3.103 consentFor matrix: request state × ask × local/remote', () => {
   assert.equal(HQ.consentFor({ remote: false, request: id, minter: m, now: clock.t + HQ.INITIATIVE_MS }), 'app');
   for (const request of [null, 5, '']) assert.equal(HQ.consentFor({ remote: false, request, minter: m, now: clock.t }), 'app', String(request));
   assert.equal(HQ.consentFor({ remote: false, request: id, minter: null, now: clock.t }), 'app');
-  // a routine run's id: `ask` never applies; 'none' only local + its checkbox + still live, else held
+  // a routine run's id: 'none' only with routineNoAsk (main's ROUT.routineNoAsk) + still live, and remote only with ask off (v3.107), else held
   for (const ask of [false, true]) for (const remote of [false, true]) for (const noAsk of [false, true]) {
     const r = v103();
     const rid = r.m.mint({ origin: 'routine', run: 'run1' });
-    assert.equal(HQ.consentFor({ ask, remote, request: rid, minter: r.m, routineNoAsk: noAsk, now: r.clock.t }), !remote && noAsk ? 'none' : 'held', `routine ask=${ask} remote=${remote} noAsk=${noAsk}`);
+    assert.equal(HQ.consentFor({ ask, remote, request: rid, minter: r.m, routineNoAsk: noAsk, now: r.clock.t }), noAsk && (!remote || !ask) ? 'none' : 'held', `routine ask=${ask} remote=${remote} noAsk=${noAsk}`);
     r.m.endLive(rid);
     assert.equal(HQ.consentFor({ ask, remote, request: rid, minter: r.m, routineNoAsk: noAsk, now: r.clock.t }), 'held');
   }

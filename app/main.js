@@ -2316,7 +2316,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     if (c.reason) return { status: 'rejected', reason: c.reason, ...(c.hint ? { hint: c.hint } : {}) };
     args = { ...args, staffName: c.staffName, ...(c.targetName ? { targetName: c.targetName } : {}) };
   }
-  const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '', ask });   // a project routine: only its own project; v3.107 follows askBeforeDispatch
+  const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: key ? key.id : target?.id || '', pub: key?.pub || '', ask });   // a project/remote routine: only its own target; v3.107 follows askBeforeDispatch
   const consent = approved ? 'none' : HQ.consentFor({ ask, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
   if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
@@ -2928,7 +2928,7 @@ async function deliverRun(run, now) {
       Object.assign(run, { status: 'typed', typedAt: now });
       return saveRt();
     }
-    // v3.49 a remote target goes through HQ's remote path by its `<pub>:<id>` key: always a held card first (remote asks)
+    // v3.49 a remote target goes through HQ's remote path by its `<pub>:<id>` key; v3.107 a held card first only with askBeforeDispatch on
     const tg = routine.target;
     const project = tg.kind === 'remote' ? HQ.remoteKey(tg.pub, tg.projectId) : tg.kind === 'staff' ? '' : P.findProject(state, tg.projectId).name;
     run.request = hqMinter.mint({ origin: 'routine', run: run.id });
