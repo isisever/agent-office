@@ -151,7 +151,7 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
     const summary = h('summary', { class: 'sb-head sb-head-row' },
       h('span', {}, t('devices.title') + (view.devices.length ? ` (${view.devices.filter((/** @type {any} */ d) => d.online).length}/${view.devices.length})` : '')));
     const body = h('div', { class: 'sb-panel-body sb-dev-body' }, ...[
-      view.error && view.error !== 'off' ? h('div', { class: 'sb-note warn' }, t(`devices.error.${view.error}`)) : null,
+      view.error && view.error !== 'off' ? h('div', { class: 'sb-note warn' }, t(`devices.error.${view.error}`), view.errorCode ? h('div', { class: 'sb-dev-details' }, t('devices.errorDetails', { code: view.errorCode })) : null) : null,
       h('label', { class: 'sb-row sb-dev-self' }, h('span', {}, t('devices.thisDevice')),
         h('input', { class: 'sb-dev-name', value: view.name, maxlength: 40, onchange: (/** @type {Event} */ e) => apply(api.link.setName(val(e))) })),
       view.devices.length ? h('ul', { class: 'sb-list' }, list) : h('div', { class: 'sb-note' }, t('devices.none')),

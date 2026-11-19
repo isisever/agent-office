@@ -72,6 +72,7 @@ function setupLink(d) {
   let link = null;
   let relay = null;                      // v3.34 login relay host (src/login-relay.js)
   let error = null;
+  let errorCode = null;                  // v3.105 e.code of the failure behind `error` (EPERM ...), shown as Details
   const queue = new Map();               // projectId → [{ id, device, text, at, reply }]
 
   const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
@@ -86,16 +87,32 @@ function setupLink(d) {
   // reads as 'bad' (every device paused). A headerless file counts once, when it parses to its schema; it is written
   // again with the header and its marker (`<file>.ao1`) at that start, and refused without the header from then on.
   const sealer = S.sealer(d.safeStorage);
+  // v3.105 the state is set where the failure happens (fail), so the person and commands.log say which step broke.
+  // Logged: the state, e.code and e.message only, never file contents or keys.
+  function fail(state, e) {
+    if (error) return;
+    error = state;
+    errorCode = e && typeof e.code === 'string' ? e.code : null;
+    console.error('link:', state, errorCode || '', e && e.message);
+    try {
+      if (S.plainDir(dir)) {
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        fs.appendFileSync(logFile, `${JSON.stringify({ at: new Date().toISOString(), event: 'link-start-failed', state, code: errorCode, message: C.cleanLine(String(e && e.message), 200) })}\n`, { mode: 0o600 });
+      }
+    } catch { /* best effort */ }
+  }
+  function guard(state, fn) { try { return fn(); } catch (e) { fail(state, e); throw e; } }
   function loadKeys() {
-    if (!S.plainDir(dir)) throw new Error('the link folder is not a plain folder');
+    if (!S.plainDir(dir)) { const e = new Error('the link folder is not a plain folder'); fail('keys-file', e); throw e; }
     if (!S.present(keysFile)) {
       const kp = require('hyperdht').keyPair();
       return { publicKey: kp.publicKey, secretKey: kp.secretKey, secrets: {}, own: [], ownV: C.OWN_VERSION, fresh: true };
     }
-    const got = sealer.openFile(keysFile, S.PURPOSE.LINK_KEYS, S.linkKeysText);
-    if (!got) throw new Error('the keys file is not a link keys file');
-    const k = JSON.parse(got.payload);
-    if (!S.isLinkKeys(k)) throw new Error('the keys file is malformed');
+    let got;
+    try { got = sealer.openFile(keysFile, S.PURPOSE.LINK_KEYS, S.linkKeysText); } catch (e) { fail(e && e.sealStage === 'decrypt' ? 'keys-decrypt' : e && e.sealStage === 'file' ? 'keys-file' : 'start', e); throw e; }
+    if (!got) { const e = new Error('the keys file is not a link keys file'); fail('keys-format', e); throw e; }
+    const k = guard('keys-format', () => JSON.parse(got.payload));
+    if (!S.isLinkKeys(k)) { const e = new Error('the keys file is malformed'); fail('keys-format', e); throw e; }
     return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {}, own: k.own, ownV: k.ownV, legacy: got.legacy };
   }
   /**
@@ -149,7 +166,7 @@ function setupLink(d) {
       link.on('persist', save);
       link.on('own', () => pump());   // v3.101 a paused device's queued entries are refused now
       // both files carry the marker and the same sets from here on (v3.102: and the header of their purpose)
-      if (keys.fresh || !marked || rec.state !== 'ok' || keys.legacy || rec.legacy) link.persist();
+      if (keys.fresh || !marked || rec.state !== 'ok' || keys.legacy || rec.legacy) guard('keys-save', () => link.persist());
       const ownLog = (event, more = {}) => { try { fs.appendFileSync(logFile, `${JSON.stringify({ at: new Date().toISOString(), event, ...more })}\n`, { mode: 0o600 }); } catch { /* best effort */ } };
       if (rec.state === 'bad') { console.error('link: the own record (own.bin) is unreadable, every device is paused'); ownLog('own-record-unreadable'); }
       else if (!keys.fresh && !marked && !migrate) ownLog('own-restored', { devices: link.devices.filter((x) => C.isOwn(link.devices, link.secrets, x.pub)).map((x) => x.name) });
@@ -184,8 +201,7 @@ function setupLink(d) {
       for (const v of Object.values(readOwners())) if (v?.owner === 'unknown' && v.projectId) d.handoff?.lock(v.projectId, true);
       if (link.devices.length) link.ensureSwarm();
     } catch (e) {
-      console.error('link:', e.message);
-      error = 'keys';
+      fail('start', e);   // no-op when a step above already set its state
       link = null;
     }
     return link;
@@ -198,7 +214,7 @@ function setupLink(d) {
     return defaults.get(id);
   }
   const opStatus = new Map();            // v3.33 `${devicePub}/${projectId}` → { op, state: 'sent'|'ok'|'failed', reason?, at } (our asks)
-  const view = () => ({ projOps: Object.fromEntries(opStatus), sessReaders: [...readers.values()].map((r) => ({ device: r.device, project: r.project })), ...(link ? { ...withTargets(link.view()), error: null } : { name: os.hostname(), id: '', pairing: null, devices: [], remotes: [], outgoing: [], handoffs: { out: [], in: [] }, self: { app: '', res: null, catalog: [] }, error: error || 'off' }), owners: ownersView() });
+  const view = () => ({ projOps: Object.fromEntries(opStatus), sessReaders: [...readers.values()].map((r) => ({ device: r.device, project: r.project })), ...(link ? { ...withTargets(link.view()), error: null, errorCode: null } : { name: os.hostname(), id: '', pairing: null, devices: [], remotes: [], outgoing: [], handoffs: { out: [], in: [] }, self: { app: '', res: null, catalog: [] }, error: error || 'off', errorCode }), owners: ownersView() });
   let pushTimer = null;
   function push() {
     if (pushTimer) return;
