@@ -6,12 +6,14 @@
 // A loop that changed files (Edit/Write/NotebookEdit, or a Bash command that clearly writes) and ran no check since
 // (tests, build, lint, typecheck) is blocked once when it stops (classic.Stop, classic.SubagentStop); its next stop
 // stands. One block per change set: a new change after the block opens a new set. No block when nothing changed or
-// when the final message says in so many words why no check applies.
+// when the final message says in so many words why no check applies. Only a change to code counts: a file that is
+// not a doc (*.md, *.txt, ...), not in a temp folder outside the project (the session scratchpad), not in ~/.claude*
+// or the office data folder (facts, memory). A loop is blocked at most once per prompt of the person's.
 
 export const VERIFY_REASON =
   "Agent Office: you changed files but ran no test/build/lint since. Run the project's check, or say in one line why none applies."
-// at most this many verify blocks per loop between two prompts of the person's (a backstop: each needs a new change)
-export const VERIFY_BLOCKS_MAX = 2
+// at most this many verify blocks per loop between two prompts of the person's (each block costs a model turn)
+export const VERIFY_BLOCKS_MAX = 1
 
 // the checks: extend here. Each is matched at a command's start (after `cd …&&`, env assignments, `npx`/`bunx`)
 export const VERIFY_COMMANDS: RegExp[] = [
@@ -85,6 +87,113 @@ export function saysNoCheck(message: string) {
   return NO_CHECK.test(message)
 }
 
+// what counts as a code change
+/** Where a loop works: its folder, the project folders, the home folder and the office data folder. */
+export type VerifyPlace = { cwd: string; roots: string[]; home: string; dataDir?: string }
+
+const DOC_FILE = /\.(?:md|mdx|markdown|txt|text|rst|adoc|asciidoc)$/i
+const TEMP_DIR = /^(?:\/private)?\/(?:tmp|var\/folders|var\/tmp)(?:\/|$)|^[A-Za-z]:\/(?:Windows\/Temp|Users\/[^/]+\/AppData\/Local\/Temp)(?:\/|$)/i
+// a Claude Code session's own temp folder (its scratchpad and task outputs): never project code
+const SESSION_TEMP = /\/claude-\d+\//
+
+/** `path` made absolute against `cwd`, with `~`, `.` and `..` resolved and `/` separators; '' when it cannot be. */
+export function resolvePath(path: string, cwd: string, home: string) {
+  let at = path.trim().replace(/\\/g, '/')
+  if (at === '~' || at.startsWith('~/')) at = home ? home.replace(/\\/g, '/') + at.slice(1) : ''
+  if (!at) return ''
+  const isAbsolute = (p: string) => p.startsWith('/') || /^[A-Za-z]:\//.test(p)
+  if (!isAbsolute(at)) {
+    const base = cwd.replace(/\\/g, '/')
+    if (!isAbsolute(base)) return ''
+    at = `${base}/${at}`
+  }
+  const drive = /^[A-Za-z]:/.test(at) ? at.slice(0, 2) : ''
+  const parts: string[] = []
+  for (const part of at.slice(drive.length).split('/')) {
+    if (!part || part === '.') continue
+    if (part === '..') parts.pop()
+    else parts.push(part)
+  }
+  return `${drive}/${parts.join('/')}`
+}
+
+const isUnder = (path: string, dir: string) => {
+  const folder = dir.replace(/\/+$/, '')
+  return Boolean(folder) && (path === folder || path.startsWith(`${folder}/`))
+}
+
+/** True when a change to this file counts for the gate: code, not a doc, a scratch file or a Claude file. */
+export function isCodePath(path: string, place: VerifyPlace) {
+  const at = resolvePath(path, place.cwd, place.home)
+  if (!at) return true // cannot tell where: counted
+  if (DOC_FILE.test(at)) return false
+  const home = place.home ? resolvePath(place.home, '/', '') : ''
+  if (home && home !== '/' && isUnder(at, home) && /^\.claude/.test(at.slice(home.length + 1))) return false
+  if (place.dataDir && isUnder(at, resolvePath(place.dataDir, place.cwd, place.home))) return false
+  if (TEMP_DIR.test(at)) {
+    // a temp folder counts only when the project itself lives there
+    if (SESSION_TEMP.test(at)) return false
+    return place.roots.some(root => Boolean(root) && isUnder(at, resolvePath(root, place.cwd, place.home)))
+  }
+  return true
+}
+
+// a shell command's words, quotes taken off ("a b" is one word)
+const wordsOf = (segment: string) => [...segment.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g)].map(m => m[1] ?? m[2] ?? m[3] ?? '')
+
+// heredoc bodies taken out: their text is data, not the files the command writes
+function withoutHeredocs(command: string) {
+  const lines = command.split('\n')
+  const kept: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? ''
+    kept.push(line)
+    for (const tag of [...line.matchAll(/<<-?\s*["']?([\w.-]+)["']?/g)].map(m => m[1] ?? '')) {
+      while (i + 1 < lines.length && (lines[i + 1] ?? '').trim() !== tag) i++
+      i++
+    }
+  }
+  return kept.join('\n')
+}
+
+const SED_SCRIPT = /^[sy]([/|#,:]).*\1.*\1\w*$/
+const looksLikePath = (word: string) =>
+  Boolean(word) &&
+  !word.startsWith('-') &&
+  !/^[a-z]+:\/\//i.test(word) &&
+  !SED_SCRIPT.test(word) &&
+  (/[\\/]/.test(word) || word.startsWith('~') || /\.\w{1,8}$/.test(word))
+
+/** True when a writing command may write code (isCodePath); a write whose targets cannot be told counts. */
+export function commandWritesCode(command: string, place: VerifyPlace) {
+  let cwd = place.cwd
+  const targets: { path: string; cwd: string }[] = []
+  for (const segment of withoutHeredocs(command).split(/&&|\|\||;|\|(?!\|)|\n/)) {
+    const words = wordsOf(segment.trim().replace(/^\(+/, ''))
+    if (words[0] === 'cd') {
+      const to = words[1] && !words[1].startsWith('-') ? resolvePath(words[1], cwd, place.home) : place.home
+      if (to) cwd = to
+      continue
+    }
+    // redirections into a file: `> f`, `>> f`, `>f`, `2> f`
+    words.forEach((word, i) => {
+      const redirect = /^\d?>>?(.*)$/.exec(word)
+      if (!redirect || word.includes('&')) return
+      const target = redirect[1] || words[i + 1] || ''
+      if (target && target !== '/dev/null') targets.push({ path: target, cwd })
+    })
+    const plain = segment
+      .trim()
+      .replace(/^\(+/, '')
+      .replace(/^(?:[A-Za-z_]\w*=\S*\s+)+/, '')
+      .replace(/^(?:time|env|sudo)\s+/, '')
+    if (!WRITING.some(write => write.test(plain))) continue
+    for (const word of words.slice(1)) if (looksLikePath(word) && !/^\d?>/.test(word) && word !== '/dev/null') targets.push({ path: word, cwd })
+  }
+  if (!targets.length) return true
+  return targets.some(target => isCodePath(target.path, { ...place, cwd: target.cwd }))
+}
+
 type Gate = { changed: number; verified: number; blockedFor: number; blocks: number }
 const gates = new Map<string, Gate>()
 let seq = 0
@@ -97,13 +206,16 @@ const gateOf = (key: string) => {
 const EDITING = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
 const COMMANDS = new Set(['Bash', 'PowerShell'])
 
-/** Notes one tool call of a loop (before or after it runs; a refused call is not noted). */
-export function verifyNote(key: string, tool: string, input: Record<string, unknown>, isReadOnly = false) {
+/** Notes one tool call of a loop (before or after it runs; a refused call is not noted). With `place`, only a
+ * change to code counts (isCodePath, commandWritesCode); without it, every change does. */
+export function verifyNote(key: string, tool: string, input: Record<string, unknown>, isReadOnly = false, place?: VerifyPlace) {
   const gate = gateOf(key)
-  if (EDITING.has(tool)) gate.changed = ++seq
-  else if (COMMANDS.has(tool) && typeof input.command === 'string') {
+  if (EDITING.has(tool)) {
+    const file = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : ''
+    if (!place || !file || isCodePath(file, place)) gate.changed = ++seq
+  } else if (COMMANDS.has(tool) && typeof input.command === 'string') {
     const command = input.command
-    if (!isReadOnly && isWritingCommand(command)) gate.changed = ++seq
+    if (!isReadOnly && isWritingCommand(command) && (!place || commandWritesCode(command, place))) gate.changed = ++seq
     if (isVerifyCommand(command)) gate.verified = ++seq
   }
 }

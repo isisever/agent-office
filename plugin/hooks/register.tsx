@@ -1316,7 +1316,12 @@ async function withHarness($: EngineInterface, e: { tool: string; agentId?: stri
   if (isNested || done.deny !== undefined) return done
   try {
     const input = e as unknown as Record<string, unknown>
-    if (verifyOn) verifyNote(key, e.tool, input, done.isReadOnly === true)
+    if (verifyOn) {
+      // only a change to code counts: the loop's folder and the project's are where relative paths resolve
+      const agentCwd = key ? agentCwds.get(key) : undefined
+      const place = { cwd: agentCwd || sessionCwd, roots: [sessionRoot, sessionCwd, agentCwd ?? ''], home: homeDir, dataDir: rootDir }
+      verifyNote(key, e.tool, input, done.isReadOnly === true, place)
+    }
     const notes: string[] = []
     const errorText = errorTextOf(done)
     if (errorText) {
