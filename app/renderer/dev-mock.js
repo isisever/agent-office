@@ -899,7 +899,7 @@ if (q.has('remotes')) {
   const base = ['watch', 'board', 'reports', 'dispatch'];
   const row = (pub, id, name, machine, online, manage, status) => ({ key: `${pub}:${id}`, id, name, machine, online, lastSeen: Date.now(), remote: true,
     ...(status ? { status } : {}), actions: [...base, ...(manage ? ['start', 'wake', 'sleep', 'stop'] : [])] });
-  const hv = { board: { tasks: [], requests: [] }, settings: { dispatchWithoutAsking: false, initiative: false, enabled: true }, running: false, stopped: false, remotes: [
+  const hv = { board: { tasks: [], requests: [] }, settings: { enabled: true }, running: false, stopped: false, remotes: [
     row(A, 'r1', 'raeko', 'DESKTOP-GE4AT5S', true, true, 'idle'),
     row(B, 'r2', 'a-really-long-remote-project-name-for-layout', 'very-long-machine-name-build-server-01.local', true, false, 'approval'),
     row(B, 'r3', 'notes', 'very-long-machine-name-build-server-01.local', true, false, 'working'),

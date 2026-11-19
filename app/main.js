@@ -1301,11 +1301,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // v3.83 team: a desk's session gets its member's role section (AGENT_OFFICE_ROLE, a 0600 file); HQ the team section
   delete env.AGENT_OFFICE_ROLE;
   delete env.AGENT_OFFICE_TEAM;
-  delete env.AGENT_OFFICE_INITIATIVE;
+  delete env.AGENT_OFFICE_INITIATIVE;   // the pre-v3.103 name: never passed on
+  delete env.AGENT_OFFICE_ASK;
   const roleFile = tab?.staffId ? writeDeskRole(id, project, tab.staffId) : null;
   if (roleFile) env.AGENT_OFFICE_ROLE = roleFile;
   if (project.hq && teamOn()) env.AGENT_OFFICE_TEAM = '1';
-  if (project.hq && state.hq?.initiative === true) env.AGENT_OFFICE_INITIATIVE = '1';   // v3.91 HQ's brief gains the initiative paragraph
+  if (project.hq && state.hq?.askBeforeDispatch === true) env.AGENT_OFFICE_ASK = '1';   // v3.103 HQ gets the asking brief (default: it carries the request through)
   delete env.AGENT_OFFICE_MAIL_GUARD;
   if (mailMcp) {
     env.AGENT_OFFICE_MAIL_GUARD = '1';           // v3.85 the plugin's second layer and the mail rules section
@@ -2085,6 +2086,9 @@ const peerCacheFile = () => path.join(app.getPath('userData'), 'link', 'peer-cac
 let hqBoard = null;
 let peerCacheMem = null;
 const hqMinter = HQ.createMinter();
+// review fix: waiting stage id → { digest of its stage.json record (CH.stageDigest), asked: the person accepted it in
+// the dialog }. Main memory only: after a restart a stage has no entry and gets the dialog at its release.
+const hqStages = new Map();
 const hqGate = ROUT.createWriteGate({ holdMs: ENTER_DELAY_MS + 1000 });
 let hqLastKey = 0;       // v3.47 last keystroke in HQ's terminal (a routine waits 15 s after it)
 let shownTab = '';       // the tab the renderer shows (pty:wake / hq:open)
@@ -2200,19 +2204,12 @@ function hqSummary(args) {
   return { ok: true, file: f };
 }
 const isHere = (machine) => !machine || machine.toLowerCase() === selfName().toLowerCase() || /^(this|local|here)( machine)?$/i.test(machine);
-/** v3.94 the third button was pressed: both HQ settings on, kept like hq:setSettings keeps them; the Board shows them.
- *  HQ's own session reads them at its next start, as with the checkboxes (HQ is not restarted). */
-function hqAllowAlways() {
-  commit({ ...state, hq: HQ.allowAlways(state.hq) });
-  send('hq:board', hqView());
-}
-/** v3.94 `request`: the dispatch's request id, passed only where the third button may be offered (HQ.offersAlways). */
-async function confirmHqDispatch(args, remote, { request = '' } = {}) {
+/** The consent dialog for one task. v3.103 shown only with `askBeforeDispatch` on, or for a dispatch without a request
+ *  id of the person's own ('adhoc'); two buttons (the v3.94 third one is gone with the settings it turned on). */
+async function confirmHqDispatch(args, remote) {
   if (!win || win.isDestroyed()) return false;
-  const always = HQ.offersAlways({ request, minter: hqMinter });
-  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny'), ...(always ? [T('main.hqAllowAlways')] : [])], defaultId: 1, cancelId: 1,
-    message: args.staffName ? T('main.hqAskStaff', { staff: args.staffName, project: officeName(args.targetName || args.project) }) : T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: `${LC.cleanLine(HQ.redact(String(args.task || '')), 300)}${always ? `\n\n${T('main.hqAllowAlwaysNote')}` : ''}` });
-  if (always && r.response === 2) { hqAllowAlways(); return true; }
+  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
+    message: args.staffName ? T('main.hqAskStaff', { staff: args.staffName, project: officeName(args.targetName || args.project) }) : T(remote ? 'main.hqAskRemote' : 'main.hqAsk', { project: officeName(args.project), machine: officeName(args.machine || '') }), detail: LC.cleanLine(HQ.redact(String(args.task || '')), 300) });
   return r.response === 0;
 }
 /** v3.47/v3.49 a routine's own project or remote run: its dispatch record names the run, so the report ends the run
@@ -2221,7 +2218,8 @@ function tagRoutineRec(id, rrun) {
   const rec = id && rrun && rrun.kind !== 'hq' && ROUT.OPEN_RUN.has(rrun.status) ? loadDispatches().get(id) : null;   // never a run that already ended
   if (rec) { rec.routine = rrun.id; saveDispatches(); }
 }
-/** v3.91 a task HQ sent on its own (no dialog): the person is told right then (the same notice a held card uses). */
+/** v3.91 a task HQ sent on its own (no dialog): the person is told right then (the same notice a held card uses).
+ *  v3.103 that is every dispatch made in a later turn of a request (not the turn the person typed). */
 function notifyInitiative(title, target) {
   notify(T('main.hqInitiativeSent', { title: LC.cleanLine(String(title || ''), 80), target: LC.cleanLine(String(target || ''), 80) }), '', null);
 }
@@ -2232,6 +2230,34 @@ function hqTargetSkips(p, staffId) {
   const desk = staffId ? P.deskOf(p, staffId) : null;
   const tab = staffId ? (desk ? P.tabPtyId(p.id, desk.n) : '') : p.id;
   return Boolean(tab) && terms.has(tab) && skipStarted.has(tab);
+}
+/** A local target for HQ.followRefusal. `p` the project; `staffId` the member ('' none, null unknown). A member's
+ *  personal workspace that is not made yet (`p` null, `personal` the member) is judged by the switches its draft
+ *  applies when it is made (ST.personalDraft, applied by ensurePersonal), so a follow-up into it is refused BEFORE
+ *  anything is created. A project not known here has no switch: the dispatch's own checks decide. */
+// review fix: `auto` (the target approves by itself: Auto-approve, or its tab started that way) and `seen` (a task of
+// this request went to that same target in the person's typed turn, hqMinter.hasTarget): a later-turn follow-up may
+// go into such a target only when seen (HQ.followRefusal 'new-unattended-target').
+function hqLocalTarget(request, p, staffId, personal = null) {
+  if (!p && personal) {
+    const d = ST.personalDraft(personal.personal);
+    return { projectId: '', staffId: personal.id, skip: d.skipPermissions === true, auto: d.autoApprove === true, seen: hqMinter.hasTarget(request, hqLocalKey(null, personal.id)) };
+  }
+  if (!p) return { projectId: '', staffId, skip: false };
+  return { projectId: p.id, staffId, skip: hqTargetSkips(p, staffId || ''), auto: hqTargetAuto(p, staffId || ''), seen: hqMinter.hasTarget(request, hqLocalKey(p, staffId)) };
+}
+/** A local target's identity (machine + project + staff member); a member's personal workspace by its owner, so the
+ *  one not made yet and the one made later are the same target. */
+function hqLocalKey(p, staffId) {
+  return `self|${p ? (p.staffOwner ? `personal:${p.staffOwner}` : p.id) : `personal:${staffId || ''}`}|${staffId || ''}`;
+}
+/** Does the target approve its permission prompts by itself? The project's Auto-approve switch, or the target tab
+ *  (the member's desk, else the boss tab) running right now from a start with Auto-approve or Skip on. */
+function hqTargetAuto(p, staffId) {
+  if (P.autoApproveOf(p)) return true;
+  const desk = staffId ? P.deskOf(p, staffId) : null;
+  const tab = staffId ? (desk ? P.tabPtyId(p.id, desk.n) : '') : p.id;
+  return Boolean(tab) && terms.has(tab) && promptless.has(tab);
 }
 /** v3.99 a remote target's identity: the paired machine's key and the project's id there, read fresh from the link.
  *  Empty parts when the machine or the project is not known (then nothing matches a consented row). */
@@ -2260,7 +2286,8 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const capBoard = () => { const b = loadHqBoard(); return excludeId ? { ...b, tasks: b.tasks.filter((t) => t.id !== excludeId) } : b; };
   // only ids the minter issued; else the current one; else the one capped 'adhoc' bucket. An approved held task keeps
   // the request it was held under (v3.47: no re-resolve).
-  const request = approved ? String(args.request || HQ.ADHOC) : HQ.resolveRequest(hqMinter, typeof args.request === 'string' ? args.request : '', { initiative: state.hq?.initiative === true });
+  const ask = state.hq?.askBeforeDispatch === true;   // v3.103 the consent dialog is off unless the person turned this on
+  const request = approved ? String(args.request || HQ.ADHOC) : HQ.resolveRequest(hqMinter, typeof args.request === 'string' ? args.request : '', { ask });
   const board = capBoard();   // an approved held task does not count against itself
   const cap = HQ.capReason(board, request);
   if (cap) return { status: 'rejected', reason: cap };
@@ -2290,46 +2317,46 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     args = { ...args, staffName: c.staffName, ...(c.targetName ? { targetName: c.targetName } : {}) };
   }
   const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: target?.id || '' });   // a project routine: only its own project
-  const consent = approved ? 'none' : HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: noAsk });
+  const consent = approved ? 'none' : HQ.consentFor({ ask, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
   if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
-  // v3.91 the initiative setting: a local follow-up of a request the person typed needs no dialog when its target
-  // (project + member) is one the person already consented to for this request and the project does not run with
-  // Skip permissions (HQ.initiativeFor); never a member's personal workspace that would be made by it. The target is
-  // read fresh at every check.
-  const initiativeArgs = (counted) => {
+  // v3.103 a dispatch in a later turn of a request the person typed (consent 'follow') needs no dialog and is not
+  // asked about: it is bound by HQ.followRefusal (the 2 h window, at most MAX_INITIATIVE such tasks per request, the
+  // caps) and never goes into a project that runs with Skip permissions (v3.91; a paired machine's flag comes from
+  // its catalog, unknown = yes). Refused with that reason. The target is read fresh at every check.
+  const followArgs = (counted) => {
     const p = remote ? null : byName(state.projects, args.project);
     const m = args.staff && teamOn() ? ST.findMember(state.staff, args.staff) : null;
-    return { initiative: state.hq?.initiative === true, remote, request, minter: hqMinter, counted,
-      // v3.99 a paired machine's project: machine key + project id; its Skip state comes from hqRemoteTarget (v3.101: the peer catalog's flag)
+    return { request, minter: hqMinter, counted,
       targets: [remote ? { ...hqRemoteTarget(key, machine, args.project), staffId: args.staff ? null : '' }
-        : { projectId: p?.id || '', staffId: args.staff ? m?.id || null : '', skip: hqTargetSkips(p, args.staff ? m?.id || '' : '') }] };
+        // a personal workspace that is not made yet: by its member's draft switches (hqLocalTarget)
+        : hqLocalTarget(request, p, args.staff ? m?.id || null : '', !p && personal ? memberById(personal.id) || personal : null)] };
   };
   const askPerson = async () => {
-    if (!(await confirmHqDispatch(args, remote, { request }))) return { status: 'rejected', reason: 'declined' };
+    if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
     // two dispatches can wait on dialogs at once: re-check the caps on the fresh board after the answer
     const late = HQ.capReason(loadHqBoard(), request);   // never an approved held task: approved skips the dialog
     return late ? { status: 'rejected', reason: late } : null;
   };
   let byInitiative = sentByInitiative;
   // v3.91 fix: the row is stamped `consented` only when the person's consent is known: consentFor needed none (their
-  // own "dispatch without asking" in a live typed turn, a routine's own no-ask setting), the dialog was accepted, or
-  // the caller says so (consentGiven). Never a row sent by initiative.
+  // own typed turn, a routine's own no-ask setting), the dialog was accepted, or the caller says so (consentGiven).
+  // Never a row HQ sent on its own in a later turn.
   let consented = approved ? consentGiven && !sentByInitiative : consent === 'none';
-  if (consent === 'app' && !personal) {
+  if (consent === 'follow') {
     // decided and counted in one step: an overlapping dispatch sees the higher count before this task is queued
-    const took = HQ.takeInitiative(loadHqBoard(), initiativeArgs(false));
-    if (took.ok) { saveHqBoard(took.board); byInitiative = true; }
+    const took = HQ.takeInitiative(loadHqBoard(), followArgs(false));
+    if (!took.ok) return { status: 'rejected', reason: took.reason };
+    saveHqBoard(took.board);
+    byInitiative = true;
   }
-  if (consent === 'app' && !byInitiative) { const refused = await askPerson(); if (refused) return refused; consented = true; }
-  // v3.91 the rule again, final BEFORE anything is made (a first stage waited on its chain's dialogs and the staff
-  // check above): count, 2 h window, caps, target, Skip permissions, the setting. No longer true: the dialog, and only
-  // after it the desk tab, its worktree or the workspace (as the path that asks does).
-  if (byInitiative && !HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })) {
-    byInitiative = false;
-    const refused = await askPerson();
-    if (refused) return refused;
-    consented = true;
+  if (consent === 'app') { const refused = await askPerson(); if (refused) return refused; consented = true; }
+  // the rule again, final BEFORE anything is made (a first stage waited on the staff check above): count, 2 h window,
+  // caps, Skip permissions. No longer true: refused; with `askBeforeDispatch` turned on meanwhile, the dialog.
+  if (byInitiative) {
+    const why = HQ.followRefusal({ ...followArgs(true), board: loadHqBoard() });
+    if (why && state.hq?.askBeforeDispatch !== true) return { status: 'rejected', reason: why };
+    if (why) { byInitiative = false; const refused = await askPerson(); if (refused) return refused; consented = true; }
   }
   // v3.83 fix: only now, with consent given (or not needed), is anything made: the member's personal workspace (its
   // folder and project), the desk tab and, in a parallel project, the desk's worktree. Declined: nothing was created.
@@ -2341,6 +2368,8 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
       const own = ensurePersonal(m);
       if (!own) return { status: 'rejected', reason: 'desk-failed' };
       args = { ...args, project: own.id };
+      // defence: the workspace as made (its draft applied) is checked again before a follow-up goes into it
+      if (byInitiative) { const why = HQ.followRefusal({ ...followArgs(true), board: loadHqBoard() }); if (why) return { status: 'rejected', reason: why }; }
     }
     const d = await hqStaffDesk(args, remote, byName(state.projects, args.project));   // checked again: the dialog was open meanwhile
     if (d.reason) return { status: 'rejected', reason: d.reason, ...(d.hint ? { hint: d.hint } : {}) };
@@ -2366,6 +2395,8 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     const startId = args.desk || p?.id;   // v3.83 a staff member's desk, else the project's boss tab
     if (startId && !terms.has(startId)) projectOp('start', startId);   // a stopped or sleeping target starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
+    // review fix: a target of the person's own typed turn (main memory, hqMinter): later follow-ups may go back there
+    if (p && !approved && consent === 'none' && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') hqMinter.addTarget(request, hqLocalKey(p, staffId));
     if (p) {
       row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName, ...(staffId ? { staffId } : {}) } : {}) });
       // v3.91 no dialog was shown: the person is told at the moment it is sent
@@ -2431,12 +2462,10 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
 // --- v3.79 staged requests (src/hq-chain.js): `then` / `after` on HQ's office_dispatch. Consent is asked when HQ
 // dispatches (today's rule; local stages of one call in one dialog, every remote stage its own); a waiting stage's text
 // is frozen in tasks/<id>/stage.json then and released unchanged except for the previous report, appended as marked data.
-async function confirmHqStages(stages, { request = '' } = {}) {
+async function confirmHqStages(stages) {
   if (!win || win.isDestroyed()) return false;
-  const always = HQ.offersAlways({ request, minter: hqMinter });
-  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny'), ...(always ? [T('main.hqAllowAlways')] : [])], defaultId: 1, cancelId: 1,
-    message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.projectName || s.project)}` : officeName(s.project), machine: s.remote ? officeName(s.machineName || '') : '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}${always ? `\n\n${T('main.hqAllowAlwaysNote')}` : ''}` });
-  if (always && r.response === 2) { hqAllowAlways(); return true; }
+  const r = await dialog.showMessageBox(win, { type: 'question', buttons: [T('main.hqAllow'), T('main.hqDeny')], defaultId: 1, cancelId: 1,
+    message: T('main.hqAskStages', { n: stages.length }), detail: `${CH.consentLines(stages.map((s) => ({ n: s.n, project: s.staff ? `${s.staff} @ ${officeName(s.projectName || s.project)}` : officeName(s.project), machine: s.remote ? officeName(s.machineName || '') : '', task: s.task, after: s.after })))}\n\n${T('main.hqAskStagesNote')}` });
   return r.response === 0;
 }
 async function hqDispatchStages(args, request, rrun) {
@@ -2484,44 +2513,31 @@ async function hqDispatchStages(args, request, rrun) {
   }
   const caps = () => CH.capFor(loadHqBoard(), request, stages.length, { maxOpen: HQ.MAX_OPEN, maxPerRequest: HQ.MAX_PER_REQUEST });
   if (caps()) return no(caps());
-  // v3.99 ONE rule for the whole chain: a stage is asked about unless consentFor needs none for its side (v3.101: `dispatchWithoutAsking`
-  // for this machine and for a paired one alike), and every stage that is asked about goes
-  // into one dialog (a remote stage no longer opens its own).
-  // v3.91 the initiative setting covers the asked stages together: every one of them counts and every one's target
-  // (machine + project + member) must be one the person consented to for this request; a local one without Skip
-  // permissions (a paired machine's are unknown here: the receiver decides); a personal workspace that is not made yet
-  // has no project id, so it always asks
-  const needsNone = (remote) => HQ.consentFor({ setting: state.hq?.dispatchWithoutAsking === true, remote, request, minter: hqMinter, routineNoAsk: false }) === 'none';
-  const quietHere = needsNone(false);
-  const quietThere = needsNone(true);
-  const asked = stages.filter((s) => !(s.remote ? quietThere : quietHere));
-  const asks = asked.length > 0;
-  const initiativeArgs = (counted) => ({ initiative: state.hq?.initiative === true, remote: false, request, minter: hqMinter, counted,
-    targets: asked.map((s) => {
-      if (s.remote) return { ...hqRemoteTarget(s.key, String(s.machine || '').trim(), s.project), staffId: '' };
-      const p = s.personalFor || !s.projectId ? null : P.findProject(state, s.projectId);
-      return { projectId: p?.id || '', staffId: s.staff ? s.staffId || null : '', skip: hqTargetSkips(p, s.staff ? s.staffId || '' : '') };
-    }) });
-  // v3.94 the third button changes only this machine's two settings; since v3.101 it is offered when the dialog names a
-  // paired machine too, and what it turns on covers targets on paired machines
-  const askStages = () => confirmHqStages(asked, { request });
+  // v3.103 ONE answer for the whole chain (HQ.consentFor; this machine and a paired one alike). The turn the person
+  // typed: no dialog. A later turn of that request: no dialog either, the stages are unattended follow-ups: every one
+  // counts toward MAX_INITIATIVE and none may go into a project with Skip permissions (HQ.followRefusal; refused with
+  // its reason, not asked). With `askBeforeDispatch` on: every stage in one dialog.
+  const consent = HQ.consentFor({ ask: state.hq?.askBeforeDispatch === true, remote: false, request, minter: hqMinter, routineNoAsk: false });
+  if (consent === 'held') return no('stages-routine');
   let byInitiative = false;
-  if (asks) {
+  if (consent === 'follow') {
     // decided and counted in one step: an overlapping dispatch sees the higher count before these stages are queued
-    const took = HQ.takeInitiative(loadHqBoard(), initiativeArgs(false));
-    if (took.ok) { saveHqBoard(took.board); byInitiative = true; }
+    const took = HQ.takeInitiative(loadHqBoard(), { request, minter: hqMinter, counted: false, targets: stages.map((s) => {
+      if (s.remote) return { ...hqRemoteTarget(s.key, String(s.machine || '').trim(), s.project), staffId: '' };
+      if (s.personalFor) return hqLocalTarget(request, null, s.staffId, memberById(s.personalFor.id) || s.personalFor);   // not made yet: its draft decides
+      const p = !s.projectId ? null : P.findProject(state, s.projectId);
+      return hqLocalTarget(request, p, s.staff ? s.staffId || null : '');
+    }) });
+    if (!took.ok) return no(took.reason);
+    saveHqBoard(took.board);
+    byInitiative = true;
   }
-  if (asks && !byInitiative && !(await askStages())) return no('declined');
-  // v3.91 the rule again on the fresh board (count, 2 h window, caps, targets); no longer true: the dialog
-  if (byInitiative && !HQ.initiativeFor({ ...initiativeArgs(true), board: loadHqBoard() })) {
-    byInitiative = false;
-    if (!(await askStages())) return no('declined');
-  }
+  if (consent === 'app' && !(await confirmHqStages(stages))) return no('declined');
   for (const s of stages) {
-    const wasAsked = asked.includes(s);
-    if (byInitiative && wasAsked) s.byInitiative = true;
-    else s.consented = true;   // v3.91 fix: the dialog was accepted, or consentFor needed none: these rows are consented
-    if (s.remote && (!wasAsked || byInitiative)) s.noDialog = true;   // v3.99 the person is told when it is sent
+    if (byInitiative) s.byInitiative = true;
+    else s.consented = true;   // the dialog was accepted, or the person's own typed turn needed none
+    if (s.remote && consent !== 'app') s.noDialog = true;   // v3.99 the person is told when it is sent
+    if (consent === 'app') s.asked = true;   // accepted in the dialog: no second dialog at release
   }
   if (caps()) return no(caps());   // dialogs can overlap: the caps again on the fresh board
   // consent given. The dialogs were open meanwhile: every member a personal stage is for must still be there and the
@@ -2530,6 +2546,8 @@ async function hqDispatchStages(args, request, rrun) {
   for (const s of stages.filter((x) => x.personalFor)) if (!teamOn() || !memberById(s.personalFor.id)) return no('unknown-staff', { stage: s.n });
   const ids = [];
   let prev = after;
+  // review fix: the stages of the person's own typed turn are targets of that turn (later follow-ups may go back there)
+  const mark = (s) => { if (consent === 'none' && !s.remote) hqMinter.addTarget(request, s.personalFor ? hqLocalKey(null, s.staffId) : hqLocalKey(P.findProject(state, s.projectId), s.staff ? s.staffId : '')); };
   for (const s of stages) {
     if (!prev) {   // the first stage without `after` goes now, the normal way
       if (s.personalFor) {
@@ -2541,8 +2559,10 @@ async function hqDispatchStages(args, request, rrun) {
       }
       /** @type {any} */ const r = await hqDispatch({ machine: s.machine, project: s.project, title: s.title, request, task: s.task, ...(s.staff ? { staff: s.staff } : {}) }, { approved: true, sentByInitiative: s.byInitiative === true, consentGiven: s.consented === true, noDialog: s.noDialog === true });   // consent was just given (or not needed)
       if (!r.id || r.status === 'rejected') return { ...r, request };   // nothing after it is created
+      mark(s);
       ids.push(r.id); prev = r.id; continue;
     }
+    mark(s);
     prev = hqWaitRow(s, request, prev);
     ids.push(prev);
   }
@@ -2559,7 +2579,9 @@ function hqWaitRow(s, request, after) {
   if (f) try {
     fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
     SF.writeAtomic(f, `# ${LC.cleanLine(s.title || '', 80)}\n\nProject: ${s.projectName} (${s.machineName})\nAfter: #${after}\n\n${s.task}\n`);
-    SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify({ machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}), ...(s.personalFor ? { personalStaff: s.personalFor.id } : {}), ...(s.remote && s.noDialog ? { noDialog: true } : {}) }));
+    const rec = { machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}), ...(s.personalFor ? { personalStaff: s.personalFor.id } : {}), ...(s.remote && s.noDialog ? { noDialog: true } : {}) };
+    SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify(rec));
+    hqStages.set(id, { digest: CH.stageDigest(JSON.parse(JSON.stringify(rec))), asked: s.asked === true });   // compared at release
   } catch (e) { console.error('hq stage:', e.message); }
   return id;
 }
@@ -2571,47 +2593,73 @@ async function hqReleaseStage({ id, after, resumed = false }) {
   if (!t || t.status !== CH.WAITING) return;
   const st = readJson(HQ.taskFile(hqDir(), id, 'stage.json'));
   if (!st || typeof st.task !== 'string' || !st.task) { hqStatus(id, 'rejected', 'stage-lost'); return; }
-  // v3.83 fix: a stage for a member's personal workspace that did not exist at consent: made only now, and only while
-  // the member is still there and the team on
+  // review fix: stage.json is a file a session can edit: its record must be the one accepted (digest kept in memory)
+  const known = hqStages.get(id);
+  hqStages.delete(id);
+  if (known && known.digest !== CH.stageDigest(st)) { hqStatus(id, 'rejected', 'stage-changed'); hqChainSweep(); return; }
+  // v3.83 fix: a stage for a member's personal workspace that did not exist at consent: checked now (the member is
+  // still there, the team on) and made only after the follow-up rule and any dialog below, never before
+  /** @type {any} */ let member = null;
   if (!st.remote && typeof st.personalStaff === 'string' && st.personalStaff) {
-    const m = teamOn() ? memberById(st.personalStaff) : null;
-    if (!m) { hqStatus(id, 'rejected', 'unknown-staff'); return; }
-    const own = ensurePersonal(m);
-    if (!own) { hqStatus(id, 'rejected', 'desk-failed'); return; }
-    st.projectId = own.id;
+    member = teamOn() ? memberById(st.personalStaff) : null;
+    if (!member) { hqStatus(id, 'rejected', 'unknown-staff'); return; }
+    const have = ST.personalOf(state.projects, member.id);
+    if (have) { st.projectId = have.id; member = null; }   // made meanwhile: an ordinary project
   }
   // v3.79 fix: a local stage goes to the project it was approved for, by id (CH.stageProject); a project that is gone
   // is not looked up by name again: the stage is refused
-  const project = st.remote ? st.project : CH.stageProject(st, state.projects);
-  if (!project) { hqStatus(id, 'rejected', 'unknown-project'); return; }
+  let project = st.remote ? st.project : member ? '' : CH.stageProject(st, state.projects);
+  if (!project && !member) { hqStatus(id, 'rejected', 'unknown-project'); return; }
   const report = readJson(HQ.taskFile(hqDir(), after, 'report.json'));
   const text = HQ.redact(report || !resumed ? CH.stageText(st.task, { id: after, report: report || {}, file: HQ.taskFile(hqDir(), after, 'report.md') }, OM.TASK_MAX) : st.task);
   saveHqBoard(HQ.setStatus(b, id, 'queued', 'released'));   // never released twice
-  // v3.91 fix: a stage HQ queued on its own (no dialog) is checked again now, at its release: the setting is still on,
-  // the request is still inside its 2 h window, the target does not run with Skip permissions and still matches a
-  // consented row. No longer true: the normal dialog for this stage (nothing is made before it); declined: the stage
-  // is rejected and the stages behind it block as usual. A stage the person consented to is released as before.
-  // v3.99 the same for a stage on a paired machine (its target: machine key + project id)
-  if (t.byInitiative === true) {
-    const p = st.remote ? null : P.findProject(state, project);
+  // the follow-up rule for this stage's target, read fresh (a personal workspace not made yet: by its draft)
+  const followWhy = () => {
+    const p = st.remote || member ? null : P.findProject(state, project);
     const m = st.staff && teamOn() ? ST.findMember(state.staff, st.staff) : null;
     const fresh = loadHqBoard();
-    const still = HQ.initiativeFor({ initiative: state.hq?.initiative === true, remote: st.remote === true, request: t.request, minter: hqMinter, counted: true,
+    return HQ.followRefusal({ request: t.request, minter: hqMinter, counted: true,
       board: { ...fresh, tasks: fresh.tasks.filter((x) => x.id !== id) },   // the row does not count against itself
       targets: [st.remote ? { ...hqRemoteTarget(st.key || null, String(st.machine || '').trim(), st.project), staffId: '' }
-        : { projectId: p?.id || '', staffId: st.staff ? m?.id || null : '', skip: hqTargetSkips(p, st.staff ? m?.id || '' : '') }] });
-    if (!still) {
-      if (!(await confirmHqDispatch({ machine: st.machine, project: p ? p.name : project, title: st.title, task: text, ...(st.staff ? { staff: st.staff, staffName: st.staff } : {}) }, st.remote === true))) {
-        hqStatus(id, 'rejected', 'declined');
-        hqChainSweep();
-        return;
-      }
-      const after2 = loadHqBoard();
-      if (after2.tasks.find((x) => x.id === id)?.status !== 'queued') return;   // removed or ended while the dialog was open
-      // the person consented to this stage now: its row says so
-      saveHqBoard({ ...after2, tasks: after2.tasks.map((x) => { if (x.id !== id) return x; const y = { ...x, consented: true }; delete y.byInitiative; return y; }) });
-      st.noDialog = false;   // v3.99 a dialog was shown for it after all
+        : member ? hqLocalTarget(t.request, null, member.id, memberById(member.id) || member)
+          : p ? hqLocalTarget(t.request, p, st.staff ? m?.id || null : '') : { projectId: '', staffId: '', skip: true }] });
+  };
+  // v3.91 fix: a stage HQ queued on its own (no dialog) is checked again now, at its release: the request is still
+  // inside its 2 h window, the caps, the target does not run with Skip permissions. No longer true: refused with the
+  // reason (v3.103), or with `askBeforeDispatch` turned on meanwhile the normal dialog for this stage (nothing is made
+  // before it); declined: the stage is rejected and the stages behind it block as usual.
+  // v3.99 the same for a stage on a paired machine (its target: machine key + project id)
+  // review fix: the dialog also for a stage the app holds no record of (the app restarted: never a silent release),
+  // and for any stage accepted without the dialog once the person turned `askBeforeDispatch` on meanwhile
+  let follow = t.byInitiative === true;
+  const askOn = state.hq?.askBeforeDispatch === true;
+  const why = follow ? followWhy() : null;
+  if (why && !askOn) { hqStatus(id, 'rejected', why); hqChainSweep(); return; }
+  if (why || !known || (askOn && !known.asked)) {
+    const shown = member ? personalFolderName(member) : (P.findProject(state, project)?.name || project);
+    if (!(await confirmHqDispatch({ machine: st.machine, project: shown, title: st.title, task: text, ...(st.staff ? { staff: st.staff, staffName: st.staff } : {}) }, st.remote === true))) {
+      hqStatus(id, 'rejected', 'declined');
+      hqChainSweep();
+      return;
     }
+    const after2 = loadHqBoard();
+    if (after2.tasks.find((x) => x.id === id)?.status !== 'queued') return;   // removed or ended while the dialog was open
+    // the person consented to this stage now: its row says so
+    saveHqBoard({ ...after2, tasks: after2.tasks.map((x) => { if (x.id !== id) return x; const y = { ...x, consented: true }; delete y.byInitiative; return y; }) });
+    st.noDialog = false;   // v3.99 a dialog was shown for it after all
+    follow = false;
+  }
+  if (member) {
+    // only now is the workspace made (the dialog was open meanwhile: the member is looked up again)
+    const m = teamOn() ? memberById(member.id) : null;
+    if (!m) { hqStatus(id, 'rejected', 'unknown-staff'); hqChainSweep(); return; }
+    const own = ensurePersonal(m);
+    if (!own) { hqStatus(id, 'rejected', 'desk-failed'); hqChainSweep(); return; }
+    st.projectId = own.id;
+    project = own.id;
+    member = null;
+    // defence: the workspace as made (its draft applied) is checked again before a follow-up goes into it
+    if (follow) { const why = followWhy(); if (why) { hqStatus(id, 'rejected', why); hqChainSweep(); return; } }
   }
   // approved: consent was given at creation; excludeId: the row does not count against itself (as an approved held card)
   /** @type {any} */ const r = await hqDispatch({ machine: st.machine, project, title: st.title, request: t.request, task: text, ...(st.staff ? { staff: st.staff } : {}) }, { approved: true, excludeId: id, waitingId: id, noDialog: st.remote === true && st.noDialog === true });
@@ -2686,8 +2734,7 @@ ipcMain.handle('hq:get', () => hqView());
 ipcMain.handle('hq:setSettings', (_e, patch) => {
   const o = patch && typeof patch === 'object' ? patch : {};
   const next = HQ.normalizeHq({ ...(state.hq || {}), ...(typeof o.accountId === 'string' ? { accountId: o.accountId } : {}),
-    ...(typeof o.bossModel === 'string' && (o.bossModel === '' || HQ.hqBossModel(o.bossModel)) ? { bossModel: o.bossModel } : {}), ...(typeof o.dispatchWithoutAsking === 'boolean' ? { dispatchWithoutAsking: o.dispatchWithoutAsking } : {}),
-    ...(typeof o.initiative === 'boolean' ? { initiative: o.initiative } : {}),
+    ...(typeof o.bossModel === 'string' && (o.bossModel === '' || HQ.hqBossModel(o.bossModel)) ? { bossModel: o.bossModel } : {}), ...(typeof o.askBeforeDispatch === 'boolean' ? { askBeforeDispatch: o.askBeforeDispatch } : {}),
     ...(typeof o.enabled === 'boolean' ? { enabled: o.enabled } : {}) });
   const relaunch = next.accountId !== hqSettings().accountId || next.bossModel !== hqSettings().bossModel;
   commit({ ...state, hq: next });

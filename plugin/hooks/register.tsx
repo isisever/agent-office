@@ -1426,7 +1426,7 @@ export const register: Register = on => {
       (await $.env.get('AGENT_OFFICE_MANAGER')) === '1' && !e.traits.includes('teammate') && e.tools.some(tool => AGENT_TOOLS.includes(tool))
     // HQ (v3.46): its own brief instead of the manager's, never both
     const kind = sectionKind({ hq: (await $.env.get('AGENT_OFFICE_HQ')) === '1' && !e.traits.includes('teammate'), manager: isLoopManager })
-    if (kind === 'hq' && !sections.some(section => section.id === HQ_SECTION_ID)) sections.push({ id: HQ_SECTION_ID, text: hqText((await $.env.get('AGENT_OFFICE_INITIATIVE')) === '1'), scope: 'session' as const })
+    if (kind === 'hq' && !sections.some(section => section.id === HQ_SECTION_ID)) sections.push({ id: HQ_SECTION_ID, text: hqText((await $.env.get('AGENT_OFFICE_ASK')) === '1'), scope: 'session' as const })
     if (kind === 'manager' && !sections.some(section => section.id === MANAGER_SECTION_ID)) {
       const pinned = pinnedModel(await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL_FORCE'), await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL'))
       sections.push({ id: MANAGER_SECTION_ID, text: managerText(pinned), scope: 'session' as const })

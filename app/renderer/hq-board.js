@@ -34,15 +34,14 @@ const ENGINE_NAMES = { claude: 'Claude Code', agy: 'Antigravity', commandcode: '
 /** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void } }} o */
 export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   if (!api?.hq || !sidebar) return null;
-  let view = { board: { tasks: [], requests: [] }, settings: { dispatchWithoutAsking: false, initiative: false, enabled: true }, running: false, stopped: false, remotes: [] };
+  let view = { board: { tasks: [], requests: [] }, settings: { enabled: true }, running: false, stopped: false, remotes: [] };
   let selected = false;
   let openReport = '';
   const dot = el('span', { class: 'sb-dot' });
   const counts = el('span', { class: 'hq-counts' });
   const gear = el('button', { class: 'sb-gear', title: t('hq.settings'), onclick: (e) => { e.stopPropagation(); settings.hidden = !settings.hidden; } }, '⚙');
-  const consent = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ dispatchWithoutAsking: consent.checked }); render(); } });
-  // v3.91 HQ may send follow-up tasks of a request the person typed without asking (local only; default off)
-  const initiative = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ initiative: initiative.checked }); render(); } });
+  // v3.103 the consent dialog is off by default; this turns it on for every task HQ hands out
+  const consent = el('input', { type: 'checkbox', onchange: async () => { view = await api.hq.setSettings({ askBeforeDispatch: consent.checked }); render(); } });
   // HQ on/off (default on): off = no HQ pty; the row says "off" and keeps this toggle
   const onOff = el('input', { type: 'checkbox', class: 'hq-toggle', title: t('hq.enabled'), onclick: (e) => e.stopPropagation(),
     onchange: async () => { view = await api.hq.setSettings({ enabled: onOff.checked }); render(); } });
@@ -53,8 +52,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   const dailyCap = el('input', { type: 'number', min: '1', max: '96', value: '48', onchange: () => saveCfg() });
   async function saveCfg() { rv = await api.routines.setCfg({ quiet: quietOn.checked ? { from: quietFrom.value, to: quietTo.value } : null, dailyCap: Number(dailyCap.value) }); render(); }
   const settings = el('div', { class: 'hq-settings', hidden: true },
-    el('label', { title: t('hq.consentHint') }, consent, ` ${t('hq.consent')}`),
-    el('label', { title: t('hq.initiativeHint') }, initiative, ` ${t('hq.initiative')}`),
+    el('label', { title: t('hq.askBeforeDispatchHint') }, consent, ` ${t('hq.askBeforeDispatch')}`),
     ...(api.routines ? [el('label', {}, quietOn, ` ${t('routines.quiet')} `, quietFrom, '–', quietTo), el('label', {}, `${t('routines.dailyCap')} `, dailyCap)] : []),
     el('button', { class: 'hq-link', onclick: () => api.hq.openFolder() }, t('hq.openFolder')));
   const row = el('div', { class: 'hq-row', id: 'hq-row', role: 'button', tabindex: '0', title: t('hq.title'), onclick: () => onSelect() },
@@ -250,7 +248,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
         el('h3', {}, t(`hq.col.${key}`)),
         ...tasks.filter((x) => sts.includes(x.status)).map((x) => el('div', { class: `hq-task${x.read ? '' : ' unread'}`, onclick: () => showReport(x) },
           el('div', { class: 'hq-task-title' }, x.title || x.id),
-          el('div', { class: 'hq-task-meta' }, `${x.staff ? `${x.staff} @ ` : ''}${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.status}${x.reason ? ` (${x.reason})` : ''}${x.byInitiative ? ` · ${t('hq.byInitiative')}` : ''}${x.personPrompted ? ` · ${t('hq.personPrompted')}` : ''}`),
+          el('div', { class: 'hq-task-meta' }, `${x.staff ? `${x.staff} @ ` : ''}${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.status}${x.reason ? ` (${t(`hq.reason.${x.reason}`) === `hq.reason.${x.reason}` ? x.reason : t(`hq.reason.${x.reason}`)})` : ''}${x.byInitiative ? ` · ${t('hq.byInitiative')}` : ''}${x.personPrompted ? ` · ${t('hq.personPrompted')}` : ''}`),
           waitLine(x),
           stageLine(x),
           x.status === 'awaiting-consent' && api.routines ? el('div', { class: 'rt-actions' },
@@ -423,8 +421,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     onOff.checked = on;
     counts.textContent = !on ? t('hq.off') : view.stopped ? t('hq.stopped')
       : `▶ ${tasks.filter((x) => OPEN.has(x.status)).length}  ● ${tasks.filter((x) => !x.read && !OPEN.has(x.status)).length}`;
-    consent.checked = Boolean(view.settings?.dispatchWithoutAsking);
-    initiative.checked = Boolean(view.settings?.initiative);
+    consent.checked = Boolean(view.settings?.askBeforeDispatch);
     row.classList.toggle('active', selected);
     board.hidden = !selected || showOffice;
     if (office) office.hidden = selected && !showOffice;

@@ -214,18 +214,18 @@ test('minter: a routine id survives clear() and a typed mint as issued, but its 
 test('report row ends no-ask: consentFor a routine id → none, then held after the inbox row clears it', () => {
   const m = HQ.createMinter();
   const rid = m.mint({ origin: 'routine' });
-  assert.equal(HQ.consentFor({ setting: false, remote: false, request: rid, minter: m, routineNoAsk: true }), 'none');
+  assert.equal(HQ.consentFor({ ask: false, remote: false, request: rid, minter: m, routineNoAsk: true }), 'none');
   m.clear();
-  assert.equal(HQ.consentFor({ setting: true, remote: false, request: rid, minter: m, routineNoAsk: true }), 'held');
+  assert.equal(HQ.consentFor({ ask: true, remote: false, request: rid, minter: m, routineNoAsk: true }), 'held');
 });
 
-test('consentFor matrix: typed/routine × local/remote × setting × routine checkbox; routines never get the modal', () => {
-  for (const remote of [false, true]) for (const setting of [false, true]) for (const noAsk of [false, true]) {
+test('consentFor matrix: typed/routine × local/remote × ask × routine checkbox; routines never get the modal', () => {
+  for (const remote of [false, true]) for (const ask of [false, true]) for (const noAsk of [false, true]) {
     const m = HQ.createMinter();
     const typed = m.mint();
     const rid = m.mint({ origin: 'routine' });
-    assert.equal(HQ.consentFor({ setting, remote, request: typed, minter: m, routineNoAsk: noAsk }), setting ? 'none' : 'app');   // v3.101 a paired machine follows the same setting; routines keep their rule (next line)
-    assert.equal(HQ.consentFor({ setting, remote, request: rid, minter: m, routineNoAsk: noAsk }), noAsk && !remote ? 'none' : 'held');
+    assert.equal(HQ.consentFor({ ask, remote, request: typed, minter: m, routineNoAsk: noAsk }), ask ? 'app' : 'none');   // v3.103 no dialog unless askBeforeDispatch; a paired machine alike; routines keep their rule (next line)
+    assert.equal(HQ.consentFor({ ask, remote, request: rid, minter: m, routineNoAsk: noAsk }), noAsk && !remote ? 'none' : 'held');
   }
 });
 
@@ -297,7 +297,7 @@ test('a project run id stops being live after its dispatch; no-ask for a project
   const rid = m.mint({ origin: 'routine' });
   m.endLive(rid);
   assert.deepEqual([m.issued(rid), m.isLiveRoutine(rid)], [true, false]);
-  assert.equal(HQ.consentFor({ setting: true, remote: false, request: rid, minter: m, routineNoAsk: true }), 'held');
+  assert.equal(HQ.consentFor({ ask: false, remote: false, request: rid, minter: m, routineNoAsk: true }), 'held');
   const proj = rt({ noAsk: true, target: { kind: 'project', projectId: 'p1' } });
   assert.equal(ROUT.routineNoAsk(proj, { projectId: 'p1' }), true);
   assert.equal(ROUT.routineNoAsk(proj, { projectId: 'p2' }), false);
@@ -450,11 +450,11 @@ test('remote routine run → a held "awaiting approval" card + notification; nev
   assert.equal(env.notes.length, 1);
   assert.match(env.notes[0].title, /Nightly.*Web.*Mac2/);
   assert.match(env.sent.length ? '' : card.request, /./);
-  // also with the global "dispatch without asking" on
-  env.state.hq.dispatchWithoutAsking = true;
+  // also with the consent dialog off (the v3.103 default) and with askBeforeDispatch on
+  env.state.hq.askBeforeDispatch = true;
   const m = HQ.createMinter();
   const id = m.mint({ origin: 'routine', run: 'x' });
-  assert.equal(HQ.consentFor({ setting: true, remote: true, request: id, minter: m, routineNoAsk: true }), 'held');
+  for (const ask of [false, true]) assert.equal(HQ.consentFor({ ask, remote: true, request: id, minter: m, routineNoAsk: true }), 'held');
 });
 
 test('approve a remote held card → sent through the pacer; the record names the run; an OK report ends the run ok', async () => {
