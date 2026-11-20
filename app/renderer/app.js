@@ -1035,23 +1035,58 @@ let sceneInit = () => {};   // set by the splitter block below; run once the off
   const div = $('divider');
   const saved = Number(store.get('termHeight'));
   if (saved) root.style.setProperty('--term-h', saved + 'px');
+  // The drag must always end, even when the pointerup never reaches the bar: a context menu, an OS
+  // gesture (pointercancel), losing pointer capture, switching apps mid-drag (blur) or the button
+  // already being released when a move arrives. Text selection (document and xterm) is suppressed
+  // while dragging, and the panes under the cursor get pointer-events:none via body.dragging.
+  /** @type {null | (() => void)} */
+  let endDrag = null;
   div.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || endDrag) return;
     if (document.body.classList.contains('office-hidden') || /** @type {HTMLElement} */ (e.target).closest('#scene-toggle')) return;
-    div.setPointerCapture(e.pointerId);
+    e.preventDefault(); // no native text selection starting from the bar
+    const pointerId = e.pointerId;
+    try { div.setPointerCapture(pointerId); } catch { /* pointer already gone */ }
     document.body.classList.add('dragging');
-    const move = (ev) => {
+    window.getSelection()?.removeAllRanges();
+    const term = panes.get(activePty())?.term;
+    const termHadSelection = !!term?.hasSelection?.();
+    let lastH = 0;
+    const move = (/** @type {PointerEvent} */ ev) => {
+      if (ev.pointerId !== pointerId) return;
+      if ((ev.buttons & 1) === 0) { end(); return; } // the release was lost somewhere
       const max = window.innerHeight * 0.8;
-      const h = Math.round(Math.min(max, Math.max(120, window.innerHeight - ev.clientY - 8)));
-      root.style.setProperty('--term-h', h + 'px');
-      store.set('termHeight', h);
+      lastH = Math.round(Math.min(max, Math.max(120, window.innerHeight - ev.clientY - 8)));
+      root.style.setProperty('--term-h', lastH + 'px');
     };
-    const up = () => {
+    const onPointerEnd = (/** @type {PointerEvent} */ ev) => { if (ev.pointerId === pointerId) end(); };
+    const onVisibility = () => { if (document.hidden) end(); };
+    const end = () => {
+      if (endDrag !== end) return;
+      endDrag = null;
       div.removeEventListener('pointermove', move);
+      div.removeEventListener('pointerup', onPointerEnd);
+      div.removeEventListener('pointercancel', onPointerEnd);
+      div.removeEventListener('lostpointercapture', onPointerEnd);
+      window.removeEventListener('pointerup', onPointerEnd, true);
+      window.removeEventListener('blur', end);
+      document.removeEventListener('visibilitychange', onVisibility);
+      try { if (div.hasPointerCapture(pointerId)) div.releasePointerCapture(pointerId); } catch { /* ignore */ }
       document.body.classList.remove('dragging');
+      if (lastH) store.set('termHeight', lastH);
+      // drop any selection the drag may have started (document or the active xterm)
+      window.getSelection()?.removeAllRanges();
+      try { if (!termHadSelection) term?.clearSelection?.(); } catch { /* ignore */ }
       focusActive();
     };
+    endDrag = end;
     div.addEventListener('pointermove', move);
-    div.addEventListener('pointerup', up, { once: true });
+    div.addEventListener('pointerup', onPointerEnd);
+    div.addEventListener('pointercancel', onPointerEnd);
+    div.addEventListener('lostpointercapture', onPointerEnd);
+    window.addEventListener('pointerup', onPointerEnd, true);
+    window.addEventListener('blur', end);
+    document.addEventListener('visibilitychange', onVisibility);
   });
   // hide / show the pixel office (the thin bar stays); the state is kept per viewer like the terminal height
   const btn = $('scene-toggle');
