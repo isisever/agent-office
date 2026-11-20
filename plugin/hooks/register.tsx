@@ -284,7 +284,7 @@ function directoryText(raw: string, journalFile = ''): string | undefined {
   const more = (data as Record<string, unknown>).more
   const rest = listed.length - lines.length + (typeof more === 'number' && more > 0 ? Math.floor(more) : 0)
   if (rest > 0) lines.push(`- … and ${rest} more`)
-  // app contract v3.113: the other accounts whose user MCP servers this session also got
+  // app contract v3.114: the other accounts whose user MCP servers this session also got
   const accountsListed = (data as Record<string, unknown>).accounts
   const accountLines: string[] = []
   for (const item of Array.isArray(accountsListed) ? accountsListed : []) {

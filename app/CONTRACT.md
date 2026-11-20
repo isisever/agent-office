@@ -2654,7 +2654,7 @@ limitCarryOnPrompt({ agents, model }) → string
 - **Tests**: `app/test/gui-session.test.cjs` "v3.112 …" (switch plans, an AskUserQuestion answer round trip through
   `spawnGui`, renderer wiring); `app/test/gui-holds.test.cjs` follows `guiTaskOpen`.
 
-## Every account's user MCP servers reach every project (v3.113)
+## Every account's user MCP servers reach every project (v3.114)
 
 - **Gap closed**: v3.6 shares Default's user servers with the other accounts and v3.9 every project's local and
   approved `.mcp.json` servers, but a user-scope server added on an account other than Default (top-level
@@ -2668,11 +2668,18 @@ limitCarryOnPrompt({ agents, model }) → string
   a name the session already has with the same config is not added, an identical config already added under another
   name is not added again, and a clash with another config becomes `<server>-<account>`: the account's label as an
   ASCII slug (accents stripped, `ı` → `i`, at most 24 characters), its id when the label has no usable character,
-  then `-2`, `-3`… Only `mcpServers` is read; logins (`.credentials.json`, `oauthAccount`, `primaryApiKey`) never.
+  then `-2`, `-3`… A name that two or more of these accounts bring with different configs (`contestedNames`) is
+  renamed `<server>-<account>` on every one of them, whatever the order of `state.accounts`, so the bare name never
+  silently moves from one account to another; identical configs still share one bare name. When all but one of them
+  go (removed, share off, folder gone), the last one's server takes the bare name again: one visible change in the
+  MCP panel. Only `mcpServers` is read; logins (`.credentials.json`, `oauthAccount`, `primaryApiKey`) never.
 - **Where it shows**: `prepareShared` / `mcpPlan` return `accountNames` (`{ [accountId]: string[] }`, prepareShared only
-  when some); the office directory gets `accounts: [{ name, mcp }]` and the plugin's **Projects in this Agent Office**
+  when some): only the servers accounts actually added, never one deduplicated against the session's own servers or a
+  project's (such a server stays that project's `office` row); the office directory gets `accounts: [{ name, mcp }]` and the plugin's **Projects in this Agent Office**
   section lists them by account name; the MCP panel lists such a server with source `otherAccount` (read-only, hint
   `sidebar.mcpReadOnlyAccount`). `officeInput` passes `accounts`; the MCP reload key also covers account labels.
-- **Tests**: `app/test/main.test.cjs` "v3.113 …" (dedup across accounts, `<server>-<account>` renames, share off, a
-  session's own account, a gone folder, no login in the file, panel source, directory); `plugin/tests/office.test.tsx`
-  "app contract v3.113 …".
+- **Tests**: `app/test/main.test.cjs` "v3.114 …" (dedup across accounts, `<server>-<account>` renames, share off, a
+  session's own account, a gone folder, no login in the file, panel source, directory) and "v3.114 a server name other
+  accounts bring with different configs …" (order-independent suffixes, removal turns the name bare, project dedup
+  not listed, injected `exists`); `plugin/tests/office.test.tsx`
+  "app contract v3.114 …".

@@ -18,7 +18,7 @@ const DEFAULT_ACCOUNT_NAME = 'Default'; // the prompt is English; the sidebar tr
  * mcp: { [dir]: string[] } server names as the session sees them (shared-config.js prepareShared mcpNames).
  * The current project comes first and is marked; at most PROJECTS_MAX projects (`more` counts the rest) and
  * MCP_MAX server names each.
- * accounts (contract v3.113): [{ name, mcp }] the other accounts whose user servers the session got (shared-config.js
+ * accounts (contract v3.114): [{ name, mcp }] the other accounts whose user servers the session got (shared-config.js
  * prepareShared accountNames), at most PROJECTS_MAX, MCP_MAX names each; listed only when some.
  * → { format, projects: [{ name, dir, account, mcp, current? }], more?, accounts? }
  * @param {{ projects: { name: string, dir: string, account: string }[], current?: string | null, mcp?: Record<string, string[]>, accounts?: { name: string, mcp: string[] }[] }} o

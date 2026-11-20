@@ -1148,7 +1148,7 @@ const officeInput = (project) => ({
     const a = A.accountOf(state, p);
     return { name: p.name, dir: p.dir, configDir: a.configDir || null, share: SC.shareEnabled(a) };
   }),
-  // v3.113 every other account's user servers too (SC.otherAccounts drops Default, the session's own, gone folders)
+  // v3.114 every other account's user servers too (SC.otherAccounts drops Default, the session's own, gone folders)
   accounts: state.accounts.filter((a) => a.configDir).map((a) => ({ id: a.id, label: a.label, configDir: a.configDir, share: SC.shareEnabled(a) })),
 });
 function sharedConfig(account, project, cwd, key, extra = null, appMcp = null) {
@@ -1171,7 +1171,7 @@ function hqMcpConfig(key, servers) {
 }
 
 // The tab's office directory (contract v3.9): the projects, their folders and accounts and the MCP servers this
-// session sees for each; v3.113: the other accounts whose user servers it got (accountNames). → the file for
+// session sees for each; v3.114: the other accounts whose user servers it got (accountNames). → the file for
 // AGENT_OFFICE_DIRECTORY, or null.
 function officeDirectoryFile(project, key, mcpNames, accountNames = null) {
   const data = OD.officeDirectory({
