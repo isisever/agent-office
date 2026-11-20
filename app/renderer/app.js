@@ -644,6 +644,14 @@ async function setBackup(projectId, value) {
   } catch (e) { console.error(e); }
 }
 
+/** v3.111 the model to continue with when no account has quota: null (next model below) | 'none' | a model id. */
+async function setLimitModel(projectId, value) {
+  try {
+    await api.projects.setLimitModel?.(projectId, value);
+    applyProjects(await api.projects.list());
+  } catch (e) { console.error(e); }
+}
+
 /** Per-project delegate accounts (account delegate): account ids; the boss stays manager; nothing restarts. */
 async function setDelegates(projectId, ids) {
   try {
@@ -736,6 +744,7 @@ sidebar = mountSidebar($('sidebar'), {
   setSavings,
   setEngine,
   setBackup,
+  setLimitModel,
   setDelegates,
   addAccount,
   renameAccount,

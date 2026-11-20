@@ -369,11 +369,14 @@ function switchAllowed(history = [], now = Date.now()) {
  * project's account id; idle: none of its tabs is mid-turn, has unsent text or runs agents or shells;
  * lastSwitch: the time of its last automatic move.
  */
-function shouldReturn({ home, current, mark = null, idle, lastSwitch = 0, now = Date.now() }) {
+function shouldReturn({ home, current, mark = null, idle, lastSwitch = 0, now = Date.now(), modelMarks = {}, family = undefined }) {
   if (!home || home.id === current || !idle) return false;
   if (home.auth?.state !== 'in') return false;
   if (now - lastSwitch < MIN_STAY_MS) return false;
-  return !limitedUntil({ usage: home.usage, mark, now });
+  if (limitedUntil({ usage: home.usage, mark, now })) return false;
+  // v3.111: the home's own limit for the project's model holds too (family unknown: any of the home's model marks)
+  const fams = family ? [family] : family === undefined ? [] : FAMILIES;
+  return !fams.some((f) => modelLimitedUntil(modelMarks, home.id, f, now));
 }
 
 /** Marks kept in state.json: only well-formed ones still in the future, for known accounts. */
@@ -387,10 +390,190 @@ function normalizeMarks(raw, accountIds, now = Date.now()) {
   return out;
 }
 
+// --- the limit policy (contract v3.111): explicit backup, the same model on other accounts, a second model, then wait
+// Claude Code names a model's own limit in the refused request's rate_limit_info.rateLimitType ("seven_day_opus",
+// "seven_day_sonnet", ... in Claude Code 2.1.329) and in its text ("You've reached your Fable limit"). The status line's
+// rate_limits has only five_hour and seven_day, so a per-model limit is known only from such a hit: it is kept as a
+// model mark ("<account id>|<family>") until its reset (none known: DEFAULT_LIMIT_MS, firm).
+const FAMILIES = ['fable', 'opus', 'sonnet', 'haiku'];
+/** The model family of a model id or alias ('claude-opus-5-5', 'opus', 'claude-fable-5-2[1m]'), or null. */
+function modelFamily(model) {
+  const m = /(haiku|sonnet|opus|fable)/i.exec(String(model || ''));
+  return m ? m[1].toLowerCase() : null;
+}
+const MODEL_LIMIT_TYPE = /_(fable|opus|sonnet|haiku)$/i;
+const MODEL_LIMIT_TEXT = /You've (?:hit|reached) your (Fable|Opus|Sonnet|Haiku)\b[A-Za-z0-9. -]{0,20}?limit/i;
+/** The family whose own limit a hit is ({ type, text } of limitFromTranscript), or null for an account-wide limit. */
+function limitFamily(hit) {
+  const t = MODEL_LIMIT_TYPE.exec(String(hit?.type || ''));
+  if (t) return t[1].toLowerCase();
+  const m = MODEL_LIMIT_TEXT.exec(normQuote(hit?.text));
+  return m ? m[1].toLowerCase() : null;
+}
+const modelMarkKey = (accountId, family) => `${accountId}|${family}`;
+/** Until when the account's own limit for this family holds (ms), or 0. */
+function modelLimitedUntil(modelMarks, accountId, family, now = Date.now()) {
+  if (!family) return 0;
+  const m = modelMarks?.[modelMarkKey(accountId, family)];
+  return m && Number.isFinite(m.until) && m.until > now ? m.until : 0;
+}
+/** Model marks kept in state.json: "<known account id>|<family>" still in the future. */
+function normalizeModelMarks(raw, accountIds, now = Date.now()) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  const ids = new Set(accountIds);
+  for (const [k, m] of Object.entries(raw)) {
+    const i = k.lastIndexOf('|');
+    if (i < 1 || !ids.has(k.slice(0, i)) || !FAMILIES.includes(k.slice(i + 1))) continue;
+    if (m && Number.isFinite(m.until) && m.until > now) out[k] = { at: Number.isFinite(m.at) ? m.at : now, until: m.until };
+  }
+  return out;
+}
+
+/**
+ * The second model: the model a project continues with when no account has quota for its own model.
+ * setting: the project's choice ('none' = wait, a model id from `order`, undefined = default); order: the app's ordered
+ * model list (projects.js CLAUDE_FULL_MODELS, strongest first). The default is the model just below the current one
+ * in that list. null (wait) when the current model is unknown or the last one, or the second model is the current one.
+ */
+function secondModel({ current, setting, order = [] }) {
+  if (setting === 'none') return null;
+  const fam = modelFamily(current);
+  let next = null;
+  if (typeof setting === 'string' && setting && order.includes(setting)) next = setting;
+  else {
+    const i = fam ? order.findIndex((m) => modelFamily(m) === fam) : -1;
+    next = i >= 0 && i + 1 < order.length ? order[i + 1] : null;
+  }
+  if (!next || next === current || (fam && modelFamily(next) === fam)) return null;
+  return next;
+}
+
+/**
+ * Where a project at its limit goes (owner policy, v3.111). Fully automatic:
+ * 1. its explicit backup account (choice: an account id; 'auto' and none are not explicit), if logged in and free;
+ * 2. the first other account in `accounts` order that is logged in and free for the project's current model;
+ * 3. the first such account free for the second model (secondModel), the tabs then run on it;
+ * 4. else wait: { wait: the earliest time a candidate (or the current account) frees, reason }.
+ * Free: no account-wide limit (limitedUntil: quota at 100 % before its reset, or a mark) and no model mark for the
+ * family. A reset time that has passed counts as free. → { id, model: null | <second model>, step } | { wait, reason }.
+ * model null in the result: keep the model the project runs now.
+ * own: the project's own model (the one it runs on its home account); default `model`. A move onto the home drops
+ * the second model (projects.js fallbackTo), so the home is checked against the project's own model only (unknown:
+ * any of the home's model marks holds it) and is never paired with the second model.
+ */
+function planLimitMove({ choice = null, model = null, own = model, second = null, current, home = null, accounts = [], marks = {}, modelMarks = {}, now = Date.now() }) {
+  const fam = modelFamily(model);
+  const ownFam = modelFamily(own);
+  const blocked = (a, f) => {
+    const wide = limitedUntil({ usage: a.usage, mark: marks[a.id], now });
+    if (a.id !== home) return Math.max(wide, modelLimitedUntil(modelMarks, a.id, f, now));
+    const fams = ownFam ? [ownFam] : FAMILIES;
+    return Math.max(wide, ...fams.map((x) => modelLimitedUntil(modelMarks, a.id, x, now)));
+  };
+  const others = accounts.filter((a) => a.id !== current);
+  const loggedIn = others.filter((a) => a.auth?.state === 'in');
+  if (choice && choice !== 'auto') {
+    const target = choice !== current ? choice : home;
+    const a = loggedIn.find((x) => x.id === target);
+    if (a && !blocked(a, fam)) return { id: a.id, model: null, step: 'explicit' };
+  }
+  const same = loggedIn.find((a) => !blocked(a, fam));
+  if (same) return { id: same.id, model: null, step: 'sameModel' };
+  const secondFam = modelFamily(second);
+  const notHome = loggedIn.filter((a) => a.id !== home);
+  if (second && secondFam !== fam) {
+    const alt = notHome.find((a) => !blocked(a, secondFam));
+    if (alt) return { id: alt.id, model: second, step: 'secondModel' };
+  }
+  const self = accounts.find((a) => a.id === current);
+  const ends = [...loggedIn, ...(self ? [self] : [])].flatMap((a) => [blocked(a, fam), ...(second && a.id !== home ? [blocked(a, secondFam)] : [])]).filter((t) => t > now);
+  return { wait: ends.length ? Math.min(...ends) : null, reason: !others.length ? 'none' : !loggedIn.length ? 'notLoggedIn' : 'allLimited' };
+}
+
+/** The model of the session's last real answer (an assistant entry's message.model, not '<synthetic>'), or null. */
+function modelFromTranscript(tail) {
+  const lines = String(tail || '').split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line.includes('"assistant"')) continue;
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    const m = e?.type === 'assistant' && !e.isSidechain ? e.message?.model : null;
+    if (typeof m === 'string' && m && m !== '<synthetic>') return m;
+  }
+  return null;
+}
+
+// A subagent stopped by the usage limit: Claude Code reports it to the main session (a tool result or task
+// notification) as `Agent "<name>" failed: Agent terminated early due to an API error: You've hit your session limit ·
+// resets 1:40pm ...`. Only a line that starts the text (or follows a tag) counts: a file read or an answer quoting it
+// is not a failure. And only two carriers count: the body of a task notification (a user text that is one
+// <task-notification> block) and a tool result that answers an Agent/Task tool use of the same session. A pasted
+// prompt or another tool's output (`cat` of a log) carrying the same words is not a failure.
+const SUBAGENT_LIMIT = /(?:^|\n|>)\s*Agent "([^"\n]{1,80})" failed: Agent terminated early due to an API error: ((?:You've (?:hit|reached) your (?!fast limit)[^\n<]{0,40}?limit|You're out of (?:usage credits|extra usage))[^\n<]{0,120})/g;
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
+const TASK_NOTE = /^\s*<task-notification>([\s\S]*)<\/task-notification>\s*$/;
+const plainTexts = (content) => (typeof content === 'string' ? [content]
+  : Array.isArray(content) ? content.flatMap((c) => (c?.type === 'text' ? [c.text || ''] : [])) : []);
+/** A user entry typed by a person: text only (no tool result), not a task notification. */
+const isPersonMessage = (content) => {
+  const texts = plainTexts(content);
+  if (!texts.length || (Array.isArray(content) && content.some((c) => c?.type === 'tool_result'))) return false;
+  return !texts.some((t) => /^\s*<task-notification>/.test(t));
+};
+/** The texts of a user entry that may report a failed sub-agent; agentUses: the ids of Agent/Task tool uses seen. */
+const blockTexts = (content, agentUses) => {
+  const notes = plainTexts(content).flatMap((t) => { const m = TASK_NOTE.exec(t); return m ? [m[1]] : []; });
+  const results = Array.isArray(content)
+    ? content.filter((c) => c?.type === 'tool_result' && agentUses.has(c.tool_use_id)).flatMap((c) => plainTexts(c.content))
+    : [];
+  return [...notes, ...results];
+};
+/**
+ * Subagents of the main session that failed on a usage limit, written at or after `since` (ms).
+ * → { names: [...unique, in order], hit: { at, resetsAt, type, text } of the newest, or null }.
+ */
+function subagentLimits(tail, { since = 0 } = {}) {
+  const names = [];
+  let hit = null;
+  const agentUses = new Set();
+  let lastPerson = -Infinity;
+  for (const raw of String(tail || '').split('\n')) {
+    const line = raw.trim();
+    const use = line.includes('"tool_use"') && line.includes('"assistant"');
+    if (!use && !line.includes('Agent terminated early') && !line.includes('"user"')) continue;
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (!e || e.isSidechain) continue;
+    if (e.type === 'assistant') {
+      const content = e.message?.content;
+      if (Array.isArray(content)) for (const c of content) if (c?.type === 'tool_use' && AGENT_TOOLS.has(c.name) && c.id) agentUses.add(c.id);
+      continue;
+    }
+    if (e.type !== 'user') continue;
+    const at = Date.parse(e.timestamp);
+    if (!Number.isFinite(at) || at < since) continue;
+    if (!e.isMeta && isPersonMessage(e.message?.content)) lastPerson = Math.max(lastPerson, at);
+    for (const text of blockTexts(e.message?.content, agentUses)) {
+      for (const m of normQuote(text).matchAll(SUBAGENT_LIMIT)) {
+        if (!names.includes(m[1])) names.push(m[1]);
+        const resetsAt = parseResetText(m[2], at);
+        if (!hit || at >= hit.at) hit = { at, resetsAt: resetsAt && resetsAt > at ? resetsAt : null, type: null, text: m[2].trim().slice(0, 200) };
+      }
+    }
+  }
+  // like limitFromTranscript: a person's message after the hit (theirs or the typed carry-on) means the session went on
+  if (hit && lastPerson > hit.at) return { names: [], hit: null };
+  return { names, hit };
+}
+
 module.exports = {
   LIMIT_PREFIXES, DEFAULT_LIMIT_MS, MIN_STAY_MS, MAX_SWITCHES, PTY_GRACE_MS, TAIL_BYTES,
   COMPACT_SETTLE_MS, COMPACT_QUOTE_MS, COMPACT_SUBMIT_MS, COMPACT_BUSY_MS, COMPACT_ECHO_MS,
   isUsageLimitText, isCompactionLimitText, parseResetText, limitFromTranscript, plainText, scanPty,
   inputAfter, startInput, compactionSighting, compactionContradicted, compactionVerdict, compactionHit, limitMark, mergeMarks,
   limitedUntil, markFor, fullness, pickBackup, switchAllowed, shouldReturn, normalizeMarks,
+  FAMILIES, modelFamily, limitFamily, modelMarkKey, modelLimitedUntil, normalizeModelMarks, secondModel, planLimitMove,
+  modelFromTranscript, subagentLimits,
 };

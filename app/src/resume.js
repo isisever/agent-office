@@ -18,6 +18,18 @@ const RESUME_PROMPT = 'Agent Office restarted (app update or restart) while you 
 /** The prompt the "Resume unfinished work" button sends (it is not always a restart). Same rules as RESUME_PROMPT. */
 const UNFINISHED_PROMPT = 'Your last turn in this session did not finish: it was cut off (an Agent Office restart or update, the session ending, or a crash) before you were done, along with any sub-agents you had running. Check what was finished (git status, files, your task list), then continue the unfinished work from where it stopped. Restart sub-agents that were cut off.';
 
+/**
+ * v3.111: the carry-on prompt for a tab that stopped at a usage limit and was moved to another account (or another
+ * model). agents: names of its subagents that failed on the limit (may be empty); model: the model it now runs on, or null.
+ */
+function limitCarryOnPrompt({ agents = [], model = null } = {}) {
+  const names = agents.filter((n) => typeof n === 'string' && n).slice(0, 12).map((n) => `"${n.replace(/["\r\n]/g, '').slice(0, 80)}"`);
+  return 'Your last turn stopped on a usage limit. Agent Office moved this session to another account'
+    + (model ? ` and runs it on ${model} for now` : '') + '. '
+    + (names.length ? `These sub-agents failed on the limit and did not finish: ${names.join(', ')}. ` : '')
+    + 'Check what was finished (git status, files, your task list), re-run every sub-agent whose work failed on the usage limit, then continue the unfinished work from where it stopped.';
+}
+
 const validSid = (s) => (typeof s === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/.test(s) ? s : '');
 
 /**
@@ -246,4 +258,5 @@ function typedPrompt(text) {
   return `\x1b[200~${promptArg(text)}\x1b[201~`;
 }
 
-module.exports = { RESUME_PROMPT, UNFINISHED_PROMPT, entryTurn, transcriptState, transcriptFileState, unfinishedActions, typedPrompt, normalizeInterrupted, isTurnBusy, canTypePrompt, nextInterrupted, clearInterrupted, resumeTargets, promptArg, claudeArgs };
+module.exports = {
+  limitCarryOnPrompt, RESUME_PROMPT, UNFINISHED_PROMPT, entryTurn, transcriptState, transcriptFileState, unfinishedActions, typedPrompt, normalizeInterrupted, isTurnBusy, canTypePrompt, nextInterrupted, clearInterrupted, resumeTargets, promptArg, claudeArgs };
