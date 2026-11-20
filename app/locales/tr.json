@@ -89,7 +89,7 @@
     "reloadMcp": "MCP değişince oturumları yenile",
     "reloadMcpTitle": "Çalışan bir Claude'un alacağı MCP sunucuları değişince (claude mcp add/remove, düzenlenen .mcp.json, bir onay, eklenen bir proje) boşta kalır kalmaz aynı konuşmada yeniden başlar: çalışırken, ajan ya da arka plan kabuğu çalıştırırken, onay beklerken ya da isteminde gönderilmemiş yazı varken başlamaz.",
     "chatView": "Sohbet görünümü",
-    "chatViewTitle": "Claude Code sekmeleri konuşmayı mesajlar ve bir yazı kutusuyla gösterir; terminal altta çalışmaya devam eder ve bir tık uzaktadır (onaylar ve /model gibi menüler orada yanıtlanır). Antigravity, Command Code, OpenCode ve kabuk sekmeleri terminal olarak kalır.",
+    "chatViewTitle": "Claude Code sekmeleri konuşmayı mesajlar ve bir yazı kutusuyla gösterir; onaylar, sorular ve planlar kart olarak gelir (macOS ve Linux). Bir sekme terminale geri alınabilir. Müdür sekmesi, Antigravity, Command Code, OpenCode ve kabuk sekmeleri terminal olarak kalır.",
     "office3d": "3D ofis",
     "office3dTitle": "Ofisi 8-bit pikseller yerine 3D çizer (ışık, gölge, yukarıdan bir kamera). Aynı ofis: kimin çalıştığı, yürüdüğü ya da dans ettiği değişmez. WebGL gerekir; yoksa ofis 8-bit kalır.",
     "shareMcpTitle": "Her projenin Claude'u ofisteki diğer projelerin MCP sunucularını da alır (yerel ve onaylı .mcp.json sunucuları, token'larıyla birlikte); böylece bir projenin sekmesinden başka bir proje üzerinde çalışabilirsin. Adı başka bir ayarla zaten alınmış bir sunucunun adına proje adı eklenir (sunucu-proje). Bundan sonra başlayan Claude oturumlarında geçerli olur.",
