@@ -3703,16 +3703,27 @@ function onLimit(p, account, hits, now) {
   }
   const done = () => { for (const h of hits) limitDone.add(`${h.id}|${h.hit.at}`); };
   const model = currentModel(p, account, hits.map((h) => h.id));
+  const fam = FB.modelFamily(model);
+  // every hit is another model's own limit (e.g. a sub-agent on Opus while the session runs Sonnet): the mark is kept,
+  // the project stays where it is
+  if (fam && families.length && hits.every((h) => FB.limitFamily(h.hit)) && !families.includes(fam)) return done();
   const second = FB.secondModel({ current: model, setting: P.limitModelOf(p), order: P.MODEL_ORDER });
-  const plan = FB.planLimitMove({ choice: P.backupOf(p), model, second, current: account.id, home: p.homeAccount || null, accounts: fallbackAccounts(), marks: limitMarks(), modelMarks: modelMarks(), now });
+  // the project's own model (the one its home runs): not the second model it may run now
+  const own = P.fallbackModelOf(p) ? P.bossModelOf(p) : model;
+  const plan = FB.planLimitMove({ choice: P.backupOf(p), model, own, second, current: account.id, home: p.homeAccount || null, accounts: fallbackAccounts(), marks: limitMarks(), modelMarks: modelMarks(), now });
   const limit = limitLabel(hits);
   if (!plan.id) {
-    const fam = FB.modelFamily(model);
     const selfFree = !FB.limitedUntil({ usage: usages.get(account.id), mark: limitMarks()[account.id], now }) && !FB.modelLimitedUntil(modelMarks(), account.id, fam, now);
     if (selfFree) { // the earliest reset was this account's own: the stopped tabs carry on where they are
-      done();
-      for (const h of hits) if (terms.has(h.id)) typePrompt(h.id, R.UNFINISHED_PROMPT);
-      fallbackNotice(p, 'resumed', T('main.fallbackResumed', { from: accountName(account), model: modelLabel(model) }), { from: account.id });
+      // only a tab that takes a typed prompt now (no turn, draft or dialog); the others are looked at again next tick
+      let typed = 0;
+      for (const h of hits) {
+        if (!terms.has(h.id)) { limitDone.add(`${h.id}|${h.hit.at}`); continue; }
+        if (tabStateOf(h.id) !== 'ready' || !typePrompt(h.id, R.UNFINISHED_PROMPT)) continue;
+        limitDone.add(`${h.id}|${h.hit.at}`);
+        typed++;
+      }
+      if (typed) fallbackNotice(p, 'resumed', T('main.fallbackResumed', { from: accountName(account), model: modelLabel(model) }), { from: account.id });
       return;
     }
     const key = `${p.id}|${account.id}|${plan.reason}|${plan.wait}`;

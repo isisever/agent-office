@@ -4759,6 +4759,61 @@ test('limit policy (v3.111): order explicit, same model, second model, wait; Bac
   assert.deepEqual(FB.planLimitMove({ current: 'a', accounts: [acct('a'), { id: 'b', auth: { state: 'out' } }], now }), { wait: null, reason: 'notLoggedIn' });
 });
 
+test('limit policy (v3.111): the home is checked against the project\'s own model and never gets the second model', () => {
+  const now = 3_000_000;
+  const accounts = [acct('a'), acct('b'), acct('c')];
+  // on b away from home a, Opus limited on a (its own model) and on c: the second model goes to c, never to a
+  const opusOut = { 'a|opus': { at: now, until: now + 40 }, 'c|opus': { at: now, until: now + 60 } };
+  const away = { current: 'b', home: 'a', accounts, model: 'claude-opus-5-5', second: 'claude-sonnet-5-5', modelMarks: opusOut, now };
+  assert.deepEqual(FB.planLimitMove(away), { id: 'c', model: 'claude-sonnet-5-5', step: 'secondModel' });
+  // c has no quota at all: wait (the home would restart on its limited Opus and bounce back)
+  assert.deepEqual(FB.planLimitMove({ ...away, marks: { c: { at: now, until: now + 80 } } }), { wait: now + 40, reason: 'allLimited' });
+  // explicit backup = the home: still its own model only
+  assert.equal(FB.planLimitMove({ ...away, choice: 'b', marks: { c: { at: now, until: now + 80 } } }).id, undefined);
+  // already running the second model (Sonnet) on b: the home is free for its own Opus though its Sonnet is out → home, own model
+  const onSecond = { current: 'b', home: 'a', accounts, model: 'claude-sonnet-5-5', own: 'claude-opus-5-5', second: 'claude-haiku-4-5', now };
+  assert.deepEqual(FB.planLimitMove({ ...onSecond, modelMarks: { 'b|sonnet': { at: now, until: now + 9 }, 'a|sonnet': { at: now, until: now + 9 } } }), { id: 'a', model: null, step: 'sameModel' });
+  // ... the home's Opus is still out: not the home (even though its Sonnet is free); c keeps the second model
+  assert.deepEqual(FB.planLimitMove({ ...onSecond, modelMarks: { 'b|sonnet': { at: now, until: now + 9 }, 'a|opus': { at: now, until: now + 30 } } }), { id: 'c', model: null, step: 'sameModel' });
+  // ... and c has nothing either: the next model never goes to the home
+  assert.deepEqual(FB.planLimitMove({ ...onSecond, marks: { c: { at: now, until: now + 50 } }, modelMarks: { 'b|sonnet': { at: now, until: now + 9 }, 'a|opus': { at: now, until: now + 30 } } }), { wait: now + 9, reason: 'allLimited' });
+  // own model unknown (Auto): any model mark of the home holds it
+  assert.equal(FB.planLimitMove({ ...onSecond, own: null, marks: { c: { at: now, until: now + 50 } }, modelMarks: { 'b|sonnet': { at: now, until: now + 9 }, 'a|fable': { at: now, until: now + 30 } } }).id, undefined);
+  // end to end: the planned move and fallbackTo agree (a second model is never dropped by a move onto the home)
+  const s0 = { accounts: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], projects: [{ id: 'p', dir: '/x', accountId: 'b', homeAccount: 'a', bossModel: 'claude-opus-5-5' }] };
+  const plan = FB.planLimitMove(away);
+  const moved = PL.fallbackTo(s0, 'p', plan.id, { model: plan.model }).projects[0];
+  assert.equal(moved.homeAccount, 'a');
+  assert.deepEqual(PL.bossModelArgs(moved), ['--model', 'claude-sonnet-5-5']);
+});
+
+test('limit policy (v3.111): a desk on its own account does not take the project\'s second model', () => {
+  const state = { accounts: [{ id: 'default' }, { id: 'b' }, { id: 'work' }], staff: [{ id: 's1', name: 'Ada', accountId: 'work' }, { id: 's2', name: 'Bo' }],
+    projects: [{ id: 'p', dir: '/x', accountId: 'b', homeAccount: 'default', fallbackModel: 'claude-sonnet-5-5', bossModel: 'claude-opus-5-5', tabs: [{ n: 2, staffId: 's1' }, { n: 3, staffId: 's2' }, { n: 4, staffId: 's1' }] }] };
+  const own = PL.resolvePty(state, 'p:2').project;
+  assert.equal(own.accountId, 'work');
+  assert.equal(own.fallbackModel, undefined);
+  assert.deepEqual(PL.bossModelArgs(own), ['--model', 'claude-opus-5-5']);
+  // a desk without an account of its own follows the project, the second model too
+  assert.deepEqual(PL.bossModelArgs(PL.resolvePty(state, 'p:3').project), ['--model', 'claude-sonnet-5-5']);
+  assert.deepEqual(PL.bossModelArgs(PL.resolvePty(state, 'p').project), ['--model', 'claude-sonnet-5-5']);
+  // the member's account equal to the project's: it still does not follow (followsProjectAccount), so no second model
+  const same = { ...state, staff: [{ id: 's1', name: 'Ada', accountId: 'b' }] };
+  assert.equal(PL.followsProjectAccount(same, 'p:4'), false);
+  assert.deepEqual(PL.bossModelArgs(PL.resolvePty(same, 'p:4').project), ['--model', 'claude-opus-5-5']);
+});
+
+test('limit policy (v3.111): main.js keeps another model\'s hit as a mark only, and types the carry-on only into a ready tab', () => {
+  const main = fsL.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = main.slice(main.indexOf('function onLimit('), main.indexOf('function tabIdle('));
+  assert.match(body, /if \(fam && families\.length && hits\.every\(\(h\) => FB\.limitFamily\(h\.hit\)\) && !families\.includes\(fam\)\) return done\(\);/);
+  assert.ok(body.indexOf('return done();') < body.indexOf('FB.planLimitMove('), 'decided before any move is planned');
+  assert.ok(body.indexOf('setModelMark(') < body.indexOf('return done();'), 'the mark is kept');
+  assert.match(body, /own = P\.fallbackModelOf\(p\) \? P\.bossModelOf\(p\) : model/);
+  assert.match(body, /tabStateOf\(h\.id\) !== 'ready' \|\| !typePrompt\(h\.id, R\.UNFINISHED_PROMPT\)\) continue;/);
+  assert.doesNotMatch(body, /done\(\);\s*for \(const h of hits\) if \(terms\.has\(h\.id\)\) typePrompt/);
+});
+
 test('limit policy (v3.111): an account whose reset passed counts again', () => {
   const now = 2_000_000;
   const accounts = [acct('a'), acct('b', { usage: full(now - 1) })];
@@ -4781,7 +4836,8 @@ test('limit policy (v3.111): a per-model limit is told by rateLimitType or the t
 test('limit policy (v3.111): a sub-agent that failed on the usage limit is a hit and named for the carry-on', () => {
   const since = Date.parse('2026-10-17T10:00:00.000Z');
   const line = 'Agent "api-review" failed: Agent terminated early due to an API error: You\'ve hit your session limit · resets 1:40pm (Europe/Istanbul) (error type rate_limit, HTTP 429)';
-  const toolResult = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:07.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: line }] }] } });
+  const agentUse = JSON.stringify({ type: 'assistant', timestamp: '2026-10-17T10:00:01.000Z', message: { content: [{ type: 'tool_use', id: 't', name: 'Agent', input: {} }] } });
+  const toolResult = agentUse + '\n' + JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:07.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: line }] }] } });
   const note = userEntry(`<task-notification><status>failed</status><summary>${line.replace('api-review', 'docs')}</summary></task-notification>`, '2026-10-17T10:00:08.000Z');
   const r = FB.subagentLimits(`${toolResult}\n${note}\n`, { since });
   assert.deepEqual(r.names, ['api-review', 'docs']);
@@ -4793,6 +4849,19 @@ test('limit policy (v3.111): a sub-agent that failed on the usage limit is a hit
   const quoted = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:07.000Z', message: { content: [{ type: 'tool_result', content: `  12\tconst s = '${line}';` }] } });
   assert.deepEqual(FB.subagentLimits(quoted, { since }), { names: [], hit: null });
   assert.deepEqual(FB.subagentLimits(JSON.stringify({ type: 'assistant', timestamp: '2026-10-17T10:00:07.000Z', message: { content: [{ type: 'text', text: line }] } }), { since }), { names: [], hit: null });
+  // a pasted user prompt carrying the line (plain text, or text that only quotes a notification) is not a hit
+  assert.deepEqual(FB.subagentLimits(userEntry(line, '2026-10-17T10:00:07.000Z'), { since }), { names: [], hit: null });
+  assert.deepEqual(FB.subagentLimits(userEntry(`why did this fail?\n<task-notification><summary>${line}</summary></task-notification>`, '2026-10-17T10:00:07.000Z'), { since }), { names: [], hit: null });
+  assert.deepEqual(FB.subagentLimits(userEntry([{ type: 'text', text: `see:\n${line}` }], '2026-10-17T10:00:07.000Z'), { since }), { names: [], hit: null });
+  // another tool's output (`cat` of a log, Bash) carrying the line is not a hit; nor a result with no Agent/Task use
+  const bashUse = JSON.stringify({ type: 'assistant', timestamp: '2026-10-17T10:00:01.000Z', message: { content: [{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'cat run.log' } }] } });
+  const catOut = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:07.000Z', message: { content: [{ type: 'tool_result', tool_use_id: 'b1', content: `boot\n${line}\ndone` }] } });
+  assert.deepEqual(FB.subagentLimits(`${bashUse}\n${catOut}\n`, { since }), { names: [], hit: null });
+  assert.deepEqual(FB.subagentLimits(catOut, { since }), { names: [], hit: null });
+  // the Task tool (older name) answers too
+  const taskUse = JSON.stringify({ type: 'assistant', timestamp: '2026-10-17T10:00:01.000Z', message: { content: [{ type: 'tool_use', id: 'k', name: 'Task', input: {} }] } });
+  const taskOut = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:07.000Z', message: { content: [{ type: 'tool_result', tool_use_id: 'k', content: line }] } });
+  assert.deepEqual(FB.subagentLimits(`${taskUse}\n${taskOut}\n`, { since }).names, ['api-review']);
   // the screen already counts the same words as a hint
   assert.ok(FB.scanPty({ tail: '' }, line).hit);
   // the carry-on prompt names them and the model

@@ -458,10 +458,19 @@ function secondModel({ current, setting, order = [] }) {
  * Free: no account-wide limit (limitedUntil: quota at 100 % before its reset, or a mark) and no model mark for the
  * family. A reset time that has passed counts as free. → { id, model: null | <second model>, step } | { wait, reason }.
  * model null in the result: keep the model the project runs now.
+ * own: the project's own model (the one it runs on its home account); default `model`. A move onto the home drops
+ * the second model (projects.js fallbackTo), so the home is checked against the project's own model only (unknown:
+ * any of the home's model marks holds it) and is never paired with the second model.
  */
-function planLimitMove({ choice = null, model = null, second = null, current, home = null, accounts = [], marks = {}, modelMarks = {}, now = Date.now() }) {
+function planLimitMove({ choice = null, model = null, own = model, second = null, current, home = null, accounts = [], marks = {}, modelMarks = {}, now = Date.now() }) {
   const fam = modelFamily(model);
-  const blocked = (a, f) => Math.max(limitedUntil({ usage: a.usage, mark: marks[a.id], now }), modelLimitedUntil(modelMarks, a.id, f, now));
+  const ownFam = modelFamily(own);
+  const blocked = (a, f) => {
+    const wide = limitedUntil({ usage: a.usage, mark: marks[a.id], now });
+    if (a.id !== home) return Math.max(wide, modelLimitedUntil(modelMarks, a.id, f, now));
+    const fams = ownFam ? [ownFam] : FAMILIES;
+    return Math.max(wide, ...fams.map((x) => modelLimitedUntil(modelMarks, a.id, x, now)));
+  };
   const others = accounts.filter((a) => a.id !== current);
   const loggedIn = others.filter((a) => a.auth?.state === 'in');
   if (choice && choice !== 'auto') {
@@ -472,12 +481,13 @@ function planLimitMove({ choice = null, model = null, second = null, current, ho
   const same = loggedIn.find((a) => !blocked(a, fam));
   if (same) return { id: same.id, model: null, step: 'sameModel' };
   const secondFam = modelFamily(second);
+  const notHome = loggedIn.filter((a) => a.id !== home);
   if (second && secondFam !== fam) {
-    const alt = loggedIn.find((a) => !blocked(a, secondFam));
+    const alt = notHome.find((a) => !blocked(a, secondFam));
     if (alt) return { id: alt.id, model: second, step: 'secondModel' };
   }
   const self = accounts.find((a) => a.id === current);
-  const ends = [...loggedIn, ...(self ? [self] : [])].flatMap((a) => [blocked(a, fam), ...(second ? [blocked(a, secondFam)] : [])]).filter((t) => t > now);
+  const ends = [...loggedIn, ...(self ? [self] : [])].flatMap((a) => [blocked(a, fam), ...(second && a.id !== home ? [blocked(a, secondFam)] : [])]).filter((t) => t > now);
   return { wait: ends.length ? Math.min(...ends) : null, reason: !others.length ? 'none' : !loggedIn.length ? 'notLoggedIn' : 'allLimited' };
 }
 
@@ -498,10 +508,22 @@ function modelFromTranscript(tail) {
 // A subagent stopped by the usage limit: Claude Code reports it to the main session (a tool result or task
 // notification) as `Agent "<name>" failed: Agent terminated early due to an API error: You've hit your session limit ·
 // resets 1:40pm ...`. Only a line that starts the text (or follows a tag) counts: a file read or an answer quoting it
-// is not a failure.
+// is not a failure. And only two carriers count: the body of a task notification (a user text that is one
+// <task-notification> block) and a tool result that answers an Agent/Task tool use of the same session. A pasted
+// prompt or another tool's output (`cat` of a log) carrying the same words is not a failure.
 const SUBAGENT_LIMIT = /(?:^|\n|>)\s*Agent "([^"\n]{1,80})" failed: Agent terminated early due to an API error: ((?:You've (?:hit|reached) your (?!fast limit)[^\n<]{0,40}?limit|You're out of (?:usage credits|extra usage))[^\n<]{0,120})/g;
-const blockTexts = (content) => (typeof content === 'string' ? [content]
-  : Array.isArray(content) ? content.flatMap((c) => (c?.type === 'text' ? [c.text || ''] : c?.type === 'tool_result' ? blockTexts(c.content) : [])) : []);
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
+const TASK_NOTE = /^\s*<task-notification>([\s\S]*)<\/task-notification>\s*$/;
+const plainTexts = (content) => (typeof content === 'string' ? [content]
+  : Array.isArray(content) ? content.flatMap((c) => (c?.type === 'text' ? [c.text || ''] : [])) : []);
+/** The texts of a user entry that may report a failed sub-agent; agentUses: the ids of Agent/Task tool uses seen. */
+const blockTexts = (content, agentUses) => {
+  const notes = plainTexts(content).flatMap((t) => { const m = TASK_NOTE.exec(t); return m ? [m[1]] : []; });
+  const results = Array.isArray(content)
+    ? content.filter((c) => c?.type === 'tool_result' && agentUses.has(c.tool_use_id)).flatMap((c) => plainTexts(c.content))
+    : [];
+  return [...notes, ...results];
+};
 /**
  * Subagents of the main session that failed on a usage limit, written at or after `since` (ms).
  * → { names: [...unique, in order], hit: { at, resetsAt, type, text } of the newest, or null }.
@@ -509,15 +531,23 @@ const blockTexts = (content) => (typeof content === 'string' ? [content]
 function subagentLimits(tail, { since = 0 } = {}) {
   const names = [];
   let hit = null;
+  const agentUses = new Set();
   for (const raw of String(tail || '').split('\n')) {
     const line = raw.trim();
-    if (!line.includes('Agent terminated early')) continue;
+    const use = line.includes('"tool_use"') && line.includes('"assistant"');
+    if (!use && !line.includes('Agent terminated early')) continue;
     let e;
     try { e = JSON.parse(line); } catch { continue; }
-    if (!e || e.type !== 'user' || e.isSidechain) continue;
+    if (!e || e.isSidechain) continue;
+    if (e.type === 'assistant') {
+      const content = e.message?.content;
+      if (Array.isArray(content)) for (const c of content) if (c?.type === 'tool_use' && AGENT_TOOLS.has(c.name) && c.id) agentUses.add(c.id);
+      continue;
+    }
+    if (e.type !== 'user') continue;
     const at = Date.parse(e.timestamp);
     if (!Number.isFinite(at) || at < since) continue;
-    for (const text of blockTexts(e.message?.content)) {
+    for (const text of blockTexts(e.message?.content, agentUses)) {
       for (const m of normQuote(text).matchAll(SUBAGENT_LIMIT)) {
         if (!names.includes(m[1])) names.push(m[1]);
         const resetsAt = parseResetText(m[2], at);

@@ -175,6 +175,9 @@ function resolvePty(state, id) {
   const packs = member?.skillPacks && typeof member.skillPacks === 'object' && !Array.isArray(member.skillPacks) && Object.keys(member.skillPacks).length ? member.skillPacks : null;
   let seen = project;
   if (own && own !== project.accountId) seen = { ...seen, accountId: own };
+  // v3.111 the second model belongs to the project's account move: a desk on its own account (which does not follow
+  // the project, followsProjectAccount) keeps its own model
+  if (own && seen.fallbackModel !== undefined) { const { fallbackModel: _, ...rest } = seen; seen = rest; }
   if (packs) seen = { ...seen, skillPacks: { ...(seen.skillPacks || {}), ...packs } };
   // v3.84 the member's own MCP tools (server ids), read by startPty (MS.withTools); never written to state
   if (Array.isArray(member?.tools) && member.tools.length) seen = { ...seen, staffTools: member.tools };
