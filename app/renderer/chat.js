@@ -84,6 +84,8 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   const input = h('textarea', { class: 'chat-input', rows: '1' });
   const send = h('button', { class: 'chat-send', onclick: () => submit() });
   const term = h('button', { class: 'chat-term', onclick: () => onTerminal() });
+  // v3.113 attach: the native file picker (images into the image bar in a GUI tab, every other file as @path)
+  const attach = h('button', { class: 'chat-attach', type: 'button', onclick: () => { attachFiles().catch((e) => console.error(e)); } }, '📎');
   const stop = h('button', { class: 'chat-stop', onclick: () => interrupt() });
   stop.hidden = true;
   // v3.108 a GUI tab whose claude ended by itself: why (exit code, the end of its stderr) and Start again
@@ -116,7 +118,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   // once it is complete, so this is the live part
   const live = h('div', { class: 'chat-live' });
   live.hidden = true;
-  const form = h('div', { class: 'chat-form' }, slash, atList, input, stop, send, term);
+  const form = h('div', { class: 'chat-form' }, slash, atList, attach, input, stop, send, term);
   form.hidden = Boolean(source);
   el.append(banner, list, empty, live, card, endBox, replyBar, imgBar, form, why);
   card.hidden = true;
@@ -145,6 +147,8 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     send.textContent = t('chat.send');
     term.textContent = t('chat.terminal');
     term.title = t(gui ? 'chat.gui.terminalTitle' : 'chat.terminalTitle');
+    attach.title = t('chat.attach');
+    attach.setAttribute('aria-label', t('chat.attach'));
     stop.textContent = t('chat.gui.stop');
     endBtn.textContent = t('chat.gui.restart');
     endShown = '';
@@ -206,7 +210,8 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
         e.stopPropagation();
         let r = 'outside';
         try { r = await api.chat.reveal(ptyId, it.path); } catch (err) { console.error(err); }
-        if (r !== 'ok') note(t('chat.revealOutside'));
+        if (r === 'gone') note(t('chat.revealGone'));
+        else if (r !== 'ok') note(t('chat.revealOutside'));
       } }, '⌕') : null;
       const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''), reveal);
       if (it.id) tools.set(it.id, line);
@@ -523,6 +528,26 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     const pos = caret + sep.length + add.length + 1;
     input.setSelectionRange(pos, pos);
     fitInput(); input.focus();
+  }
+  /**
+   * v3.113 the attach button: files picked in the native picker (opens in the tab's folder). In a GUI tab an image goes
+   * into the image bar like a pasted one (while there is room, else as @path); every other file goes in as @path like
+   * a dropped one. A terminal tab takes every file as @path (Claude Code attaches an image file itself).
+   */
+  async function attachFiles() {
+    if (source || !api.chat.pick) return;
+    const r = await api.chat.pick(ptyId, Boolean(gui));
+    if (!r) { input.focus(); return; }
+    const paths = Array.isArray(r.paths) ? r.paths.filter((p) => typeof p === 'string' && p) : [];
+    const blobs = [];
+    for (const im of Array.isArray(r.images) ? r.images : []) {
+      if (images.length + imageReads.length + blobs.length >= 5) { paths.push(im.path); continue; }
+      const bytes = Uint8Array.from(window.atob(im.data), (c) => c.charCodeAt(0));
+      blobs.push(new Blob([bytes], { type: im.type }));
+    }
+    if (blobs.length) addImages(blobs);
+    if (paths.length) insertPaths(paths);
+    else input.focus();
   }
   if (!source) {
     el.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });

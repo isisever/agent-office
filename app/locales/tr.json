@@ -732,6 +732,8 @@
     "imageRemove": "Bu görseli kaldır",
     "revealMac": "Finder'da göster",
     "revealOutside": "Bu dosya proje klasörünün içinde değil (ya da silinmiş): burada gösterilemez.",
+    "revealGone": "Bu dosya artık yok: yerine klasörü gösterildi.",
+    "attach": "Dosya ekle (görseller mesajla gider, diğer dosyalar @yol olarak)",
     "gui": {
       "terminalTitle": "Bu oturuma terminalde devam et (Claude çalışmıyorken)",
       "stop": "Durdur",
@@ -762,6 +764,7 @@
     "defaultAccount": "Varsayılan",
     "pickFolder": "Proje klasörünü seç",
     "pickButton": "Ekle",
+    "chatPickFiles": "Dosya ekle",
     "updatesOnlyInstalled": "Güncelleme denetimi yalnızca kurulu uygulamada çalışır.",
     "updatesManual": "Bu kurulum kendini güncellemez: yeni .deb paketini GitHub Releases sayfasından kurun (AppImage kendini günceller).",
     "upToDate": "Agent Office güncel ({version}).",

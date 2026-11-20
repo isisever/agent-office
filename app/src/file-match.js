@@ -64,18 +64,55 @@ function rankFiles(files, query, max = 30) {
 /** How a path goes into the message: `@path`, quoted when it holds a space. */
 const mention = (p) => (/\s/.test(p) ? `@"${p.replace(/"/g, '')}"` : `@${p}`);
 
+/** The real path (links resolved; on macOS also the letter case and /tmp → /private/tmp), or '' when it does not exist. */
+function realOf(p, fsx) {
+  try { return (fsx.realpathSync.native || fsx.realpathSync)(p); } catch { return ''; }
+}
+/** Is `real` the folder `root` or inside it (both real paths)? A name that only starts with ".." is inside. */
+function within(root, real) {
+  const rel = path.relative(root, real);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+/**
+ * v3.113 What "Show in Finder" shows for a tool line's file. `dirs`: the tab's folder first (a relative path is taken
+ * from it), then the other folders the tab may show (the project's folder for a worktree or desk tab). Both sides are
+ * compared as real paths, so /tmp vs /private/tmp and other linked roots match. A file that is gone: its nearest
+ * existing parent folder inside one of the folders.
+ * → { path, gone } or null when the path is outside every folder.
+ * @param {string | string[]} dirs
+ * @param {string} p
+ */
+function revealTarget(dirs, p, fsx = fs) {
+  const list = (Array.isArray(dirs) ? dirs : [dirs]).filter((d) => typeof d === 'string' && d);
+  if (typeof p !== 'string' || !p || p.length > 4096 || p.includes('\0') || !list.length) return null;
+  const roots = [...new Set(list.map((d) => realOf(d, fsx)).filter(Boolean))];
+  if (!roots.length) return null;
+  const abs = path.resolve(list[0], p);
+  const real = realOf(abs, fsx);
+  if (real) return roots.some((r) => within(r, real)) ? { path: real, gone: false } : null;
+  // gone: walk up to the nearest folder that exists, and show it only when it is inside a root
+  for (let up = path.dirname(abs), i = 0; i < 4096; up = path.dirname(up), i++) {
+    const r = realOf(up, fsx);
+    if (r) return roots.some((root) => within(root, r)) ? { path: r, gone: true } : null;
+    if (path.dirname(up) === up) break;
+  }
+  return null;
+}
+
 /**
  * May this path be shown in Finder for the tab? Only an existing file or folder inside the tab's folder (after links
  * are resolved). → the real path, or '' when not.
  */
 function insidePath(dir, p, fsx = fs) {
-  if (typeof p !== 'string' || !p || p.length > 4096 || !dir) return '';
-  try {
-    const root = fsx.realpathSync(dir);
-    const real = fsx.realpathSync(path.isAbsolute(p) ? p : path.join(dir, p));
-    const rel = path.relative(root, real);
-    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)) ? real : '';
-  } catch { return ''; }
+  const r = revealTarget(dir, p, fsx);
+  return r && !r.gone ? r.path : '';
 }
 
-module.exports = { FILES_MAX, parseGitFiles, walkFiles, rankFiles, mention, insidePath };
+// v3.113 files picked with the attach button: images the API takes go as image blocks (GUI tab), the rest as @path
+const IMAGE_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+const PICK_IMAGE_MAX = 30 * 1024 * 1024;   // larger files are not read into the window (the renderer scales the rest down)
+/** The image type of a picked file by its name, or '' when it is not an image the API takes. */
+const imageType = (p) => IMAGE_EXT[path.extname(String(p)).toLowerCase()] || '';
+
+module.exports = { FILES_MAX, parseGitFiles, walkFiles, rankFiles, mention, insidePath, revealTarget, imageType, PICK_IMAGE_MAX };
