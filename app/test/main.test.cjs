@@ -4858,6 +4858,15 @@ test('limit policy (v3.111): a sub-agent that failed on the usage limit is a hit
   const catOut = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:07.000Z', message: { content: [{ type: 'tool_result', tool_use_id: 'b1', content: `boot\n${line}\ndone` }] } });
   assert.deepEqual(FB.subagentLimits(`${bashUse}\n${catOut}\n`, { since }), { names: [], hit: null });
   assert.deepEqual(FB.subagentLimits(catOut, { since }), { names: [], hit: null });
+  // a person's message after the hit (not a task notification, not a tool result) means it is done, like limitFromTranscript
+  const later = userEntry('carry on with the docs', '2026-10-17T10:00:09.000Z');
+  assert.deepEqual(FB.subagentLimits(`${toolResult}\n${note}\n${later}\n`, { since }), { names: [], hit: null });
+  const laterNote = userEntry('<task-notification><status>completed</status><summary>Agent "x" done</summary></task-notification>', '2026-10-17T10:00:09.000Z');
+  const laterResult = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:09.000Z', message: { content: [{ type: 'tool_result', tool_use_id: 'zz', content: 'ok' }] } });
+  const laterMeta = userEntry('caveat', '2026-10-17T10:00:09.000Z', { isMeta: true });
+  assert.deepEqual(FB.subagentLimits(`${toolResult}\n${note}\n${laterNote}\n${laterResult}\n${laterMeta}\n`, { since }).names, ['api-review', 'docs']);
+  // a person's message before the hit does not clear it
+  assert.deepEqual(FB.subagentLimits(`${userEntry('start', '2026-10-17T10:00:02.000Z')}\n${toolResult}\n`, { since }).names, ['api-review']);
   // the Task tool (older name) answers too
   const taskUse = JSON.stringify({ type: 'assistant', timestamp: '2026-10-17T10:00:01.000Z', message: { content: [{ type: 'tool_use', id: 'k', name: 'Task', input: {} }] } });
   const taskOut = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:07.000Z', message: { content: [{ type: 'tool_result', tool_use_id: 'k', content: line }] } });

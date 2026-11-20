@@ -516,6 +516,12 @@ const AGENT_TOOLS = new Set(['Agent', 'Task']);
 const TASK_NOTE = /^\s*<task-notification>([\s\S]*)<\/task-notification>\s*$/;
 const plainTexts = (content) => (typeof content === 'string' ? [content]
   : Array.isArray(content) ? content.flatMap((c) => (c?.type === 'text' ? [c.text || ''] : [])) : []);
+/** A user entry typed by a person: text only (no tool result), not a task notification. */
+const isPersonMessage = (content) => {
+  const texts = plainTexts(content);
+  if (!texts.length || (Array.isArray(content) && content.some((c) => c?.type === 'tool_result'))) return false;
+  return !texts.some((t) => /^\s*<task-notification>/.test(t));
+};
 /** The texts of a user entry that may report a failed sub-agent; agentUses: the ids of Agent/Task tool uses seen. */
 const blockTexts = (content, agentUses) => {
   const notes = plainTexts(content).flatMap((t) => { const m = TASK_NOTE.exec(t); return m ? [m[1]] : []; });
@@ -532,10 +538,11 @@ function subagentLimits(tail, { since = 0 } = {}) {
   const names = [];
   let hit = null;
   const agentUses = new Set();
+  let lastPerson = -Infinity;
   for (const raw of String(tail || '').split('\n')) {
     const line = raw.trim();
     const use = line.includes('"tool_use"') && line.includes('"assistant"');
-    if (!use && !line.includes('Agent terminated early')) continue;
+    if (!use && !line.includes('Agent terminated early') && !line.includes('"user"')) continue;
     let e;
     try { e = JSON.parse(line); } catch { continue; }
     if (!e || e.isSidechain) continue;
@@ -547,6 +554,7 @@ function subagentLimits(tail, { since = 0 } = {}) {
     if (e.type !== 'user') continue;
     const at = Date.parse(e.timestamp);
     if (!Number.isFinite(at) || at < since) continue;
+    if (!e.isMeta && isPersonMessage(e.message?.content)) lastPerson = Math.max(lastPerson, at);
     for (const text of blockTexts(e.message?.content, agentUses)) {
       for (const m of normQuote(text).matchAll(SUBAGENT_LIMIT)) {
         if (!names.includes(m[1])) names.push(m[1]);
@@ -555,6 +563,8 @@ function subagentLimits(tail, { since = 0 } = {}) {
       }
     }
   }
+  // like limitFromTranscript: a person's message after the hit (theirs or the typed carry-on) means the session went on
+  if (hit && lastPerson > hit.at) return { names: [], hit: null };
   return { names, hit };
 }
 
