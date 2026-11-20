@@ -4790,10 +4790,19 @@ function guiSwitchIdle() {
  * machine dispatched into it has not reported yet; v3.110 also a task received from a paired device (or any queued one).
  */
 function guiHolds(pid) {
-  if (Date.now() - (activity.get(pid)?.at || 0) < 15000) return true;
+  return guiRecent(pid) || guiTaskOpen(pid);
+}
+const guiRecent = (pid) => Date.now() - (activity.get(pid)?.at || 0) < 15000;
+/** A task dispatched into this tab (by this machine, a paired device or a queue) that has not reported yet. */
+function guiTaskOpen(pid) {
   for (const x of loadDispatches().values()) if (x.pub === 'self' && x.into === pid && !x.report) return true;
   if (linkHost?.taskOpenIn(pid)) return true;   // v3.110 a paired device's task (or a local queue's) for this tab, not reported
   return false;
+}
+/** v3.112 a GUI tab's own session (from claude's init message): are sub-agents or background shells still running? */
+function guiWorking(sid) {
+  const session = sid ? office()?.readSession(sid) : undefined;
+  return (session?.workers || []).some((w) => w && w.doneAt === undefined) || (session?.shells || []).some((x) => x && x.endAt === undefined);
 }
 /** A running tab's session id when its claude can restart without losing anything, else ''. */
 function idleSession(pid) {
@@ -5482,10 +5491,14 @@ ipcMain.handle('chat:mode', (_e, id, mode) => {
   const undo = () => { if (had) termTabs.add(id); else termTabs.delete(id); };
   if (handoffLocked(id)) { undo(); lockedNotice(id); return 'locked'; }
   // the same test as restartIdle (no turn, agents, shells or draft; a session id to resume), plus an open card or turn
-  const sid = idleSession(id);
-  if (!sid || guiHolds(id) || (t.gui && (t.asks().length > 0 || t.live().busy)) || (!t.gui && attention.get(r.project.id) === 'permission')) { undo(); return 'busy'; }
+  // v3.112 a GUI tab is judged by its own state (a new tab with no conversation yet starts its terminal fresh; before,
+  // it had no session to resume and the Terminal button did nothing but a short hint)
+  const guiSid = t.gui ? validSid(t.sessionId()) || '' : '';
+  const sid = t.gui ? guiSid || validSid(lastSid.get(id)) || '' : idleSession(id);
+  const plan = GS.switchPlan({ gui: Boolean(t.gui), sid, guiSid, asks: t.gui ? t.asks().length : 0, busy: t.gui ? t.live().busy : false, tasks: guiTaskOpen(id), working: t.gui ? guiWorking(sid) : false, recent: guiRecent(id), permission: attention.get(r.project.id) === 'permission' });
+  if (plan === 'busy') { undo(); return 'busy'; }
   saveState();   // v3.110 the choice outlives an app restart
-  startPty(id, { sessionId: sid, resume: true });
+  startPty(id, plan === 'resume' ? { sessionId: sid, resume: true } : {});
   return 'moved';
 });
 // the renderer shows a tab: a sleeping one starts (lazy start, wake from sleep)

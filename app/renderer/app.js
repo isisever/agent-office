@@ -239,7 +239,9 @@ async function setChatMode(id, on) {
   let failed = '';   // v3.110 the switch could not be asked: the tab keeps its mode and says why
   try { r = String(id).split(':')[0] === HQ_ROW.id ? 'ok' : await api.chat.mode(id, on ? 'gui' : 'terminal'); } catch (e) { console.error(e); failed = String((e && /** @type {any} */ (e).message) || e); } finally { switching.delete(id); }
   if (failed || r === 'busy' || r === 'locked') {
-    hint(id, failed ? t('chat.gui.switchFailed', { error: failed }) : t(r === 'busy' ? 'chat.gui.busySwitch' : 'chat.why.locked'));
+    const why = failed ? t('chat.gui.switchFailed', { error: failed }) : t(r === 'busy' ? 'chat.gui.busySwitch' : 'chat.why.locked');
+    hint(id, why);
+    panes.get(id)?.chat?.note?.(why);   // v3.112 also under the chat's input, where the button was pressed
     setTimeout(() => hint(id, ''), 4000);
     return;
   }
@@ -988,7 +990,10 @@ $('empty-add').addEventListener('click', addProject);
 $('tab-add').addEventListener('click', () => addTab(activeId));
 
 // ⌘V (Ctrl+Shift+V on Linux; from the menu): smart paste into the focused terminal; normal paste outside it (e.g. account name).
+// v3.112 a chat input with the focus takes Finder files and images itself first (renderer/chat.js paste()).
 api.clipboard.onPaste?.(async () => {
+  const chat = [...panes.values()].find((p) => p.chat && p.el.contains(document.activeElement))?.chat;
+  if (chat && await chat.paste().catch(() => false)) return;
   if (!(await pasteIntoFocused())) api.clipboard.nativePaste();
 });
 

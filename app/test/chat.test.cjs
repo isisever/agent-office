@@ -374,8 +374,10 @@ test('v3.109 pasted images: checked types, count and size; image blocks for a GU
   assert.match(save, /7 \* 864e5/);
   assert.match(send, /for \(const p of paths\) \{ try \{ fs\.rmSync\(p\); \}/, 'files of a message that was not typed go at once');
   // a mode switch never cuts a prompt just typed in, nor a task that has not reported
-  assert.match(MAIN, /if \(Date\.now\(\) - \(activity\.get\(pid\)\?\.at \|\| 0\) < 15000\) return true;/);
+  assert.match(MAIN, /const guiRecent = \(pid\) => Date\.now\(\) - \(activity\.get\(pid\)\?\.at \|\| 0\) < 15000;/);
+  assert.match(MAIN, /return guiRecent\(pid\) \|\| guiTaskOpen\(pid\);/);
   assert.match(MAIN, /handoffLocked\(pid\) \|\| guiHolds\(pid\)\) continue;/);
-  assert.match(MAIN, /if \(!sid \|\| guiHolds\(id\) \|\|/);
+  // v3.112 the Terminal button: a terminal tab still waits out the typing window; every tab waits for an open task
+  assert.match(MAIN, /tasks: guiTaskOpen\(id\), working: t\.gui \? guiWorking\(sid\) : false, recent: guiRecent\(id\)/);
   assert.match(MAIN, /if \(!t\.sendUser\(text, images\)\) return false;/);
 });

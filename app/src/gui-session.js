@@ -40,6 +40,25 @@ function cleanTermTabs(raw, ptyIds) {
   return [...out];
 }
 
+/**
+ * v3.112 may a running tab switch between the GUI chat and its terminal now, and how?
+ * 'resume': its session goes on in the other mode; 'fresh': a GUI tab that has no conversation yet starts the other
+ * mode new (there is nothing to resume, which used to refuse the switch as busy); 'busy': not now.
+ * A GUI tab is idle when it has no open card, no turn, no open task and no sub-agent or shell running: its prompts
+ * arrive whole, so the terminal's 15 s typing window (`recent`) and its pid-file status do not apply to it.
+ * A terminal tab needs its pid file's idle session (`sid`), no open task, no recent typing and no permission prompt.
+ * @param {{ gui: boolean, sid?: string, guiSid?: string, asks?: number, busy?: boolean, tasks?: boolean, working?: boolean, recent?: boolean, permission?: boolean }} o
+ * @returns {'resume' | 'fresh' | 'busy'}
+ */
+function switchPlan({ gui, sid = '', guiSid = '', asks = 0, busy = false, tasks = false, working = false, recent = false, permission = false }) {
+  if (tasks) return 'busy';
+  if (gui) {
+    if (asks > 0 || busy || working) return 'busy';
+    return guiSid || sid ? 'resume' : 'fresh';
+  }
+  return sid && !recent && !permission ? 'resume' : 'busy';
+}
+
 /** claude's argv for a GUI start: the protocol flags, then the tab's own arguments (built without a prompt). */
 const guiArgs = (args) => [...GUI_FLAGS, ...args];
 
@@ -186,4 +205,4 @@ function endNote(stderr) {
   return lines.join('\n').slice(-END_NOTE_MAX);
 }
 
-module.exports = { endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+module.exports = { endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };

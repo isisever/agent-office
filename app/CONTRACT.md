@@ -2633,3 +2633,23 @@ limitCarryOnPrompt({ agents, model }) → string
 - **Tests**: `app/test/main.test.cjs` "limit policy (v3.111)": order explicit → same model → second model → wait, a
   project on Opus 5.5 and on Fable, the person's second-model choice and None (wait), reset-passed accounts, the model
   restored on return, the sub-agent line, the carry-on prompt, model order matching the sidebar list.
+
+## GUI chat fixes: answered cards close, Terminal works on a new tab, Finder files and images paste (v3.112)
+
+- **Cards**: `renderer/chat.js` `answer()` set `askShown = ''` after an answer, which is also "nothing open": when the
+  answered card was the last one, `setGui` never redrew and the card (AskUserQuestion, permission, plan) stayed on
+  screen. It now sets `ASK_REDRAW` and takes the card down at once when nothing else is open; a failed answer draws
+  the same card again. The protocol was right: `control_response` `success` with the request's id, `behavior: 'allow'`,
+  `updatedInput: { ...input, answers: { [question]: label | typed text } }`; Skip is `behavior: 'deny'`.
+- **Terminal button** (`chat:mode`): `GS.switchPlan` decides `resume` | `fresh` | `busy`. A GUI tab is judged by its
+  own state (no open card, no turn, no open task, no sub-agent or shell in its session); its session id comes from
+  claude's init message, else the session it was started with. A GUI tab with no conversation yet starts its terminal
+  fresh (before: no session id → `busy`, so the button only flashed a hint). The terminal's 15 s typing window and a
+  permission prompt elsewhere no longer hold a GUI tab. A refused switch also says why under the chat input
+  (`chat.note`).
+- **Paste and drop**: the menu's Paste (⌘V) with a chat input focused goes to the chat first (`chat.paste()`): files
+  copied in Finder go in as `@path`; an image is read with `navigator.clipboard.read()` and attached like a pasted one
+  (sent as an `image` content block in a GUI tab, saved to a file and typed as `@path` in a terminal tab); otherwise
+  the browser's own paste runs as before. A file dropped anywhere on the chat (not only on the input) goes in as `@path`.
+- **Tests**: `app/test/gui-session.test.cjs` "v3.112 …" (switch plans, an AskUserQuestion answer round trip through
+  `spawnGui`, renderer wiring); `app/test/gui-holds.test.cjs` follows `guiTaskOpen`.

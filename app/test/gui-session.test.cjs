@@ -259,3 +259,63 @@ test('GUI chat: the end note keeps the last lines of stderr, without escapes or 
   assert.equal(GS.endNote(''), '');
   assert.equal(GS.endNote('a'.repeat(2000)).length, 800);
 });
+
+test('v3.112 Terminal button: a GUI tab switches by its own state; a new one with no conversation starts fresh', () => {
+  // a GUI tab: no open card, no turn, no task, nothing running → resume its session; no session yet → fresh
+  assert.equal(GS.switchPlan({ gui: true, guiSid: 's1' }), 'resume');
+  assert.equal(GS.switchPlan({ gui: true, sid: 's0' }), 'resume');
+  assert.equal(GS.switchPlan({ gui: true }), 'fresh');
+  // the terminal's typing window and a permission prompt elsewhere do not hold a GUI tab
+  assert.equal(GS.switchPlan({ gui: true, guiSid: 's1', recent: true, permission: true }), 'resume');
+  for (const o of [{ asks: 1 }, { busy: true }, { tasks: true }, { working: true }]) assert.equal(GS.switchPlan({ gui: true, guiSid: 's1', ...o }), 'busy', JSON.stringify(o));
+  // a terminal tab: as before (an idle pid-file session, nothing typed in the last 15 s, no permission prompt, no task)
+  assert.equal(GS.switchPlan({ gui: false, sid: 's1' }), 'resume');
+  for (const o of [{ sid: '' }, { recent: true }, { permission: true }, { tasks: true }]) assert.equal(GS.switchPlan({ gui: false, sid: 's1', ...o }), 'busy', JSON.stringify(o));
+  // wiring: chat:mode uses the plan; a fresh start passes no session
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const mode = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:mode'"), MAIN.indexOf("ipcMain.on('pty:wake'"));
+  assert.match(mode, /GS\.switchPlan\(\{ gui: Boolean\(t\.gui\)/);
+  assert.match(mode, /startPty\(id, plan === 'resume' \? \{ sessionId: sid, resume: true \} : \{\}\)/);
+  // the reason a switch was refused shows under the chat input too
+  const APP = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
+  assert.match(APP, /panes\.get\(id\)\?\.chat\?\.note\?\.\(why\)/);
+});
+
+test('v3.112 AskUserQuestion: the answer reaches claude as updatedInput.answers and the card leaves the open list', () => {
+  const written = [];
+  const child = Object.assign(new EventEmitter(), { pid: 42, stdin: Object.assign(new EventEmitter(), { destroyed: false, write: (s) => { written.push(s); return true; } }), stdout: new EventEmitter(), stderr: new EventEmitter(), kill() {} });
+  const t = spawnGui(() => child, 'sh', [], { cwd: '/', env: {} }, { killGroup: () => {} });
+  const input = { questions: [{ question: 'Which color?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: '' }, { label: 'Blue', description: '' }] }] };
+  child.stdout.emit('data', `${JSON.stringify({ type: 'control_request', request_id: 'req-7', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input } })}\n`);
+  assert.equal(t.asks().length, 1);
+  assert.equal(t.asks()[0].kind, 'question');
+  assert.equal(t.answer('req-7', { allow: true, answers: { 'Which color?': 'Blue' } }), 'ok');
+  assert.equal(t.asks().length, 0, 'answered: no longer open, so the chat drops the card');
+  const out = JSON.parse(written.at(-1));
+  assert.deepEqual(out, { type: 'control_response', response: { subtype: 'success', request_id: 'req-7', response: { behavior: 'allow', updatedInput: { ...input, answers: { 'Which color?': 'Blue' } } } } });
+  // Skip: a deny with the same request id; answering again is 'gone'
+  child.stdout.emit('data', `${JSON.stringify({ type: 'control_request', request_id: 'req-8', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input } })}\n`);
+  assert.equal(t.answer('req-8', { allow: false }), 'ok');
+  assert.equal(JSON.parse(written.at(-1)).response.response.behavior, 'deny');
+  assert.equal(JSON.parse(written.at(-1)).response.request_id, 'req-8');
+  assert.equal(t.answer('req-8', { allow: false }), 'gone');
+});
+
+test('v3.112 chat renderer (source text): an answered card is taken down; paste, drop and the switch note are wired', () => {
+  const CHAT = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat.js'), 'utf8');
+  const answer = CHAT.slice(CHAT.indexOf('async function answer('), CHAT.indexOf('function withMessage('));
+  // the bug: askShown = '' equals "nothing open", so setGui never redrew (hid) the last answered card
+  assert.doesNotMatch(answer, /askShown = '';/);
+  assert.match(answer, /askShown = ASK_REDRAW;/);
+  assert.match(answer, /if \(!next\.length\) drawAsk\(null\);/);
+  // permission and plan cards go through the same answer()
+  const draw = CHAT.slice(CHAT.indexOf('function drawAsk('), CHAT.indexOf('async function interrupt('));
+  assert.equal((draw.match(/answer\(ask, \{ allow: true \}\)/g) || []).length, 2);
+  // files dropped anywhere on the chat; Finder files and images from the menu's Paste
+  assert.match(CHAT, /el\.addEventListener\('drop'/);
+  assert.match(CHAT, /async function pasteFromMenu\(\)/);
+  assert.match(CHAT, /navigator\.clipboard\.read\(\)/);
+  assert.match(CHAT, /paste: \(\) => pasteFromMenu\(\)/);
+  const APP = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
+  assert.match(APP, /if \(chat && await chat\.paste\(\)\.catch\(\(\) => false\)\) return;/);
+});

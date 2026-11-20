@@ -91,8 +91,8 @@ test('v3.110 a task of this machine\'s queue (HQ, a routine) holds its tab until
 });
 
 test('v3.110 wiring: guiHolds asks the link host; the terminal choice is saved, pruned and seeded', () => {
-  const holds = bodyOf(MAIN, 'function guiHolds(');
-  assert.match(holds, /if \(linkHost\?\.taskOpenIn\(pid\)\) return true;/);
+  assert.match(bodyOf(MAIN, 'function guiHolds('), /guiTaskOpen\(pid\)/);
+  assert.match(bodyOf(MAIN, 'function guiTaskOpen('), /if \(linkHost\?\.taskOpenIn\(pid\)\) return true;/);
   // termTabs: kept in state on every save, read back at load, offered to the renderer
   assert.match(bodyOf(MAIN, 'function saveState('), /keepTermTabs\(\);/);
   assert.match(bodyOf(MAIN, 'function keepTermTabs('), /GS\.cleanTermTabs\(\[\.\.\.termTabs\], state\.projects\.flatMap\(\(p\) => P\.ptyIdsOf\(p\)\)\)/);
