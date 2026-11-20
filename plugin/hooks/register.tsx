@@ -284,12 +284,30 @@ function directoryText(raw: string, journalFile = ''): string | undefined {
   const more = (data as Record<string, unknown>).more
   const rest = listed.length - lines.length + (typeof more === 'number' && more > 0 ? Math.floor(more) : 0)
   if (rest > 0) lines.push(`- … and ${rest} more`)
+  // app contract v3.114: the other accounts whose user MCP servers this session also got
+  const accountsListed = (data as Record<string, unknown>).accounts
+  const accountLines: string[] = []
+  for (const item of Array.isArray(accountsListed) ? accountsListed : []) {
+    if (accountLines.length >= DIRECTORY_MAX) break
+    if (item === null || typeof item !== 'object') continue
+    const a = item as Record<string, unknown>
+    const name = oneLine(a.name, DIRECTORY_FIELD_MAX)
+    const mcp = (Array.isArray(a.mcp) ? a.mcp : [])
+      .map(n => oneLine(n, DIRECTORY_FIELD_MAX))
+      .filter(Boolean)
+      .slice(0, DIRECTORY_MCP_MAX)
+    if (name && mcp.length) accountLines.push(`- account ${name}: ${mcp.join(', ')}`)
+  }
   return `# Projects in this Agent Office
 
 The person has these projects open in Agent Office, each with its own folder and account:
 ${lines.join('\n')}
 
 When the person names one of these projects, they mean that folder: read and work there with absolute paths (in Bash, \`cd <folder> && …\`) instead of searching the disk for it. The MCP servers listed for a project are connected in this session under those names (tools \`mcp__<server>__…\`); use them for that project's work.${
+    accountLines.length
+      ? `\n\nThis session also has the user MCP servers of the person's other accounts in Agent Office, under these names:\n${accountLines.join('\n')}`
+      : ''
+  }${
     journalFile
       ? `\n\nEvery session's turns are logged in the office journal \`${journalFile}\` (JSON lines: time, project, folders touched, new commits, the prompt, a short summary and the transcript path): when the person refers to work done in another project or session, read it, and the transcripts it lists, rather than guessing.`
       : ''

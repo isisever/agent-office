@@ -2659,7 +2659,7 @@ limitCarryOnPrompt({ agents, model }) → string
 - **Attach** (`chat:pick`, preload `chat.pick(id, wantImages)`): a 📎 button left of the chat input (every tab with a
   chat input, also HQ and a terminal tab's chat; not the read-only remote view) opens the native picker
   (`openFile`, `multiSelections`, default path the tab's folder). → `null` | `{ paths, images: [{ type, data, path }] }`.
-  In a GUI tab png/jpg/jpeg/gif/webp files (≤ 30 MB read, at most 5; `FM.imageType`, `FM.PICK_IMAGE_MAX`) go into the
+  In a GUI tab png/jpg/jpeg/gif/webp files (≤ 10 MB read, at most 5; `FM.imageType`, `FM.PICK_IMAGE_MAX`) go into the
   image bar through `addImages` (same checks and scaling as a paste); images past the bar's room, every other file and
   every file in a terminal tab go in as `@path` through `insertPaths` (full path, quoted when it holds a space).
 - **Show in Finder** (`chat:reveal`) now uses `FM.revealTarget([tab folder, project folder], path)`: both sides are
@@ -2670,3 +2670,33 @@ limitCarryOnPrompt({ agents, model }) → string
 - **Strings** (en, tr): `chat.attach`, `chat.revealGone`, `main.chatPickFiles`.
 - **Tests**: `app/test/chat.test.cjs` "v3.113 Show in Finder …" (absolute/relative, worktree roots, gone files,
   symlinked roots and macOS /tmp, image types, main/preload/renderer wiring).
+
+## Every account's user MCP servers reach every project (v3.114)
+
+- **Gap closed**: v3.6 shares Default's user servers with the other accounts and v3.9 every project's local and
+  approved `.mcp.json` servers, but a user-scope server added on an account other than Default (top-level
+  `mcpServers` of `<config>/.claude.json`) reached no project on Default or on another account.
+- **Rule** (`src/shared-config.js` `mcpPlan` / `otherAccounts`): under the same **Share MCP servers between projects**
+  setting and for the same sessions (Default's, or an account's with its share setting on), the `--mcp-config` file
+  (0600, userData/mcp/<tab>.json) also gets the user servers of every other account in `state.accounts` whose folder
+  still exists and whose share setting is on (an account that keeps apart from Default's set neither gets nor gives
+  shared servers). Default is not a source here (its user servers already reach sharing accounts, v3.6) and neither is
+  the session's own account. They are merged after the projects' servers with `officeMcpServers`, so v3.9 names stay:
+  a name the session already has with the same config is not added, an identical config already added under another
+  name is not added again, and a clash with another config becomes `<server>-<account>`: the account's label as an
+  ASCII slug (accents stripped, `ı` → `i`, at most 24 characters), its id when the label has no usable character,
+  then `-2`, `-3`… A name that two or more of these accounts bring with different configs (`contestedNames`) is
+  renamed `<server>-<account>` on every one of them, whatever the order of `state.accounts`, so the bare name never
+  silently moves from one account to another; identical configs still share one bare name. When all but one of them
+  go (removed, share off, folder gone), the last one's server takes the bare name again: one visible change in the
+  MCP panel. Only `mcpServers` is read; logins (`.credentials.json`, `oauthAccount`, `primaryApiKey`) never.
+- **Where it shows**: `prepareShared` / `mcpPlan` return `accountNames` (`{ [accountId]: string[] }`, prepareShared only
+  when some): only the servers accounts actually added, never one deduplicated against the session's own servers or a
+  project's (such a server stays that project's `office` row); the office directory gets `accounts: [{ name, mcp }]` and the plugin's **Projects in this Agent Office**
+  section lists them by account name; the MCP panel lists such a server with source `otherAccount` (read-only, hint
+  `sidebar.mcpReadOnlyAccount`). `officeInput` passes `accounts`; the MCP reload key also covers account labels.
+- **Tests**: `app/test/main.test.cjs` "v3.114 …" (dedup across accounts, `<server>-<account>` renames, share off, a
+  session's own account, a gone folder, no login in the file, panel source, directory) and "v3.114 a server name other
+  accounts bring with different configs …" (order-independent suffixes, removal turns the name bare, project dedup
+  not listed, injected `exists`); `plugin/tests/office.test.tsx`
+  "app contract v3.114 …".

@@ -471,18 +471,18 @@ function settleTokens(servers, from, to, { sweep = true } = {}) {
  * and the host of remote ones; never a URL path, header, env, argument or token. where / origin (v3.69): see push below.
  * source: 'user' (~/.claude.json mcpServers) | 'local' (~/.claude.json projects[dir]) | 'account' (the account's own
  * .claude.json) | 'project' (.mcp.json; approved: false = Claude Code asks before using it) | 'office' (another
- * project's, v3.9 share) | 'app' (added in Agent Office; scope 'all' | 'project'; shadowed: a server of that name
+ * project's, v3.9 share) | 'otherAccount' (another account's user server, v3.114; account: its id) | 'app' (added in Agent Office; scope 'all' | 'project'; shadowed: a server of that name
  * already reaches the session, so this one is not added; the same rule as SC.prepareShared: a .mcp.json server that
  * is not approved does not count; bossShadowed: named `agent-office`, so the project's boss tab (`boss`, manager
  * mode) uses Agent Office's own server of that name there, and the other tabs this one). Last, in every project's
  * list, the servers held for a handed-off project (scope 'held', away: true, folder: the folder's last part); no
  * session gets them, and they can be removed here.
  * @param {{ account: any, home: string, cwd: string | null, office?: any, servers?: any[], projectId: string,
- *   boss?: boolean, hasToken?: (id: string) => boolean, read?: (file: string) => any }} o
+ *   boss?: boolean, hasToken?: (id: string) => boolean, read?: (file: string) => any, exists?: (p: string) => boolean }} o
  */
-function listing({ account, home, cwd, office = null, servers = [], projectId, boss = false, hasToken = () => false, read }) {
+function listing({ account, home, cwd, office = null, servers = [], projectId, boss = false, hasToken = () => false, read, exists }) {
   const rd = read || ((/** @type {string} */ f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } });
-  const plan = SC.mcpPlan({ account, home, cwd, office, read: rd });
+  const plan = SC.mcpPlan({ account, home, cwd, office, read: rd, ...(exists ? { exists } : {}) });
   const isDefault = !account?.configDir || path.resolve(account.configDir) === path.resolve(path.join(home, '.claude'));
   const defaultConfig = rd(path.join(home, '.claude.json'));
   const defLocal = isObj(defaultConfig?.projects) && cwd ? defaultConfig.projects[cwd]?.mcpServers : null;
@@ -502,10 +502,11 @@ function listing({ account, home, cwd, office = null, servers = [], projectId, b
   for (const [n, c] of Object.entries(plan.own.project)) push(n, c, 'project', { approved: approved(n), where: 'project' });
   for (const [n, c] of Object.entries(plan.own.user)) push(n, c, isDefault ? 'user' : 'account', { where: 'user' });
   for (const [n, c] of Object.entries(plan.servers)) {
-    const src = isObj(defLocal) && isObj(defLocal[n]) ? 'local' : isObj(defaultConfig?.mcpServers?.[n]) ? 'user' : 'office';
+    const fromAccount = Object.keys(plan.accountNames || {}).find((id) => plan.accountNames[id].includes(n));
+    const src = isObj(defLocal) && isObj(defLocal[n]) ? 'local' : isObj(defaultConfig?.mcpServers?.[n]) ? 'user' : fromAccount ? 'otherAccount' : 'office';
     // another project's (v3.9): origin = that project's folder, so main can send the edit to that project's own row
     const origin = src === 'office' ? Object.keys(plan.mcpNames).find((k) => k !== office?.current && plan.mcpNames[k].includes(n)) : null;
-    push(n, c, src, src === 'office' ? (origin ? { origin } : {}) : { where: `default-${src}` });
+    push(n, c, src, src === 'otherAccount' ? { account: fromAccount } : src === 'office' ? (origin ? { origin } : {}) : { where: `default-${src}` });
   }
   for (const s of serversFor(servers.filter((x) => !x.held), projectId)) {
     const shadowed = seen.has(s.name);

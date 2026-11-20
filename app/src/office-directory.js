@@ -18,10 +18,12 @@ const DEFAULT_ACCOUNT_NAME = 'Default'; // the prompt is English; the sidebar tr
  * mcp: { [dir]: string[] } server names as the session sees them (shared-config.js prepareShared mcpNames).
  * The current project comes first and is marked; at most PROJECTS_MAX projects (`more` counts the rest) and
  * MCP_MAX server names each.
- * → { format, projects: [{ name, dir, account, mcp, current? }], more? }
- * @param {{ projects: { name: string, dir: string, account: string }[], current?: string | null, mcp?: Record<string, string[]> }} o
+ * accounts (contract v3.114): [{ name, mcp }] the other accounts whose user servers the session got (shared-config.js
+ * prepareShared accountNames), at most PROJECTS_MAX, MCP_MAX names each; listed only when some.
+ * → { format, projects: [{ name, dir, account, mcp, current? }], more?, accounts? }
+ * @param {{ projects: { name: string, dir: string, account: string }[], current?: string | null, mcp?: Record<string, string[]>, accounts?: { name: string, mcp: string[] }[] }} o
  */
-function officeDirectory({ projects, current = null, mcp = {} }) {
+function officeDirectory({ projects, current = null, mcp = {}, accounts = [] }) {
   const all = (Array.isArray(projects) ? projects : []).filter((p) => p && typeof p.dir === 'string' && p.dir);
   const ordered = [...all.filter((p) => p.dir === current), ...all.filter((p) => p.dir !== current)];
   const out = ordered.slice(0, PROJECTS_MAX).map((p) => ({
@@ -32,7 +34,12 @@ function officeDirectory({ projects, current = null, mcp = {} }) {
     ...(p.dir === current ? { current: true } : {}),
   }));
   const more = ordered.length - out.length;
-  return { format: FORMAT, projects: out, ...(more > 0 ? { more } : {}) };
+  const names = (v) => (Array.isArray(v) ? v : []).filter((n) => typeof n === 'string' && n).slice(0, MCP_MAX);
+  const accs = (Array.isArray(accounts) ? accounts : [])
+    .filter((a) => a && names(a.mcp).length)
+    .slice(0, PROJECTS_MAX)
+    .map((a) => ({ name: String(a.name || DEFAULT_ACCOUNT_NAME), mcp: names(a.mcp) }));
+  return { format: FORMAT, projects: out, ...(more > 0 ? { more } : {}), ...(accs.length ? { accounts: accs } : {}) };
 }
 
 /** The account name the directory shows: Default's in English, any other account's own label. */

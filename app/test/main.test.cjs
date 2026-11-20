@@ -4907,3 +4907,132 @@ test('limit policy (v3.111): the second model is passed while away and dropped o
   assert.match(main, /FB\.planLimitMove\(/);
   assert.match(main, /R\.limitCarryOnPrompt\(/);
 });
+
+test('v3.114 the user MCP servers of every other account reach each session under the share setting: deduplicated, renamed <server>-<account>, never a login', (t) => {
+  const SCa = require('../src/shared-config.js');
+  const ODa = require('../src/office-directory.js');
+  const MSa = require('../src/mcp-servers.js');
+  const root = fsT.realpathSync(fsT.mkdtempSync(pathT.join(osT.tmpdir(), 'ao-account-mcp-')));
+  t.after(() => fsT.rmSync(root, { recursive: true, force: true }));
+  const j = (...p) => pathT.join(root, ...p);
+  const w = (p, v) => { fsT.mkdirSync(pathT.dirname(p), { recursive: true }); fsT.writeFileSync(p, JSON.stringify(v)); };
+  const home = j('home'); const work = j('accounts', 'work'); const side = j('accounts', 'side'); const off = j('accounts', 'off');
+  const shop = j('shop'); const erp = j('erp');
+  for (const d of [shop, erp]) fsT.mkdirSync(d, { recursive: true });
+  const odoo = { type: 'http', url: 'https://odoo.example/mcp', headers: { Authorization: 'Bearer odoo' } };
+  const grafanaDefault = { type: 'http', url: 'https://grafana/default' };
+  const grafanaWork = { type: 'http', url: 'https://grafana/work' };
+  w(pathT.join(home, '.claude.json'), { mcpServers: { grafana: grafanaDefault }, oauthAccount: { emailAddress: 'x' } });
+  w(pathT.join(work, '.claude.json'), { mcpServers: { 'odoo-erp': odoo, grafana: grafanaWork }, oauthAccount: { emailAddress: 'w' }, primaryApiKey: 'sk-secret' });
+  w(pathT.join(work, '.credentials.json'), { token: 'never' });
+  w(pathT.join(side, '.claude.json'), { mcpServers: { 'odoo-erp': odoo, local: { command: './run.sh' } } }); // the same odoo-erp
+  w(pathT.join(off, '.claude.json'), { mcpServers: { hidden: { url: 'h' } } });
+  const sources = [pathT.join(home, '.claude.json'), pathT.join(work, '.claude.json'), pathT.join(side, '.claude.json')];
+  const before = sources.map((f) => fsT.readFileSync(f, 'utf8'));
+  const accounts = [
+    { id: 'w1', label: 'İş Hesabı', configDir: work, share: true },
+    { id: 's1', label: 'Side', configDir: side, share: true },
+    { id: 'o1', label: 'Off', configDir: off, share: false }, // keeps apart: gives nothing
+    { id: 'g1', label: 'Gone', configDir: j('accounts', 'gone'), share: true }, // folder removed
+  ];
+  const office = (current, share = true) => ({ share, current, accounts, projects: [
+    { name: 'shop', dir: shop, configDir: null, share: true },
+    { name: 'erp', dir: erp, configDir: work, share: true },
+  ] });
+  const mcpFile = j('ud', 'mcp', 'tab.json');
+  const opts = (account, o, cwd) => ({ account, home, cwd, stageRoot: j('ud', 'st'), mcpFile, office: o });
+  const dflt = { id: 'default', configDir: null };
+
+  // the Default account's session in shop: odoo-erp once (identical in two accounts), Work's grafana renamed
+  let r = SCa.prepareShared(opts(dflt, office(shop), shop));
+  assert.equal(r.mcpConfig, mcpFile);
+  if (process.platform !== 'win32') assert.equal(fsT.statSync(mcpFile).mode & 0o777, 0o600);
+  const servers = JSON.parse(fsT.readFileSync(mcpFile, 'utf8')).mcpServers;
+  assert.deepEqual(servers, { 'odoo-erp': odoo, 'grafana-Is-Hesabi': grafanaWork, local: { command: './run.sh' } });
+  assert.deepEqual(r.accountNames, { w1: ['odoo-erp', 'grafana-Is-Hesabi'], s1: ['odoo-erp', 'local'] });
+  const text = fsT.readFileSync(mcpFile, 'utf8');
+  for (const secret of ['sk-secret', 'oauthAccount', 'never', 'hidden']) assert.ok(!text.includes(secret), secret);
+  assert.deepEqual(sources.map((f) => fsT.readFileSync(f, 'utf8')), before);
+
+  // the Work account's session in erp: its own user servers are not added again; Side's odoo-erp is the same config
+  r = SCa.prepareShared(opts({ id: 'w1', label: 'İş Hesabı', configDir: work }, office(erp), erp));
+  const s2 = JSON.parse(fsT.readFileSync(mcpFile, 'utf8')).mcpServers;
+  assert.deepEqual(Object.keys(s2).sort(), ['local']); // Default's grafana: the account's own grafana wins
+  assert.deepEqual(r.accountNames, { s1: ['local'] }); // odoo-erp: the session's own (identical), not Side's
+
+  // the setting off, or a session account keeping apart: no account's servers
+  r = SCa.prepareShared(opts(dflt, office(shop, false), shop));
+  assert.equal(r.mcpConfig, null);
+  assert.equal(r.accountNames, undefined);
+  r = SCa.prepareShared(opts({ id: 's1', configDir: side, shareDefault: false }, office(shop), shop));
+  assert.equal(r.accountNames, undefined);
+
+  // a project server keeps its v3.9 name; a clashing account server gets the account's suffix
+  w(pathT.join(home, '.claude.json'), { mcpServers: {}, projects: { [erp]: { mcpServers: { 'odoo-erp': { url: 'project-odoo' } } } } });
+  const o3 = { ...office(shop), projects: [{ name: 'shop', dir: shop, configDir: null, share: true }, { name: 'erp', dir: erp, configDir: null, share: true }] };
+  const plan = SCa.mcpPlan({ account: dflt, home, cwd: shop, office: o3 });
+  assert.deepEqual(plan.mcpNames[erp], ['odoo-erp']);
+  assert.deepEqual(plan.accountNames.w1, ['odoo-erp-Is-Hesabi', 'grafana']);
+  assert.deepEqual(plan.accountNames.s1, ['odoo-erp-Is-Hesabi', 'local']);
+
+  // the suffix: a label slug (ASCII), the id when the label has no usable letter
+  assert.equal(SCa.accountSuffix({ id: 'abc123', label: 'ışık 2' }), 'isik-2');
+  assert.equal(SCa.accountSuffix({ id: 'abc123', label: '★★' }), 'abc123');
+  assert.deepEqual(SCa.otherAccounts(accounts, { home, configDir: work }).map((a) => a.id), ['s1']);
+
+  // the MCP panel names the source; the office directory lists the accounts by name
+  const rows = MSa.listing({ account: dflt, home, cwd: shop, office: o3, projectId: 'p' });
+  assert.deepEqual(rows.filter((x) => x.source === 'otherAccount').map((x) => [x.name, x.account]), [['odoo-erp-Is-Hesabi', 'w1'], ['grafana', 'w1'], ['local', 's1']]);
+  assert.deepEqual(ODa.officeDirectory({ projects: [], accounts: [{ name: 'Side', mcp: ['local', 3] }, { name: 'Empty', mcp: [] }] }).accounts, [{ name: 'Side', mcp: ['local'] }]);
+  assert.equal(ODa.officeDirectory({ projects: [] }).accounts, undefined);
+});
+
+test('v3.114 a server name other accounts bring with different configs is suffixed on every one, whatever their order; a server a project already added stays that project\'s', (t) => {
+  const SCa = require('../src/shared-config.js');
+  const MSa = require('../src/mcp-servers.js');
+  const root = fsT.realpathSync(fsT.mkdtempSync(pathT.join(osT.tmpdir(), 'ao-account-clash-')));
+  t.after(() => fsT.rmSync(root, { recursive: true, force: true }));
+  const j = (...p) => pathT.join(root, ...p);
+  const home = j('home'); const shop = j('shop'); const erp = j('erp');
+  const A = j('accounts', 'a'); const B = j('accounts', 'b'); const C = j('accounts', 'c');
+  const files = {
+    [pathT.join(home, '.claude.json')]: { projects: { [erp]: { mcpServers: { tickets: { url: 'https://tickets' } } } } },
+    [pathT.join(A, '.claude.json')]: { mcpServers: { grafana: { url: 'https://grafana/a' }, tickets: { url: 'https://tickets' }, same: { url: 's' } } },
+    [pathT.join(B, '.claude.json')]: { mcpServers: { grafana: { url: 'https://grafana/b' }, same: { url: 's' } } },
+    [pathT.join(C, '.claude.json')]: { mcpServers: { grafana: { url: 'https://grafana/a' } } }, // the same config as A's
+  };
+  const read = (f) => files[f] ?? null;
+  const exists = (p) => [A, B, C].includes(p); // the folders are faked: nothing exists on disk
+  const accA = { id: 'a1', label: 'Alpha', configDir: A, share: true };
+  const accB = { id: 'b1', label: 'Beta', configDir: B, share: true };
+  const accC = { id: 'c1', label: 'Gamma', configDir: C, share: true };
+  const office = (accounts) => ({ share: true, current: shop, accounts, projects: [
+    { name: 'shop', dir: shop, configDir: null, share: true }, { name: 'erp', dir: erp, configDir: null, share: true },
+  ] });
+  const plan = (accounts) => SCa.mcpPlan({ account: { id: 'default', configDir: null }, home, cwd: shop, office: office(accounts), read, exists });
+
+  // A and B clash on grafana: neither gets the bare name, in either order; identical `same` stays bare
+  for (const order of [[accA, accB], [accB, accA]]) {
+    const p = plan(order);
+    assert.deepEqual(Object.keys(p.servers).sort(), ['grafana-Alpha', 'grafana-Beta', 'same', 'tickets']);
+    assert.deepEqual(p.accountNames.a1, ['grafana-Alpha', 'same']); // tickets: erp's (identical), not A's
+    assert.deepEqual(p.accountNames.b1, ['grafana-Beta', 'same']);
+    assert.deepEqual(p.mcpNames[erp], ['tickets']);
+  }
+  // C has A's grafana: one server for both, still suffixed (B differs)
+  const p3 = plan([accC, accA, accB]);
+  assert.deepEqual(p3.accountNames.c1, ['grafana-Gamma']);
+  assert.deepEqual(p3.accountNames.a1, ['grafana-Gamma', 'same']);
+  assert.ok(!('grafana' in p3.servers));
+  // B removed, or its share turned off: A's grafana takes the bare name again (one change)
+  assert.deepEqual(plan([accA]).accountNames.a1, ['grafana', 'same']);
+  assert.deepEqual(plan([accA, { ...accB, share: false }]).accountNames.a1, ['grafana', 'same']);
+  // a folder that does not exist (the injected exists) gives nothing
+  assert.deepEqual(Object.keys(plan([accA, { id: 'x1', label: 'X', configDir: j('gone'), share: true }]).accountNames), ['a1']);
+  assert.deepEqual([...SCa.contestedNames([{ servers: { x: { a: 1 } } }, { servers: { x: { a: 1 } } }])], []);
+
+  // the MCP panel: the project's identical server stays an office row of erp
+  const rows = MSa.listing({ account: { id: 'default', configDir: null }, home, cwd: shop, office: office([accA, accB]), projectId: 'p', read, exists });
+  assert.deepEqual(rows.filter((x) => x.name === 'tickets').map((x) => [x.source, x.origin]), [['office', erp]]);
+  assert.deepEqual(rows.filter((x) => x.source === 'otherAccount').map((x) => [x.name, x.account]), [['grafana-Alpha', 'a1'], ['same', 'a1'], ['grafana-Beta', 'b1']]);
+});
