@@ -2541,3 +2541,32 @@ agentOffice.chat.reveal(ptyId, path): Promise<'ok' | 'outside'>       // 'chat:r
 - **Tests**: `app/test/chat.test.cjs` (git output, the walk, ranking, mentions, insidePath with `..`, absolute, missing
   and a link out of the folder; tool items carry their file; main reveals only, never opens; images: types, count,
   size, image blocks, the terminal tab's files and their modes by source text).
+
+## Chat view follow-ups: a received task holds the tab, a failed switch says so, the terminal choice is kept (v3.110)
+
+Three amendments to v3.108.
+
+```ts
+// link host (src/link-host.js)
+taskOpenIn(tabId): boolean   // a task for this tab is queued, owed a report, or typed in here and not reported
+// prefs (prefs:get / prefs:set reply) gain termTabs: string[]   // tabs the person switched to the terminal
+// state.json gains termTabs?: string[]                          // the same, kept across restarts; unset when empty
+```
+
+- **A received task holds the tab**: `guiHolds` (main.js), which keeps a tab from restarting for a mode switch (the chat
+  view setting, `chat:mode`), now also holds while `linkHost.taskOpenIn(tab)` is true: a task (with a report) from any
+  device, this one included, waits in the link host's queue for that tab; or a paired device is owed its report from
+  that tab (`Link.owesReportFor`, the queue key is the tab id: the project's main tab or a desk); or a task of this
+  machine's queue (HQ, a routine, a local boss) was typed into that tab in this run and has not reported (kept in memory
+  for at most 4.5 h, `LH.LOCAL_OPEN_MS`; this machine's dispatch records keep holding across restarts as before). Before
+  this a tab running a paired device's task looked idle between turns and could be restarted, and the task lost.
+- **A failed switch says so**: when `chat:mode` itself fails (the IPC call throws), the renderer keeps the tab's current
+  mode and shows `chat.gui.switchFailed` with the error in the tab's hint line for 4 s; before it switched the view as
+  if main had said `ok`.
+- **The terminal choice is kept**: main's `termTabs` is written to state.json as `termTabs` (tab ids, each once, at
+  most 500, `GS.cleanTermTabs`) whenever `chat:mode` changes it, and pruned on every save and at load to tabs that
+  still exist (a removed tab or project drops out). At startup the renderer seeds its `chatOff` from `prefs.termTabs`
+  once, so a tab the person switched to its terminal starts in its terminal after an app restart.
+- **Tests**: `app/test/gui-holds.test.cjs` (a real link host: a paired device's task held while queued and after it is
+  typed until its report; a local task likewise until its report file is scanned; another tab never held; the local
+  hold expires; `cleanTermTabs`; main.js wiring and the renderer's error path by source text).

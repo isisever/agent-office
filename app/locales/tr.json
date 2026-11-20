@@ -744,6 +744,7 @@
       "planTitle": "Claude'un planı hazır",
       "approvePlan": "Planı onayla",
       "keepPlanning": "Planlamaya devam et",
+      "switchFailed": "Bu sekme değiştirilemedi: {error}",
       "busySwitch": "Claude çalışıyor ya da senden cevap bekliyor: iş bitince geçiş yap.",
       "ended": "Oturum kapandı (çıkış {code}). Aynı konuşmaya devam etmek için yeniden başlat.",
       "endedError": "Claude bir hatayla durdu (çıkış {code}):",

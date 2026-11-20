@@ -217,7 +217,8 @@ function isAsleep(id) {
 // ---- Chat view (contract v3.80, chat.js): with the setting on, a Claude Code tab shows its conversation; the
 // terminal stays mounted under it and is one click away. Off: nothing below runs and the pane is as before.
 let chatView = false;
-const chatOff = new Set();   // pty ids the person switched back to the terminal (this window only)
+const chatOff = new Set();   // pty ids the person switched back to the terminal (v3.110 seeded from main's termTabs)
+let chatOffSeeded = false;
 let chatSwitch = null;       // the "chat" button over a terminal (made when first needed)
 /** Can this tab be shown as a chat? Claude Code tabs only (not Antigravity / Command Code / OpenCode, not a shell tab). */
 function chatCapable(id) {
@@ -235,9 +236,10 @@ async function setChatMode(id, on) {
   if (switching.has(id)) return;
   switching.add(id);
   let r = 'ok';
-  try { r = String(id).split(':')[0] === HQ_ROW.id ? 'ok' : await api.chat.mode(id, on ? 'gui' : 'terminal'); } catch (e) { console.error(e); r = 'ok'; } finally { switching.delete(id); }
-  if (r === 'busy' || r === 'locked') {
-    hint(id, t(r === 'busy' ? 'chat.gui.busySwitch' : 'chat.why.locked'));
+  let failed = '';   // v3.110 the switch could not be asked: the tab keeps its mode and says why
+  try { r = String(id).split(':')[0] === HQ_ROW.id ? 'ok' : await api.chat.mode(id, on ? 'gui' : 'terminal'); } catch (e) { console.error(e); failed = String((e && /** @type {any} */ (e).message) || e); } finally { switching.delete(id); }
+  if (failed || r === 'busy' || r === 'locked') {
+    hint(id, failed ? t('chat.gui.switchFailed', { error: failed }) : t(r === 'busy' ? 'chat.gui.busySwitch' : 'chat.why.locked'));
     setTimeout(() => hint(id, ''), 4000);
     return;
   }
@@ -283,6 +285,8 @@ function syncChat() {
 /** v3.80 the chat view setting from main's prefs (startup and the settings checkbox). */
 function applyChatView(p) {
   chatView = p?.chatView === true;
+  // v3.110 the tabs kept in the terminal across an app restart (main's state.json), once at startup
+  if (!chatOffSeeded && Array.isArray(p?.termTabs)) { chatOffSeeded = true; for (const id of p.termTabs) if (typeof id === 'string') chatOff.add(id); }
   sidebar?.setChatView?.(chatView);
   syncChat();
   focusActive();

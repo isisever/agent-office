@@ -26,6 +26,20 @@ function guiEligible({ chatView, terminal, engine, hq, shell, platform }) {
   return chatView === true && !terminal && engine === 'claude' && !hq && !shell && platform !== 'win32';
 }
 
+/**
+ * v3.110 the tabs the person switched to the terminal, as kept in state.json: strings only, each once, only tabs that
+ * still exist (a removed tab or project drops out), at most 500.
+ * @param {unknown} raw
+ * @param {Iterable<string>} ptyIds every tab id that exists now
+ * @returns {string[]}
+ */
+function cleanTermTabs(raw, ptyIds) {
+  const known = new Set(ptyIds);
+  const out = new Set();
+  for (const id of Array.isArray(raw) ? raw : []) if (typeof id === 'string' && known.has(id) && out.size < 500) out.add(id);
+  return [...out];
+}
+
 /** claude's argv for a GUI start: the protocol flags, then the tab's own arguments (built without a prompt). */
 const guiArgs = (args) => [...GUI_FLAGS, ...args];
 
@@ -172,4 +186,4 @@ function endNote(stderr) {
   return lines.join('\n').slice(-END_NOTE_MAX);
 }
 
-module.exports = { endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+module.exports = { endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };

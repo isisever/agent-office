@@ -754,6 +754,7 @@
       "planTitle": "Claude's plan is ready",
       "approvePlan": "Approve the plan",
       "keepPlanning": "Keep planning",
+      "switchFailed": "Could not switch this tab: {error}",
       "busySwitch": "Claude is working or waiting for you: switch when it is done.",
       "ended": "The session ended (exit {code}). Start it again to go on with the same conversation.",
       "endedError": "Claude stopped with an error (exit {code}):",

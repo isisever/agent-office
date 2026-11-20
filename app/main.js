@@ -131,6 +131,7 @@ const loadState = () => SF.readState(statePath()).raw;
 let stateWritable = true;
 function saveState() {
   if (!stateWritable) return;
+  keepTermTabs();
   try { SF.writeAtomic(statePath(), JSON.stringify(P.stateFile(loadState(), state), null, 2)); } catch {}
 }
 
@@ -1208,7 +1209,15 @@ const RESUME_GRACE_MS = 8000; // if --continue ends with an error within this ti
 // `commandcode` (startCommandCode, contract v3.25).
 // --- v3.108 GUI chat (src/gui-session.js, src/gui-proc.js): with the chat view on, a Claude Code tab runs claude on its
 // SDK protocol, the way the VS Code extension does; the person can switch one tab to its terminal (chat:mode)
-const termTabs = new Set();   // pty ids the person switched to the terminal (this run of the app)
+const termTabs = new Set();   // pty ids the person switched to the terminal (v3.110 kept in state.json as termTabs)
+/** v3.110 termTabs into state (written with it): only tabs that still exist; none → the key is not written. */
+function keepTermTabs() {
+  if (!state?.projects) return;
+  const keep = GS.cleanTermTabs([...termTabs], state.projects.flatMap((p) => P.ptyIdsOf(p)));
+  termTabs.clear();
+  for (const id of keep) termTabs.add(id);
+  state = { ...state, termTabs: keep.length ? keep : undefined };
+}
 const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
 /** Does this tab start as a GUI chat? */
 function guiTab(id, r) {
@@ -4695,11 +4704,12 @@ function guiSwitchIdle() {
 /**
  * v3.108 not now for a mode switch, whatever the pid file says: the tab was written to in the last 15 s (a prompt typed
  * by HQ, a routine or a paired device may still be waiting for its Enter, or for the turn it starts), or a task this
- * machine dispatched into it has not reported yet.
+ * machine dispatched into it has not reported yet; v3.110 also a task received from a paired device (or any queued one).
  */
 function guiHolds(pid) {
   if (Date.now() - (activity.get(pid)?.at || 0) < 15000) return true;
   for (const x of loadDispatches().values()) if (x.pub === 'self' && x.into === pid && !x.report) return true;
+  if (linkHost?.taskOpenIn(pid)) return true;   // v3.110 a paired device's task (or a local queue's) for this tab, not reported
   return false;
 }
 /** A running tab's session id when its claude can restart without losing anything, else ''. */
@@ -5385,12 +5395,13 @@ ipcMain.handle('chat:mode', (_e, id, mode) => {
   const had = termTabs.has(id);
   if (mode === 'terminal') termTabs.add(id); else termTabs.delete(id);
   const t = terms.get(id);
-  if (!t || Boolean(t.gui) === guiTab(id, r)) return 'ok';   // stopped, or already in that mode (Windows: always a terminal)
+  if (!t || Boolean(t.gui) === guiTab(id, r)) { saveState(); return 'ok'; }   // stopped, or already in that mode (Windows: always a terminal); v3.110 kept
   const undo = () => { if (had) termTabs.add(id); else termTabs.delete(id); };
   if (handoffLocked(id)) { undo(); lockedNotice(id); return 'locked'; }
   // the same test as restartIdle (no turn, agents, shells or draft; a session id to resume), plus an open card or turn
   const sid = idleSession(id);
   if (!sid || guiHolds(id) || (t.gui && (t.asks().length > 0 || t.live().busy)) || (!t.gui && attention.get(r.project.id) === 'permission')) { undo(); return 'busy'; }
+  saveState();   // v3.110 the choice outlives an app restart
   startPty(id, { sessionId: sid, resume: true });
   return 'moved';
 });
@@ -5712,7 +5723,7 @@ function buildMenu() {
 // office3d = the office drawn in 3D (contract v3.81); off unless set, and unset is not written
 // teamMode = the TEAM panel (contract v3.83); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, office3d: state.office3d === true, teamMode: state.teamMode === true });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
@@ -5802,6 +5813,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
   state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  for (const id of GS.cleanTermTabs(raw.termTabs, state.projects.flatMap((p) => P.ptyIdsOf(p)))) termTabs.add(id);   // v3.110
   // v3.83 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
   if (Array.isArray(raw.customRoles)) state = { ...state, customRoles: ST.normalizeCustomRoles(raw.customRoles) };   // v3.84, before the staff that use them
   if (Array.isArray(raw.mailAccounts)) state = { ...state, mailAccounts: MST.normalizeAccounts(raw.mailAccounts) };   // v3.85, before the staff given them
