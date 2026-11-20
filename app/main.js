@@ -5498,7 +5498,9 @@ ipcMain.handle('chat:mode', (_e, id, mode) => {
   const plan = GS.switchPlan({ gui: Boolean(t.gui), sid, guiSid, asks: t.gui ? t.asks().length : 0, busy: t.gui ? t.live().busy : false, tasks: guiTaskOpen(id), working: t.gui ? guiWorking(sid) : false, recent: guiRecent(id), permission: attention.get(r.project.id) === 'permission' });
   if (plan === 'busy') { undo(); return 'busy'; }
   saveState();   // v3.110 the choice outlives an app restart
-  startPty(id, plan === 'resume' ? { sessionId: sid, resume: true } : {});
+  // 'fresh' still follows the start's own rule (--continue when the project has history): a tab started or woken
+  // with resume has no session id until its first message, and must not lose that conversation
+  startPty(id, plan === 'resume' ? { sessionId: sid, resume: true } : { resume: true });
   return 'moved';
 });
 // the renderer shows a tab: a sleeping one starts (lazy start, wake from sleep)

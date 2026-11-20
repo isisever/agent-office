@@ -600,7 +600,8 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     let clip = null;
     try { clip = await api.clipboard.read(); } catch (e) { console.error(e); return false; }
     if (Array.isArray(clip?.files) && clip.files.length) { insertPaths(clip.files.filter((p) => typeof p === 'string' && p)); return true; }
-    if (!clip?.hasImage) return false;
+    // text with an image (spreadsheet cells, rich text): the normal paste keeps the text and adds the image
+    if (!clip?.hasImage || (typeof clip.text === 'string' && clip.text.trim())) return false;
     try {
       const blobs = [];
       for (const it of await navigator.clipboard.read()) {

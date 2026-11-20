@@ -271,11 +271,11 @@ test('v3.112 Terminal button: a GUI tab switches by its own state; a new one wit
   // a terminal tab: as before (an idle pid-file session, nothing typed in the last 15 s, no permission prompt, no task)
   assert.equal(GS.switchPlan({ gui: false, sid: 's1' }), 'resume');
   for (const o of [{ sid: '' }, { recent: true }, { permission: true }, { tasks: true }]) assert.equal(GS.switchPlan({ gui: false, sid: 's1', ...o }), 'busy', JSON.stringify(o));
-  // wiring: chat:mode uses the plan; a fresh start passes no session
+  // wiring: chat:mode uses the plan; a fresh start passes no session id but keeps the --continue rule
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const mode = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:mode'"), MAIN.indexOf("ipcMain.on('pty:wake'"));
   assert.match(mode, /GS\.switchPlan\(\{ gui: Boolean\(t\.gui\)/);
-  assert.match(mode, /startPty\(id, plan === 'resume' \? \{ sessionId: sid, resume: true \} : \{\}\)/);
+  assert.match(mode, /startPty\(id, plan === 'resume' \? \{ sessionId: sid, resume: true \} : \{ resume: true \}\)/);
   // the reason a switch was refused shows under the chat input too
   const APP = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
   assert.match(APP, /panes\.get\(id\)\?\.chat\?\.note\?\.\(why\)/);
@@ -315,6 +315,8 @@ test('v3.112 chat renderer (source text): an answered card is taken down; paste,
   assert.match(CHAT, /el\.addEventListener\('drop'/);
   assert.match(CHAT, /async function pasteFromMenu\(\)/);
   assert.match(CHAT, /navigator\.clipboard\.read\(\)/);
+  // text with an image (spreadsheet cells) goes to the normal paste so the text is not lost
+  assert.match(CHAT, /if \(!clip\?\.hasImage \|\| \(typeof clip\.text === 'string' && clip\.text\.trim\(\)\)\) return false;/);
   assert.match(CHAT, /paste: \(\) => pasteFromMenu\(\)/);
   const APP = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
   assert.match(APP, /if \(chat && await chat\.paste\(\)\.catch\(\(\) => false\)\) return;/);
