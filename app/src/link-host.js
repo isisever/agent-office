@@ -242,7 +242,10 @@ function setupLink(d) {
     if (retryOnly || error !== from || !resettable(error)) return { ok: false, reason: error || 'start', code: errorCode };
     const saved = readJson(devicesFile);
     const name = saved && typeof saved.name === 'string' ? saved.name : '';
-    const folder = `unreadable-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    // a free name: two resets in the same millisecond (or a planted path) take -2, -3, ... (mkdir below stays exclusive)
+    const stamp = `unreadable-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    let folder = stamp;
+    for (let i = 2; S.present(path.join(dir, folder)); i++) folder = `${stamp}-${i}`;
     const aside = path.join(dir, folder);
     /** @type {string[]} */
     const moved = [];
