@@ -5508,6 +5508,8 @@ ipcMain.handle('clipboard:read', async () => {
   const files = await clipboardFiles();
   return { files, hasImage: !files.length && await clipboardHasImage(), text: await clipboard.readText() };
 });
+let sceneHidden = false;   // the renderer reports whether the pixel office is hidden (View menu label)
+ipcMain.on('scene:hidden', (_e, hidden) => { if ((hidden === true) !== sceneHidden) { sceneHidden = hidden === true; buildMenu(); } });
 ipcMain.on('edit:nativePaste', (e) => e.sender.paste());
 ipcMain.handle('clipboard:hasImage', () => clipboardHasImage());
 ipcMain.handle('office:today', () => {
@@ -5705,7 +5707,7 @@ function buildMenu() {
       { label: T('main.paste'), accelerator: keys.paste, click: () => send('edit:paste') },
       { role: 'selectAll', label: T('main.selectAll') },
     ] },
-    { label: T('main.view'), submenu: [{ role: 'reload', label: T('main.reload') }, { role: 'toggleDevTools', label: T('main.devTools') }, { type: 'separator' }, { role: 'togglefullscreen', label: T('main.fullscreen') }] },
+    { label: T('main.view'), submenu: [{ label: sceneHidden ? T('main.showOffice') : T('main.hideOffice'), accelerator: 'CmdOrCtrl+Alt+O', click: () => send('scene:toggle') }, { type: 'separator' }, { role: 'reload', label: T('main.reload') }, { role: 'toggleDevTools', label: T('main.devTools') }, { type: 'separator' }, { role: 'togglefullscreen', label: T('main.fullscreen') }] },
     { role: 'windowMenu', label: T('main.window') },
   ]));
 }

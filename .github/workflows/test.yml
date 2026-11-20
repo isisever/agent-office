@@ -40,7 +40,7 @@ jobs:
       - name: Engine capabilities
         run: node --test app/test/engine-caps.test.mjs
       - name: Appearance tests
-        run: node --test app/test/appearance.test.mjs
+        run: node --test app/test/appearance.test.mjs app/test/scene-toggle.test.mjs
       - name: Bundled skill packs (contract v3.45)
         run: node --test app/test/skill-packs.test.mjs
       - name: One MCP system (contract v3.44)

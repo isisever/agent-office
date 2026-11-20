@@ -21,6 +21,7 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
   let geo = null
   let timer = 0
   let dead = false
+  let paused = false
   let selected = null
   // v3.81 the 3D office: core.mjs still runs the office every frame; its scene is drawn in 3D instead of its pixels
   let r3d = null
@@ -40,7 +41,7 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
 
   function draw() {
     // hidden (minimized, covered, other space): nothing is drawn; the first frame comes when it shows again
-    if (dead || !geo || document.hidden) return
+    if (dead || paused || !geo || document.hidden) return
     // the core module's state is shared: pass the geometry again every frame
     setGeometry(canvas.width, canvas.height)
     // if a focus is given, the theme comes from it and its desks are highlighted; otherwise the newest session's project
@@ -183,6 +184,19 @@ export function mountOffice(canvas, { onTheme, onSelect } = {}) {
     setLanguage(lang) {
       coreSetLanguage(lang)
       draw()
+    },
+    // the office is hidden by the user: stop the frame timer (no CPU) until resume()
+    pause() {
+      if (paused) return
+      paused = true
+      clearInterval(timer)
+      timer = 0
+    },
+    resume() {
+      if (!paused) return
+      paused = false
+      if (!dead && !timer) timer = setInterval(draw, FRAME_MS)
+      resize()
     },
     destroy() {
       dead = true
