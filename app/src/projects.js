@@ -37,6 +37,8 @@ function normalizeState(raw, { id = newId } = {}) {
     const delegatesField = withDelegates(p.delegates, knownDelegates);
     /** @type {{ group?: string }} */
     const groupField = withGroup(p.group);   // v3.86 (typed like delegatesField: TS2590)
+    /** @type {{ fallbackModel?: string, limitModel?: string }} */
+    const limitFields = { ...withFallbackModel(p.fallbackModel, withHome(p.homeAccount, known, accountId).homeAccount), ...withLimitModel(p.limitModel) };   // v3.111 (typed: TS2590)
     projects.push({
       id: typeof p.id === 'string' && p.id ? p.id : id(),
       dir: p.dir,
@@ -60,6 +62,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
       ...withBackup(p.backupAccount, known),
       ...withHome(p.homeAccount, known, accountId),
+      ...limitFields,   // v3.111
       ...delegatesField, // v3.56
       ...withTabs(normalizeTabs(p.tabs)),
     });
@@ -362,6 +365,9 @@ const bossModelOf = (project) => bossModelValue(project?.bossModel, project?.eng
 
 /** The boss model's launch arguments for the project's engine: claude and agy `--model <v>`, Command Code and OpenCode `-m <id>`; [] for Auto. */
 const bossModelArgs = (project) => {
+  // v3.111: while the project runs on another account with the second model, that model is passed instead
+  const fb = engineValue(project?.engine) ? null : fallbackModelOf(project);
+  if (fb) return ['--model', fb];
   const v = bossModelOf(project);
   if (!v) return [];
   const e = engineValue(project?.engine);
@@ -394,7 +400,11 @@ function setProjectAgentModel(state, id, value) {
 }
 
 /** The model the project pins its subagents to, or null (Auto). */
-const agentModelOf = (project) => agentModelValue(project?.agentModel, project?.engine);
+// v3.111: a pinned subagent model follows the second model while the project is away on it
+const agentModelOf = (project) => {
+  const v = agentModelValue(project?.agentModel, project?.engine);
+  return v && fallbackModelOf(project) ? fallbackModelOf(project) : v;
+};
 
 // --- per-project context cap (contract v3.15)
 // Project.contextCap: 200000 | 400000 tokens makes Claude Code auto-compact earlier (CLAUDE_CODE_AUTO_COMPACT_WINDOW,
@@ -563,6 +573,31 @@ const skipPermissionsArgs = (project) => (!project?.hq && skipPermissionsOf(proj
 const withBackup = (v, known) => (v === 'auto' || (typeof v === 'string' && known.has(v)) ? { backupAccount: v } : {});
 const withHome = (v, known, accountId) => (typeof v === 'string' && known.has(v) && v !== accountId ? { homeAccount: v } : {});
 
+// --- the limit policy (contract v3.111, src/fallback.js planLimitMove)
+// MODEL_ORDER: the app's ordered Claude model list (strongest first); the default second model is the one just below
+// the project's current model. Project.limitModel: 'none' (wait) or a model of MODEL_ORDER; absent = that default.
+// Project.fallbackModel: the second model the project runs on while away from its home account (only with homeAccount);
+// passed as `--model` (bossModelArgs) and, for a pinned subagent model, as the subagent model; cleared on the way home.
+const MODEL_ORDER = CLAUDE_FULL_MODELS;
+const limitModelValue = (v) => (v === 'none' || MODEL_ORDER.includes(v) ? v : null);
+const withLimitModel = (v) => (limitModelValue(v) ? { limitModel: v } : {});
+const withFallbackModel = (v, home) => (home && customModelValue(v) ? { fallbackModel: v } : {});
+/** The project's second-model setting: 'none', a model id, or null (the default: the next model below). */
+const limitModelOf = (project) => limitModelValue(project?.limitModel);
+/** The model the project runs on instead of its own while away (v3.111), or null. */
+const fallbackModelOf = (project) => (project?.homeAccount ? customModelValue(project?.fallbackModel) : null);
+/** value: 'none' | a model of MODEL_ORDER | null (default). Same state when nothing changes. */
+function setProjectLimitModel(state, id, value) {
+  const p = findProject(state, id);
+  const v = limitModelValue(value);
+  if (!p || (p.limitModel ?? null) === v) return state;
+  return { ...state, projects: state.projects.map((x) => {
+    if (x.id !== id) return x;
+    const { limitModel: _, ...rest } = x;
+    return v === null ? rest : { ...rest, limitModel: v };
+  }) };
+}
+
 /** value: null (none) | 'auto' | an account id. Same state when nothing changes or the account is unknown. */
 function setProjectBackup(state, id, value) {
   const p = findProject(state, id);
@@ -582,14 +617,17 @@ const backupOf = (project) => (typeof project?.backupAccount === 'string' && pro
  * An automatic move at the usage limit: the project goes to accountId and remembers where it came from (the first
  * account of a chain stays the home). Moving onto the home itself forgets it.
  */
-function fallbackTo(state, id, accountId) {
+/** @param {any} state @param {string} id @param {string} accountId @param {{ model?: string | null }} [opts] */
+function fallbackTo(state, id, accountId, { model } = {}) {
   const p = findProject(state, id);
   if (!p || p.accountId === accountId || !state.accounts.some((a) => a.id === accountId)) return state;
   const home = p.homeAccount || p.accountId;
+  // v3.111 model: a second model to run on (kept while away; undefined keeps the one in use, null drops it); home drops it
+  const fb = model === undefined ? customModelValue(p.fallbackModel) : customModelValue(model);
   return { ...state, projects: state.projects.map((x) => {
     if (x.id !== id) return x;
-    const { homeAccount: _, ...rest } = x;
-    return home === accountId ? { ...rest, accountId } : { ...rest, accountId, homeAccount: home };
+    const { homeAccount: _, fallbackModel: __, ...rest } = x;
+    return home === accountId ? { ...rest, accountId } : { ...rest, accountId, homeAccount: home, ...(fb ? { fallbackModel: fb } : {}) };
   }) };
 }
 
@@ -657,7 +695,7 @@ module.exports = {
   normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq), routines: ROUT.normalizeRoutines(raw?.routines), routinesCfg: ROUT.normalizeCfg(raw?.routinesCfg) }), findByDir,
   addProject, removeProject, setActive, setProjectAccount, setProjectManager, managerOf,
   BOSS_MODELS, BOSS_MODELS_BY_ENGINE, bossModelValue, setProjectBossModel, bossModelOf, bossModelArgs,
-  AGENT_MODELS, setProjectAgentModel, agentModelOf, CUSTOM_MODEL_RE, customModelValue,
+  AGENT_MODELS, setProjectAgentModel, agentModelOf, MODEL_ORDER, limitModelOf, fallbackModelOf, setProjectLimitModel, CUSTOM_MODEL_RE, customModelValue,
   CONTEXT_CAPS, setProjectContextCap, contextCapOf,
   setProjectSavings, savingsOf,
   ENGINES, setProjectEngine, engineOf,

@@ -3598,7 +3598,7 @@ test('backup account (v3.77): the tab stopped by the compaction failure carries 
   // the wiring only: the verdict's hit is one of onLimit's hits, and onLimit's hits are moveProject's carryOn
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(src, /if \(!hit\) hit = compactionSeen\(id, r\.dir, account\.configDir, w, now\);/);
-  assert.match(src, /moveProject\(p\.id, account, \{ carryOn: hits\.map\(\(h\) => h\.id\) \}\);/);
+  assert.match(src, /moveProject\(p\.id, account, \{ carryOn: hits\.map\(\(h\) => h\.id\), prompt: R\.limitCarryOnPrompt\(/);
   // a carried-on tab resumes its own conversation with the prompt as claude's positional argument: no key is pressed
   const opts = PD.restartAfterMove({ sessionId: 'abc-1', busy: true }, R.UNFINISHED_PROMPT);
   assert.deepEqual(opts, { sessionId: 'abc-1', prompt: R.UNFINISHED_PROMPT });
@@ -4705,3 +4705,127 @@ test('düz terminal sekmesi: ortamdan CLAUDE*/ANTHROPIC_*/AGENT_OFFICE_* düşer
     rtAssert.match(fn('saveRt'), /SF\.writeAtomic\(rtFileName\(\), text\)/);
   });
 }
+
+// --- the limit policy (v3.111): explicit → same model on other accounts → second model on them → wait
+const fsL = require('fs');
+const PL = require('../src/projects.js');
+const RL = require('../src/resume.js');
+const ORDER = PL.MODEL_ORDER;
+const acct = (id, o = {}) => ({ id, auth: { state: 'in' }, ...o });
+const full = (resetsAt) => ({ updatedAt: 1, fiveHour: { pct: 100, resetsAt } });
+
+test('limit policy (v3.111): the app model order is Fable, Opus, Sonnet, Haiku; the default second model is the next below', () => {
+  assert.deepEqual(ORDER, ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
+  assert.equal(FB.secondModel({ current: 'claude-fable-5-2', order: ORDER }), 'claude-opus-5-5');
+  assert.equal(FB.secondModel({ current: 'claude-opus-5-5', order: ORDER }), 'claude-sonnet-5-5');
+  assert.equal(FB.secondModel({ current: 'opus', order: ORDER }), 'claude-sonnet-5-5', 'an alias counts by its family');
+  assert.equal(FB.secondModel({ current: 'claude-haiku-5-5', order: ORDER }), null, 'the last model: wait');
+  assert.equal(FB.secondModel({ current: null, order: ORDER }), null, 'unknown model: wait');
+  // the person's choice
+  assert.equal(FB.secondModel({ current: 'claude-fable-5-2', setting: 'claude-sonnet-5-5', order: ORDER }), 'claude-sonnet-5-5');
+  assert.equal(FB.secondModel({ current: 'claude-fable-5-2', setting: 'none', order: ORDER }), null, 'None (wait)');
+  assert.equal(FB.secondModel({ current: 'claude-opus-5-5', setting: 'claude-opus-5-5', order: ORDER }), null, 'the same as the current one: wait');
+  // the setting is stored only for known values; the renderer offers the same ordered list
+  const s0 = { accounts: [{ id: 'default' }], projects: [{ id: 'p', dir: '/x', accountId: 'default' }] };
+  assert.equal(PL.limitModelOf(PL.setProjectLimitModel(s0, 'p', 'none').projects[0]), 'none');
+  assert.equal(PL.setProjectLimitModel(s0, 'p', 'gpt-5'), s0);
+  const caps = fsL.readFileSync(path.join(__dirname, '..', 'src', 'engine-caps.mjs'), 'utf8');
+  const listed = [...caps.matchAll(/value: '(claude-[a-z0-9-]+)'/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(listed)].filter((v) => ORDER.includes(v)), ORDER, 'sidebar LIMIT_MODELS keep the order');
+});
+
+test('limit policy (v3.111): order explicit, same model, second model, wait; Backup None does not block', () => {
+  const now = 1_000_000;
+  const accounts = [acct('a'), acct('b'), acct('c')];
+  const base = { current: 'a', accounts, now };
+  // a project on Opus 5.5: the same model on the first other account; None or 'auto' is not explicit
+  assert.deepEqual(FB.planLimitMove({ ...base, model: 'claude-opus-5-5', second: 'claude-sonnet-5-5' }), { id: 'b', model: null, step: 'sameModel' });
+  assert.deepEqual(FB.planLimitMove({ ...base, choice: 'auto', model: 'claude-opus-5-5' }), { id: 'b', model: null, step: 'sameModel' });
+  // explicit backup first
+  assert.deepEqual(FB.planLimitMove({ ...base, choice: 'c', model: 'claude-opus-5-5' }), { id: 'c', model: null, step: 'explicit' });
+  // explicit at its limit: the order goes on
+  assert.deepEqual(FB.planLimitMove({ ...base, choice: 'c', model: 'claude-opus-5-5', marks: { c: { at: now, until: now + 9 } } }), { id: 'b', model: null, step: 'sameModel' });
+  // a project on Fable: Fable's own limit on b and c (model marks), so Opus 5.5 (the next below) on b
+  const fableOut = { 'b|fable': { at: now, until: now + 50 }, 'c|fable': { at: now, until: now + 70 } };
+  assert.deepEqual(FB.planLimitMove({ ...base, model: 'claude-fable-5-2', second: 'claude-opus-5-5', modelMarks: fableOut }), { id: 'b', model: 'claude-opus-5-5', step: 'secondModel' });
+  // the person chose Sonnet: Sonnet on c when b has no Sonnet quota
+  assert.deepEqual(FB.planLimitMove({ ...base, model: 'claude-fable-5-2', second: 'claude-sonnet-5-5', modelMarks: { ...fableOut, 'b|sonnet': { at: now, until: now + 5 } } }), { id: 'c', model: 'claude-sonnet-5-5', step: 'secondModel' });
+  // None (wait): no second model, wait for the earliest reset
+  assert.deepEqual(FB.planLimitMove({ ...base, model: 'claude-fable-5-2', second: null, modelMarks: fableOut }), { wait: now + 50, reason: 'allLimited' });
+  // everything full: wait for the earliest of all resets (the current account's own included)
+  const allFull = [acct('a', { usage: full(now + 30) }), acct('b', { usage: full(now + 90) }), acct('c', { usage: full(now + 60) })];
+  assert.deepEqual(FB.planLimitMove({ current: 'a', accounts: allFull, model: 'claude-opus-5-5', second: 'claude-sonnet-5-5', now }), { wait: now + 30, reason: 'allLimited' });
+  assert.deepEqual(FB.planLimitMove({ current: 'a', accounts: [acct('a')], model: 'x', now }), { wait: null, reason: 'none' });
+  assert.deepEqual(FB.planLimitMove({ current: 'a', accounts: [acct('a'), { id: 'b', auth: { state: 'out' } }], now }), { wait: null, reason: 'notLoggedIn' });
+});
+
+test('limit policy (v3.111): an account whose reset passed counts again', () => {
+  const now = 2_000_000;
+  const accounts = [acct('a'), acct('b', { usage: full(now - 1) })];
+  assert.deepEqual(FB.planLimitMove({ current: 'a', accounts, marks: { b: { at: now - 100, until: now - 1 } }, modelMarks: { 'b|opus': { at: 1, until: now - 1 } }, model: 'claude-opus-5-5', now }), { id: 'b', model: null, step: 'sameModel' });
+  assert.deepEqual(FB.normalizeModelMarks({ 'b|opus': { at: 1, until: now + 5 }, 'b|gpt': { until: now + 5 }, 'zz|opus': { until: now + 5 }, 'b|fable': { until: now - 1 } }, ['a', 'b'], now), { 'b|opus': { at: 1, until: now + 5 } });
+});
+
+test('limit policy (v3.111): a per-model limit is told by rateLimitType or the text; others are account-wide', () => {
+  assert.equal(FB.limitFamily({ type: 'seven_day_opus', text: '' }), 'opus');
+  assert.equal(FB.limitFamily({ type: 'seven_day_sonnet' }), 'sonnet');
+  assert.equal(FB.limitFamily({ type: null, text: "You've reached your Fable limit. Run /usage-credits" }), 'fable');
+  assert.equal(FB.limitFamily({ type: 'five_hour', text: "You've hit your session limit · resets 3pm" }), null);
+  assert.equal(FB.limitFamily({ type: 'seven_day', text: "You've hit your weekly limit" }), null);
+  // the model the session runs (Auto): its last real answer
+  const tail = [JSON.stringify({ type: 'assistant', message: { model: 'claude-fable-5-2' } }), limitEntry()].join('\n');
+  assert.equal(FB.modelFromTranscript(tail), 'claude-fable-5-2');
+  assert.equal(FB.modelFromTranscript(limitEntry()), null);
+});
+
+test('limit policy (v3.111): a sub-agent that failed on the usage limit is a hit and named for the carry-on', () => {
+  const since = Date.parse('2026-10-17T10:00:00.000Z');
+  const line = 'Agent "api-review" failed: Agent terminated early due to an API error: You\'ve hit your session limit · resets 1:40pm (Europe/Istanbul) (error type rate_limit, HTTP 429)';
+  const toolResult = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:07.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: line }] }] } });
+  const note = userEntry(`<task-notification><status>failed</status><summary>${line.replace('api-review', 'docs')}</summary></task-notification>`, '2026-10-17T10:00:08.000Z');
+  const r = FB.subagentLimits(`${toolResult}\n${note}\n`, { since });
+  assert.deepEqual(r.names, ['api-review', 'docs']);
+  assert.equal(r.hit.at, Date.parse('2026-10-17T10:00:08.000Z'));
+  assert.equal(r.hit.text.startsWith("You've hit your session limit"), true);
+  assert.equal(FB.limitFamily(r.hit), null, 'a session limit is account-wide');
+  // older than the tab's start, a file read quoting it, or the model's own answer: not a hit
+  assert.deepEqual(FB.subagentLimits(toolResult, { since: since + 60e3 }), { names: [], hit: null });
+  const quoted = JSON.stringify({ type: 'user', timestamp: '2026-10-17T10:00:07.000Z', message: { content: [{ type: 'tool_result', content: `  12\tconst s = '${line}';` }] } });
+  assert.deepEqual(FB.subagentLimits(quoted, { since }), { names: [], hit: null });
+  assert.deepEqual(FB.subagentLimits(JSON.stringify({ type: 'assistant', timestamp: '2026-10-17T10:00:07.000Z', message: { content: [{ type: 'text', text: line }] } }), { since }), { names: [], hit: null });
+  // the screen already counts the same words as a hint
+  assert.ok(FB.scanPty({ tail: '' }, line).hit);
+  // the carry-on prompt names them and the model
+  const prompt = RL.limitCarryOnPrompt({ agents: r.names, model: 'claude-opus-5-5' });
+  assert.match(prompt, /"api-review", "docs"/);
+  assert.match(prompt, /claude-opus-5-5/);
+  assert.match(prompt, /re-run every sub-agent/);
+  assert.doesNotMatch(RL.limitCarryOnPrompt({}), /These sub-agents/);
+});
+
+test('limit policy (v3.111): the second model is passed while away and dropped on the way home', () => {
+  const s0 = { accounts: [{ id: 'default' }, { id: 'b' }], projects: [{ id: 'p', dir: '/x', accountId: 'default', bossModel: 'claude-fable-5-2', agentModel: 'claude-fable-5-2' }] };
+  const away = PL.fallbackTo(s0, 'p', 'b', { model: 'claude-opus-5-5' });
+  const p1 = away.projects[0];
+  assert.equal(p1.homeAccount, 'default');
+  assert.deepEqual(PL.bossModelArgs(p1), ['--model', 'claude-opus-5-5']);
+  assert.equal(PL.agentModelOf(p1), 'claude-opus-5-5', 'a pinned subagent model follows');
+  const home = PL.returnHome(away, 'p').projects[0];
+  assert.equal(home.fallbackModel, undefined);
+  assert.equal(home.homeAccount, undefined);
+  assert.deepEqual(PL.bossModelArgs(home), ['--model', 'claude-fable-5-2'], 'the original model again');
+  assert.equal(PL.agentModelOf(home), 'claude-fable-5-2');
+  // same-model move: no override
+  assert.deepEqual(PL.bossModelArgs(PL.fallbackTo(s0, 'p', 'b').projects[0]), ['--model', 'claude-fable-5-2']);
+  // the home's own limit for the project's model holds the return
+  const back = { home: { id: 'default', auth: { state: 'in' } }, current: 'b', idle: true, lastSwitch: 0, now: 5e6 };
+  assert.equal(FB.shouldReturn({ ...back, modelMarks: { 'default|fable': { at: 1, until: 6e6 } }, family: 'fable' }), false);
+  assert.equal(FB.shouldReturn({ ...back, modelMarks: { 'default|fable': { at: 1, until: 6e6 } }, family: 'opus' }), true);
+  assert.equal(FB.shouldReturn({ ...back, modelMarks: { 'default|fable': { at: 1, until: 6e6 } }, family: null }), false, 'Auto: any of its model marks');
+  assert.equal(FB.shouldReturn({ ...back, modelMarks: { 'default|fable': { at: 1, until: 6e6 } }, family: 'fable', now: 6e6 + 1 }), true);
+  // main.js wiring by source text: Backup None no longer stops it, the plan decides
+  const main = fsL.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.doesNotMatch(main, /if \(!choice\) return done\(\)/);
+  assert.match(main, /FB\.planLimitMove\(/);
+  assert.match(main, /R\.limitCarryOnPrompt\(/);
+});

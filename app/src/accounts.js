@@ -72,13 +72,13 @@ function removeAccount(state, id) {
       accounts: state.accounts.filter((a) => a.id !== id),
       // a backup or home naming the account goes too (v3.17); a delegate naming it goes too (v3.56, never stored [])
       projects: state.projects.map((p) => {
-        const { backupAccount, homeAccount, delegates, ...rest } = p;
+        const { backupAccount, homeAccount, fallbackModel, delegates, ...rest } = p;
         const accountId = p.accountId === id ? DEFAULT_ID : p.accountId;
         const nextDelegates = (Array.isArray(delegates) ? delegates : []).filter((d) => d !== id);
         return {
           ...rest, accountId,
           ...(backupAccount !== undefined && backupAccount !== id ? { backupAccount } : {}),
-          ...(homeAccount !== undefined && homeAccount !== id && homeAccount !== accountId ? { homeAccount } : {}),
+          ...(homeAccount !== undefined && homeAccount !== id && homeAccount !== accountId ? { homeAccount, ...(fallbackModel !== undefined ? { fallbackModel } : {}) } : {}),
           ...(nextDelegates.length ? { delegates: nextDelegates } : {}),
         };
       }),

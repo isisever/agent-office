@@ -3498,7 +3498,7 @@ function sleepIdle() {
 // Skip permissions project the bypass mode warning), written before any tab starts, so no dialog stops a moved tab.
 // carryOn (v3.17): tabs that stopped at the usage limit; they are told to carry on like a tab cut off mid-turn.
 // An Antigravity project (v3.22) ignores accounts: nothing moves and its tabs keep running.
-function moveProject(projectId, from, { carryOn = [] } = {}) {
+function moveProject(projectId, from, { carryOn = [], prompt = '' } = {}) {
   const p = P.findProject(state, projectId);
   if (!p || P.engineOf(p) !== 'claude') return; // accounts change nothing for agy or Command Code (v3.22, v3.25)
   const home = app.getPath('home');
@@ -3516,7 +3516,8 @@ function moveProject(projectId, from, { carryOn = [] } = {}) {
       busy = Boolean(sid) && (carryOn.includes(id) || R.isTurnBusy({ claude: live?.claude, office: office()?.readSession(sid) }));
       killPty(id);
     }
-    plan.push({ id, opts: PD.restartAfterMove({ sessionId: validSid(sid) || null, continues: !r?.tab || Boolean(r.tab.worktree), busy }, R.UNFINISHED_PROMPT) });
+    // v3.111: a tab stopped by the limit gets the limit carry-on prompt (re-run the sub-agents that failed on it)
+    plan.push({ id, opts: PD.restartAfterMove({ sessionId: validSid(sid) || null, continues: !r?.tab || Boolean(r.tab.worktree), busy }, prompt && carryOn.includes(id) ? prompt : R.UNFINISHED_PROMPT) });
   }
   const to = A.accountOf(state, p);
   try {
@@ -3588,10 +3589,15 @@ function transcriptLimit(id, dir, configDir) {
   const key = `${file}|${st.size}|${st.mtimeMs}|${since}`;
   const old = tailSeen.get(id);
   if (old?.key === key) return old.hit;
-  const hit = FB.limitFromTranscript(readTail(file), { since });
-  tailSeen.set(id, { key, hit });
+  const tail = readTail(file);
+  // v3.111: a sub-agent that failed on the usage limit counts as a hit too; its name goes into the carry-on prompt
+  const sub = FB.subagentLimits(tail, { since });
+  const hit = FB.limitFromTranscript(tail, { since }) || sub.hit;
+  tailSeen.set(id, { key, hit, agents: sub.names });
   return hit;
 }
+/** v3.111: the tab's sub-agents that failed on the usage limit since it started (names). */
+const failedAgents = (id) => tailSeen.get(id)?.agents || [];
 const compactTail = new Map(); // pty id → { key: "file|size|mtime", tail }: read again only when the transcript changed
 /**
  * v3.77: the compaction failure seen on the tab's screen (w.compact) → a limit hit, or null. Glue only: the tab's
@@ -3625,6 +3631,34 @@ function setLimitMark(accountId, mark) {
   state = { ...state, accountLimits: { ...FB.normalizeMarks(limitMarks(), state.accounts.map((a) => a.id)), [accountId]: next } };
   saveState();
 }
+const modelMarks = () => state.modelLimits || {};
+/** v3.111: a model's own limit on an account ("<account>|<family>"), kept until its reset like the account marks. */
+function setModelMark(accountId, family, mark) {
+  const key = FB.modelMarkKey(accountId, family);
+  const old = modelMarks()[key];
+  const next = FB.mergeMarks(old, mark);
+  if (next === old) return;
+  state = { ...state, modelLimits: { ...FB.normalizeModelMarks(modelMarks(), state.accounts.map((a) => a.id)), [key]: { at: next.at, until: next.until } } };
+  saveState();
+}
+/**
+ * v3.111: the model the project runs now: the second model while away on one, else the project's model setting (the
+ * --model launch argument), else (Auto) the model of the last answer in the stopped tabs' transcripts. null unknown.
+ */
+function currentModel(p, account, ids) {
+  const set = P.fallbackModelOf(p) || P.bossModelOf(p);
+  if (set) return set;
+  for (const id of ids) {
+    const r = P.resolvePty(state, id);
+    const sid = lastSid.get(id);
+    const file = r && sid ? TIO.findTranscript(r.dir, sid, account.configDir, app.getPath('home'))?.file : null;
+    const m = file ? FB.modelFromTranscript(readTail(file)) : null;
+    if (m) return m;
+  }
+  return null;
+}
+const modelLabel = (m) => m || T('main.fallbackModelUnknown');
+const limitLabel = (hits) => (hits.map((h) => String(h.hit.text || '').split(' · ')[0].trim()).find(Boolean) || T('main.fallbackLimitUnknown')).slice(0, 80);
 /** Tells the renderer (a hint over the project's terminals) and the system (a notification). */
 function fallbackNotice(p, kind, text, extra = {}) {
   send('account:fallback', { projectId: p.id, kind, text, ...extra });
@@ -3654,34 +3688,68 @@ function checkLimits() {
     else if (returning && p.homeAccount) maybeReturn(p, account, now);
   }
 }
+// v3.111 owner policy, fully automatic (FB.planLimitMove): the explicit backup, then the same model on the other
+// accounts in order, then the second model (the project's setting; default the next model below) on them, else wait
+// for the earliest reset (looked at again every 1.5 s). Backup "None" no longer stops it.
 function onLimit(p, account, hits, now) {
+  scanUsage(); // the quota files as they are now: an account whose reset passed is read again before it is chosen
   const resets = hits.map((h) => h.hit.resetsAt).filter(Number.isFinite);
-  const mark = FB.limitMark({ resets, seenAt: Math.min(...hits.map((h) => h.hit.at)), now });
-  setLimitMark(account.id, mark);
+  const stale = resets.length === hits.length && resets.every((t) => t <= now); // the limit seen has reset already
+  const families = [...new Set(hits.map((h) => FB.limitFamily(h.hit)).filter(Boolean))];
+  if (!stale) {
+    const mark = FB.limitMark({ resets, seenAt: Math.min(...hits.map((h) => h.hit.at)), now });
+    if (hits.some((h) => !FB.limitFamily(h.hit))) setLimitMark(account.id, mark);
+    for (const f of families) setModelMark(account.id, f, mark);
+  }
   const done = () => { for (const h of hits) limitDone.add(`${h.id}|${h.hit.at}`); };
-  const choice = P.backupOf(p);
-  if (!choice) return done(); // no backup set: Claude Code's own limit message stands
-  const pick = FB.pickBackup({ choice, current: account.id, home: p.homeAccount || null, accounts: fallbackAccounts(), marks: limitMarks(), now });
+  const model = currentModel(p, account, hits.map((h) => h.id));
+  const second = FB.secondModel({ current: model, setting: P.limitModelOf(p), order: P.MODEL_ORDER });
+  const plan = FB.planLimitMove({ choice: P.backupOf(p), model, second, current: account.id, home: p.homeAccount || null, accounts: fallbackAccounts(), marks: limitMarks(), modelMarks: modelMarks(), now });
+  const limit = limitLabel(hits);
+  if (!plan.id) {
+    const fam = FB.modelFamily(model);
+    const selfFree = !FB.limitedUntil({ usage: usages.get(account.id), mark: limitMarks()[account.id], now }) && !FB.modelLimitedUntil(modelMarks(), account.id, fam, now);
+    if (selfFree) { // the earliest reset was this account's own: the stopped tabs carry on where they are
+      done();
+      for (const h of hits) if (terms.has(h.id)) typePrompt(h.id, R.UNFINISHED_PROMPT);
+      fallbackNotice(p, 'resumed', T('main.fallbackResumed', { from: accountName(account), model: modelLabel(model) }), { from: account.id });
+      return;
+    }
+    const key = `${p.id}|${account.id}|${plan.reason}|${plan.wait}`;
+    if (plan.reason !== 'none' && !stuckSaid.has(key)) {
+      stuckSaid.add(key);
+      const at = plan.wait ? new Date(plan.wait).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '?';
+      const text = second
+        ? T('main.fallbackWaitBoth', { from: accountName(account), limit, model: modelLabel(model), second, at })
+        : T('main.fallbackWait', { from: accountName(account), limit, model: modelLabel(model), at });
+      fallbackNotice(p, 'stuck', text, { reason: plan.reason });
+    }
+    return;
+  }
   const allowed = FB.switchAllowed(switches.get(p.id), now);
   switches.set(p.id, allowed.history);
-  const stuck = !pick.id ? (pick.reason === 'none' ? '' : pick.reason) : !allowed.ok ? allowed.reason : '';
-  if (!pick.id || !allowed.ok) {
-    const key = `${p.id}|${account.id}|${stuck}|${mark.until}`;
-    if (stuck && !stuckSaid.has(key)) {
+  if (!allowed.ok) {
+    const key = `${p.id}|${account.id}|${allowed.reason}|${now - (now % 60000)}`;
+    if (!stuckSaid.has(key)) {
       stuckSaid.add(key);
-      fallbackNotice(p, 'stuck', T(stuck === 'loop' || stuck === 'soon' ? 'main.fallbackLoop' : 'main.fallbackStuck', { from: accountName(account) }), { reason: stuck });
+      fallbackNotice(p, 'stuck', T('main.fallbackLoop', { from: accountName(account) }), { reason: allowed.reason });
     }
-    return; // looked at again every 1.5 s: a backup that logs in or resets is used then (the notice is not repeated)
+    return; // looked at again every 1.5 s
   }
-  const to = accountById(pick.id);
+  const to = accountById(plan.id);
   if (!to) return;
   done();
   switches.set(p.id, [...allowed.history, now]);
-  const next = P.fallbackTo(state, p.id, to.id);
+  const next = P.fallbackTo(state, p.id, to.id, plan.model ? { model: plan.model } : {});
   if (next === state) return;
-  fallbackNotice(p, 'switched', T('main.fallbackSwitched', { from: accountName(account), to: accountName(to) }), { from: account.id, to: to.id, ptyIds: accountTabs(p) });
+  const runs = plan.model || model;
+  const why = plan.step === 'explicit' ? T('main.fallbackWhyExplicit')
+    : plan.step === 'secondModel' ? T('main.fallbackWhySecond', { model: modelLabel(model), second: plan.model })
+      : T('main.fallbackWhySame', { model: modelLabel(model) });
+  fallbackNotice(p, 'switched', T('main.fallbackSwitchedTo', { from: accountName(account), to: accountName(to), limit, model: modelLabel(runs), why }), { from: account.id, to: to.id, model: runs || null, step: plan.step, ptyIds: accountTabs(p) });
   commit(next);
-  moveProject(p.id, account, { carryOn: hits.map((h) => h.id) });
+  const agents = [...new Set(hits.flatMap((h) => failedAgents(h.id)))];
+  moveProject(p.id, account, { carryOn: hits.map((h) => h.id), prompt: R.limitCarryOnPrompt({ agents, model: plan.model || null }) });
 }
 /** A running tab that can restart without losing anything: no turn, no unsent text, no agent or shell of its session working. */
 function tabIdle(pid, configDir) {
@@ -3702,17 +3770,21 @@ function maybeReturn(p, account, now) {
   const ok = FB.shouldReturn({
     home: { id: home.id, auth: auths.get(home.id), usage: usages.get(home.id) }, current: account.id,
     mark: limitMarks()[home.id], idle, lastSwitch: hist.length ? Math.max(...hist) : 0, now,
+    modelMarks: modelMarks(), family: FB.modelFamily(P.bossModelOf(p)),   // v3.111 unknown (Auto): any of the home's model marks holds it
   });
   if (!ok) return;
   const next = P.returnHome(state, p.id);
   if (next === state) return;
   switches.set(p.id, [...hist, now]);
-  fallbackNotice(p, 'returned', T('main.fallbackReturned', { to: accountName(home), from: accountName(account) }), { from: account.id, to: home.id, ptyIds: accountTabs(p) });
+  const was = P.fallbackModelOf(p);   // v3.111: the second model is dropped on the way home; the project's own model runs again
+  fallbackNotice(p, 'returned', was ? T('main.fallbackReturnedModel', { to: accountName(home), from: accountName(account), model: was }) : T('main.fallbackReturned', { to: accountName(home), from: accountName(account) }), { from: account.id, to: home.id, ptyIds: accountTabs(p) });
   commit(next);
   moveProject(p.id, account);
 }
 // Per-project backup account (v3.17): null (none) | 'auto' | an account id. Nothing restarts.
 ipcMain.handle('projects:setBackup', (_e, id, value) => { commit(P.setProjectBackup(state, id, value)); });
+// v3.111 the model to continue with when no account has quota: null (default: the next model below) | 'none' | a model id
+ipcMain.handle('projects:setLimitModel', (_e, id, value) => { commit(P.setProjectLimitModel(state, id, value)); });
 
 // Worktree session names → project name (see projects.js sessionAliases): the office and notifications count them toward the project.
 const sessionAliases = () => P.sessionAliases(state.projects);
@@ -5814,7 +5886,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
   for (const id of GS.cleanTermTabs(raw.termTabs, state.projects.flatMap((p) => P.ptyIdsOf(p)))) termTabs.add(id);   // v3.110
   // v3.83 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
   if (Array.isArray(raw.customRoles)) state = { ...state, customRoles: ST.normalizeCustomRoles(raw.customRoles) };   // v3.84, before the staff that use them

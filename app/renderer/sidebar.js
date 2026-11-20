@@ -609,6 +609,24 @@ export function mountSidebar(el, on) {
     return control(p, 'backup', t('sidebar.backup'), sel);
   }
 
+  // v3.111 the model to continue with when no account has quota for the project's own model: the default (the next
+  // model below in the app's ordered list, the explicit ids of BOSS_MODEL_CHOICES.claude), None (wait) or one model.
+  const LIMIT_MODELS = BOSS_MODEL_CHOICES.claude.filter((c) => c.value.startsWith('claude-'));
+  function limitModelSelect(p) {
+    if (engineOfRow(p) !== 'claude') return null;
+    const now = p.limitModel === 'none' || LIMIT_MODELS.some((c) => c.value === p.limitModel) ? p.limitModel : 'default';
+    const opt = (v, label) => h('option', { value: v, selected: now === v }, label);
+    const sel = h('select', {
+      class: 'sb-acct sb-mode sb-backup',
+      title: t('sidebar.limitModelTitle'),
+      onclick: (e) => e.stopPropagation(),
+      onchange: (e) => queue('limitModel', () => on.setLimitModel?.(p.id, e.target.value === 'default' ? null : e.target.value)),
+    },
+    opt('default', t('sidebar.limitModelDefault')), opt('none', t('sidebar.limitModelNone')),
+    ...LIMIT_MODELS.map((c) => opt(c.value, c.label)));
+    return control(p, 'limitModel', t('sidebar.limitModel'), sel);
+  }
+
   // Delegate accounts (account delegate): other accounts whose jobs the boss may hand out via `ao-delegate`; the boss stays
   // the manager. Shown only when the engine supports it (caps.delegate: Claude boss) and another account exists.
   function delegatesControl(p) {
@@ -768,7 +786,7 @@ export function mountSidebar(el, on) {
     badFields.clear();
     const body = [
       groupInput(p), accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p), parallelToggle(p),
-      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
+      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), limitModelSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
     ];
     const save = h('button', {
       class: 'sb-btn primary', onclick: async () => {

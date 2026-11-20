@@ -2570,3 +2570,66 @@ taskOpenIn(tabId): boolean   // a task for this tab is queued, owed a report, or
 - **Tests**: `app/test/gui-holds.test.cjs` (a real link host: a paired device's task held while queued and after it is
   typed until its report; a local task likewise until its report file is scanned; another tab never held; the local
   hold expires; `cleanTermTabs`; main.js wiring and the renderer's error path by source text).
+
+## Limit policy: every account in order, the same model first, then a second model, then wait (v3.111)
+
+Amends v3.17 (and v3.77). When a Claude Code project's tab stops at a usage limit, the app now acts fully
+automatically, with no prompt, whether or not a backup account is set.
+
+```ts
+// projects (state.json)
+Project.limitModel?: 'none' | string   // the model to continue with when no account has quota; absent = the next model below
+Project.fallbackModel?: string         // the second model the project runs on while away (only with homeAccount)
+// state.json
+modelLimits?: { [`${accountId}|${family}`]: { at: number, until: number } }   // a model's own limit; family fable|opus|sonnet|haiku
+// IPC
+'projects:setLimitModel'(projectId, value: null | 'none' | string)           // preload api.projects.setLimitModel
+// src/fallback.js (pure)
+planLimitMove({ choice, model, second, current, home, accounts, marks, modelMarks, now })
+  → { id, model: null | string, step: 'explicit' | 'sameModel' | 'secondModel' } | { wait: number | null, reason }
+secondModel({ current, setting, order }) → string | null
+limitFamily(hit), modelFromTranscript(tail), subagentLimits(tail, { since }) → { names, hit }
+// src/resume.js
+limitCarryOnPrompt({ agents, model }) → string
+```
+
+- **Order** (`FB.planLimitMove`): 1. the project's explicit backup account (an account id; `auto` and None are not
+  explicit), if logged in and free; 2. the other logged-in accounts in the sidebar's order, the first one free for the
+  model the project runs now; 3. the same accounts with the second model; 4. otherwise wait for the earliest reset of
+  any candidate or of the current account and try again from step 1 (the 1.5 s `checkLimits` loop). Backup "None" no
+  longer stops it. `FB.switchAllowed` (2 min stay, 4 moves an hour), the rules for which tabs move (v3.83: desks on
+  their member's account stay), the Claude-only engine check and "credentials are never copied" are unchanged.
+- **The current model**: the second model while away on one, else the project's model setting (the `--model` launch
+  argument, `P.bossModelOf`), else (Auto) `message.model` of the last real answer in the stopped tabs' transcripts.
+- **The second model** (`FB.secondModel`): the project's setting "Model when no account has quota" (sidebar, Claude
+  projects): None (wait), or a model of `P.MODEL_ORDER` (= `CLAUDE_FULL_MODELS`: Fable 5.2, Opus 5.5, Sonnet 5.5,
+  Haiku 5.5; the sidebar shows the explicit ids of `BOSS_MODEL_CHOICES.claude` in that order). Default: the model just
+  below the current one by family. When the current model is unknown or the last one, or the second model is the
+  current one (same family), the step is skipped and the project waits. No model id is hard-coded in the policy.
+- **Free**: no account-wide limit (`FB.limitedUntil`: a quota window at 100 % before its reset, or a mark) and no model
+  mark for the model's family. A reset time that has passed counts as free; every account's quota files are re-read
+  (`scanUsage`) before a plan is made. A hit whose known reset times have all passed sets no new mark.
+- **Per-model limits**: the status line's `rate_limits` has only `five_hour` and `seven_day` (checked in Claude Code
+  2.1.329 and live files), so a model's own limit is known only from a hit: its `rate_limit_info.rateLimitType` ends in
+  the family (`seven_day_opus`, `seven_day_sonnet`, …) or its text names it ("You've reached your Fable limit"). Such a
+  hit sets `modelLimits["<account>|<family>"]` (until its reset, none known: 5 h) instead of the account mark.
+- **The model override**: a move with the second model stores `Project.fallbackModel`; `P.bossModelArgs` passes it as
+  `--model` (it outranks the project's own setting and `/model`), and a pinned subagent model
+  (`CLAUDE_CODE_SUBAGENT_MODEL`) follows it. `P.returnHome` / a move onto the home drops it, so the project's own
+  model runs again. The return (`maybeReturn`) also waits while the home has a live model mark for the project's
+  pinned model's family (Auto: any of the home's model marks), as well as for every tab to be idle.
+- **Waiting at home**: when no other account can take over but the current account's own limit has passed, the
+  stopped tabs are told to carry on in place (`R.UNFINISHED_PROMPT` typed into them).
+- **Sub-agent failures** count as a hit: a user entry (tool result or task notification) whose text, at its start or
+  after a tag, reads `Agent "<name>" failed: Agent terminated early due to an API error: <usage-limit message>`, written
+  since the tab started (`FB.subagentLimits`). A file read quoting it (line-number prefix) or an answer does not. The
+  screen hint (`FB.scanPty`, quota at 100 %) already matched the same words.
+- **Carry-on**: tabs stopped by the limit restart with `R.limitCarryOnPrompt`: the turn stopped on a usage limit, the
+  session moved (and the model it now runs on), the failed sub-agents by name (at most 12), re-run every sub-agent
+  whose work failed on the limit, then continue.
+- **Notices** (en, tr): `main.fallbackSwitchedTo` names the account left, the limit, the new account, the model and the
+  reason (`fallbackWhyExplicit` / `fallbackWhySame` / `fallbackWhySecond`); `main.fallbackWait` /
+  `fallbackWaitBoth` name the models and the expected time; `main.fallbackResumed`; `main.fallbackReturnedModel`.
+- **Tests**: `app/test/main.test.cjs` "limit policy (v3.111)": order explicit → same model → second model → wait, a
+  project on Opus 5.5 and on Fable, the person's second-model choice and None (wait), reset-passed accounts, the model
+  restored on return, the sub-agent line, the carry-on prompt, model order matching the sidebar list.
