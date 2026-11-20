@@ -343,8 +343,9 @@ test('v3.109 "@" files: git list, walk, ranking, mentions; tool lines carry thei
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const reveal = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:reveal'"), MAIN.indexOf("ipcMain.handle('chat:reveal'") + 400);
   assert.match(reveal, /FM\.revealTarget\(\[r\.dir, r\.project\?\.dir\], p\)/);
-  assert.match(reveal, /if \(!target\) return 'outside';\s+eShell\.showItemInFolder\(target\.path\);/);
-  assert.doesNotMatch(reveal, /openPath|openExternal/, 'shown in its folder, never opened');
+  assert.match(reveal, /if \(!target\) return 'outside';/);
+  assert.match(reveal, /if \(target\.root\) eShell\.openPath\(target\.path\); else eShell\.showItemInFolder\(target\.path\);/);
+  assert.doesNotMatch(reveal, /openExternal/);
 });
 
 test('v3.109 pasted images: checked types, count and size; image blocks for a GUI tab, @path files for a terminal tab', () => {
@@ -405,7 +406,7 @@ test('v3.113 Show in Finder: real paths on both sides, worktree tabs, files that
     assert.equal(FM.revealTarget(wt, path.join(proj, 'src/a.js')), null, 'only the folders given');
     // gone: the nearest existing folder inside; never a folder outside
     assert.deepEqual(FM.revealTarget(proj, 'src/deleted.js'), { path: path.join(proj, 'src'), gone: true });
-    assert.deepEqual(FM.revealTarget(proj, path.join(proj, 'new/deep/file.js')), { path: proj, gone: true });
+    assert.deepEqual(FM.revealTarget(proj, path.join(proj, 'new/deep/file.js')), { path: proj, gone: true, root: true }, 'the root itself: opened, not shown');
     assert.equal(FM.revealTarget(proj, path.join(base, 'other/gone.txt')), null);
     assert.equal(FM.revealTarget(proj, '/no-such-root-ao/x.js'), null);
     assert.equal(FM.insidePath(proj, 'src/deleted.js'), '', 'insidePath stays: only what exists');
@@ -423,7 +424,7 @@ test('v3.113 Show in Finder: real paths on both sides, worktree tabs, files that
           const priv = path.join('/private', t);
           assert.equal(FM.revealTarget(t, path.join(priv, 'f.txt'))?.path, path.join(priv, 'f.txt'), '/tmp tab, /private/tmp file');
           assert.equal(FM.revealTarget(priv, path.join(t, 'f.txt'))?.path, path.join(priv, 'f.txt'), '/private/tmp tab, /tmp file');
-          assert.deepEqual(FM.revealTarget(t, path.join(priv, 'gone/f.txt')), { path: priv, gone: true });
+          assert.deepEqual(FM.revealTarget(t, path.join(priv, 'gone/f.txt')), { path: priv, gone: true, root: true });
         } finally { fs.rmSync(t, { recursive: true, force: true }); }
       }
     }
@@ -444,13 +445,20 @@ test('v3.113 Show in Finder: real paths on both sides, worktree tabs, files that
   assert.match(pick, /defaultPath: r\.dir/);
   assert.match(pick, /FM\.imageType\(p\)/);
   assert.match(pick, /st\.size <= FM\.PICK_IMAGE_MAX/);
+  assert.match(pick, /data: await fs\.promises\.readFile\(p\)/);
+  assert.doesNotMatch(pick, /base64/, 'bytes over IPC, not base64');
+  assert.equal(FM.PICK_IMAGE_MAX, 10 * 1024 * 1024);
   assert.match(MAIN, /return target\.gone \? 'gone' : 'ok';/);
   const PRE = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   assert.match(PRE, /pick: \(id, wantImages\) => ipcRenderer\.invoke\('chat:pick', id, wantImages\)/);
   const R = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat.js'), 'utf8');
   assert.match(R, /class: 'chat-attach'/);
   assert.match(R, /api\.chat\.pick\(ptyId, Boolean\(gui\)\)/);
-  assert.match(R, /if \(blobs\.length\) addImages\(blobs\);\s+if \(paths\.length\) insertPaths\(paths\);/);
+  assert.match(R, /if \(blobs\.length\) addImages\(blobs\.map[^\n]*\n\s+if \(paths\.length\) insertPaths\(paths\);/);
+  assert.match(R, /new Blob\(\[im\.data\]/);
+  assert.doesNotMatch(R, /atob/);
+  assert.match(R, /if \(attach\.disabled\) return;/);
+  assert.match(R, /if \(onFail\) onFail\(f\); else note\(t\('chat\.why\.image-size'\)\)/);
   assert.match(R, /if \(r === 'gone'\) note\(t\('chat\.revealGone'\)\);/);
   for (const lang of ['en', 'tr']) {
     const L = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${lang}.json`), 'utf8'));

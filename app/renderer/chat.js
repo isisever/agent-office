@@ -85,7 +85,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   const send = h('button', { class: 'chat-send', onclick: () => submit() });
   const term = h('button', { class: 'chat-term', onclick: () => onTerminal() });
   // v3.113 attach: the native file picker (images into the image bar in a GUI tab, every other file as @path)
-  const attach = h('button', { class: 'chat-attach', type: 'button', onclick: () => { attachFiles().catch((e) => console.error(e)); } }, '📎');
+  const attach = h('button', { class: 'chat-attach', type: 'button', onclick: () => { if (attach.disabled) return; attach.disabled = true; attachFiles().catch((e) => console.error(e)).finally(() => { attach.disabled = false; }); } }, '📎');
   const stop = h('button', { class: 'chat-stop', onclick: () => interrupt() });
   stop.hidden = true;
   // v3.108 a GUI tab whose claude ended by itself: why (exit code, the end of its stderr) and Start again
@@ -542,10 +542,9 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     const blobs = [];
     for (const im of Array.isArray(r.images) ? r.images : []) {
       if (images.length + imageReads.length + blobs.length >= 5) { paths.push(im.path); continue; }
-      const bytes = Uint8Array.from(window.atob(im.data), (c) => c.charCodeAt(0));
-      blobs.push(new Blob([bytes], { type: im.type }));
+      blobs.push({ blob: new Blob([im.data], { type: im.type }), path: im.path });
     }
-    if (blobs.length) addImages(blobs);
+    if (blobs.length) addImages(blobs.map((b) => b.blob), (f) => { const b = blobs.find((x) => x.blob === f); if (b) insertPaths([b.path]); });
     if (paths.length) insertPaths(paths);
     else input.focus();
   }
@@ -597,14 +596,14 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   /** @type {Promise<void>[]} */
   const imageReads = [];   // pastes still being read: a message waits for them
   /** Images (File or Blob) into the bar above the input, at most 5 with those still being read. */
-  function addImages(files) {
+  function addImages(files, onFail) {
     for (const f of files) {
       if (images.length + imageReads.length >= 5) { note(t('chat.why.too-many-images')); break; }
       if (!IMAGE_TYPES.includes(f.type)) { note(t('chat.why.image-type')); continue; }
       const job = prepare(f).then((im) => {
-        if (!im) note(t('chat.why.image-size'));
+        if (!im) { if (onFail) onFail(f); else note(t('chat.why.image-size')); }
         else if (images.length < 5) { images.push(im); drawImages(); }
-      }).catch((err) => { console.error(err); note(t('chat.why.image-type')); })
+      }).catch((err) => { console.error(err); if (onFail) onFail(f); else note(t('chat.why.image-type')); })
         .finally(() => { imageReads.splice(imageReads.indexOf(job), 1); });
       imageReads.push(job);
     }

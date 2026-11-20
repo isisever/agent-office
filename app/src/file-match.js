@@ -79,7 +79,7 @@ function within(root, real) {
  * from it), then the other folders the tab may show (the project's folder for a worktree or desk tab). Both sides are
  * compared as real paths, so /tmp vs /private/tmp and other linked roots match. A file that is gone: its nearest
  * existing parent folder inside one of the folders.
- * → { path, gone } or null when the path is outside every folder.
+ * → { path, gone, root? } (root: the gone file's nearest folder is a root itself) or null when the path is outside every folder.
  * @param {string | string[]} dirs
  * @param {string} p
  */
@@ -94,7 +94,10 @@ function revealTarget(dirs, p, fsx = fs) {
   // gone: walk up to the nearest folder that exists, and show it only when it is inside a root
   for (let up = path.dirname(abs), i = 0; i < 4096; up = path.dirname(up), i++) {
     const r = realOf(up, fsx);
-    if (r) return roots.some((root) => within(root, r)) ? { path: r, gone: true } : null;
+    if (r) {
+      if (!roots.some((root) => within(root, r))) return null;
+      return roots.includes(r) ? { path: r, gone: true, root: true } : { path: r, gone: true };
+    }
     if (path.dirname(up) === up) break;
   }
   return null;
@@ -111,7 +114,7 @@ function insidePath(dir, p, fsx = fs) {
 
 // v3.113 files picked with the attach button: images the API takes go as image blocks (GUI tab), the rest as @path
 const IMAGE_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
-const PICK_IMAGE_MAX = 30 * 1024 * 1024;   // larger files are not read into the window (the renderer scales the rest down)
+const PICK_IMAGE_MAX = 10 * 1024 * 1024;   // larger images are not read into the window (they go in as @path)
 /** The image type of a picked file by its name, or '' when it is not an image the API takes. */
 const imageType = (p) => IMAGE_EXT[path.extname(String(p)).toLowerCase()] || '';
 

@@ -5417,10 +5417,11 @@ ipcMain.handle('chat:reveal', (_e, id, p) => {
   const r = P.resolvePty(state, String(id || ''));
   const target = r && isDir(r.dir) ? FM.revealTarget([r.dir, r.project?.dir], p) : null;
   if (!target) return 'outside';
-  eShell.showItemInFolder(target.path);
+  // showItemInFolder(root) would open the root's parent: open the folder itself instead
+  if (target.root) eShell.openPath(target.path); else eShell.showItemInFolder(target.path);
   return target.gone ? 'gone' : 'ok';
 });
-// v3.113 the attach button: the native file picker in the tab's folder. Images (a GUI tab only) come back as data for
+// v3.113 the attach button: the native file picker in the tab's folder. Images (a GUI tab only, up to 10 MB) come back as bytes for
 // the image bar; every other file (and every image in a terminal tab) as its full path for @path.
 ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
   const r = P.resolvePty(state, String(id || ''));
@@ -5433,14 +5434,14 @@ ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
   if (res.canceled || !res.filePaths.length) return null;
   /** @type {string[]} */
   const paths = [];
-  /** @type {{ type: string, data: string, path: string }[]} */
+  /** @type {{ type: string, data: Buffer, path: string }[]} */
   const images = [];
   for (const p of res.filePaths.slice(0, 50)) {
     const type = wantImages ? FM.imageType(p) : '';
     if (type && images.length < 5) {
       try {
         const st = fs.statSync(p);
-        if (st.isFile() && st.size <= FM.PICK_IMAGE_MAX) { images.push({ type, data: (await fs.promises.readFile(p)).toString('base64'), path: p }); continue; }
+        if (st.isFile() && st.size <= FM.PICK_IMAGE_MAX) { images.push({ type, data: await fs.promises.readFile(p), path: p }); continue; }
       } catch (e) { console.error('chat:pick', e); }
     }
     paths.push(p);
