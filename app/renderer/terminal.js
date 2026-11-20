@@ -173,6 +173,8 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
       return out;
     },
     focus() { term.focus(); },
+    hasSelection() { return term.hasSelection(); },
+    clearSelection() { term.clearSelection(); },
     fit: resize,
     /** Clears the terminal; restarting: the pty is being restarted by main. */
     reset({ restarting = false } = {}) { dead = false; quietExit = restarting; term.reset(); needSize = true; resize(); },

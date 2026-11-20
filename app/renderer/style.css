@@ -452,7 +452,10 @@ body.sidebar-collapsed #sidebar { display: none; }
 body.office-hidden #office { display: none; }
 body.office-hidden #divider { flex: 0 0 16px; cursor: default; }
 body.office-hidden #terminal { flex: 1 1 0; max-height: none; }
-body.dragging, body.dragging * { cursor: row-resize !important; }
+body.dragging, body.dragging * { cursor: row-resize !important; user-select: none !important; -webkit-user-select: none !important; }
+/* while the splitter is dragged the panes under the cursor must not start a selection or take the pointer */
+body.dragging #terminal, body.dragging #office, body.dragging .chat-host, body.dragging #agent-panel, body.dragging #usage-panel,
+  body.dragging #machines-panel, body.dragging canvas, body.dragging iframe, body.dragging webview { pointer-events: none !important; }
 
 #terminal {
   box-sizing: content-box;
