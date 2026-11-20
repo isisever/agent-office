@@ -3,6 +3,8 @@
 // the tab's terminal like a prompt (chat:send), so the session, its plugin and HQ work exactly as with the terminal.
 // Claude Code's own menus (approvals, AskUserQuestion, /model, …) are drawn only in the terminal: the chat reads the open
 // one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
+// v3.108 GUI chat: a tab that runs claude on its SDK protocol (chat:read returns `gui`) has no terminal to read: its
+// permission requests, questions and plans come as data and are answered with chat:answer; Stop is chat:interrupt.
 import { t } from './i18n.js';
 import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
@@ -82,11 +84,28 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   const input = h('textarea', { class: 'chat-input', rows: '1' });
   const send = h('button', { class: 'chat-send', onclick: () => submit() });
   const term = h('button', { class: 'chat-term', onclick: () => onTerminal() });
+  const stop = h('button', { class: 'chat-stop', onclick: () => interrupt() });
+  stop.hidden = true;
+  // v3.108 a GUI tab whose claude ended by itself: why (exit code, the end of its stderr) and Start again
+  const endText = h('div', { class: 'chat-end-title' });
+  const endPre = h('pre', { class: 'chat-dialog chat-end-text' });
+  const endBtn = h('button', { class: 'chat-send', onclick: () => { endBox.hidden = true; endShown = ''; api.pty.restart(ptyId); setTimeout(poll, 500); } });
+  const endBox = h('div', { class: 'chat-end' }, endText, endPre, h('div', { class: 'chat-menu-nav' }, endBtn));
+  endBox.hidden = true;
+  let endShown = '';
   const why = h('span', { class: 'chat-why' });
   const card = h('div', { class: 'chat-menu' });
   // the "/" list above the input (Claude Code's commands for this tab, chat:commands)
   const slash = h('ul', { class: 'chat-slash', role: 'listbox' });
   slash.hidden = true;
+  // v3.109 the "@" list: the tab's project files (chat:files); the pick goes in as @path, which Claude Code attaches
+  const atList = h('ul', { class: 'chat-slash chat-at', role: 'listbox' });
+  atList.hidden = true;
+  // v3.109 images pasted into the input: small previews above it (✕ drops one); they go with the next message
+  /** @type {{ type: string, data: string }[]} */
+  const images = [];
+  const imgBar = h('div', { class: 'chat-images-bar' });
+  imgBar.hidden = true;
   // the message being replied to, above the input (✕ drops it)
   const replyText = h('span', { class: 'chat-reply-text' });
   const replyBar = h('div', { class: 'chat-reply' }, h('span', { class: 'chat-reply-label' }), replyText,
@@ -97,9 +116,9 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   // once it is complete, so this is the live part
   const live = h('div', { class: 'chat-live' });
   live.hidden = true;
-  const form = h('div', { class: 'chat-form' }, slash, input, send, term);
+  const form = h('div', { class: 'chat-form' }, slash, atList, input, stop, send, term);
   form.hidden = Boolean(source);
-  el.append(banner, list, empty, live, card, replyBar, form, why);
+  el.append(banner, list, empty, live, card, endBox, replyBar, imgBar, form, why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -115,12 +134,20 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   let cursor = null;
   let sid;   // undefined until the first read
   const tools = new Map();   // tool call id → its line (marked done/failed by its result)
+  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number } }} */
+  let gui = null;   // v3.108 a GUI chat tab's open requests and live line (null: a terminal tab)
+  let askShown = '';   // the open request's id, as drawn
+  const answered = new Set();   // requests answered here: not drawn again while main's list catches up
 
   function texts() {
     input.placeholder = t('chat.placeholder');
     send.textContent = t('chat.send');
     term.textContent = t('chat.terminal');
-    term.title = t('chat.terminalTitle');
+    term.title = t(gui ? 'chat.gui.terminalTitle' : 'chat.terminalTitle');
+    stop.textContent = t('chat.gui.stop');
+    endBtn.textContent = t('chat.gui.restart');
+    endShown = '';
+    stop.title = t('chat.gui.stopTitle');
     bannerText.textContent = t('chat.permission');
     bannerBtn.textContent = t('chat.terminal');
     empty.textContent = t('chat.empty');
@@ -173,7 +200,14 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     if (it.kind === 'assistant') return message('assistant', it.text, mdBody(it.text));
     if (it.kind === 'error') return message('error', it.text, textBody(it.text));
     if (it.kind === 'tool') {
-      const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''));
+      // v3.109 a file the tool worked on: Show in Finder (main allows only a path inside the tab's folder)
+      const reveal = it.path && !source ? h('button', { class: 'chat-reveal', title: revealLabel(), onclick: async (e) => {
+        e.stopPropagation();
+        let r = 'outside';
+        try { r = await api.chat.reveal(ptyId, it.path); } catch (err) { console.error(err); }
+        if (r !== 'ok') note(t('chat.revealOutside'));
+      } }, '⌕') : null;
+      const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''), reveal);
       if (it.id) tools.set(it.id, line);
       return line;
     }
@@ -282,7 +316,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   }
   const atBottomNow = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   function checkMenu() {
-    if (!shown) return;
+    if (!shown || gui) return;   // v3.108 a GUI tab has no screen to read
     let m = null;
     try {
       m = openOnScreen(screen());
@@ -309,11 +343,182 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
         sid = r.sid;
         cursor = r.cursor;
         append(r.items || []);
+        setGui(r.gui || null);
         if (!r.more || !shown) break;
       }
       empty.hidden = list.childElementCount > 0;
     } catch (e) { console.error(e); } finally { reading = false; }
   }
+
+  // ---- v3.108 GUI chat: the open request as a card, the live line, Stop
+  function setGui(g) {
+    const was = Boolean(gui);
+    gui = g ? { ...g, asks: (g.asks || []).filter((a) => !answered.has(a.id)) } : null;
+    if (gui && !was) { menu = null; menuShown = ''; texts(); }
+    if (!gui) { if (was) { askShown = ''; card.hidden = true; card.replaceChildren(); stop.hidden = true; endBox.hidden = true; texts(); } return; }
+    drawEnd(gui.ended || null);
+    const first = gui.asks[0] || null;
+    banner.hidden = true;   // another tab's request is no terminal dialog to open here: the badge shows it
+    if ((first?.id || '') !== askShown) drawAsk(first);
+    const l = gui.live;
+    stop.hidden = !l.busy && !first;
+    live.hidden = !l.busy || Boolean(first);
+    const txt = l.text ? l.text.slice(-300).replace(/\s+/g, ' ') : l.tool ? t('chat.gui.running', { tool: l.tool }) : t('chat.working');
+    if (live.textContent !== txt) live.textContent = txt;
+  }
+  function drawEnd(e) {
+    const key = e ? `${e.at}` : '';
+    if (key === endShown) return;
+    endShown = key;
+    endBox.hidden = !e;
+    if (!e) return;
+    endText.textContent = t(e.code === 0 ? 'chat.gui.ended' : 'chat.gui.endedError', { code: e.code });
+    endPre.textContent = e.text || '';
+    endPre.hidden = !e.text;
+    if (atBottomNow()) list.scrollTop = list.scrollHeight;
+  }
+  async function answer(ask, a) {
+    answered.add(ask.id);
+    for (const b of card.querySelectorAll('button, input, textarea')) b.disabled = true;
+    let r;
+    try { r = await api.chat.answer(ptyId, ask.id, a); } catch (e) { console.error(e); r = 'error'; }
+    // 'gone': claude withdrew it. Anything else failed: the card comes back so it can still be answered
+    if (r !== 'ok' && r !== 'gone') { answered.delete(ask.id); note(t(`chat.why.${['not-running', 'locked'].includes(r) ? r : 'other'}`)); }
+    askShown = '';
+    setTimeout(poll, 100);
+  }
+  /** A text box for "tell Claude what to do instead", shown on Deny / Keep planning; Enter sends it. */
+  function withMessage(ask, label, allow) {
+    const box = h('textarea', { class: 'chat-free', rows: '2', placeholder: t('chat.gui.denyPlaceholder') });
+    const go = () => answer(ask, { allow, message: box.value });
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); go(); } });
+    card.querySelector('.chat-menu-nav')?.replaceWith(h('div', { class: 'chat-free-row' }, box, h('button', { class: 'chat-send', onclick: go }, label)));
+    box.focus();
+  }
+  function questionCard(ask) {
+    /** @type {Map<string, Set<string>>} */
+    const picked = new Map();
+    const other = new Map();   // question → its "Other" text box
+    const parts = ask.questions.map((q) => {
+      picked.set(q.question, new Set());
+      const rows = q.options.map((o) => {
+        const row = h('button', { class: 'chat-opt', title: o.description || '' },
+          h('span', { class: 'chat-opt-n' }, q.multiSelect ? '☐' : '○'), h('span', { class: 'chat-opt-label' }, o.label),
+          o.description ? h('span', { class: 'chat-opt-desc' }, o.description) : null);
+        row.addEventListener('click', () => {
+          const set = picked.get(q.question);
+          if (!q.multiSelect) { set.clear(); for (const b of row.parentElement.children) { b.classList.remove('checked'); const n = b.querySelector('.chat-opt-n'); if (n) n.textContent = '○'; } }
+          if (set.has(o.label)) set.delete(o.label); else set.add(o.label);
+          row.classList.toggle('checked', set.has(o.label));
+          row.querySelector('.chat-opt-n').textContent = q.multiSelect ? (set.has(o.label) ? '☑' : '☐') : (set.has(o.label) ? '●' : '○');
+          if (!q.multiSelect && ask.questions.length === 1) submitAnswers();   // one question, one choice: done
+        });
+        return row;
+      });
+      const box = h('input', { class: 'chat-free', type: 'text', placeholder: t('chat.gui.other') });
+      box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submitAnswers(); } });
+      other.set(q.question, box);
+      return h('div', { class: 'chat-question' }, q.header ? h('div', { class: 'chat-menu-ctx' }, q.header) : null,
+        h('div', { class: 'chat-menu-q' }, q.question), h('div', { class: 'chat-opts' }, ...rows), box);
+    });
+    function submitAnswers() {
+      const answers = {};
+      for (const q of ask.questions) {
+        const typed = other.get(q.question)?.value.trim();
+        const labels = [...picked.get(q.question)];
+        const a = typed || labels.join(', ');
+        if (a) answers[q.question] = a;
+      }
+      if (Object.keys(answers).length < ask.questions.length) { note(t('chat.gui.answerAll')); return; }
+      note('');
+      answer(ask, { allow: true, answers });
+    }
+    return [...parts, h('div', { class: 'chat-menu-nav' },
+      h('button', { class: 'chat-nav', onclick: () => answer(ask, { allow: false }) }, t('chat.gui.skip')),
+      h('button', { class: 'chat-send', onclick: () => submitAnswers() }, t('chat.gui.submit')))];
+  }
+  function drawAsk(ask) {
+    askShown = ask?.id || '';
+    card.hidden = !ask;
+    if (!ask) { card.replaceChildren(); return; }
+    const more = gui && gui.asks.length > 1 ? h('div', { class: 'chat-menu-ctx' }, t('chat.gui.more', { count: gui.asks.length - 1 })) : null;
+    let kids;
+    if (ask.kind === 'question') kids = questionCard(ask);
+    else if (ask.kind === 'plan') {
+      kids = [h('div', { class: 'chat-menu-q' }, t('chat.gui.planTitle')), h('div', { class: 'chat-plan' }, mdBody(ask.plan || '')),
+        h('div', { class: 'chat-menu-nav' },
+          h('button', { class: 'chat-nav', onclick: () => withMessage(ask, t('chat.gui.keepPlanning'), false) }, t('chat.gui.keepPlanning')),
+          h('button', { class: 'chat-send', onclick: () => answer(ask, { allow: true }) }, t('chat.gui.approvePlan')))];
+    } else {
+      kids = [h('div', { class: 'chat-menu-q' }, t(ask.agent ? 'chat.gui.agentWants' : 'chat.gui.wants', { tool: ask.name })),
+        ask.detail ? h('pre', { class: 'chat-dialog' }, ask.detail) : null,
+        h('div', { class: 'chat-menu-nav' },
+          h('button', { class: 'chat-nav', onclick: () => withMessage(ask, t('chat.gui.deny'), false) }, t('chat.gui.deny')),
+          h('button', { class: 'chat-send', onclick: () => answer(ask, { allow: true }) }, t('chat.gui.allow')))];
+    }
+    card.replaceChildren(...[more, ...kids].filter(Boolean));
+    if (atBottomNow()) list.scrollTop = list.scrollHeight;
+  }
+  async function interrupt() {
+    try { await api.chat.interrupt(ptyId); } catch (e) { console.error(e); }
+    setTimeout(poll, 200);
+  }
+
+  const revealLabel = () => t(api.platform === 'darwin' ? 'chat.revealMac' : 'chat.reveal');
+  // ---- v3.109 "@": files of the tab's project
+  /** @type {{ path: string, insert: string }[]} */
+  let atShown = [];
+  let atPick = 0;
+  let atSeq = 0;
+  /** The "@…" word the caret is in (after a space or at the start), or null. */
+  function atQuery() {
+    const caret = input.selectionStart ?? input.value.length;
+    const before = input.value.slice(0, caret);
+    const m = /(?:^|\s)@([^\s@"]{0,200})$/.exec(before);
+    return m ? m[1] : null;
+  }
+  function closeAt() { atList.hidden = true; atShown = []; }
+  function drawAt() {
+    atList.replaceChildren(...atShown.map((f, i) => h('li', {
+      class: `chat-slash-row${i === atPick ? ' on' : ''}`, role: 'option',
+      onmousedown: (e) => { e.preventDefault(); atPick = i; completeAt(); },
+    }, h('span', { class: 'chat-slash-name' }, f.path.slice(f.path.lastIndexOf('/') + 1)), h('span', { class: 'chat-slash-desc' }, f.path))));
+    atList.hidden = !atShown.length;
+    atList.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+  }
+  async function updateAt() {
+    const q = atQuery();
+    if (q === null || !api.chat.files) { closeAt(); return; }
+    const seq = ++atSeq;
+    let list = [];
+    try { list = await api.chat.files(ptyId, q); } catch (e) { console.error(e); }
+    if (seq !== atSeq || atQuery() === null) return;   // a newer key, or the word is gone
+    atShown = list || []; atPick = 0;
+    drawAt();
+  }
+  function completeAt() {
+    const f = atShown[atPick];
+    if (!f) return;
+    const caret = input.selectionStart ?? input.value.length;
+    const before = input.value.slice(0, caret).replace(/@[^\s@"]*$/, '');
+    const after = input.value.slice(caret);
+    input.value = `${before}${f.insert} ${after.replace(/^\s+/, '')}`;
+    const pos = before.length + f.insert.length + 1;
+    input.setSelectionRange(pos, pos);
+    closeAt(); fitInput(); input.focus();
+  }
+  // ---- v3.109 a file dropped on the input goes in as @path (its full path)
+  input.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+  input.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const paths = [...(e.dataTransfer?.files || [])].map((f) => { try { return api.pathForFile?.(f) || ''; } catch { return ''; } }).filter(Boolean);
+    if (!paths.length) return;
+    const add = paths.map((p) => (/\s/.test(p) ? `@"${p.replace(/"/g, '')}"` : `@${p}`)).join(' ');
+    const caret = input.selectionStart ?? input.value.length;
+    const sep = caret > 0 && !/\s$/.test(input.value.slice(0, caret)) ? ' ' : '';
+    input.value = `${input.value.slice(0, caret)}${sep}${add} ${input.value.slice(caret)}`;
+    fitInput(); input.focus();
+  });
 
   function replyTo(text) {
     replying = text;
@@ -326,16 +531,62 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     why.textContent = text;
     why.hidden = !text;
   }
+  function drawImages() {
+    imgBar.replaceChildren(...images.map((im, i) => h('span', { class: 'chat-image-chip' },
+      h('img', { src: `data:${im.type};base64,${im.data}`, alt: t('chat.imageAlt') }),
+      h('button', { class: 'chat-image-x', title: t('chat.imageRemove'), onclick: () => { images.splice(i, 1); drawImages(); input.focus(); } }, '✕'))));
+    imgBar.hidden = !images.length;
+  }
+  const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  const B64_MAX = 5 * 1024 * 1024;   // the API's limit, on the base64 text (main checks the same)
+  const EDGE_MAX = 8000;             // the API's largest side
+  const readUrl = (blob) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result || '')); r.onerror = () => bad(r.error); r.readAsDataURL(blob); });
+  const b64 = (url) => url.slice(url.indexOf(',') + 1);
+  /** An image as it goes out: as it is when within the API's limits, else scaled down (long side 2000 px, JPEG). */
+  async function prepare(f) {
+    const url = await readUrl(f);
+    let bmp = null;
+    try { bmp = await window.createImageBitmap(f); } catch { return null; }
+    const big = Math.max(bmp.width, bmp.height);
+    if (b64(url).length <= B64_MAX && big <= EDGE_MAX) { bmp.close?.(); return { type: f.type, data: b64(url) }; }
+    const k = Math.min(1, 2000 / big);
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+    c.getContext('2d')?.drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close?.();
+    const data = b64(c.toDataURL('image/jpeg', 0.85));
+    return data.length <= B64_MAX ? { type: 'image/jpeg', data } : null;
+  }
+  /** @type {Promise<void>[]} */
+  const imageReads = [];   // pastes still being read: a message waits for them
+  input.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;   // text: the input's own paste
+    if (!(e.clipboardData?.getData('text/plain') || '').trim()) e.preventDefault();
+    for (const f of files) {
+      if (images.length + imageReads.length >= 5) { note(t('chat.why.too-many-images')); break; }
+      if (!IMAGE_TYPES.includes(f.type)) { note(t('chat.why.image-type')); continue; }
+      const job = prepare(f).then((im) => {
+        if (!im) note(t('chat.why.image-size'));
+        else if (images.length < 5) { images.push(im); drawImages(); }
+      }).catch((err) => { console.error(err); note(t('chat.why.image-type')); })
+        .finally(() => { imageReads.splice(imageReads.indexOf(job), 1); });
+      imageReads.push(job);
+    }
+  });
   async function submit() {
+    if (imageReads.length) await Promise.all(imageReads.slice());   // an image pasted a moment ago goes with this message
     const text = input.value;
-    if (!text.trim()) return;
-    if (menu) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
+    if (!text.trim() && !images.length) return;
+    if (menu && !gui) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
     // a slash command is sent as typed (a quote in front would stop it being a command)
     const out = replying && !/^\s*\//.test(text) ? withReply(replying, text) : text;
     let r;
-    try { r = await api.chat.send(ptyId, out); } catch (e) { console.error(e); r = 'error'; }
+    const sent = images.slice();
+    try { r = await api.chat.send(ptyId, out, sent); } catch (e) { console.error(e); r = 'error'; }
     if (r === 'ok') {
-      echo(out);
+      echo(sent.length ? `${out}${out.trim() ? '\n\n' : ''}${t('chat.images', { count: sent.length })}` : out);
+      images.length = 0; drawImages();
       input.value = '';
       replyTo('');
       fitInput();
@@ -347,7 +598,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
       if (cmd && commands?.some((c) => c.name === cmd && c.ui)) setTimeout(() => onTerminal(), 400);
       return;
     }
-    note(t(`chat.why.${['not-running', 'permission', 'draft', 'locked', 'too-long'].includes(r) ? r : 'other'}`));
+    note(t(`chat.why.${['not-running', 'permission', 'draft', 'locked', 'too-long', 'too-many-images', 'image-type', 'image-size', 'image-save'].includes(r) ? r : 'other'}`));
   }
   const fitInput = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; };
 
@@ -393,9 +644,14 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     fitInput();
     input.focus();
   }
-  input.addEventListener('input', () => { fitInput(); note(''); updateSlash(); });
-  input.addEventListener('blur', () => setTimeout(closeSlash, 150));
+  input.addEventListener('input', () => { fitInput(); note(''); updateSlash(); updateAt(); });
+  input.addEventListener('blur', () => setTimeout(() => { closeSlash(); closeAt(); }, 150));
   input.addEventListener('keydown', (e) => {
+    if (!atList.hidden && atShown.length && !e.isComposing) {   // v3.109 the "@" list first
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); atPick = (atPick + (e.key === 'ArrowDown' ? 1 : -1) + atShown.length) % atShown.length; drawAt(); return; }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); completeAt(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); closeAt(); return; }
+    }
     if (!slash.hidden && shownCmds.length && !e.isComposing) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); pick = (pick + (e.key === 'ArrowDown' ? 1 : -1) + shownCmds.length) % shownCmds.length; drawSlash(); return; }
       if (e.key === 'Tab') { e.preventDefault(); complete(); return; }
@@ -409,6 +665,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     // Enter sends, Shift+Enter is a new line; not while an input method is composing (Turkish/CJK IMEs)
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
     else if (e.key === 'Escape' && replying) { e.preventDefault(); replyTo(''); }
+    else if (e.key === 'Escape' && gui?.live.busy) { e.preventDefault(); interrupt(); }   // v3.108 Esc stops the turn, as in the terminal
   });
 
   return {
@@ -429,8 +686,10 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
       window.clearInterval(menuTimer);
     },
     /** The project's attention ('permission' shows the banner: Claude Code waits for an answer in the terminal). */
-    setAttention(a) { attention = a; banner.hidden = hidesBanner() || a !== 'permission'; },
-    texts() { texts(); menuShown = ''; drawMenu(); },
+    setAttention(a) { attention = a; banner.hidden = Boolean(gui) || hidesBanner() || a !== 'permission'; },
+    texts() { texts(); if (gui) { askShown = ''; setGui(gui); return; } menuShown = ''; drawMenu(); },
+    /** v3.108 is this tab a GUI chat (as of the last read)? */
+    isGui: () => Boolean(gui),
     focus() { input.focus(); },
     destroy() { shown = false; window.clearInterval(timer); window.clearInterval(menuTimer); el.remove(); },
   };

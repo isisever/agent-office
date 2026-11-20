@@ -519,7 +519,7 @@ function setupLink(d) {
       if (remote) link?.expectReport(c.id, c.device.pub, project);
       let ok; try { ok = put(C.markedTask(c.id, c.device.name, c.text), { taskId: c.id }) === true; } catch { ok = false; }
       if (!ok) { if (remote) link?.dropReport(c.id); return false; }
-      if (!remote) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); }
+      if (!remote) { localTasks.add(c.id); saveTaskIds(localTasksFile, localTasks); localInto.set(c.id, { tab: project, at: Date.now() }); }
     } else if (put(C.markedCommand(c.device.name, c.text), {}) !== true) return false;
     // v3.97 it went into a tab that answers or skips its prompts (only a trusted device's entry gets this far): logged as such
     if (unattendedFor(c.device, project)) log(c.device.name, d.projects().find((x) => x.id === project)?.name || project, c.text, `${c.report ? 'task:' : ''}delivered:${UNATTENDED}`);
@@ -768,6 +768,8 @@ function setupLink(d) {
   // --- v3.35 one boss: dispatch (office_dispatch) and the reports of dispatched tasks
   const localTasksFile = path.join(dir, 'local-tasks.json');
   const localTasks = loadTaskIds(localTasksFile);   // ids of tasks dispatched to a project of this machine (until reported; v3.46 kept across restarts)
+  // v3.110 the tab each local task went into (this run only; main's dispatch records keep theirs across restarts)
+  const localInto = new Map();   // task id -> { tab, at }
   const newId = () => require('crypto').randomBytes(8).toString('hex');
   /** A task for a project of this machine: the same queue and checks as a remote one. → { id, status, reason? } */
   /** onStatus(id, status, reason?) hears every status (queued, then delivered or rejected), also the later ones. */
@@ -801,6 +803,7 @@ function setupLink(d) {
       const id = n.slice(0, -5);
       const report = readJson(f);
       let used = false;
+      if (report) localInto.delete(id);
       if (report && localTasks.has(id)) { localTasks.delete(id); saveTaskIds(localTasksFile, localTasks); d.onReport?.({ id, machine: '', pub: SELF, report: C.cleanReport(report, true) }); used = true; }
       else if (report && link?.owesReport(id)) used = link.sendReport(id, report);
       let old = false;
@@ -894,6 +897,9 @@ function setupLink(d) {
     remoteTask: (id) => link?.sentTask(id) || null,
     cancelRemote: (id) => (link ? link.cancelTask(id) : { ok: false, reason: 'offline' }),
     pumpOutbox: () => link?.pumpOutbox(),
+    /** v3.110 a task for this tab (another device's, or this machine's: HQ, a routine, a local boss) is queued, or went
+     *  in and has not reported yet: the tab must not restart (a mode switch), or the task is lost. */
+    taskOpenIn: (tab) => taskOpenIn(queue, link, localInto, String(tab), Date.now()),
     knows: (id) => localTasks.has(id) || [...queue.values()].some((q) => q.some((c) => c.id === id)),
     /** The Link (tests; null while off). */
     link: () => link,
@@ -907,4 +913,17 @@ function setupLink(d) {
 /** v3.46 depth 1 across machines: a paired device's task (report) for this project is queued or its report is owed. */
 const remoteTaskOpen = (queue, link, project) => (queue.get(project) || []).some((c) => c.report && c.device.pub !== SELF) || Boolean(link?.owesReportFor?.(project));
 
-module.exports = { setupLink, loadTaskIds, saveTaskIds, ttlOf, remoteTaskOpen, QUEUE_TTL_MS };
+/** v3.110 any task (any device, this one too) queued for this tab, owed a report from it, or typed into it here and not
+ *  reported. A local task that never reports stops counting after LOCAL_OPEN_MS (the remote one after link's OWED_MS). */
+const LOCAL_OPEN_MS = 4.5 * 3600 * 1000;
+function taskOpenIn(queue, link, localInto, tab, now) {
+  if ((queue.get(tab) || []).some((c) => c.report)) return true;
+  if (link?.owesReportFor?.(tab)) return true;
+  for (const [id, x] of localInto) {
+    if (now - x.at >= LOCAL_OPEN_MS) localInto.delete(id);
+    else if (x.tab === tab) return true;
+  }
+  return false;
+}
+
+module.exports = { setupLink, loadTaskIds, saveTaskIds, ttlOf, remoteTaskOpen, taskOpenIn, LOCAL_OPEN_MS, QUEUE_TTL_MS };

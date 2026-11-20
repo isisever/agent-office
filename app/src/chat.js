@@ -51,7 +51,7 @@ function userText(s, base) {
 /**
  * Transcript lines (JSONL text, whole lines) → chat items, in order:
  *   { kind: 'user', text, images? } | { kind: 'assistant', text } | { kind: 'error', text }
- *   | { kind: 'tool', id, name, detail } | { kind: 'toolDone', id, error } | { kind: 'command', text }
+ *   | { kind: 'tool', id, name, detail, path? } | { kind: 'toolDone', id, error } | { kind: 'command', text }
  *   | { kind: 'note', note: 'compact' | 'task' | 'interrupted' | 'message' }
  * each with key (unique per line and block) and at (ms, 0 when unknown). A bad line is skipped.
  */
@@ -85,7 +85,11 @@ function chatItems(text) {
       content.forEach((b, n) => {
         const k = `${key}:${n}`;
         if (b?.type === 'text' && String(b.text || '').trim()) out.push({ key: k, at, kind: j.isApiErrorMessage ? 'error' : 'assistant', text: cut(String(b.text).trim(), TEXT_MAX) });
-        else if (b?.type === 'tool_use') out.push({ key: k, at, kind: 'tool', id: String(b.id || ''), name: toolName(b.name), detail: toolDetail(b.name, b.input) });
+        else if (b?.type === 'tool_use') {
+          // v3.109 the file a tool worked on (the chat can show it in Finder: main checks it is inside the tab's folder)
+          const fp = ['file_path', 'notebook_path'].map((k2) => b.input?.[k2]).find((v) => typeof v === 'string' && v.trim() && v.length <= 4096);
+          out.push({ key: k, at, kind: 'tool', id: String(b.id || ''), name: toolName(b.name), detail: toolDetail(b.name, b.input), ...(fp ? { path: fp } : {}) });
+        }
       });
     }
   }
@@ -122,6 +126,30 @@ function readChat(file, cursor, fsm = fs) {
   const used = end > start ? end : to < st.size && buf.length ? buf.length : start;
   const items = end > start ? chatItems(buf.subarray(start, end).toString('utf8')) : [];
   return { cursor: { file, ino: st.ino, size: from + used }, items, reset: !same, more: to < st.size };
+}
+
+// v3.109 images pasted into the chat input: the types Claude takes, at most IMAGES_MAX of at most IMAGE_MAX characters
+// of base64 each (the API counts its 5 MB on that text; the renderer scales a bigger image down before it comes here)
+const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+const IMAGES_MAX = 5;
+const IMAGE_MAX = 5 * 1024 * 1024;
+/**
+ * The images of a chat message, checked: [{ type, data (base64) }] → { images: [{ type, data, ext }] } | { error:
+ * 'too-many-images' | 'image-type' | 'image-size' }. Not an array (or empty): no images.
+ */
+function cleanImages(list) {
+  if (!Array.isArray(list) || !list.length) return { images: [] };
+  if (list.length > IMAGES_MAX) return { error: 'too-many-images' };
+  const images = [];
+  for (const it of list) {
+    const type = typeof it?.type === 'string' ? it.type.toLowerCase() : '';
+    if (!IMAGE_TYPES[type]) return { error: 'image-type' };
+    const data = typeof it.data === 'string' ? it.data : '';
+    if (!data || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return { error: 'image-type' };
+    if (data.length > IMAGE_MAX) return { error: 'image-size' };
+    images.push({ type, data, ext: IMAGE_TYPES[type] });
+  }
+  return { images };
 }
 
 /** Why a message typed in the chat can't go to the tab now → a reason, or null (it can). */
@@ -192,4 +220,4 @@ function linkItems(items, { redact = (s) => require('./hq.js').redact(s), toolDe
   return out;
 }
 
-module.exports = { TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };
+module.exports = { IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };

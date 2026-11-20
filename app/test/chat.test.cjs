@@ -148,7 +148,7 @@ test('toolDetail: an AskUserQuestion call shows its questions', () => {
 
 test('main.js: chat:send types through typePrompt; chatView is written only once set', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  const send = src.slice(src.indexOf("ipcMain.handle('chat:send'"), src.indexOf("ipcMain.handle('chat:send'") + 900);
+  const send = src.slice(src.indexOf("ipcMain.handle('chat:send'"), src.indexOf("ipcMain.handle('chat:send'") + 2400);   // v3.109 images are checked first
   assert.match(send, /CHAT\.sendRefused\(/);
   assert.match(send, /typePrompt\(id,/);
   assert.match(src, /\.\.\.\(typeof raw\.chatView === 'boolean' \? \{ chatView: raw\.chatView \} : \{\}\)/);
@@ -310,4 +310,72 @@ test('redaction (best effort): PEM private keys and secret-looking assignments',
   assert.equal(redact('export PATH=/usr/local/bin:/usr/bin'), 'export PATH=/usr/local/bin:/usr/bin');
   assert.equal(redact('export NODE_ENV=production PORT=3000 AUTHOR=jane'), 'export NODE_ENV=production PORT=3000 AUTHOR=jane');
   assert.equal(redact('password=hunter22 token: abcdefgh'), 'password=[redacted] token: [redacted]');   // the older patterns still hold, once
+});
+
+test('v3.109 "@" files: git list, walk, ranking, mentions; tool lines carry their file; reveal only inside the folder', () => {
+  const FM = require('../src/file-match.js');
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  assert.deepEqual(FM.parseGitFiles('a.js\0src/b.js\0\0bad\nname\0'), ['a.js', 'src/b.js']);
+  const files = ['src/login/form.js', 'README.md', 'test/login.test.js', 'src/app.js', 'docs/blogin-notes.md'];
+  assert.deepEqual(FM.rankFiles(files, 'login'), ['test/login.test.js', 'docs/blogin-notes.md', 'src/login/form.js'], 'name starts, name contains, path contains');
+  assert.deepEqual(FM.rankFiles(files, 'sapp'), ['src/app.js'], 'letters in order');
+  assert.equal(FM.rankFiles(files, '').length, 5);
+  assert.equal(FM.mention('src/a.js'), '@src/a.js');
+  assert.equal(FM.mention('docs/setup "guide".md'), '@"docs/setup guide.md"', 'a path with a space is quoted (quotes inside dropped)');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-fm-'));
+  try {
+    for (const f of ['a.txt', 'src/b.js', 'node_modules/x/c.js', '.git/HEAD', '.hidden/d.txt']) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), 'x'); }
+    assert.deepEqual(FM.walkFiles(dir).sort(), ['a.txt', 'src/b.js'], 'no node_modules, no dot folders');
+    assert.ok(FM.insidePath(dir, 'src/b.js').endsWith(path.join('src', 'b.js')));
+    assert.ok(FM.insidePath(dir, path.join(dir, 'a.txt')));
+    assert.equal(FM.insidePath(dir, '../../etc/passwd'), '');
+    assert.equal(FM.insidePath(dir, '/etc/hosts'), '');
+    assert.equal(FM.insidePath(dir, 'missing.txt'), '', 'only what exists');
+    if (process.platform !== 'win32') {
+      fs.symlinkSync('/etc', path.join(dir, 'out'));
+      assert.equal(FM.insidePath(dir, 'out/hosts'), '', 'a link out of the folder is outside');
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  const CHAT = require('../src/chat.js');
+  const items = CHAT.chatItems(JSON.stringify({ type: 'assistant', uuid: 'u1', message: { content: [{ type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: '/w/src/a.js', old_string: 'x' } }, { type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'ls' } }] } }));
+  assert.equal(items[0].path, '/w/src/a.js');
+  assert.equal('path' in items[1], false);
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const reveal = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:reveal'"), MAIN.indexOf("ipcMain.handle('chat:reveal'") + 400);
+  assert.match(reveal, /FM\.insidePath\(r\.dir, p\)/);
+  assert.match(reveal, /if \(!real\) return 'outside';\s+eShell\.showItemInFolder\(real\);/);
+  assert.doesNotMatch(reveal, /openPath|openExternal/, 'shown in its folder, never opened');
+});
+
+test('v3.109 pasted images: checked types, count and size; image blocks for a GUI tab, @path files for a terminal tab', () => {
+  const CHAT = require('../src/chat.js');
+  const GS = require('../src/gui-session.js');
+  const fs = require('node:fs'); const path = require('node:path');
+  const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64');
+  assert.deepEqual(CHAT.cleanImages(undefined), { images: [] });
+  assert.deepEqual(CHAT.cleanImages([{ type: 'IMAGE/PNG', data: png }]).images, [{ type: 'image/png', data: png, ext: 'png' }]);
+  assert.deepEqual(CHAT.cleanImages([{ type: 'image/tiff', data: png }]), { error: 'image-type' });
+  assert.deepEqual(CHAT.cleanImages([{ type: 'image/png', data: 'not base64!' }]), { error: 'image-type' });
+  assert.deepEqual(CHAT.cleanImages(Array.from({ length: 6 }, () => ({ type: 'image/png', data: png }))), { error: 'too-many-images' });
+  assert.deepEqual(CHAT.cleanImages([{ type: 'image/jpeg', data: 'A'.repeat(CHAT.IMAGE_MAX + 4) }]), { error: 'image-size' }, 'the base64 text counts (as the API counts it)');
+  assert.equal(CHAT.cleanImages([{ type: 'image/jpeg', data: 'A'.repeat(CHAT.IMAGE_MAX) }]).images.length, 1);
+  const withImg = JSON.parse(GS.userLine('look', [{ type: 'image/png', data: png }]));
+  assert.deepEqual(withImg.message.content, [{ type: 'text', text: 'look' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }]);
+  assert.deepEqual(JSON.parse(GS.userLine('', [{ type: 'image/png', data: png }])).message.content.map((b) => b.type), ['image'], 'an image alone');
+  assert.equal(JSON.parse(GS.userLine('plain')).message.content, 'plain', 'no images: a plain string as before');
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const send = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:send'"), MAIN.indexOf('const chatImagesDir'));
+  assert.ok(send.indexOf('CHAT.cleanImages(images)') < send.indexOf('typePrompt('), 'checked before anything is sent');
+  assert.match(send, /if \(gui \|\| !img\.images\.length\) return typePrompt\(id, body, \{ images: img\.images \}\)/);
+  assert.match(send, /paths\.map\(FM\.mention\)/);
+  const save = MAIN.slice(MAIN.indexOf('function saveChatImages('), MAIN.indexOf('function saveChatImages(') + 900);
+  assert.match(save, /mkdirSync\(dir, \{ recursive: true, mode: 0o700 \}\)/);
+  assert.match(save, /\{ mode: 0o600, flag: 'wx' \}/);
+  assert.match(save, /7 \* 864e5/);
+  assert.match(send, /for \(const p of paths\) \{ try \{ fs\.rmSync\(p\); \}/, 'files of a message that was not typed go at once');
+  // a mode switch never cuts a prompt just typed in, nor a task that has not reported
+  assert.match(MAIN, /if \(Date\.now\(\) - \(activity\.get\(pid\)\?\.at \|\| 0\) < 15000\) return true;/);
+  assert.match(MAIN, /handoffLocked\(pid\) \|\| guiHolds\(pid\)\) continue;/);
+  assert.match(MAIN, /if \(!sid \|\| guiHolds\(id\) \|\|/);
+  assert.match(MAIN, /if \(!t\.sendUser\(text, images\)\) return false;/);
 });

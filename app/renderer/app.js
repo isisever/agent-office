@@ -217,7 +217,8 @@ function isAsleep(id) {
 // ---- Chat view (contract v3.80, chat.js): with the setting on, a Claude Code tab shows its conversation; the
 // terminal stays mounted under it and is one click away. Off: nothing below runs and the pane is as before.
 let chatView = false;
-const chatOff = new Set();   // pty ids the person switched back to the terminal (this window only)
+const chatOff = new Set();   // pty ids the person switched back to the terminal (v3.110 seeded from main's termTabs)
+let chatOffSeeded = false;
 let chatSwitch = null;       // the "chat" button over a terminal (made when first needed)
 /** Can this tab be shown as a chat? Claude Code tabs only (not Antigravity / Command Code / OpenCode, not a shell tab). */
 function chatCapable(id) {
@@ -228,7 +229,21 @@ function chatCapable(id) {
   if (!p || (p.engine && p.engine !== 'claude')) return false;
   return !n || !tabsOf(p).find((x) => x.n === Number(n))?.shell;
 }
-function setChatMode(id, on) {
+// v3.108 a GUI chat tab has no terminal of its own: main continues its session in a terminal (or back in the GUI chat)
+// only while nothing runs in it; HQ (and Windows) switch the view only, as before
+const switching = new Set();
+async function setChatMode(id, on) {
+  if (switching.has(id)) return;
+  switching.add(id);
+  let r = 'ok';
+  let failed = '';   // v3.110 the switch could not be asked: the tab keeps its mode and says why
+  try { r = String(id).split(':')[0] === HQ_ROW.id ? 'ok' : await api.chat.mode(id, on ? 'gui' : 'terminal'); } catch (e) { console.error(e); failed = String((e && /** @type {any} */ (e).message) || e); } finally { switching.delete(id); }
+  if (failed || r === 'busy' || r === 'locked') {
+    hint(id, failed ? t('chat.gui.switchFailed', { error: failed }) : t(r === 'busy' ? 'chat.gui.busySwitch' : 'chat.why.locked'));
+    setTimeout(() => hint(id, ''), 4000);
+    return;
+  }
+  if (r === 'moved') panes.get(id)?.term.reset({ restarting: true });
   if (on) chatOff.delete(id); else chatOff.add(id);
   syncChat();
   focusActive();
@@ -270,6 +285,8 @@ function syncChat() {
 /** v3.80 the chat view setting from main's prefs (startup and the settings checkbox). */
 function applyChatView(p) {
   chatView = p?.chatView === true;
+  // v3.110 the tabs kept in the terminal across an app restart (main's state.json), once at startup
+  if (!chatOffSeeded && Array.isArray(p?.termTabs)) { chatOffSeeded = true; for (const id of p.termTabs) if (typeof id === 'string') chatOff.add(id); }
   sidebar?.setChatView?.(chatView);
   syncChat();
   focusActive();
@@ -394,6 +411,7 @@ api.pty.onData((id, d) => {
   pending.set(id, buf);
 });
 api.pty.onReloaded?.((id) => panes.get(id)?.term.reloaded());
+api.chat?.onMoved?.((id) => panes.get(id)?.term.reset({ restarting: true }));   // v3.108 the chat view setting moved an idle tab
 api.pty.onSleep?.((id) => {
   panes.get(id)?.term.sleep();
   pending.delete(id);

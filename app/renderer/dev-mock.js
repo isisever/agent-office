@@ -185,7 +185,7 @@ const chatOf = (id) => {
     const at = Date.now();
     mockChats.set(id, [
       { key: `${id}-1`, at, kind: 'user', text: 'README için kısa bir kurulum bölümü yaz.' },
-      { key: `${id}-2`, at, kind: 'tool', id: `${id}-t1`, name: 'Read', detail: '/Users/me/web/README.md' },
+      { key: `${id}-2`, at, kind: 'tool', id: `${id}-t1`, name: 'Read', detail: '/Users/me/web/README.md', path: '/Users/me/web/README.md' },
       { key: `${id}-3`, at, kind: 'toolDone', id: `${id}-t1`, error: false },
       { key: `${id}-4`, at, kind: 'tool', id: `${id}-t2`, name: 'Bash', detail: 'npm test' },
       { key: `${id}-5`, at, kind: 'toolDone', id: `${id}-t2`, error: true },
@@ -195,6 +195,28 @@ const chatOf = (id) => {
     ]);
   }
   return mockChats.get(id);
+};
+// v3.108 GUI chat: ?gui (with ?chat) makes every Claude tab a GUI chat tab; ?gui=perm | q | plan opens a permission
+// request, an AskUserQuestion or a plan on the main tab (?gui=ended: its claude ended with an error); a sent message
+// streams a live answer for 2 s
+const mockGui = new Map();   // pty id → { asks, live }
+const guiOf = (id) => {
+  if (!q.has('gui') || String(id).startsWith('hq')) return null;
+  if (!mockGui.has(id)) {
+    const kind = q.get('gui');
+    const main = !String(id).includes(':') && id === projects[0]?.id;
+    const asks = !main ? [] : kind === 'perm'
+      ? [{ id: 'a1', kind: 'permission', tool: 'Bash', name: 'Bash', detail: 'git push origin feature/login', reason: '', agent: false, since: Date.now() },
+        { id: 'a2', kind: 'permission', tool: 'Edit', name: 'Edit', detail: '/Users/me/web/.claude/settings.json', reason: '', agent: true, since: Date.now() }]
+      : kind === 'q' ? [{ id: 'q1', kind: 'question', tool: 'AskUserQuestion', name: 'AskUserQuestion', detail: '', agent: false, since: Date.now(), questions: [
+        { question: 'Which scope should the setup section cover?', header: 'Scope', multiSelect: false, options: [{ label: 'Only README', description: 'The setup section' }, { label: 'README and docs/', description: 'Every page that mentions setup' }] },
+        { question: 'Which platforms?', header: 'Platforms', multiSelect: true, options: [{ label: 'macOS', description: '' }, { label: 'Linux', description: '' }, { label: 'Windows', description: '' }] }] }]
+      : kind === 'plan' ? [{ id: 'p1', kind: 'plan', tool: 'ExitPlanMode', name: 'ExitPlanMode', detail: '', agent: false, since: Date.now(), plan: '## Plan\n\n1. Add `src/setup.js`\n2. Write the **Setup** section\n3. Run `npm test`' }]
+      : [];
+    const ended = main && kind === 'ended' ? { ended: { code: 1, text: 'shell-init: error retrieving current directory\nerror: An unknown error occurred (Unexpected)', at: Date.now() } } : {};
+    mockGui.set(id, { asks, live: { busy: false, text: '', tool: '' }, ...ended });
+  }
+  return mockGui.get(id);
 };
 let office3dSetting = q.has('office3d'); // v3.81 ?office3d: the 3D office from the start
 // v3.83 team: ?staff turns team mode on with three members; the presets are read as main reads them
@@ -549,12 +571,36 @@ window.agentOffice = {
       { name: 'superpowers:brainstorming', description: 'Use when the user asks to design or plan', source: 'plugin' },
       { name: 'office', description: 'Agent Office: ofis özeti ve istatistikler', source: 'plugin' },
     ],
+    // v3.109 the "@" list (a few sample files, ranked like main: name first) and Show in Finder (a note in the console)
+    files: async (_id, q) => ['README.md', 'src/app.js', 'src/login/form.js', 'test/login.test.js', 'docs/setup guide.md']
+      .filter((f) => !q || f.toLowerCase().includes(String(q).toLowerCase())).map((f) => ({ path: f, insert: /\s/.test(f) ? `@"${f}"` : `@${f}` })),
+    reveal: async (_id, p) => { console.log('mock: show in Finder', p); return 'ok'; },
     read: async (id, cursor) => {
       if (String(id).startsWith('login:')) return { unsupported: true };
       const items = chatOf(id);
       const from = cursor && cursor.file === id ? cursor.size : 0;
-      return { sid: `mock-${id}`, cursor: { file: id, ino: 1, size: items.length }, items: items.slice(from), reset: from === 0, more: false };
+      return { sid: `mock-${id}`, cursor: { file: id, ino: 1, size: items.length }, items: items.slice(from), reset: from === 0, more: false, gui: guiOf(id) };
     },
+    answer: async (id, askId, a) => {
+      const g = guiOf(id);
+      if (!g) return 'not-running';
+      const ask = g.asks.find((x) => x.id === askId);
+      if (!ask) return 'gone';
+      g.asks = g.asks.filter((x) => x.id !== askId);
+      const at = Date.now();
+      chatOf(id).push({ key: `${id}-ans${at}`, at, kind: 'assistant', text: `(sahte) ${ask.name}: ${JSON.stringify(a)}` });
+      return 'ok';
+    },
+    interrupt: async (id) => {
+      const g = guiOf(id);
+      if (!g) return 'not-running';
+      g.live = { busy: false, text: '', tool: '' };
+      const at = Date.now();
+      chatOf(id).push({ key: `${id}-int${at}`, at, kind: 'note', note: 'interrupted' });
+      return 'ok';
+    },
+    mode: async (id) => (guiOf(id)?.live.busy ? 'busy' : guiOf(id) ? 'moved' : 'ok'),
+    onMoved: () => () => {},
     // a menu answer clears the screen (the menu is gone) and lands in the chat as Claude Code would show it
     keys: async (id, steps) => {
       const at = Date.now();
@@ -562,11 +608,23 @@ window.agentOffice = {
       chatOf(id).push({ key: `${id}-k${at}`, at, kind: 'note', note: 'message' }, { key: `${id}-r${at}`, at, kind: 'assistant', text: `(sahte) tuşlar: ${JSON.stringify(steps)}` });
       return 'ok';
     },
-    send: async (id, text) => {
+    send: async (id, text, images) => {   // v3.109 images are counted, as the transcript would show them
       if (q.has('asking')) return 'permission';
+      if ((images || []).length) { const at = Date.now(); chatOf(id).push({ key: `${id}-i${at}`, at, kind: 'user', text: String(text || '').trim(), images: images.length }); return 'ok'; }
       const items = chatOf(id);
       const at = Date.now();
       items.push({ key: `${id}-u${at}`, at, kind: 'user', text: String(text).trim() });
+      const g = guiOf(id);
+      if (g) {   // v3.108 a live answer streams in, then lands in the transcript
+        const answer = `Tamam: "${String(text).trim().slice(0, 60)}"`;
+        let n = 0;
+        const tick = setInterval(() => {
+          n += 4;
+          g.live = { busy: true, text: answer.slice(0, n), tool: n < 12 ? 'Read' : '' };
+          if (n >= answer.length + 8) { clearInterval(tick); g.live = { busy: false, text: '', tool: '' }; items.push({ key: `${id}-a${at}`, at, kind: 'assistant', text: answer }); }
+        }, 150);
+        return 'ok';
+      }
       setTimeout(() => items.push({ key: `${id}-a${at}`, at, kind: 'assistant', text: `Tamam: "${String(text).trim().slice(0, 60)}"` }), 1000);
       return 'ok';
     },

@@ -135,9 +135,16 @@ contextBridge.exposeInMainWorld('agentOffice', {
   // v3.80 chat view: a Claude Code tab's conversation read from its transcript; a message is typed into the tab
   chat: {
     read: (id, cursor) => ipcRenderer.invoke('chat:read', id, cursor),   // → { unsupported } | { sid, cursor, items, reset, more }
-    send: (id, text) => ipcRenderer.invoke('chat:send', id, text),       // → 'ok' | why not ('empty', 'not-running', 'permission', 'draft', 'locked', …)
+    send: (id, text, images) => ipcRenderer.invoke('chat:send', id, text, images),   // → 'ok' | why not ('empty', 'not-running', 'permission', 'draft', 'locked', …); v3.109 images: [{ type, data (base64) }] ≤ 5, ≤ 5 MB each ('too-many-images', 'image-type', 'image-size', 'image-save')
     keys: (id, steps, expect) => ipcRenderer.invoke('chat:keys', id, steps, expect),     // expect: the key of the menu the card shows; a menu answer: ['2'] | ['3', { text }, '\r'] | ['\x1b'] …; → 'ok' | why not
     commands: (id) => ipcRenderer.invoke('chat:commands', id),           // the "/" list → [{ name, description, source, ui? }]
+    files: (id, query) => ipcRenderer.invoke('chat:files', id, query),   // v3.109 the "@" list → [{ path, insert }] (the tab's project files)
+    reveal: (id, path) => ipcRenderer.invoke('chat:reveal', id, path),   // v3.109 Show in Finder → 'ok' | 'outside' (only inside the tab's folder)
+    // v3.108 GUI chat: read also returns gui: null | { asks: [{ id, kind, tool, name, detail, questions?, plan?, since }], live: { busy, text, tool } }
+    answer: (id, askId, answer) => ipcRenderer.invoke('chat:answer', id, askId, answer),   // answer: { allow, message?, answers? } → 'ok' | 'gone' | 'bad-answer' | 'locked' | 'not-running'
+    interrupt: (id) => ipcRenderer.invoke('chat:interrupt', id),         // stop the running turn → 'ok' | 'not-running'
+    mode: (id, mode) => ipcRenderer.invoke('chat:mode', id, mode),       // 'terminal' | 'gui' → 'ok' (view only) | 'moved' (restarted in that mode) | 'busy' | 'locked' | 'unsupported'
+    onMoved: listen('chat:moved'),                                       // a tab restarted in the other mode (its terminal starts over)
   },
   work: {
     resumeUnfinished: () => ipcRenderer.invoke('work:resumeUnfinished'), // v3.8: { resumed: [{ id, name }], skipped: [{ id, name }] }

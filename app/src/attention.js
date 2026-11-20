@@ -95,4 +95,20 @@ function usageAlerts(accountId, usage, alerted, { seed = false, now = Date.now()
   return out;
 }
 
-module.exports = { nextAttention, mergeAliases, emptyAttention, usageAlerts, LEVELS };
+/**
+ * v3.108 a GUI chat tab's open permission request is no plugin `waiting` (no dialog opens in a terminal): main passes
+ * them here, by project name, and they count as the project's waiting (the oldest wins), so the badge and the
+ * notification work as for a terminal tab. office is not changed; a project the office does not list yet is added.
+ * @param {any[] | null} office @param {Map<string, { tool: string, since: number }>} waits
+ */
+function withWaits(office, waits) {
+  if (!waits || !waits.size) return office;
+  const out = (office || []).map((p) => {
+    const w = waits.get(p.name);
+    return w && (!p.waiting || w.since < p.waiting.since) ? { ...p, waiting: w } : p;
+  });
+  for (const [name, w] of waits) if (!out.some((p) => p.name === name)) out.push({ name, waiting: w });
+  return out;
+}
+
+module.exports = { nextAttention, mergeAliases, withWaits, emptyAttention, usageAlerts, LEVELS };

@@ -602,6 +602,25 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
 .chat-nav { cursor: pointer; font: inherit; font-size: 12px; padding: 4px 10px; border-radius: var(--radius); border: 1px solid var(--border); color: var(--text); background: var(--surface); }
 .chat-free-row { display: flex; gap: 6px; }
 .chat-free { flex: 1; padding: 5px 8px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); outline: none; }
+/* v3.108 GUI chat: Stop, a question's block, a plan to approve */
+.chat-stop { cursor: pointer; font: inherit; font-size: 12px; padding: 5px 10px; border-radius: var(--radius); border: 1px solid var(--danger); color: var(--danger); background: var(--raised); }
+.chat-stop[hidden] { display: none; }
+/* v3.109 Show in Finder on a tool line; the "@" file list (same look as the "/" list) */
+.chat-reveal { cursor: pointer; font: inherit; font-size: 11px; margin-left: 6px; padding: 0 5px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted); background: transparent; opacity: 0; }
+.chat-tool:hover .chat-reveal, .chat-reveal:focus { opacity: 1; }
+.chat-reveal:hover { color: var(--text); border-color: var(--line-strong); }
+/* v3.109 pasted images above the input */
+.chat-images-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+.chat-images-bar[hidden] { display: none; }
+.chat-image-chip { position: relative; display: inline-block; }
+.chat-image-chip img { display: block; height: 56px; max-width: 120px; object-fit: cover; border: 1px solid var(--border); border-radius: 6px; }
+.chat-image-x { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; font-size: 10px; line-height: 16px; cursor: pointer; border-radius: 50%; border: 1px solid var(--border); color: var(--text); background: var(--raised); }
+.chat-question { display: flex; flex-direction: column; gap: 4px; }
+.chat-question + .chat-question { padding-top: 6px; border-top: 1px solid var(--border); }
+.chat-end { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--danger); border-radius: 8px; background: var(--raised); }
+.chat-end[hidden], .chat-end-text[hidden] { display: none; }
+.chat-end-title { font-weight: bold; color: var(--danger); }
+.chat-plan { max-height: 40vh; overflow-y: auto; padding: 4px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 /* over a terminal shown instead of the chat: top-right, left of the "+" corner button */
 #chat-switch { position: absolute; top: 4px; right: 40px; z-index: 2; padding: 2px 8px; font-size: 11px; opacity: .55; }
 #chat-switch:hover { opacity: 1; }
