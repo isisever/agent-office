@@ -136,6 +136,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   const tools = new Map();   // tool call id → its line (marked done/failed by its result)
   /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number } }} */
   let gui = null;   // v3.108 a GUI chat tab's open requests and live line (null: a terminal tab)
+  const ASK_REDRAW = '\u0000';   // askShown that matches no request: the next setGui draws the card again
   let askShown = '';   // the open request's id, as drawn
   const answered = new Set();   // requests answered here: not drawn again while main's list catches up
 
@@ -384,7 +385,10 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     try { r = await api.chat.answer(ptyId, ask.id, a); } catch (e) { console.error(e); r = 'error'; }
     // 'gone': claude withdrew it. Anything else failed: the card comes back so it can still be answered
     if (r !== 'ok' && r !== 'gone') { answered.delete(ask.id); note(t(`chat.why.${['not-running', 'locked'].includes(r) ? r : 'other'}`)); }
-    askShown = '';
+    // the card is drawn again from main's list: the next open request, the same one when this failed, or none.
+    // ASK_REDRAW, not '': '' is also "nothing open", so an answered last card would never have been taken down
+    askShown = ASK_REDRAW;
+    if (r === 'ok' || r === 'gone') { const next = gui ? gui.asks.filter((x) => !answered.has(x.id)) : []; if (!next.length) drawAsk(null); }
     setTimeout(poll, 100);
   }
   /** A text box for "tell Claude what to do instead", shown on Deny / Keep planning; Enter sends it. */
@@ -507,18 +511,26 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     input.setSelectionRange(pos, pos);
     closeAt(); fitInput(); input.focus();
   }
-  // ---- v3.109 a file dropped on the input goes in as @path (its full path)
-  input.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
-  input.addEventListener('drop', (e) => {
-    e.preventDefault(); e.stopPropagation();
-    const paths = [...(e.dataTransfer?.files || [])].map((f) => { try { return api.pathForFile?.(f) || ''; } catch { return ''; } }).filter(Boolean);
+  // ---- v3.109 a file dropped on the chat goes in as @path (its full path); v3.112 anywhere on the chat, not only on
+  // the one-line input (a file dropped beside it made the window open the file)
+  /** Full paths into the input at the caret as @path (quoted when they hold a space). */
+  function insertPaths(paths) {
     if (!paths.length) return;
     const add = paths.map((p) => (/\s/.test(p) ? `@"${p.replace(/"/g, '')}"` : `@${p}`)).join(' ');
     const caret = input.selectionStart ?? input.value.length;
     const sep = caret > 0 && !/\s$/.test(input.value.slice(0, caret)) ? ' ' : '';
     input.value = `${input.value.slice(0, caret)}${sep}${add} ${input.value.slice(caret)}`;
+    const pos = caret + sep.length + add.length + 1;
+    input.setSelectionRange(pos, pos);
     fitInput(); input.focus();
-  });
+  }
+  if (!source) {
+    el.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      insertPaths([...(e.dataTransfer?.files || [])].map((f) => { try { return api.pathForFile?.(f) || ''; } catch { return ''; } }).filter(Boolean));
+    });
+  }
 
   function replyTo(text) {
     replying = text;
@@ -559,10 +571,8 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   }
   /** @type {Promise<void>[]} */
   const imageReads = [];   // pastes still being read: a message waits for them
-  input.addEventListener('paste', (e) => {
-    const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;   // text: the input's own paste
-    if (!(e.clipboardData?.getData('text/plain') || '').trim()) e.preventDefault();
+  /** Images (File or Blob) into the bar above the input, at most 5 with those still being read. */
+  function addImages(files) {
     for (const f of files) {
       if (images.length + imageReads.length >= 5) { note(t('chat.why.too-many-images')); break; }
       if (!IMAGE_TYPES.includes(f.type)) { note(t('chat.why.image-type')); continue; }
@@ -573,7 +583,36 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
         .finally(() => { imageReads.splice(imageReads.indexOf(job), 1); });
       imageReads.push(job);
     }
+  }
+  input.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;   // text: the input's own paste
+    if (!(e.clipboardData?.getData('text/plain') || '').trim()) e.preventDefault();
+    addImages(files);
   });
+  /**
+   * v3.112 the menu's Paste (⌘V) with the input focused, before the browser's own paste: files copied in Finder go in
+   * as @path (the browser's paste sees only their names); an image is read with the async clipboard API, since the
+   * browser's paste event does not always carry it. → true when handled here, false: the normal paste goes on.
+   */
+  async function pasteFromMenu() {
+    if (source || document.activeElement !== input) return false;
+    let clip = null;
+    try { clip = await api.clipboard.read(); } catch (e) { console.error(e); return false; }
+    if (Array.isArray(clip?.files) && clip.files.length) { insertPaths(clip.files.filter((p) => typeof p === 'string' && p)); return true; }
+    // text with an image (spreadsheet cells, rich text): the normal paste keeps the text and adds the image
+    if (!clip?.hasImage || (typeof clip.text === 'string' && clip.text.trim())) return false;
+    try {
+      const blobs = [];
+      for (const it of await navigator.clipboard.read()) {
+        const type = it.types.find((x) => IMAGE_TYPES.includes(x));
+        if (type) blobs.push(await it.getType(type));
+      }
+      if (!blobs.length) return false;
+      addImages(blobs);
+      return true;
+    } catch (e) { console.error(e); return false; }
+  }
   async function submit() {
     if (imageReads.length) await Promise.all(imageReads.slice());   // an image pasted a moment ago goes with this message
     const text = input.value;
@@ -691,6 +730,10 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     /** v3.108 is this tab a GUI chat (as of the last read)? */
     isGui: () => Boolean(gui),
     focus() { input.focus(); },
+    /** v3.112 the menu's Paste while this chat's input has the focus (see pasteFromMenu). */
+    paste: () => pasteFromMenu(),
+    /** v3.112 a line under the input (why the Terminal button did not switch). */
+    note: (text) => note(String(text || '')),
     destroy() { shown = false; window.clearInterval(timer); window.clearInterval(menuTimer); el.remove(); },
   };
 }
