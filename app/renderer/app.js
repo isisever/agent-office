@@ -1015,12 +1015,14 @@ document.addEventListener('mouseup', (e) => {
   focusActive();
 });
 
+let sceneInit = () => {};   // set by the splitter block below; run once the office is mounted
 // Draggable splitter: terminal height.
 {
   const div = $('divider');
   const saved = Number(store.get('termHeight'));
   if (saved) root.style.setProperty('--term-h', saved + 'px');
   div.addEventListener('pointerdown', (e) => {
+    if (document.body.classList.contains('office-hidden') || /** @type {HTMLElement} */ (e.target).closest('#scene-toggle')) return;
     div.setPointerCapture(e.pointerId);
     document.body.classList.add('dragging');
     const move = (ev) => {
@@ -1037,6 +1039,23 @@ document.addEventListener('mouseup', (e) => {
     div.addEventListener('pointermove', move);
     div.addEventListener('pointerup', up, { once: true });
   });
+  // hide / show the pixel office (the thin bar stays); the state is kept per viewer like the terminal height
+  const btn = $('scene-toggle');
+  const setSceneHidden = (hidden) => {
+    document.body.classList.toggle('office-hidden', hidden);
+    store.set('officeHidden', hidden ? '1' : '0');
+    btn.textContent = hidden ? '\u25BC' : '\u25B2';
+    btn.title = btn.ariaLabel = hidden ? t('app.showOffice') : t('app.hideOffice');
+    if (hidden) { try { agentPanel?.hide(); } catch (e) { console.error(e); } office?.pause?.(); }
+    else office?.resume?.();
+    api.scene?.sendHidden(hidden);
+    requestAnimationFrame(() => panes.get(activePty())?.term.fit());
+  };
+  const toggleScene = () => setSceneHidden(!document.body.classList.contains('office-hidden'));
+  btn.addEventListener('click', toggleScene);
+  div.addEventListener('dblclick', (e) => { if (!(/** @type {HTMLElement} */ (e.target).closest('#scene-toggle'))) toggleScene(); });
+  api.scene?.onToggle(toggleScene);
+  sceneInit = () => { if (store.get('officeHidden') === '1') setSceneHidden(true); else setSceneHidden(false); };
 }
 
 // ---- Agent details: right-hand panel when a bot is clicked in the office (agent-panel.js) ----
@@ -1095,6 +1114,8 @@ try {
   console.warn('Ofis görünümü yüklenemedi:', e.message);
   document.body.classList.add('no-office');
 }
+sceneInit();
+onLang(() => sceneInit());
 
 // v3.28: this user's other Agent Offices (renderer/devices.js): Devices section, remote projects, remote desks
 let machines = null;

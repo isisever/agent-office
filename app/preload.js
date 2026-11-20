@@ -150,6 +150,10 @@ contextBridge.exposeInMainWorld('agentOffice', {
     resumeUnfinished: () => ipcRenderer.invoke('work:resumeUnfinished'), // v3.8: { resumed: [{ id, name }], skipped: [{ id, name }] }
     onResumed: listen('work:resumed'),                  // the same result after the menu item
   },
+  scene: {
+    onToggle: listen('scene:toggle'),                   // the View menu's Hide / Show office
+    sendHidden: (hidden) => ipcRenderer.send('scene:hidden', Boolean(hidden)), // keeps the menu label current
+  },
   clipboard: {
     hasImage: () => ipcRenderer.invoke('clipboard:hasImage'),
     read: () => ipcRenderer.invoke('clipboard:read'),   // { hasImage, text, files }

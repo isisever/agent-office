@@ -440,6 +440,18 @@ body.sidebar-collapsed #sidebar { display: none; }
   cursor: row-resize;
 }
 #divider:hover, body.dragging #divider { filter: brightness(1.25); }
+#divider { position: relative; }
+#scene-toggle {
+  position: absolute; right: 8px; top: -1px; height: 14px; padding: 0 6px; line-height: 12px;
+  font-size: 10px; cursor: pointer; z-index: 2;
+  color: var(--status-text); background: var(--status-bg); border: 1px solid var(--frame); border-top: 0;
+  border-radius: 0 0 4px 4px;
+}
+#scene-toggle:hover { filter: brightness(1.25); }
+/* the office is hidden (v3.x scene toggle): a thin bar stays, the terminal or chat takes the height */
+body.office-hidden #office { display: none; }
+body.office-hidden #divider { flex: 0 0 16px; cursor: default; }
+body.office-hidden #terminal { flex: 1 1 0; max-height: none; }
 body.dragging, body.dragging * { cursor: row-resize !important; }
 
 #terminal {
