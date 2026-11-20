@@ -5411,12 +5411,42 @@ ipcMain.handle('chat:files', async (_e, id, query) => {
   const files = await folderFiles(r.dir);
   return FM.rankFiles(files, typeof query === 'string' ? query.slice(0, 200) : '', 30).map((p) => ({ path: p, insert: FM.mention(p) }));
 });
+// v3.113 the tab's folder, then the project's folder (a worktree or desk tab runs in a folder of its own); a file that is
+// gone shows its nearest existing folder ('gone'); the path is shown in its folder, never opened
 ipcMain.handle('chat:reveal', (_e, id, p) => {
   const r = P.resolvePty(state, String(id || ''));
-  const real = r && isDir(r.dir) ? FM.insidePath(r.dir, p) : '';
-  if (!real) return 'outside';
-  eShell.showItemInFolder(real);
-  return 'ok';
+  const target = r && isDir(r.dir) ? FM.revealTarget([r.dir, r.project?.dir], p) : null;
+  if (!target) return 'outside';
+  // showItemInFolder(root) would open the root's parent: open the folder itself instead
+  if (target.root) eShell.openPath(target.path); else eShell.showItemInFolder(target.path);
+  return target.gone ? 'gone' : 'ok';
+});
+// v3.113 the attach button: the native file picker in the tab's folder. Images (a GUI tab only, up to 10 MB) come back as bytes for
+// the image bar; every other file (and every image in a terminal tab) as its full path for @path.
+ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
+  const r = P.resolvePty(state, String(id || ''));
+  if (!r || r.tab?.shell) return null;
+  const res = await dialog.showOpenDialog(win, {
+    title: T('main.chatPickFiles'),
+    properties: ['openFile', 'multiSelections'],
+    ...(isDir(r.dir) ? { defaultPath: r.dir } : {}),
+  });
+  if (res.canceled || !res.filePaths.length) return null;
+  /** @type {string[]} */
+  const paths = [];
+  /** @type {{ type: string, data: Buffer, path: string }[]} */
+  const images = [];
+  for (const p of res.filePaths.slice(0, 50)) {
+    const type = wantImages ? FM.imageType(p) : '';
+    if (type && images.length < 5) {
+      try {
+        const st = fs.statSync(p);
+        if (st.isFile() && st.size <= FM.PICK_IMAGE_MAX) { images.push({ type, data: await fs.promises.readFile(p), path: p }); continue; }
+      } catch (e) { console.error('chat:pick', e); }
+    }
+    paths.push(p);
+  }
+  return { paths, images };
 });
 // The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).
 ipcMain.handle('chat:send', (_e, id, text, images) => {

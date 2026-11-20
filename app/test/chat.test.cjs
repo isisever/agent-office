@@ -342,9 +342,10 @@ test('v3.109 "@" files: git list, walk, ranking, mentions; tool lines carry thei
   assert.equal('path' in items[1], false);
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const reveal = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:reveal'"), MAIN.indexOf("ipcMain.handle('chat:reveal'") + 400);
-  assert.match(reveal, /FM\.insidePath\(r\.dir, p\)/);
-  assert.match(reveal, /if \(!real\) return 'outside';\s+eShell\.showItemInFolder\(real\);/);
-  assert.doesNotMatch(reveal, /openPath|openExternal/, 'shown in its folder, never opened');
+  assert.match(reveal, /FM\.revealTarget\(\[r\.dir, r\.project\?\.dir\], p\)/);
+  assert.match(reveal, /if \(!target\) return 'outside';/);
+  assert.match(reveal, /if \(target\.root\) eShell\.openPath\(target\.path\); else eShell\.showItemInFolder\(target\.path\);/);
+  assert.doesNotMatch(reveal, /openExternal/);
 });
 
 test('v3.109 pasted images: checked types, count and size; image blocks for a GUI tab, @path files for a terminal tab', () => {
@@ -380,4 +381,87 @@ test('v3.109 pasted images: checked types, count and size; image blocks for a GU
   // v3.112 the Terminal button: a terminal tab still waits out the typing window; every tab waits for an open task
   assert.match(MAIN, /tasks: guiTaskOpen\(id\), working: t\.gui \? guiWorking\(sid\) : false, recent: guiRecent\(id\)/);
   assert.match(MAIN, /if \(!t\.sendUser\(text, images\)\) return false;/);
+});
+
+test('v3.113 Show in Finder: real paths on both sides, worktree tabs, files that are gone; the attach button', () => {
+  const FM = require('../src/file-match.js');
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ao-reveal-')));
+  try {
+    const proj = path.join(base, 'proj');
+    const wt = path.join(base, 'proj-wt-2');
+    for (const f of ['proj/src/a.js', 'proj/..notes.md', 'proj-wt-2/src/a.js', 'other/x.txt']) { fs.mkdirSync(path.dirname(path.join(base, f)), { recursive: true }); fs.writeFileSync(path.join(base, f), 'x'); }
+    // absolute and relative paths, and a name that only starts with ".."
+    assert.deepEqual(FM.revealTarget(proj, path.join(proj, 'src/a.js')), { path: path.join(proj, 'src/a.js'), gone: false });
+    assert.deepEqual(FM.revealTarget(proj, 'src/a.js'), { path: path.join(proj, 'src/a.js'), gone: false });
+    assert.equal(FM.revealTarget(proj, '..notes.md')?.path, path.join(proj, '..notes.md'), '"..notes.md" is inside');
+    assert.equal(FM.revealTarget(proj, '../other/x.txt'), null);
+    assert.equal(FM.revealTarget(proj, path.join(base, 'other/x.txt')), null);
+    assert.equal(FM.revealTarget(proj, ''), null);
+    assert.equal(FM.revealTarget(proj, 'a\0b'), null);
+    assert.equal(FM.revealTarget([], 'src/a.js'), null);
+    // a worktree tab: its own folder first, the project's folder too
+    assert.equal(FM.revealTarget([wt, proj], 'src/a.js')?.path, path.join(wt, 'src/a.js'), 'relative: from the tab folder');
+    assert.equal(FM.revealTarget([wt, proj], path.join(proj, 'src/a.js'))?.path, path.join(proj, 'src/a.js'), 'the project folder is allowed too');
+    assert.equal(FM.revealTarget([wt, proj], path.join(base, 'other/x.txt')), null);
+    assert.equal(FM.revealTarget(wt, path.join(proj, 'src/a.js')), null, 'only the folders given');
+    // gone: the nearest existing folder inside; never a folder outside
+    assert.deepEqual(FM.revealTarget(proj, 'src/deleted.js'), { path: path.join(proj, 'src'), gone: true });
+    assert.deepEqual(FM.revealTarget(proj, path.join(proj, 'new/deep/file.js')), { path: proj, gone: true, root: true }, 'the root itself: opened, not shown');
+    assert.equal(FM.revealTarget(proj, path.join(base, 'other/gone.txt')), null);
+    assert.equal(FM.revealTarget(proj, '/no-such-root-ao/x.js'), null);
+    assert.equal(FM.insidePath(proj, 'src/deleted.js'), '', 'insidePath stays: only what exists');
+    if (process.platform !== 'win32') {
+      // linked roots (macOS /tmp → /private/tmp): the tab folder through a link, the file through the real path, and back
+      const link = path.join(base, 'link-to-proj');
+      fs.symlinkSync(proj, link);
+      assert.equal(FM.revealTarget(link, path.join(proj, 'src/a.js'))?.path, path.join(proj, 'src/a.js'));
+      assert.equal(FM.revealTarget(proj, path.join(link, 'src/a.js'))?.path, path.join(proj, 'src/a.js'));
+      assert.deepEqual(FM.revealTarget(link, path.join(link, 'src/gone.js')), { path: path.join(proj, 'src'), gone: true });
+      if (process.platform === 'darwin' && fs.existsSync('/private/tmp')) {
+        const t = fs.mkdtempSync('/tmp/ao-reveal-');
+        try {
+          fs.writeFileSync(path.join(t, 'f.txt'), 'x');
+          const priv = path.join('/private', t);
+          assert.equal(FM.revealTarget(t, path.join(priv, 'f.txt'))?.path, path.join(priv, 'f.txt'), '/tmp tab, /private/tmp file');
+          assert.equal(FM.revealTarget(priv, path.join(t, 'f.txt'))?.path, path.join(priv, 'f.txt'), '/private/tmp tab, /tmp file');
+          assert.deepEqual(FM.revealTarget(t, path.join(priv, 'gone/f.txt')), { path: priv, gone: true, root: true });
+        } finally { fs.rmSync(t, { recursive: true, force: true }); }
+      }
+    }
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  // picked files: images the API takes by their name
+  assert.equal(FM.imageType('/a/b/Shot.PNG'), 'image/png');
+  assert.equal(FM.imageType('x.jpeg'), 'image/jpeg');
+  assert.equal(FM.imageType('x.jpg'), 'image/jpeg');
+  assert.equal(FM.imageType('x.webp'), 'image/webp');
+  assert.equal(FM.imageType('x.gif'), 'image/gif');
+  assert.equal(FM.imageType('x.svg'), '');
+  assert.equal(FM.imageType('/a/png'), '');
+  // wiring: main's picker, preload, the renderer's button, strings in both languages
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const pick = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:pick'"), MAIN.indexOf("ipcMain.handle('chat:pick'") + 1400);
+  assert.match(pick, /dialog\.showOpenDialog\(win, \{/);
+  assert.match(pick, /properties: \['openFile', 'multiSelections'\]/);
+  assert.match(pick, /defaultPath: r\.dir/);
+  assert.match(pick, /FM\.imageType\(p\)/);
+  assert.match(pick, /st\.size <= FM\.PICK_IMAGE_MAX/);
+  assert.match(pick, /data: await fs\.promises\.readFile\(p\)/);
+  assert.doesNotMatch(pick, /base64/, 'bytes over IPC, not base64');
+  assert.equal(FM.PICK_IMAGE_MAX, 10 * 1024 * 1024);
+  assert.match(MAIN, /return target\.gone \? 'gone' : 'ok';/);
+  const PRE = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  assert.match(PRE, /pick: \(id, wantImages\) => ipcRenderer\.invoke\('chat:pick', id, wantImages\)/);
+  const R = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat.js'), 'utf8');
+  assert.match(R, /class: 'chat-attach'/);
+  assert.match(R, /api\.chat\.pick\(ptyId, Boolean\(gui\)\)/);
+  assert.match(R, /if \(blobs\.length\) addImages\(blobs\.map[^\n]*\n\s+if \(paths\.length\) insertPaths\(paths\);/);
+  assert.match(R, /new Blob\(\[im\.data\]/);
+  assert.doesNotMatch(R, /atob/);
+  assert.match(R, /if \(attach\.disabled\) return;/);
+  assert.match(R, /if \(onFail\) onFail\(f\); else note\(t\('chat\.why\.image-size'\)\)/);
+  assert.match(R, /if \(r === 'gone'\) note\(t\('chat\.revealGone'\)\);/);
+  for (const lang of ['en', 'tr']) {
+    const L = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${lang}.json`), 'utf8'));
+    assert.ok(L.chat.attach && L.chat.revealGone && L.main.chatPickFiles, lang);
+  }
 });

@@ -594,7 +594,7 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
 .chat-form { flex: 0 0 auto; display: flex; gap: 6px; align-items: flex-end; }
 .chat-input { flex: 1; min-height: 20px; max-height: 160px; resize: none; padding: 6px 8px; font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius); outline: none; }
 .chat-input:focus { border-color: var(--line-strong); }
-.chat-send, .chat-term, .chat-banner-btn, #chat-switch { cursor: pointer; font: inherit; font-size: 12px; padding: 5px 10px; border-radius: var(--radius); border: 1px solid var(--border); color: var(--text); background: var(--raised); }
+.chat-send, .chat-term, .chat-attach, .chat-banner-btn, #chat-switch { cursor: pointer; font: inherit; font-size: 12px; padding: 5px 10px; border-radius: var(--radius); border: 1px solid var(--border); color: var(--text); background: var(--raised); }
 .chat-send { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
 .chat-why { font-size: 11px; color: var(--danger); }
 .chat-why[hidden] { display: none; }
@@ -620,6 +620,7 @@ body.dragging, body.dragging * { cursor: row-resize !important; }
 /* v3.109 Show in Finder on a tool line; the "@" file list (same look as the "/" list) */
 .chat-reveal { cursor: pointer; font: inherit; font-size: 11px; margin-left: 6px; padding: 0 5px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted); background: transparent; opacity: 0; }
 .chat-tool:hover .chat-reveal, .chat-reveal:focus { opacity: 1; }
+.chat-attach { padding: 5px 7px; line-height: 1; }
 .chat-reveal:hover { color: var(--text); border-color: var(--line-strong); }
 /* v3.109 pasted images above the input */
 .chat-images-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }

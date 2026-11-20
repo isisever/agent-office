@@ -2653,3 +2653,20 @@ limitCarryOnPrompt({ agents, model }) → string
   the browser's own paste runs as before. A file dropped anywhere on the chat (not only on the input) goes in as `@path`.
 - **Tests**: `app/test/gui-session.test.cjs` "v3.112 …" (switch plans, an AskUserQuestion answer round trip through
   `spawnGui`, renderer wiring); `app/test/gui-holds.test.cjs` follows `guiTaskOpen`.
+
+## Chat attach button and a sturdier Show in Finder (v3.113)
+
+- **Attach** (`chat:pick`, preload `chat.pick(id, wantImages)`): a 📎 button left of the chat input (every tab with a
+  chat input, also HQ and a terminal tab's chat; not the read-only remote view) opens the native picker
+  (`openFile`, `multiSelections`, default path the tab's folder). → `null` | `{ paths, images: [{ type, data, path }] }`.
+  In a GUI tab png/jpg/jpeg/gif/webp files (≤ 30 MB read, at most 5; `FM.imageType`, `FM.PICK_IMAGE_MAX`) go into the
+  image bar through `addImages` (same checks and scaling as a paste); images past the bar's room, every other file and
+  every file in a terminal tab go in as `@path` through `insertPaths` (full path, quoted when it holds a space).
+- **Show in Finder** (`chat:reveal`) now uses `FM.revealTarget([tab folder, project folder], path)`: both sides are
+  real paths (`realpathSync.native`: /tmp vs /private/tmp, linked roots, letter case); a relative path is taken from
+  the tab's folder; a worktree or desk tab may also show files in the project's folder; a name that only starts with
+  `..` counts as inside; a file that is gone shows its nearest existing folder inside (→ `'gone'`, note
+  `chat.revealGone`). Outside every folder → `'outside'` as before. `FM.insidePath` keeps its meaning (existing only).
+- **Strings** (en, tr): `chat.attach`, `chat.revealGone`, `main.chatPickFiles`.
+- **Tests**: `app/test/chat.test.cjs` "v3.113 Show in Finder …" (absolute/relative, worktree roots, gone files,
+  symlinked roots and macOS /tmp, image types, main/preload/renderer wiring).

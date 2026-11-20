@@ -140,7 +140,8 @@ contextBridge.exposeInMainWorld('agentOffice', {
     keys: (id, steps, expect) => ipcRenderer.invoke('chat:keys', id, steps, expect),     // expect: the key of the menu the card shows; a menu answer: ['2'] | ['3', { text }, '\r'] | ['\x1b'] …; → 'ok' | why not
     commands: (id) => ipcRenderer.invoke('chat:commands', id),           // the "/" list → [{ name, description, source, ui? }]
     files: (id, query) => ipcRenderer.invoke('chat:files', id, query),   // v3.109 the "@" list → [{ path, insert }] (the tab's project files)
-    reveal: (id, path) => ipcRenderer.invoke('chat:reveal', id, path),   // v3.109 Show in Finder → 'ok' | 'outside' (only inside the tab's folder)
+    reveal: (id, path) => ipcRenderer.invoke('chat:reveal', id, path),   // v3.109 Show in Finder → 'ok' | 'gone' (v3.113 its nearest folder shown) | 'outside' (only inside the tab's or project's folder)
+    pick: (id, wantImages) => ipcRenderer.invoke('chat:pick', id, wantImages),   // v3.113 attach button: native file picker → null | { paths: string[], images: [{ type, data (base64), path }] }
     // v3.108 GUI chat: read also returns gui: null | { asks: [{ id, kind, tool, name, detail, questions?, plan?, since }], live: { busy, text, tool } }
     answer: (id, askId, answer) => ipcRenderer.invoke('chat:answer', id, askId, answer),   // answer: { allow, message?, answers? } → 'ok' | 'gone' | 'bad-answer' | 'locked' | 'not-running'
     interrupt: (id) => ipcRenderer.invoke('chat:interrupt', id),         // stop the running turn → 'ok' | 'not-running'

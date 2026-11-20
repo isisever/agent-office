@@ -742,6 +742,8 @@
     "imageRemove": "Remove this image",
     "revealMac": "Show in Finder",
     "revealOutside": "This file is not inside the project folder (or is gone): it cannot be shown here.",
+    "revealGone": "This file is gone: its folder is shown instead.",
+    "attach": "Attach files (images go with the message, other files as @path)",
     "gui": {
       "terminalTitle": "Continue this session in the terminal (when Claude is not working)",
       "stop": "Stop",
@@ -772,6 +774,7 @@
     "defaultAccount": "Default",
     "pickFolder": "Choose the project folder",
     "pickButton": "Add",
+    "chatPickFiles": "Attach files",
     "updatesOnlyInstalled": "Checking for updates only works in the installed app.",
     "updatesManual": "This install does not update itself: install the new .deb from GitHub Releases (the AppImage updates itself).",
     "upToDate": "Agent Office is up to date ({version}).",
