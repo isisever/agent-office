@@ -819,7 +819,7 @@ export function mountSidebar(el, on) {
       s.host || '',
     ].filter(Boolean).join(' · ');
     const hint = (s) => [
-      s.readOnly && !s.where ? t('sidebar.mcpReadOnly') : null,
+      s.readOnly && !s.where ? t(s.source === 'otherAccount' ? 'sidebar.mcpReadOnlyAccount' : 'sidebar.mcpReadOnly') : null,
       s.source === 'project' && s.approved === false ? t('sidebar.mcpUnapproved') : null,
       s.shadowed ? t('sidebar.mcpShadowed') : null,
       s.bossShadowed ? t('sidebar.mcpBossShadowed') : null,

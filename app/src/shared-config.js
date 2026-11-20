@@ -32,6 +32,11 @@
 // .claude.json of that project's account, plus Default's for an account sharing Default's) and the approved servers
 // of its .mcp.json go into the same --mcp-config file. A config the session already has is not added again; a
 // name clash with another config is renamed <server>-<project> (Claude Code allows only letters, digits, '-', '_').
+// Other accounts (contract v3.113, same setting, same rules, same file): the user servers (top-level `mcpServers` of
+// <config>/.claude.json, headers included) of every other account the app knows whose folder still exists and whose
+// share setting is on (an account that keeps apart from Default's set neither gets nor gives shared servers). They come
+// after the projects' servers, so names v3.9 gave stay; a clash is renamed <server>-<account> (the account's label as
+// a slug, its id when the label has no usable letter). Only `mcpServers` is read: never a login or another field.
 // Nothing is ever written to a source file.
 //
 // Never shared: logins (.credentials.json, keychain, oauthAccount and primaryApiKey in .claude.json), the account's
@@ -436,10 +441,43 @@ function readProjectServers({ home, dir, configDir, share, read = readJson }) {
   });
 }
 
+// ---- the user servers of the other accounts (contract v3.113)
+
+// officeMcpServers keys: a project's is its absolute folder, an account's this prefix and its id (never a folder).
+const ACCOUNT_KEY = 'account:';
+
+/**
+ * The accounts whose user servers a session gets: office.accounts ([{ id, label, configDir, share }], every account
+ * the app keeps), minus Default (configDir null; its servers reach other accounts through their own share setting),
+ * the session's own account (configDir; null for Default), accounts with their share setting off, and accounts whose
+ * folder is gone. → [{ id, configDir, suffix }] in the given order; suffix: the slug a clashing name gets.
+ */
+function otherAccounts(accounts, { home, configDir = null, exists: has = exists }) {
+  const claudeDir = path.join(home, '.claude');
+  const out = [];
+  const seen = new Set();
+  for (const a of Array.isArray(accounts) ? accounts : []) {
+    if (!isObj(a) || typeof a.id !== 'string' || !a.id || typeof a.configDir !== 'string' || !a.configDir) continue;
+    if (a.share === false || seen.has(a.id) || samePath(a.configDir, claudeDir)) continue;
+    if (configDir && samePath(a.configDir, configDir)) continue;
+    if (!has(a.configDir)) continue;
+    seen.add(a.id);
+    out.push({ id: a.id, configDir: a.configDir, suffix: accountSuffix(a) });
+  }
+  return out;
+}
+
+/** The suffix a clashing server name from an account gets: its label as a slug, else its id (always valid). */
+function accountSuffix(account) {
+  const ascii = String(account?.label || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/\u0131/g, 'i');
+  const slug = ascii.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+/, '').slice(0, 24).replace(/-+$/, '');
+  return slug || slugOf(account?.id || 'account').slice(0, 24);
+}
+
 /**
  * The MCP side of prepareShared, reading only: what the tab's --mcp-config holds and the names for the office
  * directory. Also what a running tab's MCP fingerprint is made of (see mcpFingerprint).
- * → { servers: { name: config }, mcpNames, own: { user, local, project, approvals } } (own: the session's own
+ * → { servers: { name: config }, mcpNames, accountNames, own: { user, local, project, approvals } } (own: the session's own
  * servers, which Claude Code loads by itself). Another project's servers come with their relative paths resolved
  * against that project's folder (resolveServerPaths).
  */
@@ -458,6 +496,7 @@ function mcpPlan({ account, home, cwd, office = null, read = readJson, exists: h
   if (office?.current && cwd) {
     mcpNames[office.current] = Object.keys(readProjectServers({ home, dir: cwd, configDir: isDefault ? null : configDir, share: on, read }));
   }
+  const accountNames = {};
   if (office?.share && (isDefault || on)) {
     const have = {
       ...serversOf(accountConfig?.mcpServers), ...serversOf(projectMcp?.mcpServers), ...localServers(accountConfig, cwd), ...shared,
@@ -465,9 +504,17 @@ function mcpPlan({ account, home, cwd, office = null, read = readJson, exists: h
     const others = projects
       .filter((p) => p.dir !== office.current)
       .map((p) => ({ key: p.dir, name: String(p.name || path.basename(p.dir)), servers: resolveServers(readProjectServers({ home, dir: p.dir, configDir: p.configDir, share: p.share !== false, read }), p.dir, { exists: has }) }));
+    // v3.113 the user servers of the other accounts, after the projects' (their names stay as v3.9 gave them)
+    const accounts = otherAccounts(office.accounts, { home, configDir: isDefault ? null : configDir });
+    for (const a of accounts) {
+      others.push({ key: ACCOUNT_KEY + a.id, name: a.suffix, servers: serversOf(read(path.join(a.configDir, '.claude.json'))?.mcpServers) });
+    }
     const r = officeMcpServers({ have, others });
     added = r.servers;
-    Object.assign(mcpNames, r.names);
+    for (const [key, list] of Object.entries(r.names)) {
+      if (!key.startsWith(ACCOUNT_KEY)) mcpNames[key] = list;
+      else if (list.length) accountNames[key.slice(ACCOUNT_KEY.length)] = list;
+    }
   }
   const entry = isObj(accountConfig?.projects) && cwd ? accountConfig.projects[cwd] : null;
   const pick = (o) => (isObj(o) ? { all: o.enableAllProjectMcpServers === true, on: list(o.enabledMcpjsonServers), off: list(o.disabledMcpjsonServers) } : null);
@@ -481,7 +528,7 @@ function mcpPlan({ account, home, cwd, office = null, read = readJson, exists: h
       pick(read(path.join(isDefault ? claudeDir : configDir, 'settings.json'))),
     ],
   };
-  return { servers: { ...shared, ...added }, mcpNames, own };
+  return { servers: { ...shared, ...added }, mcpNames, accountNames, own };
 }
 
 /**
@@ -500,6 +547,9 @@ const mcpFingerprint = (plan) =>
  * (configDir null for Default; share: its account uses Default's), current: this tab's project folder, share: the
  * "Share MCP servers between projects" setting. The other projects' servers are added when it is on and the
  * session's account takes shared servers (Default always; another account with its share setting on).
+ * office.accounts (contract v3.113): [{ id, label, configDir, share }] every account the app keeps (see otherAccounts):
+ * their user servers are added under the same setting and rules. → also accountNames (only when some):
+ * { [accountId]: string[] } each account's servers by the names this session sees.
  * Off (or Default) for Default's set: removes what the app made in the account folder. No server to add: no file.
  * → { pluginDirs: string[], mcpConfig: string | null, mcpNames: { [projectDir]: string[] } } (mcpNames: each
  * project's servers by the names this session sees; the current project's own ones under `current`)
@@ -519,7 +569,7 @@ function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, 
     syncLinks(configDir, on ? linkPlan(listClaudeDir(claudeDir), claudeDir) : [], { platform });
     if (on) pluginDirs = sharedPluginDirs({ claudeDir, configDir, stageRoot, platform });
   }
-  const { servers: planned, mcpNames, own } = mcpPlan({ account, home, cwd, office });
+  const { servers: planned, mcpNames, accountNames, own } = mcpPlan({ account, home, cwd, office });
   const servers = { ...planned, ...(extra || {}) };
   const taken = new Set([...Object.keys(servers), ...keysOf(own.user), ...keysOf(own.local), ...keysOf(own.project).filter((n) => isApproved(own.approvals, n))]);
   const appShadowed = [];
@@ -536,7 +586,7 @@ function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, 
       mcpConfig = mcpFile;
     } else fs.rmSync(mcpFile, { force: true });
   } catch {}
-  return { pluginDirs, mcpConfig, mcpNames, ...(appShadowed.length ? { appShadowed } : {}) };
+  return { pluginDirs, mcpConfig, mcpNames, ...(Object.keys(accountNames).length ? { accountNames } : {}), ...(appShadowed.length ? { appShadowed } : {}) };
 }
 
 // ---- the per-tab MCP files hold tokens: each lives only while its tab's claude runs
@@ -565,7 +615,7 @@ const sharedArgs = ({ pluginDirs = [], mcpConfig }) => [
 ];
 
 module.exports = {
-  MARKER, shareEnabled, isApproved, sharedMcpServers, resolveServerPaths, resolveServers, approvedProjectServers, projectServers, officeMcpServers, canonical, slugOf,
+  MARKER, shareEnabled, isApproved, sharedMcpServers, resolveServerPaths, resolveServers, approvedProjectServers, projectServers, officeMcpServers, otherAccounts, accountSuffix, canonical, slugOf,
   sharedPlugins, pluginManifest, stageName, linkPlan, listClaudeDir,
   syncLinks, stagePlugin, prepareShared, mcpPlan, mcpFingerprint, sharedArgs, mcpFileName, staleMcpFiles, pruneMcpFiles,
 };

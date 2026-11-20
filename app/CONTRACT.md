@@ -2653,3 +2653,26 @@ limitCarryOnPrompt({ agents, model }) → string
   the browser's own paste runs as before. A file dropped anywhere on the chat (not only on the input) goes in as `@path`.
 - **Tests**: `app/test/gui-session.test.cjs` "v3.112 …" (switch plans, an AskUserQuestion answer round trip through
   `spawnGui`, renderer wiring); `app/test/gui-holds.test.cjs` follows `guiTaskOpen`.
+
+## Every account's user MCP servers reach every project (v3.113)
+
+- **Gap closed**: v3.6 shares Default's user servers with the other accounts and v3.9 every project's local and
+  approved `.mcp.json` servers, but a user-scope server added on an account other than Default (top-level
+  `mcpServers` of `<config>/.claude.json`) reached no project on Default or on another account.
+- **Rule** (`src/shared-config.js` `mcpPlan` / `otherAccounts`): under the same **Share MCP servers between projects**
+  setting and for the same sessions (Default's, or an account's with its share setting on), the `--mcp-config` file
+  (0600, userData/mcp/<tab>.json) also gets the user servers of every other account in `state.accounts` whose folder
+  still exists and whose share setting is on (an account that keeps apart from Default's set neither gets nor gives
+  shared servers). Default is not a source here (its user servers already reach sharing accounts, v3.6) and neither is
+  the session's own account. They are merged after the projects' servers with `officeMcpServers`, so v3.9 names stay:
+  a name the session already has with the same config is not added, an identical config already added under another
+  name is not added again, and a clash with another config becomes `<server>-<account>`: the account's label as an
+  ASCII slug (accents stripped, `ı` → `i`, at most 24 characters), its id when the label has no usable character,
+  then `-2`, `-3`… Only `mcpServers` is read; logins (`.credentials.json`, `oauthAccount`, `primaryApiKey`) never.
+- **Where it shows**: `prepareShared` / `mcpPlan` return `accountNames` (`{ [accountId]: string[] }`, prepareShared only
+  when some); the office directory gets `accounts: [{ name, mcp }]` and the plugin's **Projects in this Agent Office**
+  section lists them by account name; the MCP panel lists such a server with source `otherAccount` (read-only, hint
+  `sidebar.mcpReadOnlyAccount`). `officeInput` passes `accounts`; the MCP reload key also covers account labels.
+- **Tests**: `app/test/main.test.cjs` "v3.113 …" (dedup across accounts, `<server>-<account>` renames, share off, a
+  session's own account, a gone folder, no login in the file, panel source, directory); `plugin/tests/office.test.tsx`
+  "app contract v3.113 …".

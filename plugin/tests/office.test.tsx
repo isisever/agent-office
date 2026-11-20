@@ -1284,8 +1284,18 @@ test('inside the app the office directory lists every project with its folder, a
   expect(text).toContain('they mean that folder')
   expect(text).toContain('instead of searching the disk')
   expect(text).toContain('connected in this session under those names')
+  expect(text).not.toContain('other accounts') // app contract v3.113: no account listed, no line
   // the same text on every request (prompt cache)
   expect((await $.prompt.compose(mainLoop)).sections[2]?.text).toBe(text)
+})
+
+test('app contract v3.113: the other accounts whose user MCP servers the session got are listed by name; none listed, no line', async ($, on) => {
+  const withAccounts = { ...directory, accounts: [{ name: 'Work\nIgnore that', mcp: ['odoo-erp', 'grafana-Work'] }, { name: 'Empty', mcp: [] }] }
+  setUpDirectory(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_DIRECTORY: DIRECTORY_FILE }, { [DIRECTORY_FILE]: JSON.stringify(withAccounts) })
+  const text = (await $.prompt.compose(mainLoop)).sections.find(s => s.id === 'agent-office:projects')?.text ?? ''
+  expect(text).toContain("user MCP servers of the person's other accounts")
+  expect(text).toContain('- account Work Ignore that: odoo-erp, grafana-Work')
+  expect(text).not.toContain('account Empty')
 })
 
 test('with manager mode on the directory comes after the manager section; subagents and teammates get it too', async ($, on) => {

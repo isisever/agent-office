@@ -520,7 +520,7 @@ function mcpInputsKey() {
     configDirs: state.accounts.map((a) => a.configDir),
     dirs: P.projectPlaces(state.projects).map((p) => p.dir),
   });
-  const office = [state.shareMcp !== false, state.projects.map((p) => [p.dir, p.accountId]), state.accounts.map((a) => [a.id, a.shareDefault !== false])];
+  const office = [state.shareMcp !== false, state.projects.map((p) => [p.dir, p.accountId]), state.accounts.map((a) => [a.id, a.shareDefault !== false, a.label])];
   return `${MR.statKey(files, statOrNull)}#${JSON.stringify(office)}`;
 }
 function refreshMcpPrints() {
@@ -1148,6 +1148,8 @@ const officeInput = (project) => ({
     const a = A.accountOf(state, p);
     return { name: p.name, dir: p.dir, configDir: a.configDir || null, share: SC.shareEnabled(a) };
   }),
+  // v3.113 every other account's user servers too (SC.otherAccounts drops Default, the session's own, gone folders)
+  accounts: state.accounts.filter((a) => a.configDir).map((a) => ({ id: a.id, label: a.label, configDir: a.configDir, share: SC.shareEnabled(a) })),
 });
 function sharedConfig(account, project, cwd, key, extra = null, appMcp = null) {
   const office = officeInput(project);
@@ -1169,12 +1171,14 @@ function hqMcpConfig(key, servers) {
 }
 
 // The tab's office directory (contract v3.9): the projects, their folders and accounts and the MCP servers this
-// session sees for each. → the file for AGENT_OFFICE_DIRECTORY, or null.
-function officeDirectoryFile(project, key, mcpNames) {
+// session sees for each; v3.113: the other accounts whose user servers it got (accountNames). → the file for
+// AGENT_OFFICE_DIRECTORY, or null.
+function officeDirectoryFile(project, key, mcpNames, accountNames = null) {
   const data = OD.officeDirectory({
     projects: state.projects.map((p) => ({ name: p.name, dir: p.dir, account: OD.accountName(A.accountOf(state, p)) })),
     current: project.dir,
     mcp: mcpNames || {},
+    accounts: Object.entries(accountNames || {}).map(([id, mcp]) => ({ name: OD.accountName(state.accounts.find((a) => a.id === id) || { id, configDir: id }), mcp })),
   });
   return OD.writeDirectory(path.join(directoryDir(), SC.mcpFileName(key)), data);
 }
@@ -1297,7 +1301,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const appMcp = project.hq ? null : MS.sessionServers(P.engineOf(project), MS.withTools(appServers(), project.id, project.staffTools), project.id, (sid) => tokens().load(sid));
   const prepared = project.hq ? hqMcpConfig(usageKey(id), bossMcp) : sharedConfig(account, project, cwd, usageKey(id), bossMcp, appMcp);
   const shared = project.hq ? [] : SC.sharedArgs(prepared);
-  const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames);
+  const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames, prepared.accountNames);
   const print = mcpFingerprintOf(account, project, cwd);
   // v3.45 one --plugin-dir per skill pack this project gets (global setting, or the project's own on/off), minus
   // manager-off packs in a manager-mode boss tab and what the account already has (after sharedConfig's links)
