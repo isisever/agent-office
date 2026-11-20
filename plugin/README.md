@@ -116,9 +116,9 @@ If `themes.json` cannot be parsed, the office keeps running with the default the
 
 ## Theme gallery
 
-Nine ready themes live in [`themes/`](../themes) at the root of the repository, one small JSON file each:
+Ten ready themes live in [`themes/`](../themes) at the root of the repository, one small JSON file each:
 
-In the Agent Office app there is nothing to copy: pick one under **Theme** at the bottom of the sidebar (it ships with the app and colors the whole office until you go back to **Auto (per project)**). The steps below are for the terminal viewer.
+In the Agent Office app there is nothing to copy: pick one under **Theme** in ⚙ Settings (it ships with the app and colors the whole office until you go back to **Auto (per project)**). The steps below are for the terminal viewer.
 
 | | |
 | --- | --- |
@@ -158,7 +158,7 @@ Optional, in `~/.claude/agent-office/settings.json`; both the plugin and the vie
 
 - `language`: `"tr"`, `"en"` or `"auto"` (default: follow the locale, see Language).
 - `forgetMinutes`: how long a bot that delivered its work stays in the office, 1 to 60 minutes (default 5). It parties for this time minus 30 seconds, then leaves.
-- `botColor`: the bots' color as `"#rrggbb"` (default `"#3fb6a8"`). In the app, pick it under **Bot rengi** in the sidebar instead.
+- `botColor`: the bots' color as `"#rrggbb"` (default `"#3fb6a8"`). In the app, pick it under **Bot color** in ⚙ Settings instead.
 
 A missing or invalid file, or an invalid value, falls back to the defaults. Restart the session and reopen the office after changing it.
 
