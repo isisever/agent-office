@@ -746,6 +746,15 @@
     "revealOutside": "This file is not inside the project folder (or is gone): it cannot be shown here.",
     "revealGone": "This file is gone: its folder is shown instead.",
     "attach": "Attach files (images go with the message, other files as @path)",
+    "resume": {
+      "title": "Resume a session",
+      "search": "Search sessions…",
+      "empty": "No other session of this project to resume.",
+      "gone": "That session is gone; pick another one."
+    },
+    "cmd": {
+      "running": "This command runs in the terminal: the chat comes back when its screen is closed."
+    },
     "agents": {
       "back": "← Back to the chat",
       "empty": "This agent has not written anything yet.",

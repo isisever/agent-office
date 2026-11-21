@@ -44,10 +44,12 @@ test('chatItems: meta, sidechain and Claude Code’s own lines are left out; com
     line({ type: 'system', subtype: 'turn_duration' }) + line({ type: 'file-history-snapshot' }) + 'not json\n' +
     assistant([{ type: 'text', text: 'API Error: 529' }], { isApiErrorMessage: true });
   const items = C.chatItems(text);
-  assert.deepEqual(kinds(items), ['command', 'note', 'note', 'note', 'user', 'error']);
+  // v3.117 a command's printed text is shown (it was hidden before)
+  assert.deepEqual(kinds(items), ['command', 'output', 'note', 'note', 'note', 'user', 'error']);
   assert.equal(items[0].text, '/model sonnet');
+  assert.equal(items[1].text, 'Set model to sonnet');
   assert.deepEqual(items.filter((i) => i.kind === 'note').map((i) => i.note), ['task', 'interrupted', 'compact']);
-  assert.deepEqual({ text: items[4].text, images: items[4].images }, { text: 'şuna bak', images: 1 });
+  assert.deepEqual({ text: items[5].text, images: items[5].images }, { text: 'şuna bak', images: 1 });
   assert.ok(!JSON.stringify(items).includes('sub-agent talk'));
   assert.ok(!JSON.stringify(items).includes('hidden meta'));
 });
@@ -379,7 +381,7 @@ test('v3.109 pasted images: checked types, count and size; image blocks for a GU
   assert.match(MAIN, /return guiRecent\(pid\) \|\| guiTaskOpen\(pid\);/);
   assert.match(MAIN, /handoffLocked\(pid\) \|\| guiHolds\(pid\)\) continue;/);
   // v3.112 the Terminal button: a terminal tab still waits out the typing window; every tab waits for an open task
-  assert.match(MAIN, /tasks: guiTaskOpen\(id\), working: t\.gui \? guiWorking\(sid\) : false, recent: guiRecent\(id\)/);
+  assert.match(MAIN, /tasks: guiTaskOpen\(id\), working: t\.gui \? guiWorking\(sid\) : false, recent: !back && guiRecent\(id\)/);
   // v3.116 only typing marks a tab as just written to: never its output or a focus report
   assert.equal((MAIN.match(/a\.inputAt = a\.at/g) || []).length, 5);
   assert.doesNotMatch(MAIN.slice(MAIN.indexOf('onData: (d) => {'), MAIN.indexOf('onExit:', MAIN.indexOf('onData: (d) => {'))), /inputAt/);
@@ -531,4 +533,72 @@ test('main.js: chat:agent reads only a file agentFile built, with sidechain line
   const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   assert.match(preload, /agents: \(id\) => ipcRenderer\.invoke\('chat:agents', id\)/);
   assert.match(preload, /agent: \(id, agentId, cursor\) => ipcRenderer\.invoke\('chat:agent', id, agentId, cursor\)/);
+});
+
+test('v3.117 a command\'s printed text is an output item (no colours); it never crosses the device link', () => {
+  const items = C.chatItems(user('<command-name>/model</command-name>\n<command-args></command-args>') +
+    user('<local-command-stdout>Set model to `Opus`</local-command-stdout>') +
+    user('<local-command-stdout>\n\x1b[1mContext\x1b[22m  ⛁ 12%   \n\n</local-command-stdout>') +
+    user('<local-command-stdout></local-command-stdout>') + user('<local-command-stderr>oops</local-command-stderr>'));
+  assert.deepEqual(items.map((i) => [i.kind, i.text]), [['command', '/model'], ['output', 'Set model to `Opus`'], ['output', 'Context  ⛁ 12%']]);
+  assert.deepEqual(C.linkItems(items, { redact: (s) => s }).map((i) => i.kind), ['command']);
+});
+
+test('v3.117 chat:command: a GUI tab moves to its terminal for the command (never saved), typed once idle; back ignores its own typing', () => {
+  const GS = require('../src/gui-session.js');
+  for (const ok of ['/resume', '/model opus', '/plugin:cmd x', '/mcp']) assert.equal(GS.isCommand(ok), true, ok);
+  for (const bad of ['resume', '/', '/ x', '/a\x1b[A', '/a\rb', 5, null, `/x ${'a'.repeat(2000)}`]) assert.equal(GS.isCommand(bad), false, String(bad));
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:command'"), MAIN.indexOf('\n});\n', MAIN.indexOf("ipcMain.handle('chat:command'")));
+  assert.match(body, /if \(!GS\.isCommand\(cmd\)\) return 'bad-command';/);
+  assert.match(body, /if \(handoffLocked\(id\)\)/);
+  assert.match(body, /if \(!t\.gui\) return typePrompt\(id, cmd\)/);
+  assert.match(body, /switchMode\(id, 'terminal', \{ temp: true \}\)/);
+  assert.match(body, /if \(idleSession\(id\)\) \{ if \(typePrompt\(id, cmd\)\) send\('chat:commandTyped', id\); return; \}/);
+  const sw = MAIN.slice(MAIN.indexOf('function switchMode('), MAIN.indexOf("ipcMain.handle('chat:command'"));
+  assert.match(sw, /const choice = temp \? cmdTabs : termTabs;/);
+  assert.match(sw, /if \(!temp\) saveState\(\)/);
+  assert.match(sw, /recent: !back && guiRecent\(id\)/);
+  assert.match(MAIN, /terminal: termTabs\.has\(id\) \|\| cmdTabs\.has\(id\)/);
+  assert.match(MAIN, /ipcMain\.handle\('chat:mode', \(_e, id, mode\) => switchMode\(String\(id\), mode\)\);/);
+  const APP = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
+  assert.match(APP, /if \(!promptReady\(lines\)\) \{ w\.seen = true;/);
+  assert.match(APP, /if \(w\.gui\) setChatMode\(id, true\);/);
+  for (const lang of ['en', 'tr']) assert.ok(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${lang}.json`), 'utf8')).chat.cmd.running, lang);
+});
+
+test('v3.118 sessionList: newest first, named by /rename, then Claude Code\'s title, then the first prompt; the own session left out', () => {
+  const a = tmp();
+  const b = tmp();
+  const put = (dir, id, text, ageS) => {
+    const f = path.join(dir, `${id}.jsonl`);
+    fs.writeFileSync(f, text);
+    const when = Date.now() / 1000 - ageS;
+    fs.utimesSync(f, when, when);
+  };
+  put(a, 's-old', user('<command-name>/model</command-name>') + user('fix the login test', { gitBranch: 'fix/login' }) + line({ type: 'ai-title', aiTitle: 'Login test fix' }), 300);
+  put(a, 's-named', user('first ask') + line({ type: 'ai-title', aiTitle: 'Auto title' }) + line({ type: 'custom-title', customTitle: 'My name' }), 200);
+  put(b, 's-plain', user('README please'), 100);
+  put(b, 's-own', user('this tab'), 10);
+  put(a, 's-empty', line({ type: 'file-history-snapshot' }), 50);
+  fs.writeFileSync(path.join(a, 'notes.txt'), 'x');
+  const list = C.sessionList([a, b, a], { exclude: 's-own' });
+  assert.deepEqual(list.map((s) => s.id), ['s-plain', 's-named', 's-old']);
+  assert.deepEqual(list.map((s) => [s.title, s.prompt]), [['', 'README please'], ['My name', 'first ask'], ['Login test fix', 'fix the login test']]);
+  assert.equal(list[2].branch, 'fix/login');
+  assert.deepEqual(C.sessionList(['/no/such/dir']), []);
+});
+
+test('v3.118 chat:resume: only a listed session of a GUI tab, never while anything runs; preload exposes it', () => {
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:resume'"), MAIN.indexOf('\n});\n', MAIN.indexOf("ipcMain.handle('chat:resume'")));
+  assert.match(body, /if \(!t\.gui\) return 'unsupported';/);
+  assert.match(body, /if \(handoffLocked\(id\)\)/);
+  assert.match(body, /if \(!validSid\(sid\) \|\| !\(chatSessionsOf\(id, t\) \|\| \[\]\)\.some\(\(x\) => x\.id === sid\)\) return 'gone';/);
+  assert.match(body, /if \(GS\.switchPlan\(facts\) === 'busy'\) return `busy:\$\{GS\.switchWhy\(facts\)\}`;/);
+  assert.match(body, /startPty\(id, \{ sessionId: sid, resume: true \}\);/);
+  assert.match(MAIN, /CHAT\.sessionList\(TIO\.historyDirsOf\(r\.dir, configDir, app\.getPath\('home'\)\), \{ exclude: validSid\(t\.sessionId\(\)\) \|\| '' \}\)/);
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  assert.match(preload, /sessions: \(id\) => ipcRenderer\.invoke\('chat:sessions', id\)/);
+  assert.match(preload, /resume: \(id, sid\) => ipcRenderer\.invoke\('chat:resume', id, sid\)/);
 });

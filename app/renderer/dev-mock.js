@@ -205,6 +205,7 @@ const chatOf = (id) => {
 // request, an AskUserQuestion or a plan on the main tab (?gui=ended: its claude ended with an error); a sent message
 // streams a live answer for 2 s
 const mockGui = new Map();   // pty id → { asks, live }
+const chatCommandTyped = new Set();   // v3.117 onCommandTyped listeners
 const guiOf = (id) => {
   if (!q.has('gui') || String(id).startsWith('hq')) return null;
   if (!mockGui.has(id)) {
@@ -625,6 +626,27 @@ window.agentOffice = {
       chatOf(id).push({ key: `${id}-int${at}`, at, kind: 'note', note: 'interrupted' });
       return 'ok';
     },
+    // v3.117 a command with a screen: its "terminal" shows a picker, then the prompt box again (the chat comes back)
+    command: async (id, text) => {
+      if (guiOf(id)?.live.busy) return 'busy:turn';
+      const R = '─'.repeat(60);
+      setTimeout(() => { chatCommandTyped.forEach((cb) => cb(id)); ev.data.emit(id, `\x1b[2J\x1b[H${R}\r\n ${text}\r\n  ❯ 1. Option one\r\n    2. Option two\r\n\r\n Enter to select · Esc to cancel\r\n`); }, 400);
+      setTimeout(() => { ev.data.emit(id, `\x1b[2J\x1b[H${R}\r\n❯ \r\n${R}\r\n  ? for shortcuts\r\n`); const at = Date.now(); chatOf(id).push({ key: `${id}-c${at}`, at, kind: 'command', text }, { key: `${id}-o${at}`, at, kind: 'output', text: '(sahte) Set model to Opus' }); }, 3000);
+      return guiOf(id) ? 'moved' : 'typed';
+    },
+    // v3.118 /resume in a GUI chat tab: three sessions; a pick starts the chat over with a note of it
+    sessions: async () => [
+      { id: 's-1', title: 'Login testini düzelt', prompt: 'login.test.js neden zaman aşımına uğruyor?', branch: 'fix/login', at: Date.now() - 3600e3, size: 1 },
+      { id: 's-2', title: '', prompt: 'README için kısa bir kurulum bölümü yaz.', branch: 'main', at: Date.now() - 864e5, size: 1 },
+      { id: 's-3', title: 'Ödeme sayfası tasarımı', prompt: 'Ödeme sayfasını sadeleştir', branch: '', at: Date.now() - 5 * 864e5, size: 1 },
+    ],
+    resume: async (id, sid) => {
+      if (guiOf(id)?.live.busy) return 'busy:turn';
+      const at = Date.now();
+      mockChats.set(id, [{ key: `${id}-r${at}`, at, kind: 'assistant', text: `(sahte) ${sid} oturumu sürdürüldü.` }]);
+      return 'moved';
+    },
+    onCommandTyped: (cb) => { chatCommandTyped.add(cb); return () => chatCommandTyped.delete(cb); },
     mode: async (id) => (guiOf(id)?.live.busy ? 'busy:turn' : guiOf(id) ? 'moved' : 'ok'),
     onMoved: () => () => {},
     // a menu answer clears the screen (the menu is gone) and lands in the chat as Claude Code would show it

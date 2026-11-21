@@ -11,6 +11,7 @@ import { modLabel, isModKey, keyOf, isMac } from './platform.js';
 import { themeChoices, effectiveTheme } from '../src/themes.mjs';
 import { normalizeLook, normalizeMode, effectiveMode, chromeFor, terminalTheme } from '../src/appearance.mjs';
 import { tildePath, windowTitle } from '../src/layout.mjs';
+import { promptReady } from '../src/tui-menu.mjs';
 
 // Fake window.agentOffice to see the layout in a plain browser (outside Electron).
 if (!window.agentOffice) await import('./dev-mock.js');
@@ -253,6 +254,48 @@ async function setChatMode(id, on) {
   syncChat();
   focusActive();
 }
+// v3.117 a command with a screen of its own runs in the tab's terminal: shown until that screen is closed (Claude
+// Code's prompt box is back, nothing open over it), then the chat comes back by itself (a GUI tab restarts in the chat
+// with the session the terminal is in now, so /resume's pick goes on there)
+const CMD_TYPE_MS = 35000;   // main types the command once claude is up; given up after this
+const CMD_SETTLE_MS = 2500;  // a command with no screen (its output only): back after this
+const CMD_STABLE_MS = 700;   // the prompt box stays this long before the chat comes back
+/** @type {Map<string, { gui: boolean, at: number, typedAt: number, seen: boolean, readyAt: number }>} */
+const cmdRuns = new Map();
+let cmdTimer = 0;
+function startCommand(id, how) {
+  const gui = how === 'moved';
+  if (gui) panes.get(id)?.term.reset({ restarting: true });
+  cmdRuns.set(id, { gui, at: Date.now(), typedAt: gui ? 0 : Date.now(), seen: false, readyAt: 0 });
+  chatOff.add(id);
+  syncChat();
+  hint(id, t('chat.cmd.running'));
+  if (!cmdTimer) cmdTimer = window.setInterval(watchCommands, 300);
+}
+api.chat?.onCommandTyped?.((id) => { const w = cmdRuns.get(id); if (w && !w.typedAt) w.typedAt = Date.now(); });
+function endCommand(id) {
+  cmdRuns.delete(id);
+  hint(id, '');
+  if (!cmdRuns.size) { window.clearInterval(cmdTimer); cmdTimer = 0; }
+}
+function watchCommands() {
+  const now = Date.now();
+  for (const [id, w] of cmdRuns) {
+    const p = panes.get(id);
+    // the person went back to the chat (or the tab is gone): nothing to watch
+    if (!p || !chatOff.has(id) || !chatView) { endCommand(id); continue; }
+    if (!w.typedAt) { if (now - w.at > CMD_TYPE_MS) endCommand(id); continue; }
+    if (now - w.typedAt < 600) continue;   // its Enter goes 400 ms after the text
+    let lines = [];
+    try { lines = p.term.screen(); } catch (e) { console.error(e); }
+    if (!promptReady(lines)) { w.seen = true; w.readyAt = 0; continue; }
+    if (!w.readyAt) w.readyAt = now;
+    if (now - w.readyAt < CMD_STABLE_MS || (!w.seen && now - w.typedAt < CMD_SETTLE_MS)) continue;
+    endCommand(id);
+    if (w.gui) setChatMode(id, true);
+    else { chatOff.delete(id); syncChat(); focusActive(); }
+  }
+}
 /** Shows the visible tab as chat or terminal; the terminal gets a resize nudge when it comes back. */
 function syncChat() {
   const visible = activePty();
@@ -263,7 +306,7 @@ function syncChat() {
       const host = document.createElement('div');
       host.className = 'chat-host';
       p.el.append(host);
-      p.chat = mountChat(host, { ptyId: id, onTerminal: () => setChatMode(id, false), screen: () => p.term.screen() });
+      p.chat = mountChat(host, { ptyId: id, onTerminal: () => setChatMode(id, false), onCommand: (how) => startCommand(id, how), screen: () => p.term.screen() });
     }
     const was = Boolean(p.chatOn);
     p.chatOn = want;

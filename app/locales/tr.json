@@ -736,6 +736,15 @@
     "revealOutside": "Bu dosya proje klasörünün içinde değil (ya da silinmiş): burada gösterilemez.",
     "revealGone": "Bu dosya artık yok: yerine klasörü gösterildi.",
     "attach": "Dosya ekle (görseller mesajla gider, diğer dosyalar @yol olarak)",
+    "resume": {
+      "title": "Bir oturumu sürdür",
+      "search": "Oturumlarda ara…",
+      "empty": "Bu projede sürdürülecek başka oturum yok.",
+      "gone": "Bu oturum artık yok; başka birini seç."
+    },
+    "cmd": {
+      "running": "Bu komut terminalde çalışıyor: ekranı kapanınca sohbete dönülecek."
+    },
     "agents": {
       "back": "← Sohbete dön",
       "empty": "Bu ajan henüz bir şey yazmadı.",

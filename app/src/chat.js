@@ -36,9 +36,17 @@ function toolName(name) {
 const COMMAND_RE = /<command-name>([^<]*)<\/command-name>(?:[\s\S]*?<command-args>([^<]*)<\/command-args>)?/;
 const HIDDEN_RE = /^\s*<(local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr|system-reminder)>/;
 
+const OUTPUT_RE = /^\s*<local-command-stdout>([\s\S]*?)(?:<\/local-command-stdout>\s*)?$/;
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
+/** A command's printed text without terminal colours, trailing spaces or blank lines around it. */
+const plainOutput = (s) => String(s || '').replace(ANSI_RE, '').replace(/[ \t]+$/gm, '').replace(/^\n+|\n+$/g, '');
 /** One "user" text → an item, or null when it is not something to show. */
 function userText(s, base) {
   const text = String(s || '');
+  // v3.117 what a command printed (/model's "Set model to …", /context's table, …): the terminal shows it, so the chat does
+  const out = OUTPUT_RE.exec(text);
+  if (out) { const o = plainOutput(out[1]); return o.trim() ? { ...base, kind: 'output', text: cut(o, TEXT_MAX) } : null; }
   if (!text.trim() || HIDDEN_RE.test(text)) return null;
   const cmd = COMMAND_RE.exec(text);
   if (cmd) return { ...base, kind: 'command', text: cut(oneLine(`${cmd[1]} ${cmd[2] || ''}`), 200) };
@@ -53,7 +61,7 @@ function userText(s, base) {
  * Transcript lines (JSONL text, whole lines) → chat items, in order:
  *   { kind: 'user', text, images? } | { kind: 'assistant', text } | { kind: 'error', text }
  *   | { kind: 'tool', id, name, detail, path?, agent? } | { kind: 'toolDone', id, error } | { kind: 'command', text }
- *   | { kind: 'note', note: 'compact' | 'task' | 'interrupted' | 'message' }
+ *   | { kind: 'note', note: 'compact' | 'task' | 'interrupted' | 'message' } | { kind: 'output', text } (v3.117)
  * each with key (unique per line and block) and at (ms, 0 when unknown). A bad line is skipped.
  */
 function chatItems(text, { sidechain = false } = {}) {
@@ -182,6 +190,70 @@ function chatAgents(transcript, workers, now = Date.now(), fsm = fs) {
   return out.sort((a, b) => b.at - a.at).slice(0, AGENTS_MAX).reverse();
 }
 
+// v3.118 /resume in the chat: the sessions of the tab's project folder, newest first, the way Claude Code's picker shows
+// them: the name given with /rename, else Claude Code's own title, else the first thing the person wrote.
+const SESSIONS_MAX = 50;
+const SESSION_PEEK = 64 * 1024;   // bytes read at each end of a transcript for its title and first prompt
+const SID_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}\.jsonl$/;
+/** Bytes [from, from + n) of a file as text ('' when it cannot be read). */
+function peek(fsm, file, from, n) {
+  let fd;
+  try {
+    fd = fsm.openSync(file, 'r');
+    const buf = Buffer.alloc(n);
+    return buf.subarray(0, fsm.readSync(fd, buf, 0, n, from)).toString('utf8');
+  } catch { return ''; } finally { if (fd !== undefined) try { fsm.closeSync(fd); } catch {} }
+}
+/** One transcript's title, first prompt and branch from its two ends → { title, prompt, branch }. */
+function sessionInfo(file, size, fsm = fs) {
+  const head = peek(fsm, file, 0, Math.min(size, SESSION_PEEK));
+  const tail = size > SESSION_PEEK ? peek(fsm, file, size - SESSION_PEEK, SESSION_PEEK) : '';
+  let custom = '';
+  let ai = '';
+  let prompt = '';
+  let branch = '';
+  for (const text of [head, tail]) {
+    for (const line of text.split('\n')) {
+      if (!line.includes('"type"')) continue;
+      let j;
+      try { j = JSON.parse(line); } catch { continue; }
+      if (j?.type === 'custom-title' && typeof j.customTitle === 'string') custom = j.customTitle;
+      else if (j?.type === 'ai-title' && typeof j.aiTitle === 'string') ai = j.aiTitle;
+      if (typeof j?.gitBranch === 'string' && j.gitBranch) branch = j.gitBranch;
+      if (!prompt && j?.type === 'user' && !j.isMeta && !j.isSidechain) {
+        const c = j.message?.content;
+        const it = userText(typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text).join('\n') : '', {});
+        if (it?.kind === 'user' && it.text) prompt = it.text;
+      }
+    }
+  }
+  return { title: cut(oneLine(custom || ai), 120), prompt: cut(oneLine(prompt), 200), branch: cut(oneLine(branch), 80) };
+}
+/**
+ * The sessions in Claude Code's folders of one project folder → [{ id, title, prompt, branch, at, size }], newest first,
+ * at most SESSIONS_MAX; `exclude` (the tab's own session) and sessions with nothing the person wrote are left out.
+ */
+function sessionList(dirs, { exclude = '', fsm = fs } = {}) {
+  const files = [];
+  for (const dir of new Set(Array.isArray(dirs) ? dirs : [])) {
+    let names = [];
+    try { names = fsm.readdirSync(dir).filter((n) => SID_FILE_RE.test(n)); } catch { continue; }
+    for (const n of names) {
+      const id = n.slice(0, -6);
+      if (id === exclude || files.some((f) => f.id === id)) continue;
+      try { const st = fsm.statSync(path.join(dir, n)); if (st.isFile() && st.size > 0) files.push({ id, file: path.join(dir, n), at: Math.round(st.mtimeMs), size: st.size }); } catch {}
+    }
+  }
+  const out = [];
+  for (const f of files.sort((a, b) => b.at - a.at)) {
+    if (out.length >= SESSIONS_MAX) break;
+    const info = sessionInfo(f.file, f.size, fsm);
+    if (!info.prompt && !info.title) continue;
+    out.push({ id: f.id, ...info, at: f.at, size: f.size });
+  }
+  return out;
+}
+
 // v3.109 images pasted into the chat input: the types Claude takes, at most IMAGES_MAX of at most IMAGE_MAX characters
 // of base64 each (the API counts its 5 MB on that text; the renderer scales a bigger image down before it comes here)
 const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
@@ -274,4 +346,4 @@ function linkItems(items, { redact = (s) => require('./hq.js').redact(s), toolDe
   return out;
 }
 
-module.exports = { AGENT_TOOLS, agentFile, chatAgents, IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };
+module.exports = { sessionList, AGENT_TOOLS, agentFile, chatAgents, IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };

@@ -70,6 +70,9 @@ function switchWhy({ gui, sid = '', asks = 0, busy = false, tasks = false, worki
   if (!sid) return ['draft', 'turn', 'agents'].includes(idleWhy) ? idleWhy : 'session';
   return permission ? 'permission' : recent ? 'recent' : '';
 }
+/** v3.117 a slash command the chat may type for the person: "/name" (letters, digits, : . _ -) and its arguments. */
+const isCommand = (s) => typeof s === 'string' && s.length <= 2000 && /^\/\w[\w:.-]{0,63}(?:\s|$)/.test(s)
+  && ![...s].some((c) => { const n = c.charCodeAt(0); return (n < 0x20 && c !== '\n' && c !== '\t') || n === 0x7f; });
 /** v3.116 is this terminal input typing (an Enter or a printable key), not an escape the terminal sends by itself? */
 const typesInput = (d) => { const s = String(d ?? ''); return s.includes('\r') || s.includes('\x03') || draftAfter(false, s); };
 
@@ -219,4 +222,4 @@ function endNote(stderr) {
   return lines.join('\n').slice(-END_NOTE_MAX);
 }
 
-module.exports = { switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+module.exports = { isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };

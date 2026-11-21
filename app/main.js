@@ -1214,6 +1214,7 @@ const RESUME_GRACE_MS = 8000; // if --continue ends with an error within this ti
 // --- v3.108 GUI chat (src/gui-session.js, src/gui-proc.js): with the chat view on, a Claude Code tab runs claude on its
 // SDK protocol, the way the VS Code extension does; the person can switch one tab to its terminal (chat:mode)
 const termTabs = new Set();   // pty ids the person switched to the terminal (v3.110 kept in state.json as termTabs)
+const cmdTabs = new Set();    // v3.117 pty ids in their terminal for a command's own screen (chat:command); never saved
 /** v3.110 termTabs into state (written with it): only tabs that still exist; none → the key is not written. */
 function keepTermTabs() {
   if (!state?.projects) return;
@@ -1225,7 +1226,7 @@ function keepTermTabs() {
 const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
 /** Does this tab start as a GUI chat? */
 function guiTab(id, r) {
-  return GS.guiEligible({ chatView: state.chatView === true, terminal: termTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
+  return GS.guiEligible({ chatView: state.chatView === true, terminal: termTabs.has(id) || cmdTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
 }
 /** A GUI tab's permission request: true when the app answers it (Auto-approve, v3.71 rules); else it waits for the person. */
 function guiAsk(id, ask, input, { autoApprove, mailGuard }) {
@@ -5544,15 +5545,21 @@ ipcMain.handle('chat:interrupt', (_e, id) => {
 });
 // The person switches a tab between the GUI chat and its terminal: the same session goes on in the other (claude
 // --resume), only while nothing runs in it (rule 4: never restart busy work). A stopped or sleeping tab only notes it.
-ipcMain.handle('chat:mode', (_e, id, mode) => {
-  id = String(id);
+ipcMain.handle('chat:mode', (_e, id, mode) => switchMode(String(id), mode));
+/**
+ * Moves an idle tab between its terminal and the GUI chat → chat:mode's result. temp (v3.117 chat:command): the
+ * terminal only for a command's own screen: cmdTabs instead of the person's saved choice (termTabs).
+ */
+function switchMode(id, mode, { temp = false } = {}) {
   const r = P.resolvePty(state, id);
   if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude' || r.project.hq) return 'unsupported';
-  const had = termTabs.has(id);
-  if (mode === 'terminal') termTabs.add(id); else termTabs.delete(id);
+  const choice = temp ? cmdTabs : termTabs;
+  const had = choice.has(id);
+  const back = mode !== 'terminal' && cmdTabs.has(id);   // v3.117 back from a command's screen: its own typing is done
+  if (mode === 'terminal') choice.add(id); else { termTabs.delete(id); cmdTabs.delete(id); }
   const t = terms.get(id);
-  if (!t || Boolean(t.gui) === guiTab(id, r)) { saveState(); return 'ok'; }   // stopped, or already in that mode (Windows: always a terminal); v3.110 kept
-  const undo = () => { if (had) termTabs.add(id); else termTabs.delete(id); };
+  if (!t || Boolean(t.gui) === guiTab(id, r)) { if (!temp) saveState(); return 'ok'; }   // stopped, or already in that mode (Windows: always a terminal); v3.110 kept
+  const undo = () => { if (had) choice.add(id); else choice.delete(id); if (back) cmdTabs.add(id); };
   if (handoffLocked(id)) { undo(); lockedNotice(id); return 'locked'; }
   // the same test as restartIdle (no turn, agents, shells or draft; a session id to resume), plus an open card or turn
   // v3.112 a GUI tab is judged by its own state (a new tab with no conversation yet starts its terminal fresh; before,
@@ -5560,14 +5567,61 @@ ipcMain.handle('chat:mode', (_e, id, mode) => {
   const guiSid = t.gui ? validSid(t.sessionId()) || '' : '';
   const idle = t.gui ? null : idleState(id);
   const sid = t.gui ? guiSid || validSid(lastSid.get(id)) || '' : idle.sid;
-  const facts = { gui: Boolean(t.gui), sid, guiSid, asks: t.gui ? t.asks().length : 0, busy: t.gui ? t.live().busy : false, tasks: guiTaskOpen(id), working: t.gui ? guiWorking(sid) : false, recent: guiRecent(id), permission: attention.get(r.project.id) === 'permission' };
+  const facts = { gui: Boolean(t.gui), sid, guiSid, asks: t.gui ? t.asks().length : 0, busy: t.gui ? t.live().busy : false, tasks: guiTaskOpen(id), working: t.gui ? guiWorking(sid) : false, recent: !back && guiRecent(id), permission: attention.get(r.project.id) === 'permission' };
   const plan = GS.switchPlan(facts);
   // v3.116 why it was refused ('busy:<why>'): the chat says what to wait for
   if (plan === 'busy') { undo(); return `busy:${GS.switchWhy({ ...facts, idleWhy: idle?.why || '' })}`; }
-  saveState();   // v3.110 the choice outlives an app restart
+  if (!temp) saveState();   // v3.110 the choice outlives an app restart
   // 'fresh' still follows the start's own rule (--continue when the project has history): a tab started or woken
   // with resume has no session id until its first message, and must not lose that conversation
   startPty(id, plan === 'resume' ? { sessionId: sid, resume: true } : { resume: true });
+  return 'moved';
+}
+// v3.118 /resume in a GUI chat tab without its terminal: the project folder's sessions (chat:sessions), and the pick
+// (chat:resume) restarts the tab in the chat with that session, only while nothing runs (the same test as chat:mode)
+function chatSessionsOf(id, t) {
+  const r = P.resolvePty(state, id);
+  if (!r || !t?.gui) return null;
+  const { configDir } = A.accountOf(state, r.project);
+  return CHAT.sessionList(TIO.historyDirsOf(r.dir, configDir, app.getPath('home')), { exclude: validSid(t.sessionId()) || '' });
+}
+ipcMain.handle('chat:sessions', (_e, id) => chatSessionsOf(String(id), terms.get(String(id))) || []);
+ipcMain.handle('chat:resume', (_e, id, sid) => {
+  id = String(id);
+  const t = terms.get(id);
+  if (!t) return 'not-running';
+  if (!t.gui) return 'unsupported';
+  if (handoffLocked(id)) { lockedNotice(id); return 'locked'; }
+  if (!validSid(sid) || !(chatSessionsOf(id, t) || []).some((x) => x.id === sid)) return 'gone';
+  const own = validSid(t.sessionId()) || '';
+  const facts = { gui: true, sid: own, guiSid: own, asks: t.asks().length, busy: t.live().busy, tasks: guiTaskOpen(id), working: guiWorking(own) };
+  if (GS.switchPlan(facts) === 'busy') return `busy:${GS.switchWhy(facts)}`;
+  startPty(id, { sessionId: sid, resume: true });
+  return 'moved';
+});
+// v3.117 a command that opens a screen of its own (/resume, /model, /mcp, …): a GUI chat tab has no terminal for it,
+// so claude continues the same session in its terminal (only while nothing runs, as chat:mode) and the command is
+// typed there once claude is up and idle; the renderer shows the terminal and comes back with chat:mode 'gui' when
+// the screen is closed. A terminal tab takes it as typed. → 'moved' | 'typed' | chat:mode's refusals | 'bad-command'
+const CMD_WAIT_MS = 30000;
+ipcMain.handle('chat:command', (_e, id, text) => {
+  id = String(id);
+  const cmd = String(text ?? '').trim();
+  if (!GS.isCommand(cmd)) return 'bad-command';
+  const t = terms.get(id);
+  if (!t) return 'not-running';
+  if (handoffLocked(id)) { lockedNotice(id); return 'locked'; }
+  if (!t.gui) return typePrompt(id, cmd) ? 'typed' : 'not-running';
+  const r = switchMode(id, 'terminal', { temp: true });
+  if (r !== 'moved') return r;
+  const until = Date.now() + CMD_WAIT_MS;
+  const tick = () => {
+    const now = terms.get(id);
+    if (!now || now.gui || !cmdTabs.has(id) || Date.now() > until) return;
+    if (idleSession(id)) { if (typePrompt(id, cmd)) send('chat:commandTyped', id); return; }
+    setTimeout(tick, 300);
+  };
+  setTimeout(tick, 300);
   return 'moved';
 });
 // the renderer shows a tab: a sleeping one starts (lazy start, wake from sleep)

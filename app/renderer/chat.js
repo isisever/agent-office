@@ -14,7 +14,8 @@ import { blocks as mdBlocks } from '../src/chat-md.mjs';
 const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
 const MENU_MS = 400;
-const AGENTS_MS = 1500; // v3.115 the tab's sub-agents are listed this often while shown    // the terminal screen is checked for an open menu this often while shown
+const AGENTS_MS = 1500;
+const BUSY_WHY = ['task', 'asks', 'turn', 'agents', 'recent', 'permission', 'draft', 'session'];   // v3.116 chat:mode's 'busy:<why>' // v3.115 the tab's sub-agents are listed this often while shown    // the terminal screen is checked for an open menu this often while shown
 
 /** @returns {any} */
 function h(tag, attrs = {}, ...kids) {
@@ -70,12 +71,13 @@ function textBody(text) {
 
 /**
  * @param {HTMLElement} el the pane's chat host
- * @param {{ ptyId: string, onTerminal: () => void, screen: () => string[], source?: { read: (cursor: any) => Promise<any> } | null }} opts
- *   onTerminal: the person wants the terminal; screen: the tab's terminal screen lines; source (v3.100): another
+ * @param {{ ptyId: string, onTerminal: () => void, onCommand?: (how: 'moved' | 'typed') => void, screen: () => string[], source?: { read: (cursor: any) => Promise<any> } | null }} opts
+ *   onTerminal: the person wants the terminal; onCommand (v3.117): a command with a screen of its own was started in the
+ *   tab's terminal ('moved': a GUI tab restarted there; 'typed'); screen: the tab's terminal screen lines; source (v3.100): another
  *   place the items come from (read answers like chat:read), shown read-only: no input, no menu buttons, no reply
  *   (renderer/remote-view.js: a session on another machine)
  */
-export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
+export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(), screen, source = null }) {
   const api = window.agentOffice;
   const list = h('div', { class: 'chat-list' });
   const empty = h('p', { class: 'chat-empty dim' });
@@ -132,9 +134,19 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   const agentEmpty = h('p', { class: 'chat-empty dim' });
   const agentView = h('div', { class: 'chat-agent-view' }, h('div', { class: 'chat-agent-head' }, agentBack, agentTitle, agentState), agentList, agentEmpty);
   agentView.hidden = true;
+  // v3.118 /resume in a GUI chat tab: the project's sessions in place of the chat (search, ↑/↓, Enter; Esc closes)
+  const pickBack = h('button', { class: 'chat-nav', onclick: () => closeResume() });
+  const pickTitle = h('span', { class: 'chat-agent-title' });
+  const pickSearch = h('input', { class: 'chat-free chat-pick-search', type: 'text' });
+  const pickList = h('div', { class: 'chat-list chat-pick-list', role: 'listbox' });
+  const pickEmpty = h('p', { class: 'chat-empty dim' });
+  const pickWhy = h('span', { class: 'chat-why' });
+  pickWhy.hidden = true;
+  const picker = h('div', { class: 'chat-agent-view chat-picker' }, h('div', { class: 'chat-agent-head' }, pickBack, pickTitle), pickSearch, pickList, pickEmpty, pickWhy);
+  picker.hidden = true;
   agentView.tabIndex = -1;
   agentView.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeAgent(); } });
-  el.append(banner, list, empty, agentView, live, card, endBox, agentBar, replyBar, imgBar, form, why);
+  el.append(banner, list, empty, agentView, picker, live, card, endBox, agentBar, replyBar, imgBar, form, why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -171,6 +183,10 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     bannerBtn.textContent = t('chat.terminal');
     empty.textContent = t('chat.empty');
     agentBack.textContent = t('chat.agents.back');
+    pickBack.textContent = t('chat.agents.back');
+    pickTitle.textContent = t('chat.resume.title');
+    pickSearch.placeholder = t('chat.resume.search');
+    pickEmpty.textContent = t('chat.resume.empty');
     agentEmpty.textContent = t('chat.agents.empty');
     agentsShown = '';
     drawAgents();
@@ -241,6 +257,7 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
       return line;
     }
     if (it.kind === 'command') return h('div', { class: 'chat-cmd' }, it.text);
+    if (it.kind === 'output') return message('output', it.text, h('pre', { class: 'chat-output' }, it.text), true);   // v3.117 what a command printed
     if (it.kind === 'note') return h('div', { class: 'chat-note dim' }, t(`chat.note.${it.note}`));
     return null;
   }
@@ -784,6 +801,12 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     if (menu && !gui) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
     // a slash command is sent as typed (a quote in front would stop it being a command)
     const out = replying && !/^\s*\//.test(text) ? withReply(replying, text) : text;
+    // v3.117 a command with a screen of its own (/resume, /model, /mcp, …) runs in the tab's terminal; the chat comes back
+    // when that screen is closed (app.js watches it)
+    const cmd = text.trim().match(/^\/([\w:.-]+)/)?.[1];
+    if (cmd === 'resume' && gui && !images.length && api.chat.sessions) { openResume(text.trim().slice(7).trim()); return; }   // v3.118
+    if (cmd && !images.length) await loadCommands();
+    if (cmd && !images.length && commands?.some((c) => c.name === cmd && c.ui)) { await runCommand(text.trim()); return; }
     let r;
     const sent = images.slice();
     try { r = await api.chat.send(ptyId, out, sent); } catch (e) { console.error(e); r = 'error'; }
@@ -796,12 +819,77 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
       note('');
       closeSlash();
       setTimeout(poll, 150);
-      // a command that opens a screen of its own (settings, pickers, panels) is answered in the terminal
-      const cmd = text.trim().match(/^\/([\w:.-]+)/)?.[1];
-      if (cmd && commands?.some((c) => c.name === cmd && c.ui)) setTimeout(() => onTerminal(), 400);
       return;
     }
     note(t(`chat.why.${['not-running', 'permission', 'draft', 'locked', 'too-long', 'too-many-images', 'image-type', 'image-size', 'image-save'].includes(r) ? r : 'other'}`));
+  }
+  // ---- v3.118 /resume without the terminal
+  /** @type {{ id: string, title: string, prompt: string, branch: string, at: number, size: number }[]} */
+  let sessions = [];
+  /** @type {typeof sessions} */
+  let pickShown = [];
+  let pickAt = 0;
+  let resuming = false;
+  async function openResume(query) {
+    input.value = ''; replyTo(''); fitInput(); note(''); closeSlash(); closeAt();
+    picker.hidden = false;
+    el.classList.add('chat-in-picker');
+    pickSearch.value = query;
+    pickWhy.hidden = true;
+    pickEmpty.hidden = true;
+    pickList.replaceChildren();
+    pickSearch.focus();
+    try { sessions = await api.chat.sessions(ptyId) || []; } catch (e) { console.error(e); sessions = []; }
+    drawResume();
+  }
+  function closeResume() {
+    picker.hidden = true;
+    el.classList.remove('chat-in-picker');
+    input.focus();
+  }
+  function drawResume() {
+    const q = pickSearch.value.trim().toLowerCase();
+    pickShown = q ? sessions.filter((s) => `${s.title} ${s.prompt} ${s.branch}`.toLowerCase().includes(q)) : sessions;
+    pickAt = Math.min(pickAt, Math.max(0, pickShown.length - 1));
+    pickList.replaceChildren(...pickShown.map((s, i) => h('button', {
+      class: `chat-pick-row${i === pickAt ? ' on' : ''}`, role: 'option', onclick: () => { pickAt = i; resumeOne(); },
+    }, h('span', { class: 'chat-pick-title' }, s.title || s.prompt),
+    s.title && s.prompt ? h('span', { class: 'chat-pick-prompt dim' }, s.prompt) : null,
+    h('span', { class: 'chat-pick-meta dim' }, [new Date(s.at).toLocaleString(), s.branch].filter(Boolean).join(' · ')))));
+    pickEmpty.hidden = pickShown.length > 0;
+    pickList.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+  }
+  async function resumeOne() {
+    const s = pickShown[pickAt];
+    if (!s || resuming) return;
+    resuming = true;
+    let r;
+    try { r = await api.chat.resume(ptyId, s.id); } catch (e) { console.error(e); r = 'error'; } finally { resuming = false; }
+    if (r === 'moved') { closeResume(); clear(); cursor = null; sid = undefined; empty.hidden = true; setTimeout(poll, 800); return; }
+    const why = String(r).startsWith('busy:') ? String(r).slice(5) : '';
+    pickWhy.textContent = why && BUSY_WHY.includes(why) ? t(`chat.gui.busyWhy.${why}`) : t(r === 'gone' ? 'chat.resume.gone' : `chat.why.${['not-running', 'locked'].includes(r) ? r : 'other'}`);
+    pickWhy.hidden = false;
+  }
+  pickSearch.addEventListener('input', () => { pickAt = 0; drawResume(); });
+  picker.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeResume(); }
+    else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && pickShown.length) { e.preventDefault(); pickAt = (pickAt + (e.key === 'ArrowDown' ? 1 : -1) + pickShown.length) % pickShown.length; drawResume(); }
+    else if (e.key === 'Enter') { e.preventDefault(); resumeOne(); }
+  });
+
+  /** v3.117 a command with a screen of its own: a GUI tab moves to its terminal (main types it there once claude is idle), a terminal tab takes it as typed; the view follows (onCommand). */
+  async function runCommand(text) {
+    let r;
+    try { r = gui ? await api.chat.command(ptyId, text) : await api.chat.send(ptyId, text); } catch (e) { console.error(e); r = 'error'; }
+    if (r === 'moved' || r === 'typed' || r === 'ok') {
+      input.value = ''; replyTo(''); fitInput(); note(''); closeSlash();
+      onCommand(r === 'moved' ? 'moved' : 'typed');
+      return;
+    }
+    const why = String(r).startsWith('busy:') ? String(r).slice(5) : '';
+    note(why && BUSY_WHY.includes(why) ? t(`chat.gui.busyWhy.${why}`)
+      : t(`chat.why.${['not-running', 'permission', 'draft', 'locked', 'too-long'].includes(r) ? r : 'other'}`));
   }
   const fitInput = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; };
 
