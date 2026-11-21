@@ -1221,6 +1221,8 @@ function keepTermTabs() {
   const keep = GS.cleanTermTabs([...termTabs], state.projects.flatMap((p) => P.ptyIdsOf(p)));
   termTabs.clear();
   for (const id of keep) termTabs.add(id);
+  const ids = new Set(state.projects.flatMap((p) => P.ptyIdsOf(p)));
+  for (const id of cmdTabs) if (!ids.has(id)) cmdTabs.delete(id);   // v3.117 a closed tab's command terminal (never saved)
   state = { ...state, termTabs: keep.length ? keep : undefined };
 }
 const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
@@ -5555,8 +5557,10 @@ function switchMode(id, mode, { temp = false } = {}) {
   if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude' || r.project.hq) return 'unsupported';
   const choice = temp ? cmdTabs : termTabs;
   const had = choice.has(id);
-  const back = mode !== 'terminal' && cmdTabs.has(id);   // v3.117 back from a command's screen: its own typing is done
-  if (mode === 'terminal') choice.add(id); else { termTabs.delete(id); cmdTabs.delete(id); }
+  const back = mode !== 'terminal' && cmdTabs.has(id);   // v3.117 back from a command's screen
+  // only the command's own typing is waived: anything typed after it (a prompt sent in the terminal) still holds the tab
+  const waived = back && (activity.get(id)?.inputAt || 0) <= (cmdTyped.get(id) || 0);
+  if (mode === 'terminal') choice.add(id); else { termTabs.delete(id); cmdTabs.delete(id); cmdPending.delete(id); }
   const t = terms.get(id);
   if (!t || Boolean(t.gui) === guiTab(id, r)) { if (!temp) saveState(); return 'ok'; }   // stopped, or already in that mode (Windows: always a terminal); v3.110 kept
   const undo = () => { if (had) choice.add(id); else choice.delete(id); if (back) cmdTabs.add(id); };
@@ -5567,7 +5571,7 @@ function switchMode(id, mode, { temp = false } = {}) {
   const guiSid = t.gui ? validSid(t.sessionId()) || '' : '';
   const idle = t.gui ? null : idleState(id);
   const sid = t.gui ? guiSid || validSid(lastSid.get(id)) || '' : idle.sid;
-  const facts = { gui: Boolean(t.gui), sid, guiSid, asks: t.gui ? t.asks().length : 0, busy: t.gui ? t.live().busy : false, tasks: guiTaskOpen(id), working: t.gui ? guiWorking(sid) : false, recent: !back && guiRecent(id), permission: attention.get(r.project.id) === 'permission' };
+  const facts = { gui: Boolean(t.gui), sid, guiSid, asks: t.gui ? t.asks().length : 0, busy: t.gui ? t.live().busy : false, tasks: guiTaskOpen(id), working: t.gui ? guiWorking(sid) : false, recent: !waived && guiRecent(id), permission: attention.get(r.project.id) === 'permission' };
   const plan = GS.switchPlan(facts);
   // v3.116 why it was refused ('busy:<why>'): the chat says what to wait for
   if (plan === 'busy') { undo(); return `busy:${GS.switchWhy({ ...facts, idleWhy: idle?.why || '' })}`; }
@@ -5583,7 +5587,18 @@ function chatSessionsOf(id, t) {
   const r = P.resolvePty(state, id);
   if (!r || !t?.gui) return null;
   const { configDir } = A.accountOf(state, r.project);
-  return CHAT.sessionList(TIO.historyDirsOf(r.dir, configDir, app.getPath('home')), { exclude: validSid(t.sessionId()) || '' });
+  return CHAT.sessionList(TIO.historyDirsOf(r.dir, configDir, app.getPath('home')), { exclude: liveSids() });
+}
+/** v3.118 the sessions running tabs are in (this one too): never resumed a second time in another tab. */
+function liveSids() {
+  const out = new Set();
+  for (const [pid, tt] of terms) {
+    if (tt.gui) { const s = validSid(tt.sessionId()); if (s) out.add(s); continue; }
+    const r = P.resolvePty(state, pid);
+    const s = r && validSid(readJson(Z.claudePidFile(A.accountOf(state, r.project).configDir, app.getPath('home'), tt.pid))?.sessionId);
+    if (s) out.add(s);
+  }
+  return out;
 }
 ipcMain.handle('chat:sessions', (_e, id) => chatSessionsOf(String(id), terms.get(String(id))) || []);
 ipcMain.handle('chat:resume', (_e, id, sid) => {
@@ -5604,6 +5619,8 @@ ipcMain.handle('chat:resume', (_e, id, sid) => {
 // typed there once claude is up and idle; the renderer shows the terminal and comes back with chat:mode 'gui' when
 // the screen is closed. A terminal tab takes it as typed. → 'moved' | 'typed' | chat:mode's refusals | 'bad-command'
 const CMD_WAIT_MS = 30000;
+const cmdPending = new Map();   // pty id → { cmd, until }: a command waiting for its terminal's prompt box
+const cmdTyped = new Map();     // pty id → activity.inputAt of the command's own typing (the way back waives only that)
 ipcMain.handle('chat:command', (_e, id, text) => {
   id = String(id);
   const cmd = String(text ?? '').trim();
@@ -5611,18 +5628,28 @@ ipcMain.handle('chat:command', (_e, id, text) => {
   const t = terms.get(id);
   if (!t) return 'not-running';
   if (handoffLocked(id)) { lockedNotice(id); return 'locked'; }
-  if (!t.gui) return typePrompt(id, cmd) ? 'typed' : 'not-running';
+  if (!t.gui) return 'terminal';   // a terminal tab: the renderer sends it with chat:send and its refusals
   const r = switchMode(id, 'terminal', { temp: true });
-  if (r !== 'moved') return r;
-  const until = Date.now() + CMD_WAIT_MS;
-  const tick = () => {
-    const now = terms.get(id);
-    if (!now || now.gui || !cmdTabs.has(id) || Date.now() > until) return;
-    if (idleSession(id)) { if (typePrompt(id, cmd)) send('chat:commandTyped', id); return; }
-    setTimeout(tick, 300);
-  };
-  setTimeout(tick, 300);
-  return 'moved';
+  if (r === 'moved') cmdPending.set(id, { cmd, until: Date.now() + CMD_WAIT_MS });
+  return r;
+});
+// v3.117 the renderer saw the restarted terminal's prompt box (nothing open over it): main types the command only if
+// nothing else could take the keys either → 'typed' | 'wait' (try again) | 'gone' (given up, or the tab moved on)
+ipcMain.handle('chat:commandGo', (_e, id) => {
+  id = String(id);
+  const p = cmdPending.get(id);
+  const t = terms.get(id);
+  if (!p || !t || t.gui || !cmdTabs.has(id) || Date.now() > p.until) { cmdPending.delete(id); return 'gone'; }
+  if (handoffLocked(id)) return 'wait';
+  const r = P.resolvePty(state, id);
+  if (!r || !idleSession(id) || attention.get(r.project.id) === 'permission') return 'wait';
+  const claude = readJson(Z.claudePidFile(A.accountOf(state, r.project).configDir, app.getPath('home'), t.pid));
+  const sid = validSid(claude?.sessionId);
+  if (!R.canTypePrompt({ claude, office: sid ? office()?.readSession(sid) : undefined })) return 'wait';
+  if (!typePrompt(id, p.cmd)) return 'wait';
+  cmdPending.delete(id);
+  cmdTyped.set(id, activity.get(id)?.inputAt || Date.now());
+  return 'typed';
 });
 // the renderer shows a tab: a sleeping one starts (lazy start, wake from sleep)
 ipcMain.on('pty:wake', (_e, id) => { shownTab = String(id); wake(id); });

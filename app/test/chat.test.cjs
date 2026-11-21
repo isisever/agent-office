@@ -381,7 +381,7 @@ test('v3.109 pasted images: checked types, count and size; image blocks for a GU
   assert.match(MAIN, /return guiRecent\(pid\) \|\| guiTaskOpen\(pid\);/);
   assert.match(MAIN, /handoffLocked\(pid\) \|\| guiHolds\(pid\)\) continue;/);
   // v3.112 the Terminal button: a terminal tab still waits out the typing window; every tab waits for an open task
-  assert.match(MAIN, /tasks: guiTaskOpen\(id\), working: t\.gui \? guiWorking\(sid\) : false, recent: !back && guiRecent\(id\)/);
+  assert.match(MAIN, /tasks: guiTaskOpen\(id\), working: t\.gui \? guiWorking\(sid\) : false, recent: !waived && guiRecent\(id\)/);
   // v3.116 only typing marks a tab as just written to: never its output or a focus report
   assert.equal((MAIN.match(/a\.inputAt = a\.at/g) || []).length, 5);
   assert.doesNotMatch(MAIN.slice(MAIN.indexOf('onData: (d) => {'), MAIN.indexOf('onExit:', MAIN.indexOf('onData: (d) => {'))), /inputAt/);
@@ -552,17 +552,27 @@ test('v3.117 chat:command: a GUI tab moves to its terminal for the command (neve
   const body = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:command'"), MAIN.indexOf('\n});\n', MAIN.indexOf("ipcMain.handle('chat:command'")));
   assert.match(body, /if \(!GS\.isCommand\(cmd\)\) return 'bad-command';/);
   assert.match(body, /if \(handoffLocked\(id\)\)/);
-  assert.match(body, /if \(!t\.gui\) return typePrompt\(id, cmd\)/);
+  assert.match(body, /if \(!t\.gui\) return 'terminal';/, 'a terminal tab goes through chat:send and its refusals');
+  assert.doesNotMatch(body, /typePrompt/, 'nothing is typed before the renderer sees the prompt box');
   assert.match(body, /switchMode\(id, 'terminal', \{ temp: true \}\)/);
-  assert.match(body, /if \(idleSession\(id\)\) \{ if \(typePrompt\(id, cmd\)\) send\('chat:commandTyped', id\); return; \}/);
+  // typed only when the prompt box is up and nothing else could take the keys
+  const go = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:commandGo'"), MAIN.indexOf('\n});\n', MAIN.indexOf("ipcMain.handle('chat:commandGo'")));
+  assert.match(go, /if \(!r \|\| !idleSession\(id\) \|\| attention\.get\(r\.project\.id\) === 'permission'\) return 'wait';/);
+  assert.match(go, /if \(!R\.canTypePrompt\(/);
+  assert.match(go, /if \(handoffLocked\(id\)\) return 'wait';/);
+  assert.match(go, /cmdTyped\.set\(id, activity\.get\(id\)\?\.inputAt \|\| Date\.now\(\)\);/);
   const sw = MAIN.slice(MAIN.indexOf('function switchMode('), MAIN.indexOf("ipcMain.handle('chat:command'"));
   assert.match(sw, /const choice = temp \? cmdTabs : termTabs;/);
   assert.match(sw, /if \(!temp\) saveState\(\)/);
-  assert.match(sw, /recent: !back && guiRecent\(id\)/);
+  // the way back waives only the command's own typing, never a prompt typed after it
+  assert.match(sw, /const waived = back && \(activity\.get\(id\)\?\.inputAt \|\| 0\) <= \(cmdTyped\.get\(id\) \|\| 0\);/);
+  assert.match(sw, /recent: !waived && guiRecent\(id\)/);
   assert.match(MAIN, /terminal: termTabs\.has\(id\) \|\| cmdTabs\.has\(id\)/);
   assert.match(MAIN, /ipcMain\.handle\('chat:mode', \(_e, id, mode\) => switchMode\(String\(id\), mode\)\);/);
   const APP = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
   assert.match(APP, /if \(!promptReady\(lines\)\) \{ w\.seen = true;/);
+  assert.match(APP, /api\.chat\.commandGo\(id\)/);
+  assert.match(APP, /if \(stillTyped\(lines, w\.text\)\)/);
   assert.match(APP, /if \(w\.gui\) setChatMode\(id, true\);/);
   for (const lang of ['en', 'tr']) assert.ok(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${lang}.json`), 'utf8')).chat.cmd.running, lang);
 });
@@ -582,7 +592,8 @@ test('v3.118 sessionList: newest first, named by /rename, then Claude Code\'s ti
   put(b, 's-own', user('this tab'), 10);
   put(a, 's-empty', line({ type: 'file-history-snapshot' }), 50);
   fs.writeFileSync(path.join(a, 'notes.txt'), 'x');
-  const list = C.sessionList([a, b, a], { exclude: 's-own' });
+  const list = C.sessionList([a, b, a], { exclude: new Set(['s-own']) });
+  assert.deepEqual(C.sessionList([b], { exclude: 's-own' }).map((s) => s.id), ['s-plain']);
   assert.deepEqual(list.map((s) => s.id), ['s-plain', 's-named', 's-old']);
   assert.deepEqual(list.map((s) => [s.title, s.prompt]), [['', 'README please'], ['My name', 'first ask'], ['Login test fix', 'fix the login test']]);
   assert.equal(list[2].branch, 'fix/login');
@@ -597,7 +608,9 @@ test('v3.118 chat:resume: only a listed session of a GUI tab, never while anythi
   assert.match(body, /if \(!validSid\(sid\) \|\| !\(chatSessionsOf\(id, t\) \|\| \[\]\)\.some\(\(x\) => x\.id === sid\)\) return 'gone';/);
   assert.match(body, /if \(GS\.switchPlan\(facts\) === 'busy'\) return `busy:\$\{GS\.switchWhy\(facts\)\}`;/);
   assert.match(body, /startPty\(id, \{ sessionId: sid, resume: true \}\);/);
-  assert.match(MAIN, /CHAT\.sessionList\(TIO\.historyDirsOf\(r\.dir, configDir, app\.getPath\('home'\)\), \{ exclude: validSid\(t\.sessionId\(\)\) \|\| '' \}\)/);
+  // a session another running tab is in is never offered (two claude processes would write one transcript)
+  assert.match(MAIN, /CHAT\.sessionList\(TIO\.historyDirsOf\(r\.dir, configDir, app\.getPath\('home'\)\), \{ exclude: liveSids\(\) \}\)/);
+  assert.match(MAIN.slice(MAIN.indexOf('function liveSids('), MAIN.indexOf('function liveSids(') + 700), /for \(const \[pid, tt\] of terms\)/);
   const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   assert.match(preload, /sessions: \(id\) => ipcRenderer\.invoke\('chat:sessions', id\)/);
   assert.match(preload, /resume: \(id, sid\) => ipcRenderer\.invoke\('chat:resume', id, sid\)/);

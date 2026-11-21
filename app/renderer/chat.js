@@ -13,9 +13,9 @@ import { blocks as mdBlocks } from '../src/chat-md.mjs';
 
 const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
-const MENU_MS = 400;
-const AGENTS_MS = 1500;
-const BUSY_WHY = ['task', 'asks', 'turn', 'agents', 'recent', 'permission', 'draft', 'session'];   // v3.116 chat:mode's 'busy:<why>' // v3.115 the tab's sub-agents are listed this often while shown    // the terminal screen is checked for an open menu this often while shown
+const MENU_MS = 400;    // the terminal screen is checked for an open menu this often while shown
+const AGENTS_MS = 1500; // v3.115 the tab's sub-agents are listed this often while shown
+const BUSY_WHY = ['task', 'asks', 'turn', 'agents', 'recent', 'permission', 'draft', 'session'];   // v3.116 chat:mode's 'busy:<why>'
 
 /** @returns {any} */
 function h(tag, attrs = {}, ...kids) {
@@ -71,7 +71,7 @@ function textBody(text) {
 
 /**
  * @param {HTMLElement} el the pane's chat host
- * @param {{ ptyId: string, onTerminal: () => void, onCommand?: (how: 'moved' | 'typed') => void, screen: () => string[], source?: { read: (cursor: any) => Promise<any> } | null }} opts
+ * @param {{ ptyId: string, onTerminal: () => void, onCommand?: (how: 'moved' | 'typed', text: string) => void, screen: () => string[], source?: { read: (cursor: any) => Promise<any> } | null }} opts
  *   onTerminal: the person wants the terminal; onCommand (v3.117): a command with a screen of its own was started in the
  *   tab's terminal ('moved': a GUI tab restarted there; 'typed'); screen: the tab's terminal screen lines; source (v3.100): another
  *   place the items come from (read answers like chat:read), shown read-only: no input, no menu buttons, no reply
@@ -881,10 +881,14 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   /** v3.117 a command with a screen of its own: a GUI tab moves to its terminal (main types it there once claude is idle), a terminal tab takes it as typed; the view follows (onCommand). */
   async function runCommand(text) {
     let r;
-    try { r = gui ? await api.chat.command(ptyId, text) : await api.chat.send(ptyId, text); } catch (e) { console.error(e); r = 'error'; }
+    try {
+      r = gui ? await api.chat.command(ptyId, text) : 'terminal';
+      // a terminal tab (or one that just went to its terminal): sent like any message, with chat:send's refusals
+      if (r === 'terminal') r = await api.chat.send(ptyId, text);
+    } catch (e) { console.error(e); r = 'error'; }
     if (r === 'moved' || r === 'typed' || r === 'ok') {
       input.value = ''; replyTo(''); fitInput(); note(''); closeSlash();
-      onCommand(r === 'moved' ? 'moved' : 'typed');
+      onCommand(r === 'moved' ? 'moved' : 'typed', text);
       return;
     }
     const why = String(r).startsWith('busy:') ? String(r).slice(5) : '';

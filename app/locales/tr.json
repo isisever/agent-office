@@ -743,7 +743,8 @@
       "gone": "Bu oturum artık yok; başka birini seç."
     },
     "cmd": {
-      "running": "Bu komut terminalde çalışıyor: ekranı kapanınca sohbete dönülecek."
+      "running": "Bu komut terminalde çalışıyor: ekranı kapanınca sohbete dönülecek.",
+      "gaveUp": "Komut terminalde başlatılamadı; terminal açık bırakıldı (Sohbet düğmesiyle dönebilirsin)."
     },
     "agents": {
       "back": "← Sohbete dön",

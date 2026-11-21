@@ -753,7 +753,8 @@
       "gone": "That session is gone; pick another one."
     },
     "cmd": {
-      "running": "This command runs in the terminal: the chat comes back when its screen is closed."
+      "running": "This command runs in the terminal: the chat comes back when its screen is closed.",
+      "gaveUp": "The command could not be started in the terminal; it is left open for you (Chat goes back)."
     },
     "agents": {
       "back": "← Back to the chat",

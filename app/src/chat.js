@@ -231,16 +231,19 @@ function sessionInfo(file, size, fsm = fs) {
 }
 /**
  * The sessions in Claude Code's folders of one project folder → [{ id, title, prompt, branch, at, size }], newest first,
- * at most SESSIONS_MAX; `exclude` (the tab's own session) and sessions with nothing the person wrote are left out.
+ * at most SESSIONS_MAX; `exclude` (ids: the sessions running tabs are in) and sessions with nothing the person wrote
+ * are left out.
  */
-function sessionList(dirs, { exclude = '', fsm = fs } = {}) {
+/** @param {string[]} dirs @param {{ exclude?: string | Iterable<string>, fsm?: any }} [opts] */
+function sessionList(dirs, { exclude = [], fsm = fs } = {}) {
+  const skip = new Set(typeof exclude === 'string' ? [exclude] : exclude);
   const files = [];
   for (const dir of new Set(Array.isArray(dirs) ? dirs : [])) {
     let names = [];
     try { names = fsm.readdirSync(dir).filter((n) => SID_FILE_RE.test(n)); } catch { continue; }
     for (const n of names) {
       const id = n.slice(0, -6);
-      if (id === exclude || files.some((f) => f.id === id)) continue;
+      if (skip.has(id) || files.some((f) => f.id === id)) continue;
       try { const st = fsm.statSync(path.join(dir, n)); if (st.isFile() && st.size > 0) files.push({ id, file: path.join(dir, n), at: Math.round(st.mtimeMs), size: st.size }); } catch {}
     }
   }

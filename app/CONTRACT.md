@@ -2784,9 +2784,9 @@ Now the command runs where it works, in Claude Code's own screen, exactly as in 
 when that screen is closed. What the command printed shows in the chat.
 
 ```ts
-agentOffice.chat.command(ptyId, text)   // 'chat:command' → 'moved' | 'typed' | 'busy:<why>' (v3.116) | 'locked'
-                                        //   | 'not-running' | 'unsupported' | 'bad-command'
-agentOffice.chat.onCommandTyped(cb)     // event 'chat:commandTyped' (id): main typed the command into the terminal
+agentOffice.chat.command(ptyId, text)   // 'chat:command' → 'moved' | 'terminal' (send it with chat.send) | 'busy:<why>'
+                                        //   (v3.116) | 'locked' | 'not-running' | 'unsupported' | 'bad-command'
+agentOffice.chat.commandGo(ptyId)       // 'chat:commandGo': the prompt box is on screen → 'typed' | 'wait' | 'gone'
 // chat items: { kind: 'output', text }: a <local-command-stdout> line, colours and blank edges removed
 ```
 
@@ -2795,20 +2795,27 @@ agentOffice.chat.onCommandTyped(cb)     // event 'chat:commandTyped' (id): main 
   characters, ≤ 2000 characters.
 - **A GUI chat tab** (`chat:command`): the same switch as `chat:mode` 'terminal' (`switchMode`, refused with the same
   `busy:<why>` while anything runs), but temporary: the tab goes into `cmdTabs` (memory only, never `termTabs` or
-  `state.json`), so an app restart or the setting's sweep brings it back to the chat. claude continues the same session
-  in its terminal; once its pid file shows an idle session (`idleSession`, every 300 ms, up to 30 s) main types the
-  command (`typePrompt`) and sends `chat:commandTyped`.
-- **A terminal tab** (HQ, Windows, a tab the person keeps in its terminal): the command is sent like any message
-  (`chat:send`, with its refusals) and the view shows the terminal.
+  `state.json`; pruned with closed tabs), so an app restart brings it back to the chat. claude continues the same
+  session in its terminal and the command waits (`cmdPending`, 30 s). Nothing is typed until the renderer sees the
+  restarted terminal's prompt box with nothing over it (`promptReady`, steady for 0.7 s) and calls `chat:commandGo`;
+  main then types it (`typePrompt`) only if the session is idle (`idleSession`), claude takes a prompt
+  (`canTypePrompt`), no approval of the project waits and no handoff runs, else `wait`. A startup dialog or an approval
+  menu therefore never gets the command's keys. Given up (`gone`, 30 s): the terminal stays open with
+  `chat.cmd.gaveUp`; Chat brings the tab back.
+- **A terminal tab** (HQ, Windows, a tab the person keeps in its terminal; also a GUI flag in the renderer that is out
+  of date: `chat:command` answers `terminal`): the command is sent like any message (`chat:send`, with its refusals:
+  never over an approval menu or a draft) and the view shows the terminal.
 - **Back to the chat** (`renderer/app.js` `watchCommands`, every 300 ms): the hint `chat.cmd.running` shows over the
   terminal; once the command is typed, the screen is read with `promptReady` (`src/tui-menu.mjs`: Claude Code's prompt
   box at the foot, a full-width rule above its glyph and one below, no menu, dialog or running turn). When it has
-  been open and closed again (a picker, a panel), or 2.5 s after the command for one that only prints, and the box
+  been open and closed again (a picker, a panel), or 4 s after the command for one that only prints, and the box
   stays 0.7 s, a GUI tab switches back with `chat:mode` 'gui': it restarts in the chat with the session its terminal
-  is in now (so a session picked in `/resume` goes on in the chat). Coming back from `cmdTabs` ignores the tab's own
-  typing (`recent`; the command, a picker's search); a draft left in the box, a turn or running agents still refuse it
+  is in now. A box that still holds the command as typed is not "closed" (Claude Code has not taken it yet). Coming
+  back from `cmdTabs` waives `recent` only for the command's own typing (`cmdTyped`: anything typed after it, a prompt
+  sent in that terminal or a picker's search, still holds the tab 15 s); a draft, a turn or running agents refuse it
   and the terminal stays (the hint says why). A terminal tab only switches the view back. Pressing Chat by hand ends
-  the watch.
+  the watch. The chat view setting's sweep (`guiSwitchIdle`) leaves a tab in `cmdTabs` alone: its watch brings it
+  back.
 - **Output** (`src/chat.js`): `<local-command-stdout>` lines (hidden until now) become `output` items, shown as
   preformatted text (Copy, no Reply). They never cross the device link (`linkItems` keeps its list of kinds).
 - **Dev-mock**: `?chat&gui`: a "/" command with a screen shows a fake picker in the terminal, then the prompt box; the
@@ -2830,7 +2837,8 @@ agentOffice.chat.resume(ptyId, sessionId)   // 'chat:resume' → 'moved' | 'busy
 ```
 
 - **The list** (`CHAT.sessionList`, `TIO.historyDirsOf`): the `.jsonl` sessions in Claude Code's folders for the tab's
-  project folder (as typed and with links resolved), newest first, at most 50, the tab's own session left out. Each
+  project folder (as typed and with links resolved), newest first, at most 50; the sessions running tabs are in
+  (`liveSids`: a GUI tab's own id, a terminal tab's pid file) are left out, so one session never runs twice. Each
   is named as Claude Code's picker names it: the `/rename` name (`custom-title`), else Claude Code's title
   (`ai-title`), else the first thing the person wrote; with that first prompt, the git branch and the time. Only the
   first and last 64 KB of a file are read; a session with nothing the person wrote is left out. Only these names and
