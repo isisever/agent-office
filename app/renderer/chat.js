@@ -13,7 +13,8 @@ import { blocks as mdBlocks } from '../src/chat-md.mjs';
 
 const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
-const MENU_MS = 400;    // the terminal screen is checked for an open menu this often while shown
+const MENU_MS = 400;
+const AGENTS_MS = 1500; // v3.115 the tab's sub-agents are listed this often while shown    // the terminal screen is checked for an open menu this often while shown
 
 /** @returns {any} */
 function h(tag, attrs = {}, ...kids) {
@@ -120,7 +121,20 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
   live.hidden = true;
   const form = h('div', { class: 'chat-form' }, slash, atList, attach, input, stop, send, term);
   form.hidden = Boolean(source);
-  el.append(banner, list, empty, live, card, endBox, replyBar, imgBar, form, why);
+  // v3.115 sub-agents: the running ones above the input (as the terminal lists them); one opens its own conversation
+  // in place of the chat (read-only; ← Back returns). A paired device's chat has none (source).
+  const agentBar = h('div', { class: 'chat-agents' });
+  agentBar.hidden = true;
+  const agentBack = h('button', { class: 'chat-nav', onclick: () => closeAgent() });
+  const agentTitle = h('span', { class: 'chat-agent-title' });
+  const agentState = h('span', { class: 'chat-agent-state dim' });
+  const agentList = h('div', { class: 'chat-list chat-agent-list' });
+  const agentEmpty = h('p', { class: 'chat-empty dim' });
+  const agentView = h('div', { class: 'chat-agent-view' }, h('div', { class: 'chat-agent-head' }, agentBack, agentTitle, agentState), agentList, agentEmpty);
+  agentView.hidden = true;
+  agentView.tabIndex = -1;
+  agentView.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeAgent(); } });
+  el.append(banner, list, empty, agentView, live, card, endBox, agentBar, replyBar, imgBar, form, why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -156,10 +170,13 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     bannerText.textContent = t('chat.permission');
     bannerBtn.textContent = t('chat.terminal');
     empty.textContent = t('chat.empty');
+    agentBack.textContent = t('chat.agents.back');
+    agentEmpty.textContent = t('chat.agents.empty');
+    agentsShown = '';
+    drawAgents();
   }
-  texts();
 
-  function clear() { list.replaceChildren(); tools.clear(); pending.length = 0; }
+  function clear() { list.replaceChildren(); tools.clear(); agentRows.clear(); pending.length = 0; }
   // messages sent from here, shown at once until the transcript has them (then the transcript's copy replaces them)
   /** @type {HTMLElement[]} */
   const pending = [];
@@ -186,24 +203,29 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     btn.textContent = ok ? t('chat.copied') : t('chat.copyFailed');
     setTimeout(() => { btn.textContent = t('chat.copy'); }, 1200);
   }
-  function message(kind, text, body) {
+  function message(kind, text, body, ro = false) {
     const copy = h('button', { class: 'chat-act', onclick: () => copyText(String(text), copy) }, t('chat.copy'));
     const reply = h('button', { class: 'chat-act', onclick: () => replyTo(String(text)) }, t('chat.reply'));
-    return h('div', { class: `chat-msg ${kind}` }, body, h('div', { class: 'chat-acts' }, copy, kind === 'error' || source ? null : reply));
+    return h('div', { class: `chat-msg ${kind}` }, body, h('div', { class: 'chat-acts' }, copy, kind === 'error' || source || ro ? null : reply));
   }
-  function item(it) {
+  /** One chat item → its row (or null). map: the tool rows waiting for their result; ro: no Reply (a sub-agent's view). */
+  function item(it, map = tools, ro = false) {
     if (it.kind === 'toolDone') {
-      const line = tools.get(it.id);
-      if (line) { line.classList.remove('pending'); line.classList.add(it.error ? 'failed' : 'done'); tools.delete(it.id); }
+      const line = map.get(it.id);
+      if (line?.dataset.agent) {   // v3.115 a background agent's call returns at once: its row follows the agent instead
+        line.dataset.result = it.error ? 'failed' : 'done';
+        map.delete(it.id);
+        agentRowState(line);
+      } else if (line) { line.classList.remove('pending'); line.classList.add(it.error ? 'failed' : 'done'); map.delete(it.id); }
       return null;
     }
     if (it.kind === 'user') {
       const body = mdBody(it.text);
       if (it.images) body.append(h('div', { class: 'chat-images dim' }, t('chat.images', { count: it.images })));
-      return message('user', it.text, body);
+      return message('user', it.text, body, ro);
     }
-    if (it.kind === 'assistant') return message('assistant', it.text, mdBody(it.text));
-    if (it.kind === 'error') return message('error', it.text, textBody(it.text));
+    if (it.kind === 'assistant') return message('assistant', it.text, mdBody(it.text), ro);
+    if (it.kind === 'error') return message('error', it.text, textBody(it.text), ro);
     if (it.kind === 'tool') {
       // v3.109 a file the tool worked on: Show in Finder (main allows only a path inside the tab's folder)
       const reveal = it.path && !source ? h('button', { class: 'chat-reveal', title: revealLabel(), onclick: async (e) => {
@@ -214,7 +236,8 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
         else if (r !== 'ok') note(t('chat.revealOutside'));
       } }, '⌕') : null;
       const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''), reveal);
-      if (it.id) tools.set(it.id, line);
+      if (it.id) map.set(it.id, line);
+      if (it.agent && it.id && !source) agentRow(line, it.id);
       return line;
     }
     if (it.kind === 'command') return h('div', { class: 'chat-cmd' }, it.text);
@@ -239,10 +262,124 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
     while (list.childElementCount > KEEP) {
       const gone = list.firstElementChild;
       for (const [id, line] of tools) if (line === gone) tools.delete(id);   // a trimmed tool row is never marked done
+      if (gone instanceof HTMLElement && gone.dataset.agent) agentRows.delete(gone.dataset.agent);
       gone.remove();
     }
     if (atBottom) list.scrollTop = list.scrollHeight;
   }
+
+  // ---- v3.115 sub-agents
+  /** @type {{ id: string, toolUseId: string, description: string, type: string, state: string, tool: string, detail: string, toolCount: number, at: number }[]} */
+  let agents = [];
+  let agentsShown = '';
+  let agentsReading = false;
+  let agentsAt = 0;
+  const agentRows = new Map();   // the boss's Agent call id → its row in the chat
+  let open = null;   // the sub-agent shown: { id, toolUseId, cursor, reading, tools }
+  const agentOf = (toolUseId) => agents.find((a) => a.toolUseId === toolUseId) || null;
+  /** An Agent call's row: clickable, with the agent's state once it is known. */
+  function agentRow(line, toolUseId) {
+    line.dataset.agent = toolUseId;
+    line.classList.add('chat-agent-row');
+    line.append(h('span', { class: 'chat-agent-badge' }));
+    line.addEventListener('click', () => { if (!window.getSelection()?.toString()) openAgent(toolUseId); });
+    agentRows.set(toolUseId, line);
+    agentRowState(line);
+  }
+  function agentRowState(line) {
+    const a = agentOf(line.dataset.agent || '');
+    // no sub-agent file (yet, or a session from before): the call's own result decides, as for any tool
+    const st = a ? a.state : line.dataset.result || 'pending';
+    line.classList.toggle('pending', st === 'pending' || st === 'running');
+    line.classList.toggle('running', st === 'running');
+    line.classList.toggle('done', st === 'done');
+    line.classList.toggle('failed', st === 'failed');
+    line.classList.toggle('stopped', st === 'stopped');
+    line.classList.toggle('openable', Boolean(a));
+    const badge = line.querySelector('.chat-agent-badge');
+    const txt = !a ? '' : st === 'running' ? (a.tool ? t('chat.agents.runningTool', { tool: a.tool, count: a.toolCount }) : t('chat.agents.running')) : t(`chat.agents.${st}`);
+    if (badge && badge.textContent !== txt) badge.textContent = txt;
+  }
+  /** The running agents above the input; the open agent's header. */
+  function drawAgents() {
+    const run = agents.filter((a) => a.state === 'running');
+    const key = `${run.map((a) => `${a.id}:${a.tool}:${a.toolCount}`).join('|')}#${open?.id || ''}`;
+    if (key !== agentsShown) {
+      agentsShown = key;
+      agentBar.replaceChildren(...(run.length ? [h('span', { class: 'chat-agents-label dim' }, t('chat.agents.label', { count: run.length }))] : []),
+        ...run.map((a) => h('button', { class: `chat-agent-chip${open?.id === a.id ? ' on' : ''}`, title: a.detail || a.description, onclick: () => openAgent(a.toolUseId, a.id) },
+          h('span', { class: 'chat-agent-chip-name' }, a.description || a.type || a.id),
+          a.tool ? h('span', { class: 'chat-agent-chip-tool dim' }, a.tool) : null)));
+      agentBar.hidden = !run.length;
+    }
+    if (open) {
+      const a = agents.find((x) => x.id === open.id);
+      agentTitle.textContent = a ? `${a.description || a.id}${a.type ? ` · ${a.type}` : ''}` : open.id;
+      agentState.textContent = !a ? '' : a.state === 'running' && a.tool ? t('chat.agents.runningTool', { tool: a.tool, count: a.toolCount }) : t(`chat.agents.${a.state}`);
+    }
+  }
+  async function readAgents() {
+    if (source || !api.chat.agents || agentsReading || !shown) return;
+    agentsReading = true;
+    try {
+      const r = await api.chat.agents(ptyId);
+      agents = Array.isArray(r) ? r : [];
+      for (const line of agentRows.values()) agentRowState(line);
+      drawAgents();
+    } catch (e) { console.error(e); } finally { agentsReading = false; agentsAt = Date.now(); }
+  }
+  function openAgent(toolUseId, id = agentOf(toolUseId)?.id) {
+    if (!id) return;
+    if (open?.id !== id) {
+      open = { id, toolUseId, cursor: null, reading: false, tools: new Map() };
+      agentList.replaceChildren();
+      agentEmpty.hidden = true;
+    }
+    agentView.hidden = false;
+    el.classList.add('chat-in-agent');
+    agentView.focus();
+    agentsShown = '';
+    drawAgents();
+    readAgent();
+  }
+  function closeAgent() {
+    open = null;
+    agentView.hidden = true;
+    agentList.replaceChildren();
+    el.classList.remove('chat-in-agent');
+    agentsShown = '';
+    drawAgents();
+    list.scrollTop = list.scrollHeight;
+    input.focus();
+  }
+  /** The open sub-agent's transcript: what it gained since the last read (readChat with its sidechain lines). */
+  async function readAgent() {
+    const o = open;
+    if (!o || o.reading || !shown) return;
+    o.reading = true;
+    try {
+      for (let n = 0; n < 20; n++) {
+        const r = await api.chat.agent(ptyId, o.id, o.cursor);
+        if (open !== o) return;
+        if (!r || r.gone) { agentEmpty.hidden = agentList.childElementCount > 0; return; }
+        if (r.reset) { agentList.replaceChildren(); o.tools.clear(); }
+        o.cursor = r.cursor;
+        const atBottom = agentList.scrollHeight - agentList.scrollTop - agentList.clientHeight < 40;
+        const frag = document.createDocumentFragment();
+        for (const it of r.items || []) {
+          let row = null;
+          try { row = item(it, o.tools, true); } catch (e) { console.error(e); }
+          if (row) frag.append(row);
+        }
+        agentList.append(frag);
+        while (agentList.childElementCount > KEEP) agentList.firstElementChild?.remove();
+        if (atBottom || r.reset) agentList.scrollTop = agentList.scrollHeight;
+        if (!r.more) break;
+      }
+      agentEmpty.hidden = agentList.childElementCount > 0;
+    } catch (e) { console.error(e); } finally { o.reading = false; }
+  }
+  texts();
 
   // ---- the open menu as a card
   // A truncated approval, a cut dialog and a dialog that reads like an approval are answered in the terminal: their
@@ -354,6 +491,9 @@ export function mountChat(el, { ptyId, onTerminal, screen, source = null }) {
       }
       empty.hidden = list.childElementCount > 0;
     } catch (e) { console.error(e); } finally { reading = false; }
+    // v3.115 the sub-agents every AGENTS_MS (a folder listing), the open one's conversation with every read
+    if (Date.now() - agentsAt >= AGENTS_MS) readAgents();
+    if (open) readAgent();
   }
 
   // ---- v3.108 GUI chat: the open request as a card, the live line, Stop

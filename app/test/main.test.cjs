@@ -1378,6 +1378,12 @@ test('uyku: gönderilmemiş yazı (Enter gönderir, Ctrl+C siler, kaçış dizil
   // arrows, focus in/out, SS3 keys, Alt+key and paste brackets alone are not text
   assert.equal(draftAfter(false, '\x1b[A\x1b[B\x1b[I\x1b[O\x1bOP\x1bb'), false);
   assert.equal(draftAfter(false, '\x1b[200~\x1b[201~'), false);
+  // v3.116 the terminal's answers to claude's queries (OSC 11 background colour, XTVERSION) are no text
+  assert.equal(draftAfter(false, '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\'), false);
+  assert.equal(draftAfter(false, '\x1b]10;rgb:ffff/ffff/ffff\x07'), false);
+  assert.equal(draftAfter(false, '\x1bP>|xterm.js(5.5.0)\x1b\\'), false);
+  assert.equal(draftAfter(true, '\x1b]11;rgb:0/0/0\x07'), true, 'an answer keeps a real draft');
+  assert.equal(draftAfter(false, '\x1b]11;rgb:0/0/0\x07hi'), true, 'text after the answer still counts');
   // pasted text is a draft; a trailing Enter sends it
   assert.equal(draftAfter(false, '\x1b[200~long paste\x1b[201~'), true);
   assert.equal(draftAfter(false, '\x1b[200~long paste\x1b[201~\r'), false);

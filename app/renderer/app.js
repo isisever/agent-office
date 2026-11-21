@@ -232,14 +232,17 @@ function chatCapable(id) {
 // v3.108 a GUI chat tab has no terminal of its own: main continues its session in a terminal (or back in the GUI chat)
 // only while nothing runs in it; HQ (and Windows) switch the view only, as before
 const switching = new Set();
+const BUSY_WHY = ['task', 'asks', 'turn', 'agents', 'recent', 'permission', 'draft', 'session'];
 async function setChatMode(id, on) {
   if (switching.has(id)) return;
   switching.add(id);
   let r = 'ok';
   let failed = '';   // v3.110 the switch could not be asked: the tab keeps its mode and says why
   try { r = String(id).split(':')[0] === HQ_ROW.id ? 'ok' : await api.chat.mode(id, on ? 'gui' : 'terminal'); } catch (e) { console.error(e); failed = String((e && /** @type {any} */ (e).message) || e); } finally { switching.delete(id); }
-  if (failed || r === 'busy' || r === 'locked') {
-    const why = failed ? t('chat.gui.switchFailed', { error: failed }) : t(r === 'busy' ? 'chat.gui.busySwitch' : 'chat.why.locked');
+  const busy = r === 'busy' || r.startsWith('busy:');   // v3.116 'busy:<why>': what the tab is waiting for
+  if (failed || busy || r === 'locked') {
+    const why = failed ? t('chat.gui.switchFailed', { error: failed }) : !busy ? t('chat.why.locked')
+      : BUSY_WHY.includes(r.slice(5)) ? t(`chat.gui.busyWhy.${r.slice(5)}`) : t('chat.gui.busySwitch');
     hint(id, why);
     panes.get(id)?.chat?.note?.(why);   // v3.112 also under the chat's input, where the button was pressed
     setTimeout(() => hint(id, ''), 4000);

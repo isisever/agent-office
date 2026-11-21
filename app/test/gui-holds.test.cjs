@@ -100,7 +100,7 @@ test('v3.110 wiring: guiHolds asks the link host; the terminal choice is saved, 
   assert.match(MAIN, /termTabs: \[\.\.\.termTabs\]/);
   const mode = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:mode'"), MAIN.indexOf("ipcMain.on('pty:wake'"));
   assert.equal((mode.match(/saveState\(\)/g) || []).length, 2, 'saved on ok and on moved, never on a refused switch');
-  assert.ok(mode.indexOf('undo(); return \'busy\'') < mode.lastIndexOf('saveState()'));
+  assert.ok(mode.indexOf('undo(); return `busy:') < mode.lastIndexOf('saveState()'));
 
   assert.deepEqual(GS.cleanTermTabs(['p1', 'p1', 'gone', 3, null, 'p1:2'], ['p1', 'p1:2', 'p2']), ['p1', 'p1:2']);
   assert.deepEqual(GS.cleanTermTabs('p1', ['p1']), []);
@@ -109,7 +109,8 @@ test('v3.110 wiring: guiHolds asks the link host; the terminal choice is saved, 
   // the renderer: an IPC error keeps the mode and shows the error; chatOff starts from main's list once
   const set = bodyOf(APP, 'async function setChatMode(');
   assert.doesNotMatch(set, /r = 'ok'; \}/, 'an error is no longer taken for ok');
-  assert.match(set, /if \(failed \|\| r === 'busy' \|\| r === 'locked'\)/);
+  assert.match(set, /const busy = r === 'busy' \|\| r\.startsWith\('busy:'\);/);
+  assert.match(set, /if \(failed \|\| busy \|\| r === 'locked'\)/);
   assert.match(set, /t\('chat\.gui\.switchFailed', \{ error: failed \}\)/);
   assert.ok(set.indexOf('return;') < set.indexOf('chatOff.add(id)'), 'returns before the view flips');
   assert.match(bodyOf(APP, 'function applyChatView('), /if \(!chatOffSeeded && Array\.isArray\(p\?\.termTabs\)\)/);

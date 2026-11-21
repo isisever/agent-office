@@ -375,11 +375,14 @@ test('v3.109 pasted images: checked types, count and size; image blocks for a GU
   assert.match(save, /7 \* 864e5/);
   assert.match(send, /for \(const p of paths\) \{ try \{ fs\.rmSync\(p\); \}/, 'files of a message that was not typed go at once');
   // a mode switch never cuts a prompt just typed in, nor a task that has not reported
-  assert.match(MAIN, /const guiRecent = \(pid\) => Date\.now\(\) - \(activity\.get\(pid\)\?\.at \|\| 0\) < 15000;/);
+  assert.match(MAIN, /const guiRecent = \(pid\) => Date\.now\(\) - \(activity\.get\(pid\)\?\.inputAt \|\| 0\) < 15000;/);
   assert.match(MAIN, /return guiRecent\(pid\) \|\| guiTaskOpen\(pid\);/);
   assert.match(MAIN, /handoffLocked\(pid\) \|\| guiHolds\(pid\)\) continue;/);
   // v3.112 the Terminal button: a terminal tab still waits out the typing window; every tab waits for an open task
   assert.match(MAIN, /tasks: guiTaskOpen\(id\), working: t\.gui \? guiWorking\(sid\) : false, recent: guiRecent\(id\)/);
+  // v3.116 only typing marks a tab as just written to: never its output or a focus report
+  assert.equal((MAIN.match(/a\.inputAt = a\.at/g) || []).length, 5);
+  assert.doesNotMatch(MAIN.slice(MAIN.indexOf('onData: (d) => {'), MAIN.indexOf('onExit:', MAIN.indexOf('onData: (d) => {'))), /inputAt/);
   assert.match(MAIN, /if \(!t\.sendUser\(text, images\)\) return false;/);
 });
 
@@ -464,4 +467,68 @@ test('v3.113 Show in Finder: real paths on both sides, worktree tabs, files that
     const L = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', `${lang}.json`), 'utf8'));
     assert.ok(L.chat.attach && L.chat.revealGone && L.main.chatPickFiles, lang);
   }
+});
+
+// ---- v3.115 sub-agents in the chat (test names: "v3.115 …" below)
+test('chatItems: an Agent call is marked as one; a sub-agent transcript is read with its sidechain lines', () => {
+  const boss = assistant([{ type: 'tool_use', id: 'tu1', name: 'Agent', input: { description: 'Port HR', prompt: 'long brief' } }, { type: 'tool_use', id: 'tu2', name: 'Read', input: { file_path: '/a' } }]);
+  const items = C.chatItems(boss);
+  assert.equal(items[0].agent, true);
+  assert.equal(items[0].detail, 'Port HR');
+  assert.equal(items[1].agent, undefined);
+  const side = user('Do the port', { isSidechain: true }) + assistant([{ type: 'text', text: 'Done.' }], { isSidechain: true });
+  assert.deepEqual(C.chatItems(side), [], 'the boss chat never shows sidechain lines');
+  assert.deepEqual(kinds(C.chatItems(side, { sidechain: true })), ['user', 'assistant']);
+});
+
+test('agentFile: only ids Claude Code makes build a path, inside the session\'s subagents folder', () => {
+  const t = path.join('/x', 'proj', 's1.jsonl');
+  assert.equal(C.agentFile(t, 'a3d81ff3acf26ea76'), path.join('/x', 'proj', 's1', 'subagents', 'agent-a3d81ff3acf26ea76.jsonl'));
+  for (const bad of ['../s2', 'a/b', '', 'a.b', 'x'.repeat(65), 5, null]) assert.equal(C.agentFile(t, bad), null, String(bad));
+  assert.equal(C.agentFile('', 'abc'), null);
+});
+
+test('chatAgents: meta links each agent to its Agent call; workers say which run; old unfinished ones stopped', () => {
+  const dir = tmp();
+  const t = path.join(dir, 's1.jsonl');
+  fs.writeFileSync(t, '');
+  const sub = path.join(dir, 's1', 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  const put = (id, meta, ageMs) => {
+    const f = path.join(sub, `agent-${id}.jsonl`);
+    fs.writeFileSync(f, '{}\n');
+    if (meta) fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify(meta));
+    const when = (Date.now() - ageMs) / 1000;
+    fs.utimesSync(f, when, when);
+  };
+  put('run1', { agentType: 'Explore', description: 'Look\naround', toolUseId: 'tuA' }, 600000);
+  put('done1', { agentType: 'fork', description: 'Port', toolUseId: 'tuB', finished: true }, 600000);
+  put('old1', { agentType: 'fork', description: 'Killed', toolUseId: 'tuC' }, 600000);
+  put('fresh1', { description: 'Just started', toolUseId: 'tuD' }, 1000);
+  put('nometa', null, 600000);
+  fs.writeFileSync(path.join(sub, 'notes.txt'), 'x');
+  const workers = [{ id: 'run1', spawnAt: 10, tool: 'mcp__s__t', detail: 'q', toolCount: 3 }, { id: 'gone', spawnAt: 1 }];
+  const list = C.chatAgents(t, workers);
+  const by = Object.fromEntries(list.map((a) => [a.id, a]));
+  assert.deepEqual(Object.keys(by).sort(), ['done1', 'fresh1', 'nometa', 'old1', 'run1']);
+  assert.deepEqual({ ...by.run1 }, { id: 'run1', toolUseId: 'tuA', description: 'Look around', type: 'Explore', state: 'running', tool: 's · t', detail: 'q', toolCount: 3, at: 10 });
+  assert.equal(by.done1.state, 'done');
+  assert.equal(by.old1.state, 'stopped');
+  assert.equal(by.fresh1.state, 'running');
+  assert.equal(by.nometa.toolUseId, '');
+  assert.equal(list[0].id, 'run1', 'oldest first');
+  assert.deepEqual(C.chatAgents(path.join(dir, 'none.jsonl'), []), []);
+});
+
+test('main.js: chat:agent reads only a file agentFile built, with sidechain lines; preload exposes both calls', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = main.slice(main.indexOf("ipcMain.handle('chat:agent',"), main.indexOf('\n});\n', main.indexOf("ipcMain.handle('chat:agent',")));
+  assert.match(body, /CHAT\.agentFile\(known\.file, agentId\)/);
+  assert.match(body, /\{ sidechain: true \}/);
+  assert.match(main, /ipcMain\.handle\('chat:agents',[\s\S]*?CHAT\.chatAgents\(known\.file, office\(\)\?\.readSession\(known\.sid\)\?\.workers\)/);
+  const link = main.slice(main.indexOf('function linkSessionOf(id) {'), main.indexOf("ipcMain.handle('chat:read'"));
+  assert.ok(!/subagent|chatAgents|agentFile/.test(link), 'a paired device never gets the sub-agents');
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  assert.match(preload, /agents: \(id\) => ipcRenderer\.invoke\('chat:agents', id\)/);
+  assert.match(preload, /agent: \(id, agentId, cursor\) => ipcRenderer\.invoke\('chat:agent', id, agentId, cursor\)/);
 });

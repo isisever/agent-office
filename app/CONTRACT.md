@@ -2700,3 +2700,76 @@ limitCarryOnPrompt({ agents, model }) → string
   accounts bring with different configs …" (order-independent suffixes, removal turns the name bare, project dedup
   not listed, injected `exists`); `plugin/tests/office.test.tsx`
   "app contract v3.114 …".
+
+## Sub-agents in the chat view (v3.115)
+
+The terminal lists a session's running sub-agents and lets the person step into one to read its conversation; the
+chat view (v3.80, GUI chat v3.108 and the terminal-based chat alike) showed an Agent call as one plain tool line. Now
+it shows each sub-agent's state, lists the running ones above the input, and opens one's own conversation, read-only.
+
+```ts
+agentOffice.chat.agents(ptyId): Promise<ChatAgent[]>   // 'chat:agents'; [] when the tab has no transcript yet
+agentOffice.chat.agent(ptyId, agentId, cursor): Promise<ReadChat | { gone: true }>   // 'chat:agent'; readChat's result
+type ChatAgent = { id: string; toolUseId: string; description: string; type: string;
+  state: 'running' | 'done' | 'stopped'; tool: string; detail: string; toolCount: number; at: number }
+// chat items: a tool line gains agent?: true when the call is Agent (or the older Task)
+```
+
+- **Where they are** (`src/chat.js`): Claude Code keeps each sub-agent beside the session's transcript,
+  `<session>.jsonl` → `<session>/subagents/agent-<id>.jsonl`, and `agent-<id>.meta.json` (`agentType`, `description`,
+  `toolUseId`: the boss's Agent call, `finished` once done; checked with Claude Code 2.1.311). `chatAgents` lists the
+  folder (at most 50, the newest, shown oldest first); `toolUseId` links an agent to its row in the chat.
+- **State**: the plugin's session file (`workers`, the office's source) says which run: a worker without `doneAt` is
+  `running` with its current tool, detail and tool count; else a `finished` meta or a worker with `doneAt` is `done`;
+  else a file written in the last 2 minutes is `running` (the plugin is off or late), anything older `stopped` (killed
+  with its tab). An Agent row follows its agent's state, not its call's result: a background agent's call returns at
+  once. A row with no agent file (an older session) falls back to the call's result like any tool.
+- **Reading one** (`chat:agent`): main builds the path only from an id Claude Code makes (`agentFile`:
+  `[A-Za-z0-9_-]{1,64}`) inside the folder of the transcript `chat:read` found for that tab, and reads it with
+  `readChat(…, { sidechain: true })` (the boss's chat still skips sidechain lines). Same items, same cursor, same
+  limits as the chat; thinking and tool results are never shown.
+- **UI** (`renderer/chat.js`): an Agent row is a small card with its state (`chat.agents.*`); clicking it opens the
+  agent's conversation in place of the chat, with ← Back (Esc too) and its title, type and state; the input, the live
+  line and the reply bar are hidden there, an open approval card stays (a sub-agent's request is answered there). The
+  running agents are chips above the input (`chat.agents.label`); a chip opens that agent. Agents are listed every
+  1.5 s while the chat is shown; the open one's conversation is read with every chat read (400 ms).
+- **Not on a paired device**: a remote chat (`source`, v3.100) shows no agent state, chips or view, and
+  `linkSessionOf` still gives the boss's transcript only. Not for non-Claude engines or shell tabs (`chat:agents` → []).
+- **Dev-mock**: `?chat` adds two Agent rows (one running with a chip, one done); each opens a short conversation.
+- **Unverified**: nested agents (an agent that starts agents) are expected in the same folder (`spawnDepth`) and open
+  from the parent agent's view; not tried. Not tried in the packaged app or on Linux.
+- **Tests**: `app/test/chat.test.cjs` "v3.115 …" (Agent rows, sidechain reading, `agentFile` refusing other paths,
+  `chatAgents` states and links, main's handlers and preload by source text, nothing in `linkSessionOf`).
+
+## Switching a tab between terminal and chat: only typing holds it, a refusal says why (v3.116)
+
+Amends v3.108 (`guiHolds`, `chat:mode`), v3.110 and v3.112. "Written to in the last 15 s" was read from the tab's
+last activity, which a terminal tab's output also sets: claude redraws on every focus report, resize or status update,
+so clicking the tab and then **Chat** was refused as `busy` again and again, and the person was told only "Claude is
+working or waiting for you".
+
+```ts
+agentOffice.chat.mode(id, 'terminal' | 'gui')   // 'busy' is now 'busy:<why>'
+type SwitchWhy = 'task' | 'asks' | 'turn' | 'agents' | 'recent' | 'permission' | 'draft' | 'session'
+```
+
+- **Written to** (`guiRecent`): the time of the last input (`activity.inputAt`): a prompt typed by `typePrompt` (HQ,
+  routines, paired devices, the chat's own messages), a menu answer (`chat:keys`), a start prompt, and keys from the
+  terminal that type something (`GS.typesInput`: an Enter, Ctrl+C or a printable character outside an escape
+  sequence). A focus report, a mouse report, an arrow key or a terminal's answer to a query is no input. The tab's
+  output still counts as activity for sleep (`activity.at`, unchanged).
+- **The terminal's answers** (`Z.draftAfter`, so the draft check and sleep too): claude turns on focus reports
+  (`CSI ?1004h`) and asks the terminal things (`CSI >0q` its version, `OSC 11 ;?` its background colour, seen with
+  Claude Code 2.1.311); xterm answers through the same input path as keys, e.g. `ESC P >|xterm.js(…) ESC \`. An OSC,
+  DCS, APC, PM or SOS string (up to BEL or `ESC \`) is skipped like a CSI: before, its text counted as typing, so a
+  terminal tab kept a draft (refused as `draft`, never slept) or was "just written to" (`recent`) after a resume.
+- **Why** (`GS.switchWhy`, `idleState` in main: `idleSession` with its reason): a task not reported (`task`), an open
+  card (`asks`), a running turn (`turn`), sub-agents or background shells running (`agents`), just typed into
+  (`recent`), another tab's approval (`permission`), a draft in the terminal's input (`draft`), no session to continue
+  (`session`). The renderer shows `chat.gui.busyWhy.<why>` (plain `busy`: `chat.gui.busySwitch`). Nothing else about
+  when a switch is allowed changed: a tab with a turn, agents, shells, a card or a draft is never restarted.
+- **Dev-mock**: a GUI tab with a live answer refuses with `busy:turn`.
+- **Tests**: `app/test/gui-session.test.cjs` "v3.116 …" (every refused plan has a reason; escapes are not input);
+  `app/test/chat.test.cjs` and `app/test/gui-holds.test.cjs` (wiring by source text).
+- **Unverified**: that the refusals the person saw came from claude's redraws (the reason now shows on the next
+  refusal); not tried in the packaged app.

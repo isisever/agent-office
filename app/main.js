@@ -1407,7 +1407,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   terms.set(id, t);
   if (!project.hq && (P.skipPermissionsOf(project) || P.autoApproveOf(project))) promptless.add(id); else promptless.delete(id);
   if (P.skipPermissionsArgs(project).length > 0) skipStarted.add(id); else skipStarted.delete(id);
-  activity.set(id, { at: startedAt, draft: false });
+  // v3.116 inputAt: when something was last typed into the tab (a start prompt counts), for guiRecent
+  activity.set(id, { at: startedAt, draft: false, inputAt: prompt ? startedAt : 0 });
   mcpPrint.set(id, { started: print, current: print });
   ptyStart.set(id, startedAt);
   // v3.77: a prompt given as claude's argument (the carry-on after a move) is an Enter at the start
@@ -1817,7 +1818,7 @@ function noteInput(id, d) {
 function hqWriteTyped(id, d) {
   if (HQ.submitsTyped(activity.get(id)?.draft, d)) hqMinter.mint();
   const a = activity.get(id);
-  if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); }
+  if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); if (GS.typesInput(d)) a.inputAt = a.at; }
   noteInput(id, d);
   ptyOf(id)?.write(d);
 }
@@ -1838,7 +1839,7 @@ function typePrompt(id, text, { taskId = '', images = [] } = {}) {
     if (!t.sendUser(text, images)) return false;   // v3.109 pasted images go in as image blocks
     noteInput(id, '\r');
     const a = activity.get(id);
-    if (a) { a.at = Date.now(); a.draft = false; }
+    if (a) { a.at = Date.now(); a.draft = false; a.inputAt = a.at; }
     return true;
   }
   if (P.isHqId(id)) hqGate.hold();   // v3.47 the person's HQ keystrokes wait until the pasted prompt's Enter
@@ -1848,7 +1849,7 @@ function typePrompt(id, text, { taskId = '', images = [] } = {}) {
     if (P.isHqId(id)) for (const d of hqGate.release()) hqWriteTyped(id, d);   // held keys go through the same mint/draft logic
   }, ENTER_DELAY_MS);
   const a = activity.get(id);
-  if (a) { a.at = Date.now(); a.draft = false; }
+  if (a) { a.at = Date.now(); a.draft = false; a.inputAt = a.at; }
   return true;
 }
 // --- device link (v3.28, src/link-host.js): remote commands go to the project's main tab, only when it is idle
@@ -4796,7 +4797,9 @@ function guiSwitchIdle() {
 function guiHolds(pid) {
   return guiRecent(pid) || guiTaskOpen(pid);
 }
-const guiRecent = (pid) => Date.now() - (activity.get(pid)?.at || 0) < 15000;
+// v3.116 typed in, not any output: a terminal tab's claude redraws on every focus, resize or status update, which kept
+// the Chat button refused ("busy") for good
+const guiRecent = (pid) => Date.now() - (activity.get(pid)?.inputAt || 0) < 15000;
 /** A task dispatched into this tab (by this machine, a paired device or a queue) that has not reported yet. */
 function guiTaskOpen(pid) {
   for (const x of loadDispatches().values()) if (x.pub === 'self' && x.into === pid && !x.report) return true;
@@ -4810,16 +4813,22 @@ function guiWorking(sid) {
 }
 /** A running tab's session id when its claude can restart without losing anything, else ''. */
 function idleSession(pid) {
+  return idleState(pid).sid;
+}
+/** v3.116 idleSession with the reason it is not idle: why = 'draft' | 'session' | 'turn' | 'agents' (sid '' then). */
+function idleState(pid) {
   const t = terms.get(pid);
   const r = P.resolvePty(state, pid);
-  if (!t || !r || P.engineOf(r.project) !== 'claude' || activity.get(pid)?.draft) return ''; // claude-engine tabs only (v3.22, v3.25)
+  if (!t || !r || P.engineOf(r.project) !== 'claude') return { sid: '', why: 'session' }; // claude-engine tabs only (v3.22, v3.25)
+  if (activity.get(pid)?.draft) return { sid: '', why: 'draft' };
   const { configDir } = A.accountOf(state, r.project);
   const claude = readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid));
   const sid = validSid(claude?.sessionId);
   const session = sid ? office()?.readSession(sid) : undefined;
-  if (!sid || R.isTurnBusy({ claude, office: session })) return '';
+  if (!sid) return { sid: '', why: 'session' };
+  if (R.isTurnBusy({ claude, office: session })) return { sid: '', why: 'turn' };
   const working = (session?.workers || []).some((w) => w && w.doneAt === undefined) || (session?.shells || []).some((x) => x && x.endAt === undefined);
-  return working ? '' : sid;
+  return working ? { sid: '', why: 'agents' } : { sid, why: '' };
 }
 
 // --- accounts
@@ -5303,7 +5312,8 @@ ipcMain.on('pty:write', (_e, id, d) => {
   if (!terms.has(id)) wake(id);
   if (terms.get(id)?.gui) return;   // v3.108 a GUI chat tab has no terminal: keys from its hidden xterm are no draft
   const a = activity.get(id);
-  if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); }
+  // v3.116 only typing counts as input: a focus report or another escape the terminal sends by itself does not
+  if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); if (GS.typesInput(d)) a.inputAt = a.at; }
   noteInput(id, d);
   agyWatch.get(id)?.watch.input(d);
   ptyOf(id)?.write(d);
@@ -5369,6 +5379,26 @@ ipcMain.handle('chat:read', (_e, id, cursor) => {
   }
   return { sid, ...CHAT.readChat(known.file, cursor && typeof cursor === 'object' ? cursor : null), gui: guiInfo(id) };
 });
+// v3.115 the tab's sub-agents and one sub-agent's own conversation, read-only, beside the transcript chat:read found
+// for the tab (the chat reads that first, every 400 ms). Never offered to a paired device: linkSessionOf gives the
+// boss's file only.
+function chatTranscriptOf(id) {
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return null;
+  const known = chatFiles.get(id);
+  return known && fs.existsSync(known.file) ? known : null;
+}
+ipcMain.handle('chat:agents', (_e, id) => {
+  const known = chatTranscriptOf(String(id));
+  if (!known) return [];
+  return CHAT.chatAgents(known.file, office()?.readSession(known.sid)?.workers);
+});
+ipcMain.handle('chat:agent', (_e, id, agentId, cursor) => {
+  const known = chatTranscriptOf(String(id));
+  const file = known && CHAT.agentFile(known.file, agentId);
+  if (!file) return { gone: true };
+  return CHAT.readChat(file, cursor && typeof cursor === 'object' ? cursor : null, fs, { sidechain: true });
+});
 // A chat-view menu button (an approval, a question): its keys go straight to the tab, a step every 250 ms so Claude
 // Code's menu takes each one; not through pty:write (they are no draft and mint no HQ request).
 // Main keeps no screen of a pty (its output goes to the renderer's terminal), so the renderer checks the menu on its
@@ -5390,7 +5420,7 @@ ipcMain.handle('chat:keys', (_e, id, steps, expect) => {
   menuTyping.set(id, Date.now() + keys.length * MENU_STEP_MS);
   if (P.isHqId(id)) hqLastKey = Date.now();
   const a = activity.get(id);
-  if (a) a.at = Date.now();
+  if (a) { a.at = Date.now(); a.inputAt = a.at; }
   keys.forEach((k, n) => setTimeout(() => { if (terms.get(id) === t) t.write(k); }, n * MENU_STEP_MS));
   return 'ok';
 });
@@ -5528,9 +5558,12 @@ ipcMain.handle('chat:mode', (_e, id, mode) => {
   // v3.112 a GUI tab is judged by its own state (a new tab with no conversation yet starts its terminal fresh; before,
   // it had no session to resume and the Terminal button did nothing but a short hint)
   const guiSid = t.gui ? validSid(t.sessionId()) || '' : '';
-  const sid = t.gui ? guiSid || validSid(lastSid.get(id)) || '' : idleSession(id);
-  const plan = GS.switchPlan({ gui: Boolean(t.gui), sid, guiSid, asks: t.gui ? t.asks().length : 0, busy: t.gui ? t.live().busy : false, tasks: guiTaskOpen(id), working: t.gui ? guiWorking(sid) : false, recent: guiRecent(id), permission: attention.get(r.project.id) === 'permission' });
-  if (plan === 'busy') { undo(); return 'busy'; }
+  const idle = t.gui ? null : idleState(id);
+  const sid = t.gui ? guiSid || validSid(lastSid.get(id)) || '' : idle.sid;
+  const facts = { gui: Boolean(t.gui), sid, guiSid, asks: t.gui ? t.asks().length : 0, busy: t.gui ? t.live().busy : false, tasks: guiTaskOpen(id), working: t.gui ? guiWorking(sid) : false, recent: guiRecent(id), permission: attention.get(r.project.id) === 'permission' };
+  const plan = GS.switchPlan(facts);
+  // v3.116 why it was refused ('busy:<why>'): the chat says what to wait for
+  if (plan === 'busy') { undo(); return `busy:${GS.switchWhy({ ...facts, idleWhy: idle?.why || '' })}`; }
   saveState();   // v3.110 the choice outlives an app restart
   // 'fresh' still follows the start's own rule (--continue when the project has history): a tab started or woken
   // with resume has no session id until its first message, and must not lose that conversation

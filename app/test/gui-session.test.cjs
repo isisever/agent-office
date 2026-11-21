@@ -274,7 +274,8 @@ test('v3.112 Terminal button: a GUI tab switches by its own state; a new one wit
   // wiring: chat:mode uses the plan; a fresh start passes no session id but keeps the --continue rule
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const mode = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:mode'"), MAIN.indexOf("ipcMain.on('pty:wake'"));
-  assert.match(mode, /GS\.switchPlan\(\{ gui: Boolean\(t\.gui\)/);
+  assert.match(mode, /const facts = \{ gui: Boolean\(t\.gui\)/);
+  assert.match(mode, /GS\.switchPlan\(facts\)/);
   assert.match(mode, /startPty\(id, plan === 'resume' \? \{ sessionId: sid, resume: true \} : \{ resume: true \}\)/);
   // the reason a switch was refused shows under the chat input too
   const APP = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
@@ -320,4 +321,23 @@ test('v3.112 chat renderer (source text): an answered card is taken down; paste,
   assert.match(CHAT, /paste: \(\) => pasteFromMenu\(\)/);
   const APP = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
   assert.match(APP, /if \(chat && await chat\.paste\(\)\.catch\(\(\) => false\)\) return;/);
+});
+
+test('v3.116 switchWhy names what a refused switch waits for; typesInput ignores escapes the terminal sends itself', () => {
+  assert.equal(GS.switchWhy({ gui: true, tasks: true, asks: 1 }), 'task');
+  assert.equal(GS.switchWhy({ gui: true, asks: 2, busy: true }), 'asks');
+  assert.equal(GS.switchWhy({ gui: true, busy: true, working: true }), 'turn');
+  assert.equal(GS.switchWhy({ gui: true, working: true }), 'agents');
+  assert.equal(GS.switchWhy({ gui: false, sid: '', idleWhy: 'agents' }), 'agents');
+  assert.equal(GS.switchWhy({ gui: false, sid: '', idleWhy: 'draft' }), 'draft');
+  assert.equal(GS.switchWhy({ gui: false, sid: '', idleWhy: 'odd' }), 'session');
+  assert.equal(GS.switchWhy({ gui: false, sid: 's1', recent: true, permission: true }), 'permission');
+  assert.equal(GS.switchWhy({ gui: false, sid: 's1', recent: true }), 'recent');
+  // every refused plan has a reason
+  for (const o of [{ gui: true, asks: 1 }, { gui: true, busy: true }, { gui: true, working: true }, { gui: false }, { gui: false, sid: 's', recent: true }, { gui: false, sid: 's', permission: true }]) {
+    assert.equal(GS.switchPlan(o), 'busy');
+    assert.ok(GS.switchWhy(o), JSON.stringify(o));
+  }
+  for (const d of ['\x1b[I', '\x1b[O', '\x1b[?1;2c', '\x1b[<0;10;5M', '\x1b[A', '', '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\', '\x1bP>|xterm.js(5.5.0)\x1b\\']) assert.equal(GS.typesInput(d), false, JSON.stringify(d));
+  for (const d of ['a', '\r', 'hello\r', '\x1b[200~text\x1b[201~', '\x03']) assert.equal(GS.typesInput(d), true, JSON.stringify(d));
 });

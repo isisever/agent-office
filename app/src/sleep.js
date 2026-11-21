@@ -25,7 +25,8 @@ const hasScheduleTool = (transcript) => SCHEDULE_TOOLS.some((n) => String(transc
 
 /**
  * Is there prompt text typed but not sent after this input? Enter (CR) sends it and Ctrl+C clears it; any printable
- * character (pasted text too) leaves a draft; escape sequences (arrows, focus reports, paste brackets) change nothing.
+ * character (pasted text too) leaves a draft; escape sequences (arrows, focus reports, paste brackets, the terminal's
+ * OSC / DCS answers) change nothing.
  * Backspacing a draft away still counts as a draft: the safe side.
  * @param {boolean} draft @param {string} input
  */
@@ -40,7 +41,13 @@ function draftAfter(draft, input) {
         i += 2;
         while (i < s.length && !(s.charCodeAt(i) >= 0x40 && s.charCodeAt(i) <= 0x7e)) i++;
       } else if (n === 'O') i += 2; // SS3: one more byte (F1-F4, keypad arrows)
-      else if (n !== undefined) i += 1; // Alt+key
+      else if (n === ']' || n === 'P' || n === '_' || n === '^' || n === 'X') {
+        // v3.116 OSC / DCS / APC / PM / SOS: the terminal's own answer to claude (its background colour for the auto
+        // theme, its version), up to BEL or ESC \. Its text was taken for typing: a draft that never went away
+        i += 2;
+        while (i < s.length && s.charCodeAt(i) !== 0x07 && !(s.charCodeAt(i) === 0x1b && s[i + 1] === '\\')) i++;
+        if (s.charCodeAt(i) === 0x1b) i++;
+      } else if (n !== undefined) i += 1; // Alt+key
       continue;
     }
     if (c >= 0x20 && c !== 0x7f) draft = true;
