@@ -736,6 +736,25 @@
     "revealOutside": "Bu dosya proje klasörünün içinde değil (ya da silinmiş): burada gösterilemez.",
     "revealGone": "Bu dosya artık yok: yerine klasörü gösterildi.",
     "attach": "Dosya ekle (görseller mesajla gider, diğer dosyalar @yol olarak)",
+    "resume": {
+      "title": "Bir oturumu sürdür",
+      "search": "Oturumlarda ara…",
+      "empty": "Bu projede sürdürülecek başka oturum yok.",
+      "gone": "Bu oturum artık yok; başka birini seç."
+    },
+    "cmd": {
+      "running": "Bu komut terminalde çalışıyor: ekranı kapanınca sohbete dönülecek.",
+      "gaveUp": "Komut terminalde başlatılamadı; terminal açık bırakıldı (Sohbet düğmesiyle dönebilirsin)."
+    },
+    "agents": {
+      "back": "← Sohbete dön",
+      "empty": "Bu ajan henüz bir şey yazmadı.",
+      "label": "Çalışan ajanlar ({count}):",
+      "running": "çalışıyor",
+      "runningTool": "{tool} · {count} araç",
+      "done": "bitti",
+      "stopped": "durdu"
+    },
     "gui": {
       "terminalTitle": "Bu oturuma terminalde devam et (Claude çalışmıyorken)",
       "stop": "Durdur",
@@ -756,6 +775,16 @@
       "keepPlanning": "Planlamaya devam et",
       "switchFailed": "Bu sekme değiştirilemedi: {error}",
       "busySwitch": "Claude çalışıyor ya da senden cevap bekliyor: iş bitince geçiş yap.",
+      "busyWhy": {
+        "task": "Bu sekmeye gönderilen bir görev henüz rapor vermedi: bitince geç.",
+        "asks": "Claude yukarıda cevabını bekliyor: önce onu cevapla.",
+        "turn": "Claude çalışıyor: bitince geç (ya da önce durdur).",
+        "agents": "Bu oturumun ajanları ya da arka plan komutları hâlâ çalışıyor: bitince geç.",
+        "recent": "Bu sekmeye az önce bir şey yazıldı: birkaç saniye sonra tekrar dene.",
+        "permission": "Bu projenin bir sekmesi onay bekliyor: önce onu cevapla.",
+        "draft": "Terminalin giriş kutusunda gönderilmemiş yazı var: önce gönder ya da sil.",
+        "session": "Bu oturumda devam edilecek bir konuşma henüz yok: önce bir mesaj yaz, sonra geç."
+      },
       "ended": "Oturum kapandı (çıkış {code}). Aynı konuşmaya devam etmek için yeniden başlat.",
       "endedError": "Claude bir hatayla durdu (çıkış {code}):",
       "restart": "Yeniden başlat"

@@ -144,8 +144,14 @@ contextBridge.exposeInMainWorld('agentOffice', {
     pick: (id, wantImages) => ipcRenderer.invoke('chat:pick', id, wantImages),   // v3.113 attach button: native file picker → null | { paths: string[], images: [{ type, data (base64), path }] }
     // v3.108 GUI chat: read also returns gui: null | { asks: [{ id, kind, tool, name, detail, questions?, plan?, since }], live: { busy, text, tool } }
     answer: (id, askId, answer) => ipcRenderer.invoke('chat:answer', id, askId, answer),   // answer: { allow, message?, answers? } → 'ok' | 'gone' | 'bad-answer' | 'locked' | 'not-running'
+    agents: (id) => ipcRenderer.invoke('chat:agents', id),               // v3.115 the tab's sub-agents → [{ id, toolUseId, description, type, state: 'running' | 'done' | 'stopped', tool, detail, toolCount, at }]
+    agent: (id, agentId, cursor) => ipcRenderer.invoke('chat:agent', id, agentId, cursor),   // v3.115 one sub-agent's conversation → readChat's result | { gone }
     interrupt: (id) => ipcRenderer.invoke('chat:interrupt', id),         // stop the running turn → 'ok' | 'not-running'
-    mode: (id, mode) => ipcRenderer.invoke('chat:mode', id, mode),       // 'terminal' | 'gui' → 'ok' (view only) | 'moved' (restarted in that mode) | 'busy' | 'locked' | 'unsupported'
+    sessions: (id) => ipcRenderer.invoke('chat:sessions', id),           // v3.118 /resume in a GUI chat tab: the project's sessions → [{ id, title, prompt, branch, at, size }]
+    resume: (id, sid) => ipcRenderer.invoke('chat:resume', id, sid),     // v3.118 continue one of them in this tab → 'moved' | 'busy:<why>' | 'gone' | 'locked' | 'not-running' | 'unsupported'
+    command: (id, text) => ipcRenderer.invoke('chat:command', id, text),   // v3.117 a command with a screen of its own → 'moved' (its terminal) | 'terminal' (send it with chat.send) | 'busy:<why>' | 'locked' | 'not-running' | 'unsupported' | 'bad-command'
+    mode: (id, mode) => ipcRenderer.invoke('chat:mode', id, mode),       // 'terminal' | 'gui' → 'ok' (view only) | 'moved' (restarted in that mode) | 'busy:<why>' (v3.116) | 'locked' | 'unsupported'
+    commandGo: (id) => ipcRenderer.invoke('chat:commandGo', id),         // v3.117 its prompt box is on screen: type the waiting command → 'typed' | 'wait' | 'gone'
     onMoved: listen('chat:moved'),                                       // a tab restarted in the other mode (its terminal starts over)
   },
   work: {

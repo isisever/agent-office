@@ -192,6 +192,11 @@ const chatOf = (id) => {
       { key: `${id}-6`, at, kind: 'assistant', text: '## Setup added\n\nI added the **Setup** section to the README; `npm test` still *hangs somewhere*:\n\n```sh\nnpm install\nnpm start\n```\n\n- **Passed:** 12 tests\n- **Left:** 1 test\n  - `login.test.js` times out\n\n| Step | State |\n|---|---|\n| Setup | ✓ |\n| Tests | ~~done~~ 1 failure |\n\n> Details: [report](https://example.com/report)\n\nShall I look into it?' },
       { key: `${id}-7`, at, kind: 'command', text: '/model sonnet' },
       { key: `${id}-8`, at, kind: 'note', note: 'compact' },
+      // v3.115 two sub-agents: one still running (the strip above the input), one done; a row opens its conversation
+      { key: `${id}-9`, at, kind: 'tool', id: `${id}-ag1`, name: 'Agent', detail: 'Login testini incele', agent: true },
+      { key: `${id}-10`, at, kind: 'toolDone', id: `${id}-ag1`, error: false },
+      { key: `${id}-11`, at, kind: 'tool', id: `${id}-ag2`, name: 'Agent', detail: 'README kurulum bölümünü kontrol et', agent: true },
+      { key: `${id}-12`, at, kind: 'toolDone', id: `${id}-ag2`, error: false },
     ]);
   }
   return mockChats.get(id);
@@ -200,6 +205,7 @@ const chatOf = (id) => {
 // request, an AskUserQuestion or a plan on the main tab (?gui=ended: its claude ended with an error); a sent message
 // streams a live answer for 2 s
 const mockGui = new Map();   // pty id → { asks, live }
+const mockCommands = new Map();   // v3.117 pty id → the command waiting for its terminal's prompt box
 const guiOf = (id) => {
   if (!q.has('gui') || String(id).startsWith('hq')) return null;
   if (!mockGui.has(id)) {
@@ -579,6 +585,23 @@ window.agentOffice = {
     files: async (_id, q) => ['README.md', 'src/app.js', 'src/login/form.js', 'test/login.test.js', 'docs/setup guide.md']
       .filter((f) => !q || f.toLowerCase().includes(String(q).toLowerCase())).map((f) => ({ path: f, insert: /\s/.test(f) ? `@"${f}"` : `@${f}` })),
     reveal: async (_id, p) => { console.log('mock: show in Finder', p); return 'ok'; },
+    // v3.115 the tab's sub-agents (the first runs and gains a tool every read) and their conversations
+    agents: async (id) => [
+      { id: 'a1', toolUseId: `${id}-ag1`, description: 'Login testini incele', type: 'Explore', state: 'running', tool: 'Grep', detail: 'timeout', toolCount: 3 + Math.floor(Date.now() / 3000) % 5, at: 1 },
+      { id: 'a2', toolUseId: `${id}-ag2`, description: 'README kurulum bölümünü kontrol et', type: 'general-purpose', state: 'done', tool: '', detail: '', toolCount: 4, at: 2 },
+    ],
+    agent: async (id, agentId, cursor) => {
+      if (cursor) return { cursor, items: [], reset: false, more: false };
+      const at = Date.now();
+      const items = [
+        { key: `${agentId}-1`, at, kind: 'user', text: agentId === 'a1' ? '`login.test.js` neden zaman aşımına uğruyor? Kısa raporla.' : 'README kurulum bölümünü kontrol et.' },
+        { key: `${agentId}-2`, at, kind: 'tool', id: `${agentId}-t1`, name: 'Grep', detail: 'timeout' },
+        { key: `${agentId}-3`, at, kind: 'toolDone', id: `${agentId}-t1`, error: false },
+        { key: `${agentId}-4`, at, kind: 'tool', id: `${agentId}-t2`, name: 'Read', detail: 'test/login.test.js' },
+        ...(agentId === 'a2' ? [{ key: `${agentId}-5`, at, kind: 'toolDone', id: `${agentId}-t2`, error: false }, { key: `${agentId}-6`, at, kind: 'assistant', text: 'Kurulum bölümü **tamam**; `npm start` adımı doğru.' }] : []),
+      ];
+      return { cursor: { file: `${id}:${agentId}`, ino: 1, size: items.length }, items, reset: true, more: false };
+    },
     read: async (id, cursor) => {
       if (String(id).startsWith('login:')) return { unsupported: true };
       const items = chatOf(id);
@@ -603,7 +626,37 @@ window.agentOffice = {
       chatOf(id).push({ key: `${id}-int${at}`, at, kind: 'note', note: 'interrupted' });
       return 'ok';
     },
-    mode: async (id) => (guiOf(id)?.live.busy ? 'busy' : guiOf(id) ? 'moved' : 'ok'),
+    // v3.117 a command with a screen: its "terminal" shows a picker, then the prompt box again (the chat comes back)
+    command: async (id, text) => {
+      if (guiOf(id)?.live.busy) return 'busy:turn';
+      const R = '─'.repeat(60);
+      if (!guiOf(id)) return 'terminal';
+      mockCommands.set(id, text);
+      setTimeout(() => ev.data.emit(id, `\x1b[2J\x1b[H${R}\r\n❯ \r\n${R}\r\n  ? for shortcuts\r\n`), 400);   // the restarted terminal
+      return 'moved';
+    },
+    // v3.118 /resume in a GUI chat tab: three sessions; a pick starts the chat over with a note of it
+    sessions: async () => [
+      { id: 's-1', title: 'Login testini düzelt', prompt: 'login.test.js neden zaman aşımına uğruyor?', branch: 'fix/login', at: Date.now() - 3600e3, size: 1 },
+      { id: 's-2', title: '', prompt: 'README için kısa bir kurulum bölümü yaz.', branch: 'main', at: Date.now() - 864e5, size: 1 },
+      { id: 's-3', title: 'Ödeme sayfası tasarımı', prompt: 'Ödeme sayfasını sadeleştir', branch: '', at: Date.now() - 5 * 864e5, size: 1 },
+    ],
+    resume: async (id, sid) => {
+      if (guiOf(id)?.live.busy) return 'busy:turn';
+      const at = Date.now();
+      mockChats.set(id, [{ key: `${id}-r${at}`, at, kind: 'assistant', text: `(sahte) ${sid} oturumu sürdürüldü.` }]);
+      return 'moved';
+    },
+    commandGo: async (id) => {
+      const text = mockCommands.get(id);
+      if (!text) return 'gone';
+      mockCommands.delete(id);
+      const R = '─'.repeat(60);
+      ev.data.emit(id, `\x1b[2J\x1b[H${R}\r\n ${text}\r\n  ❯ 1. Option one\r\n    2. Option two\r\n\r\n Enter to select · Esc to cancel\r\n`);
+      setTimeout(() => { ev.data.emit(id, `\x1b[2J\x1b[H${R}\r\n❯ \r\n${R}\r\n  ? for shortcuts\r\n`); const at = Date.now(); chatOf(id).push({ key: `${id}-c${at}`, at, kind: 'command', text }, { key: `${id}-o${at}`, at, kind: 'output', text: '(sahte) Set model to Opus' }); }, 2600);
+      return 'typed';
+    },
+    mode: async (id) => (guiOf(id)?.live.busy ? 'busy:turn' : guiOf(id) ? 'moved' : 'ok'),
     onMoved: () => () => {},
     // a menu answer clears the screen (the menu is gone) and lands in the chat as Claude Code would show it
     keys: async (id, steps) => {

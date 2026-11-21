@@ -6,6 +6,7 @@
 // into that pty like any prompt. Thinking, sub-agent (sidechain) lines, meta lines and tool results' content are
 // never shown: a tool result only marks its call done or failed.
 const fs = require('fs');
+const path = require('path');
 
 const TAIL = 512 * 1024;            // the first read of a transcript starts this far from its end
 const STEP_MAX = 2 * 1024 * 1024;   // bytes read per call; the rest comes with the next calls
@@ -35,9 +36,17 @@ function toolName(name) {
 const COMMAND_RE = /<command-name>([^<]*)<\/command-name>(?:[\s\S]*?<command-args>([^<]*)<\/command-args>)?/;
 const HIDDEN_RE = /^\s*<(local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr|system-reminder)>/;
 
+const OUTPUT_RE = /^\s*<local-command-stdout>([\s\S]*?)(?:<\/local-command-stdout>\s*)?$/;
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
+/** A command's printed text without terminal colours, trailing spaces or blank lines around it. */
+const plainOutput = (s) => String(s || '').replace(ANSI_RE, '').replace(/[ \t]+$/gm, '').replace(/^\n+|\n+$/g, '');
 /** One "user" text → an item, or null when it is not something to show. */
 function userText(s, base) {
   const text = String(s || '');
+  // v3.117 what a command printed (/model's "Set model to …", /context's table, …): the terminal shows it, so the chat does
+  const out = OUTPUT_RE.exec(text);
+  if (out) { const o = plainOutput(out[1]); return o.trim() ? { ...base, kind: 'output', text: cut(o, TEXT_MAX) } : null; }
   if (!text.trim() || HIDDEN_RE.test(text)) return null;
   const cmd = COMMAND_RE.exec(text);
   if (cmd) return { ...base, kind: 'command', text: cut(oneLine(`${cmd[1]} ${cmd[2] || ''}`), 200) };
@@ -51,17 +60,18 @@ function userText(s, base) {
 /**
  * Transcript lines (JSONL text, whole lines) → chat items, in order:
  *   { kind: 'user', text, images? } | { kind: 'assistant', text } | { kind: 'error', text }
- *   | { kind: 'tool', id, name, detail, path? } | { kind: 'toolDone', id, error } | { kind: 'command', text }
- *   | { kind: 'note', note: 'compact' | 'task' | 'interrupted' | 'message' }
+ *   | { kind: 'tool', id, name, detail, path?, agent? } | { kind: 'toolDone', id, error } | { kind: 'command', text }
+ *   | { kind: 'note', note: 'compact' | 'task' | 'interrupted' | 'message' } | { kind: 'output', text } (v3.117)
  * each with key (unique per line and block) and at (ms, 0 when unknown). A bad line is skipped.
  */
-function chatItems(text) {
+function chatItems(text, { sidechain = false } = {}) {
   const out = [];
   for (const line of String(text || '').split('\n')) {
     if (!line.trim()) continue;
     let j;
     try { j = JSON.parse(line); } catch { continue; }
-    if (!j || typeof j !== 'object' || j.isSidechain || j.isMeta) continue;
+    // v3.115 a sub-agent's own transcript is all sidechain lines: read them there, never in the boss's
+    if (!j || typeof j !== 'object' || (j.isSidechain && !sidechain) || j.isMeta) continue;
     const at = Date.parse(j.timestamp) || 0;
     const key = String(j.uuid || `${at}-${out.length}`);
     const content = j.message?.content;
@@ -88,7 +98,9 @@ function chatItems(text) {
         else if (b?.type === 'tool_use') {
           // v3.109 the file a tool worked on (the chat can show it in Finder: main checks it is inside the tab's folder)
           const fp = ['file_path', 'notebook_path'].map((k2) => b.input?.[k2]).find((v) => typeof v === 'string' && v.trim() && v.length <= 4096);
-          out.push({ key: k, at, kind: 'tool', id: String(b.id || ''), name: toolName(b.name), detail: toolDetail(b.name, b.input), ...(fp ? { path: fp } : {}) });
+          // v3.115 a call that starts a sub-agent: the chat links its row to that agent's own conversation
+          const agent = AGENT_TOOLS.has(b.name) ? { agent: true } : {};
+          out.push({ key: k, at, kind: 'tool', id: String(b.id || ''), name: toolName(b.name), detail: toolDetail(b.name, b.input), ...(fp ? { path: fp } : {}), ...agent });
         }
       });
     }
@@ -103,7 +115,7 @@ function chatItems(text) {
  * being written comes with the next call. more: there is more to read right away (STEP_MAX was reached).
  * A missing file → { cursor: null, items: [], reset: true, more: false }.
  */
-function readChat(file, cursor, fsm = fs) {
+function readChat(file, cursor, fsm = fs, opts = {}) {
   let st;
   try { st = fsm.statSync(file); } catch { return { cursor: null, items: [], reset: true, more: false }; }
   const same = Boolean(cursor && cursor.file === file && cursor.ino === st.ino && Number.isFinite(cursor.size) && cursor.size >= 0 && st.size >= cursor.size);
@@ -124,8 +136,125 @@ function readChat(file, cursor, fsm = fs) {
   const end = buf.lastIndexOf(10) + 1;   // whole lines only
   // a line longer than STEP_MAX: skipped (its pieces are not JSON), so the reading never stalls on it
   const used = end > start ? end : to < st.size && buf.length ? buf.length : start;
-  const items = end > start ? chatItems(buf.subarray(start, end).toString('utf8')) : [];
+  const items = end > start ? chatItems(buf.subarray(start, end).toString('utf8'), opts) : [];
   return { cursor: { file, ino: st.ino, size: from + used }, items, reset: !same, more: to < st.size };
+}
+
+// v3.115 sub-agents in the chat. Claude Code keeps each sub-agent's conversation beside the session's transcript:
+// <session>.jsonl → <session>/subagents/agent-<id>.jsonl, with agent-<id>.meta.json ({ agentType, description,
+// toolUseId: the boss's Agent call, finished? }). The plugin's session file says which ones still run (workers).
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
+const AGENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const AGENTS_MAX = 50;              // newest first, then shown oldest first
+const AGENT_QUIET_MS = 2 * 60000;   // no worker entry, not finished: running while its file changed this recently
+/** The subagents/ folder of a session transcript. */
+const agentsDir = (transcript) => String(transcript || '').replace(/\.jsonl$/, '') + path.sep + 'subagents';
+/** A sub-agent's transcript file, or null when the id is not one Claude Code makes (no path can be built from it). */
+function agentFile(transcript, agentId) {
+  if (!transcript || typeof agentId !== 'string' || !AGENT_ID_RE.test(agentId)) return null;
+  return path.join(agentsDir(transcript), `agent-${agentId}.jsonl`);
+}
+/**
+ * The session's sub-agents → [{ id, toolUseId, description, type, state: 'running' | 'done' | 'stopped', tool,
+ * detail, toolCount, at }], oldest first, at most AGENTS_MAX. workers: the plugin's session workers ({ id, doneAt?,
+ * tool, detail, toolCount }); one without doneAt runs. Else a finished meta is done, a file written in the last
+ * AGENT_QUIET_MS runs, anything else stopped (killed with its tab, or the plugin is off).
+ */
+function chatAgents(transcript, workers, now = Date.now(), fsm = fs) {
+  const dir = agentsDir(transcript);
+  let names = [];
+  try { names = fsm.readdirSync(dir).filter((n) => /^agent-[A-Za-z0-9_-]{1,64}\.jsonl$/.test(n)); } catch { return []; }
+  const byId = new Map((Array.isArray(workers) ? workers : []).filter((w) => w && typeof w.id === 'string').map((w) => [w.id, w]));
+  const out = [];
+  for (const n of names) {
+    const id = n.slice(6, -6);
+    const file = path.join(dir, n);
+    let st;
+    try { st = fsm.statSync(file); } catch { continue; }
+    let meta = {};
+    try { meta = JSON.parse(fsm.readFileSync(file.replace(/\.jsonl$/, '.meta.json'), 'utf8')) || {}; } catch {}
+    const w = byId.get(id);
+    const state = w && w.doneAt === undefined ? 'running' : w || meta.finished === true ? 'done' : now - st.mtimeMs < AGENT_QUIET_MS ? 'running' : 'stopped';
+    out.push({
+      id,
+      toolUseId: typeof meta.toolUseId === 'string' ? meta.toolUseId : '',
+      description: cut(oneLine(meta.description || w?.description || ''), DETAIL_MAX),
+      type: cut(oneLine(meta.agentType || w?.type || ''), 60),
+      state,
+      tool: state === 'running' && typeof w?.tool === 'string' ? toolName(w.tool) : '',
+      detail: state === 'running' && typeof w?.detail === 'string' ? cut(oneLine(w.detail), DETAIL_MAX) : '',
+      toolCount: Number.isInteger(w?.toolCount) ? w.toolCount : 0,
+      at: Number.isFinite(w?.spawnAt) ? w.spawnAt : Math.round(st.birthtimeMs || st.mtimeMs),
+    });
+  }
+  return out.sort((a, b) => b.at - a.at).slice(0, AGENTS_MAX).reverse();
+}
+
+// v3.118 /resume in the chat: the sessions of the tab's project folder, newest first, the way Claude Code's picker shows
+// them: the name given with /rename, else Claude Code's own title, else the first thing the person wrote.
+const SESSIONS_MAX = 50;
+const SESSION_PEEK = 64 * 1024;   // bytes read at each end of a transcript for its title and first prompt
+const SID_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}\.jsonl$/;
+/** Bytes [from, from + n) of a file as text ('' when it cannot be read). */
+function peek(fsm, file, from, n) {
+  let fd;
+  try {
+    fd = fsm.openSync(file, 'r');
+    const buf = Buffer.alloc(n);
+    return buf.subarray(0, fsm.readSync(fd, buf, 0, n, from)).toString('utf8');
+  } catch { return ''; } finally { if (fd !== undefined) try { fsm.closeSync(fd); } catch {} }
+}
+/** One transcript's title, first prompt and branch from its two ends → { title, prompt, branch }. */
+function sessionInfo(file, size, fsm = fs) {
+  const head = peek(fsm, file, 0, Math.min(size, SESSION_PEEK));
+  const tail = size > SESSION_PEEK ? peek(fsm, file, size - SESSION_PEEK, SESSION_PEEK) : '';
+  let custom = '';
+  let ai = '';
+  let prompt = '';
+  let branch = '';
+  for (const text of [head, tail]) {
+    for (const line of text.split('\n')) {
+      if (!line.includes('"type"')) continue;
+      let j;
+      try { j = JSON.parse(line); } catch { continue; }
+      if (j?.type === 'custom-title' && typeof j.customTitle === 'string') custom = j.customTitle;
+      else if (j?.type === 'ai-title' && typeof j.aiTitle === 'string') ai = j.aiTitle;
+      if (typeof j?.gitBranch === 'string' && j.gitBranch) branch = j.gitBranch;
+      if (!prompt && j?.type === 'user' && !j.isMeta && !j.isSidechain) {
+        const c = j.message?.content;
+        const it = userText(typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text).join('\n') : '', {});
+        if (it?.kind === 'user' && it.text) prompt = it.text;
+      }
+    }
+  }
+  return { title: cut(oneLine(custom || ai), 120), prompt: cut(oneLine(prompt), 200), branch: cut(oneLine(branch), 80) };
+}
+/**
+ * The sessions in Claude Code's folders of one project folder → [{ id, title, prompt, branch, at, size }], newest first,
+ * at most SESSIONS_MAX; `exclude` (ids: the sessions running tabs are in) and sessions with nothing the person wrote
+ * are left out.
+ */
+/** @param {string[]} dirs @param {{ exclude?: string | Iterable<string>, fsm?: any }} [opts] */
+function sessionList(dirs, { exclude = [], fsm = fs } = {}) {
+  const skip = new Set(typeof exclude === 'string' ? [exclude] : exclude);
+  const files = [];
+  for (const dir of new Set(Array.isArray(dirs) ? dirs : [])) {
+    let names = [];
+    try { names = fsm.readdirSync(dir).filter((n) => SID_FILE_RE.test(n)); } catch { continue; }
+    for (const n of names) {
+      const id = n.slice(0, -6);
+      if (skip.has(id) || files.some((f) => f.id === id)) continue;
+      try { const st = fsm.statSync(path.join(dir, n)); if (st.isFile() && st.size > 0) files.push({ id, file: path.join(dir, n), at: Math.round(st.mtimeMs), size: st.size }); } catch {}
+    }
+  }
+  const out = [];
+  for (const f of files.sort((a, b) => b.at - a.at)) {
+    if (out.length >= SESSIONS_MAX) break;
+    const info = sessionInfo(f.file, f.size, fsm);
+    if (!info.prompt && !info.title) continue;
+    out.push({ id: f.id, ...info, at: f.at, size: f.size });
+  }
+  return out;
 }
 
 // v3.109 images pasted into the chat input: the types Claude takes, at most IMAGES_MAX of at most IMAGE_MAX characters
@@ -220,4 +349,4 @@ function linkItems(items, { redact = (s) => require('./hq.js').redact(s), toolDe
   return out;
 }
 
-module.exports = { IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };
+module.exports = { sessionList, AGENT_TOOLS, agentFile, chatAgents, IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };
