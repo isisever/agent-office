@@ -5599,6 +5599,7 @@ function liveSids() {
     const s = r && validSid(readJson(Z.claudePidFile(A.accountOf(state, r.project).configDir, app.getPath('home'), tt.pid))?.sessionId);
     if (s) out.add(s);
   }
+  for (const how of asleep.values()) { const s = validSid(how?.sessionId); if (s) out.add(s); }   // v3.118 a sleeping tab resumes its session on wake
   return out;
 }
 ipcMain.handle('chat:sessions', (_e, id) => chatSessionsOf(String(id), terms.get(String(id))) || []);
