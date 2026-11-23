@@ -7,6 +7,7 @@
 // deny in a `control_response`, and stops a turn with a `control_request` `interrupt`. Checked with Claude Code 2.1.311.
 // Nothing is read off a screen and no key is typed: the chat draws each request as a card from its data.
 const { toolDetail, toolName } = require('./chat.js');
+const { draftAfter } = require('./sleep.js');
 
 /** The flags that turn claude into the SDK protocol; they go before every other argument. */
 const GUI_FLAGS = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
@@ -58,6 +59,22 @@ function switchPlan({ gui, sid = '', guiSid = '', asks = 0, busy = false, tasks 
   }
   return sid && !recent && !permission ? 'resume' : 'busy';
 }
+
+/**
+ * v3.116 why switchPlan said 'busy' → 'task' | 'asks' | 'turn' | 'agents' | 'recent' | 'permission' | 'draft' |
+ * 'session' (the chat names it). idleWhy: main's idle check of a terminal tab ('draft' | 'session' | 'turn' | 'agents').
+ */
+function switchWhy({ gui, sid = '', asks = 0, busy = false, tasks = false, working = false, recent = false, permission = false, idleWhy = '' }) {
+  if (tasks) return 'task';
+  if (gui) return asks > 0 ? 'asks' : busy ? 'turn' : working ? 'agents' : '';
+  if (!sid) return ['draft', 'turn', 'agents'].includes(idleWhy) ? idleWhy : 'session';
+  return permission ? 'permission' : recent ? 'recent' : '';
+}
+/** v3.117 a slash command the chat may type for the person: "/name" (letters, digits, : . _ -) and its arguments. */
+const isCommand = (s) => typeof s === 'string' && s.length <= 2000 && /^\/\w[\w:.-]{0,63}(?:\s|$)/.test(s)
+  && ![...s].some((c) => { const n = c.charCodeAt(0); return (n < 0x20 && c !== '\n' && c !== '\t') || n === 0x7f; });
+/** v3.116 is this terminal input typing (an Enter or a printable key), not an escape the terminal sends by itself? */
+const typesInput = (d) => { const s = String(d ?? ''); return s.includes('\r') || s.includes('\x03') || draftAfter(false, s); };
 
 /** claude's argv for a GUI start: the protocol flags, then the tab's own arguments (built without a prompt). */
 const guiArgs = (args) => [...GUI_FLAGS, ...args];
@@ -205,4 +222,4 @@ function endNote(stderr) {
   return lines.join('\n').slice(-END_NOTE_MAX);
 }
 
-module.exports = { endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+module.exports = { isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };

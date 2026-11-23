@@ -2485,7 +2485,8 @@ type Ask = { id: string; kind: 'permission' | 'question' | 'plan'; tool: string;
   (`chat:interrupt`, also Esc in the input while a turn runs). Locale keys `chat.gui.*`, `main.guiTerminalNote`.
   Dev-mock: `?chat&gui`, `?gui=perm|q|plan`.
 - **Not done here**: HQ in GUI mode; Windows; "allow always" (`permission_suggestions`); slash commands that open a
-  screen of their own (`/model`, `/mcp`, …) still need the terminal (switch with Terminal when idle). (Images in the
+  screen of their own (`/model`, `/mcp`, …) still need the terminal (switch with Terminal when idle). Amended in v3.117:
+  such a command runs in the tab's terminal and the chat comes back by itself. (Images in the
   chat input: v3.109.)
 - **Unverified**: checked with Claude Code 2.1.311 in headless runs: `can_use_tool` arrives for a Bash write and runs on
   allow; AskUserQuestion answers reach the model through `updatedInput.answers`; `interrupt` ends the turn
@@ -2700,3 +2701,159 @@ limitCarryOnPrompt({ agents, model }) → string
   accounts bring with different configs …" (order-independent suffixes, removal turns the name bare, project dedup
   not listed, injected `exists`); `plugin/tests/office.test.tsx`
   "app contract v3.114 …".
+
+## Sub-agents in the chat view (v3.115)
+
+The terminal lists a session's running sub-agents and lets the person step into one to read its conversation; the
+chat view (v3.80, GUI chat v3.108 and the terminal-based chat alike) showed an Agent call as one plain tool line. Now
+it shows each sub-agent's state, lists the running ones above the input, and opens one's own conversation, read-only.
+
+```ts
+agentOffice.chat.agents(ptyId): Promise<ChatAgent[]>   // 'chat:agents'; [] when the tab has no transcript yet
+agentOffice.chat.agent(ptyId, agentId, cursor): Promise<ReadChat | { gone: true }>   // 'chat:agent'; readChat's result
+type ChatAgent = { id: string; toolUseId: string; description: string; type: string;
+  state: 'running' | 'done' | 'stopped'; tool: string; detail: string; toolCount: number; at: number }
+// chat items: a tool line gains agent?: true when the call is Agent (or the older Task)
+```
+
+- **Where they are** (`src/chat.js`): Claude Code keeps each sub-agent beside the session's transcript,
+  `<session>.jsonl` → `<session>/subagents/agent-<id>.jsonl`, and `agent-<id>.meta.json` (`agentType`, `description`,
+  `toolUseId`: the boss's Agent call, `finished` once done; checked with Claude Code 2.1.311). `chatAgents` lists the
+  folder (at most 50, the newest, shown oldest first); `toolUseId` links an agent to its row in the chat.
+- **State**: the plugin's session file (`workers`, the office's source) says which run: a worker without `doneAt` is
+  `running` with its current tool, detail and tool count; else a `finished` meta or a worker with `doneAt` is `done`;
+  else a file written in the last 2 minutes is `running` (the plugin is off or late), anything older `stopped` (killed
+  with its tab). An Agent row follows its agent's state, not its call's result: a background agent's call returns at
+  once. A row with no agent file (an older session) falls back to the call's result like any tool.
+- **Reading one** (`chat:agent`): main builds the path only from an id Claude Code makes (`agentFile`:
+  `[A-Za-z0-9_-]{1,64}`) inside the folder of the transcript `chat:read` found for that tab, and reads it with
+  `readChat(…, { sidechain: true })` (the boss's chat still skips sidechain lines). Same items, same cursor, same
+  limits as the chat; thinking and tool results are never shown.
+- **UI** (`renderer/chat.js`): an Agent row is a small card with its state (`chat.agents.*`); clicking it opens the
+  agent's conversation in place of the chat, with ← Back (Esc too) and its title, type and state; the input, the live
+  line and the reply bar are hidden there, an open approval card stays (a sub-agent's request is answered there). The
+  running agents are chips above the input (`chat.agents.label`); a chip opens that agent. Agents are listed every
+  1.5 s while the chat is shown; the open one's conversation is read with every chat read (400 ms).
+- **Not on a paired device**: a remote chat (`source`, v3.100) shows no agent state, chips or view, and
+  `linkSessionOf` still gives the boss's transcript only. Not for non-Claude engines or shell tabs (`chat:agents` → []).
+- **Dev-mock**: `?chat` adds two Agent rows (one running with a chip, one done); each opens a short conversation.
+- **Unverified**: nested agents (an agent that starts agents) are expected in the same folder (`spawnDepth`) and open
+  from the parent agent's view; not tried. Not tried in the packaged app or on Linux.
+- **Tests**: `app/test/chat.test.cjs` "v3.115 …" (Agent rows, sidechain reading, `agentFile` refusing other paths,
+  `chatAgents` states and links, main's handlers and preload by source text, nothing in `linkSessionOf`).
+
+## Switching a tab between terminal and chat: only typing holds it, a refusal says why (v3.116)
+
+Amends v3.108 (`guiHolds`, `chat:mode`), v3.110 and v3.112. "Written to in the last 15 s" was read from the tab's
+last activity, which a terminal tab's output also sets: claude redraws on every focus report, resize or status update,
+so clicking the tab and then **Chat** was refused as `busy` again and again, and the person was told only "Claude is
+working or waiting for you".
+
+```ts
+agentOffice.chat.mode(id, 'terminal' | 'gui')   // 'busy' is now 'busy:<why>'
+type SwitchWhy = 'task' | 'asks' | 'turn' | 'agents' | 'recent' | 'permission' | 'draft' | 'session'
+```
+
+- **Written to** (`guiRecent`): the time of the last input (`activity.inputAt`): a prompt typed by `typePrompt` (HQ,
+  routines, paired devices, the chat's own messages), a menu answer (`chat:keys`), a start prompt, and keys from the
+  terminal that type something (`GS.typesInput`: an Enter, Ctrl+C or a printable character outside an escape
+  sequence). A focus report, a mouse report, an arrow key or a terminal's answer to a query is no input. The tab's
+  output still counts as activity for sleep (`activity.at`, unchanged).
+- **The terminal's answers** (`Z.draftAfter`, so the draft check and sleep too): claude turns on focus reports
+  (`CSI ?1004h`) and asks the terminal things (`CSI >0q` its version, `OSC 11 ;?` its background colour, seen with
+  Claude Code 2.1.311); xterm answers through the same input path as keys, e.g. `ESC P >|xterm.js(…) ESC \`. An OSC,
+  DCS, APC, PM or SOS string (up to BEL or `ESC \`) is skipped like a CSI: before, its text counted as typing, so a
+  terminal tab kept a draft (refused as `draft`, never slept) or was "just written to" (`recent`) after a resume.
+- **Why** (`GS.switchWhy`, `idleState` in main: `idleSession` with its reason): a task not reported (`task`), an open
+  card (`asks`), a running turn (`turn`), sub-agents or background shells running (`agents`), just typed into
+  (`recent`), another tab's approval (`permission`), a draft in the terminal's input (`draft`), no session to continue
+  (`session`). The renderer shows `chat.gui.busyWhy.<why>` (plain `busy`: `chat.gui.busySwitch`). Nothing else about
+  when a switch is allowed changed: a tab with a turn, agents, shells, a card or a draft is never restarted.
+- **Dev-mock**: a GUI tab with a live answer refuses with `busy:turn`.
+- **Tests**: `app/test/gui-session.test.cjs` "v3.116 …" (every refused plan has a reason; escapes are not input);
+  `app/test/chat.test.cjs` and `app/test/gui-holds.test.cjs` (wiring by source text).
+- **Unverified**: that the refusals the person saw came from claude's redraws (the reason now shows on the next
+  refusal); not tried in the packaged app.
+
+## Commands with a screen of their own work from the chat (v3.117)
+
+Claude Code's commands that open a screen of their own (`ui` in `src/slash-commands.js`: `/resume`, `/model`, `/mcp`,
+`/config`, `/context`, `/usage`, … ) have no screen in a GUI chat tab (v3.108: claude runs without a terminal there);
+before, the chat sent the text and asked for the terminal, which was refused while the turn the text started ran.
+Now the command runs where it works, in Claude Code's own screen, exactly as in the terminal, and the chat comes back
+when that screen is closed. What the command printed shows in the chat.
+
+```ts
+agentOffice.chat.command(ptyId, text)   // 'chat:command' → 'moved' | 'terminal' (send it with chat.send) | 'busy:<why>'
+                                        //   (v3.116) | 'locked' | 'not-running' | 'unsupported' | 'bad-command'
+agentOffice.chat.commandGo(ptyId)       // 'chat:commandGo': the prompt box is on screen → 'typed' | 'wait' | 'gone'
+// chat items: { kind: 'output', text }: a <local-command-stdout> line, colours and blank edges removed
+```
+
+- **Which commands**: a "/" command whose built-in entry has `ui` (a plain command, a skill or a project command is
+  still sent as a message). `GS.isCommand`: `/name` (letters, digits, `: . _ -`) with optional arguments, no control
+  characters, ≤ 2000 characters.
+- **A GUI chat tab** (`chat:command`): the same switch as `chat:mode` 'terminal' (`switchMode`, refused with the same
+  `busy:<why>` while anything runs), but temporary: the tab goes into `cmdTabs` (memory only, never `termTabs` or
+  `state.json`; pruned with closed tabs), so an app restart brings it back to the chat. claude continues the same
+  session in its terminal and the command waits (`cmdPending`, 30 s). Nothing is typed until the renderer sees the
+  restarted terminal's prompt box with nothing over it (`promptReady`, steady for 0.7 s) and calls `chat:commandGo`;
+  main then types it (`typePrompt`) only if the session is idle (`idleSession`), claude takes a prompt
+  (`canTypePrompt`), no approval of the project waits and no handoff runs, else `wait`. A startup dialog or an approval
+  menu therefore never gets the command's keys. Given up (`gone`, 30 s): the terminal stays open with
+  `chat.cmd.gaveUp`; Chat brings the tab back.
+- **A terminal tab** (HQ, Windows, a tab the person keeps in its terminal; also a GUI flag in the renderer that is out
+  of date: `chat:command` answers `terminal`): the command is sent like any message (`chat:send`, with its refusals:
+  never over an approval menu or a draft) and the view shows the terminal.
+- **Back to the chat** (`renderer/app.js` `watchCommands`, every 300 ms): the hint `chat.cmd.running` shows over the
+  terminal; once the command is typed, the screen is read with `promptReady` (`src/tui-menu.mjs`: Claude Code's prompt
+  box at the foot, a full-width rule above its glyph and one below, no menu, dialog or running turn). When it has
+  been open and closed again (a picker, a panel), or 4 s after the command for one that only prints, and the box
+  stays 0.7 s, a GUI tab switches back with `chat:mode` 'gui': it restarts in the chat with the session its terminal
+  is in now. A box that still holds the command as typed is not "closed" (Claude Code has not taken it yet). Coming
+  back from `cmdTabs` waives `recent` only for the command's own typing (`cmdTyped`: anything typed after it, a prompt
+  sent in that terminal or a picker's search, still holds the tab 15 s); a draft, a turn or running agents refuse it
+  and the terminal stays (the hint says why). A terminal tab only switches the view back. Pressing Chat by hand ends
+  the watch. The chat view setting's sweep (`guiSwitchIdle`) leaves a tab in `cmdTabs` alone: its watch brings it
+  back.
+- **Output** (`src/chat.js`): `<local-command-stdout>` lines (hidden until now) become `output` items, shown as
+  preformatted text (Copy, no Reply). They never cross the device link (`linkItems` keeps its list of kinds).
+- **Dev-mock**: `?chat&gui`: a "/" command with a screen shows a fake picker in the terminal, then the prompt box; the
+  chat comes back with a sample output line.
+- **Tests**: `app/test/tui-menu.test.mjs` "v3.117 promptReady …"; `app/test/chat.test.cjs` "v3.117 …" (output items,
+  the link, `isCommand`, the wiring of `chat:command`, `switchMode` and the watch by source text).
+- **Guards** (review of PR #20): `chat:commandGo` also waits while `guiTaskOpen(id) || guiRecent(id)` (a task or typing that
+  arrived during the restart stops the command); `tabStateOf` reports `busy` for a tab in `cmdTabs`, so routines, paired
+  devices and HQ dispatch never type into a command's menu.
+- **Unverified**: the screen check was written against the prompt box and pickers of Claude Code 2.1.286/2.1.311 as
+  the earlier menu tests captured them; not tried with every command's screen, in the packaged app, or on Linux.
+
+## /resume in the chat, without the terminal (v3.118)
+
+Amends v3.117 for one command: `/resume` (with no images) in a GUI chat tab no longer goes through the terminal. The
+chat shows the project's sessions in place of the conversation and continues the picked one in the same tab. In a
+terminal tab (HQ, Windows, a tab kept in its terminal) `/resume` still opens Claude Code's own picker (v3.117).
+
+```ts
+agentOffice.chat.sessions(ptyId): Promise<{ id, title, prompt, branch, at, size }[]>   // 'chat:sessions'; [] unless a GUI tab
+agentOffice.chat.resume(ptyId, sessionId)   // 'chat:resume' → 'moved' | 'busy:<why>' | 'gone' | 'locked' | 'not-running' | 'unsupported'
+```
+
+- **The list** (`CHAT.sessionList`, `TIO.historyDirsOf`): the `.jsonl` sessions in Claude Code's folders for the tab's
+  project folder (as typed and with links resolved), newest first, at most 50; the sessions running tabs are in
+  (`liveSids`: a GUI tab's own id, a terminal tab's pid file) are left out, so one session never runs twice. Each
+  is named as Claude Code's picker names it: the `/rename` name (`custom-title`), else Claude Code's title
+  (`ai-title`), else the first thing the person wrote; with that first prompt, the git branch and the time. Only the
+  first and last 64 KB of a file are read; a session with nothing the person wrote is left out. Only these names and
+  times reach the renderer.
+- **The pick** (`chat:resume`): only an id of that list (`gone` otherwise), only in a GUI tab, refused while anything
+  runs exactly like `chat:mode` from a GUI tab (`busy:<why>`, v3.116: an open card, a turn, agents or shells, a task);
+  then the tab restarts in the chat with `--resume <id>` (`startPty`, the resume grace as for any resume) and the chat
+  reads the new session from the start.
+- **UI** (`renderer/chat.js`): ← Back, a search box (title, first prompt, branch), the rows (title, first prompt, time ·
+  branch); ↑/↓ and Enter pick, Esc closes; a refusal shows under the list. Text after `/resume` goes into the search.
+  Locale keys `chat.resume.*`. Dev-mock `?chat&gui`: three sample sessions.
+- **Tests**: `app/test/chat.test.cjs` "v3.118 …" (order, names, own session, empty files, missing folders; the IPC's
+  checks by source text).
+- **Sleeping tabs** (review of PR #20): `liveSids` also holds every `asleep` entry's `sessionId`, so the picker never offers a
+  session a sleeping tab will resume. A claude started outside the app on the same session cannot be detected.

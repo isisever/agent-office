@@ -64,6 +64,9 @@ function findTranscript(dir, id, configDir, home) {
   return any ? { historyDir: path.dirname(any), file: any } : null;
 }
 
+/** v3.118 the folders Claude Code keeps a project folder's sessions in (as typed and with links resolved). */
+const historyDirsOf = (dir, configDir, home) => [...new Set([P.historyDir(dir, configDir, home), historyDirOf(dir, configDir, home)])];
+
 /** The newest session of the folder (for a tab whose claude is not running), or null. */
 function newestSession(dir, configDir, home) {
   let best = null;
@@ -367,6 +370,7 @@ function placeSession(parsed, o) {
 }
 
 module.exports = {
+  historyDirsOf,
   runGit, walkFiles, findSessionFiles, findTranscript, newestSession, memoryDirOf, historyDirOf, officeSessionFile,
   gitExport, collectExport, writeArchive, loadArchive, inspectTarget, cloneInto, prepareGit, applyGit, placeSession,
 };

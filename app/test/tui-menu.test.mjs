@@ -210,3 +210,32 @@ test('openDialog: a cut dialog and an approval-like one are flagged; keys and th
   assert.equal(screenKey(null), '');
   assert.equal(openOnScreen(['answer', RULE, '> Press Enter to continue', RULE, '  ? for shortcuts']), null);
 });
+
+test('v3.117 promptReady: the prompt box is back; never while a menu, a dialog or a turn is on screen', async () => {
+  const { promptReady } = await import('../src/tui-menu.mjs');
+  const box = screen(`⏺ Set model to Opus
+${RULE}
+❯ 
+${RULE}
+  ⏵⏵ accept edits on (shift+tab to cycle)`);
+  assert.equal(promptReady(box), true);
+  assert.equal(promptReady(screen(`${RULE}
+❯ a draft over
+  two lines
+${RULE}`)), true, 'a draft in the box is still the box (main refuses a draft itself)');
+  assert.equal(promptReady(PERMISSION), false, 'an approval menu');
+  assert.equal(promptReady(screen(`${RULE}
+ Resume a session
+ ❯ fix the login · 2h ago
+   README setup · yesterday
+
+ ↑/↓ to navigate · Enter to select · Esc to cancel`)), false, 'a picker');
+  assert.equal(promptReady(screen(`✻ Working… (3s · esc to interrupt)
+${RULE}
+❯ 
+${RULE}`)), false, 'a turn runs');
+  assert.equal(promptReady(screen(`❯ 
+${RULE}`)), false, 'no rule above the glyph: not the box');
+  assert.equal(promptReady([]), false);
+  assert.equal(promptReady(null), false);
+});

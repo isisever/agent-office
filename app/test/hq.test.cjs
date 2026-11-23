@@ -590,7 +590,7 @@ test('shell status: tabStateOf types into a shell tab; tabWorkRunning still sees
   const R = require('../src/resume.js');
   const make = (status, extra = {}) => {
     const deps = {
-      state: {}, P: { resolvePty: () => ({ project: { id: 'p' } }) }, terms: new Map([['p', { pid: 1 }]]), handoffLocks: new Set(),
+      state: {}, P: { resolvePty: () => ({ project: { id: 'p' } }) }, terms: new Map([['p', { pid: 1 }]]), handoffLocks: new Set(), cmdTabs: new Set(),
       A: { accountOf: () => ({ configDir: '/c' }) }, Z: { claudePidFile: () => '/c/sessions/1.json' }, app: { getPath: () => '/h' },
       readJson: () => (status === null ? null : { sessionId: 's1', status }), validSid: (s) => s || '', LC: { typingReady: () => true },
       sessionPrompted: () => true, R, office: () => ({ readSession: () => extra.office }), activity: new Map(), attention: new Map(),

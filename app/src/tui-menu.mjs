@@ -181,3 +181,22 @@ export function openOnScreen(lines) {
 export const screenKey = (m) => (m?.dialog ? dialogKey(m) : menuKey(m));
 /** Must this be answered in the terminal (never from the card)? A truncated approval menu; a cut or approval-like dialog. */
 export const mustUseTerminal = (m) => (m?.dialog ? Boolean(m.truncated || m.approval) : Boolean(m?.truncated) && isApproval(m));
+
+// v3.117 a command that opens a screen of its own (/resume, /model, /mcp, …) runs in the tab's terminal; the chat comes
+// back once that screen is closed: Claude Code's prompt box is on screen again (a full-width rule above its prompt
+// glyph and one below it), nothing is open over it and no turn runs.
+const BOX_GAP = 6;   // lines a draft may take between the prompt glyph and the box's lower rule
+/** Is Claude Code's prompt box back at the foot of the screen, with no menu, dialog or running turn? */
+export function promptReady(lines) {
+  const L = (Array.isArray(lines) ? lines : []).map((l) => String(l ?? '').replace(/\s+$/, ''));
+  if (openOnScreen(L) || liveStatus(L).busy) return false;
+  for (let i = L.length - 1; i > 0; i--) {
+    if (!PROMPT_RE.test(L[i])) continue;
+    let up = i - 1;
+    while (up >= 0 && !L[up].trim()) up--;
+    if (up < 0 || !RULE_RE.test(L[up])) return false;
+    for (let k = i + 1; k < L.length && k <= i + BOX_GAP; k++) if (RULE_RE.test(L[k])) return true;
+    return false;
+  }
+  return false;
+}

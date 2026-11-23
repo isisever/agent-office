@@ -746,6 +746,25 @@
     "revealOutside": "This file is not inside the project folder (or is gone): it cannot be shown here.",
     "revealGone": "This file is gone: its folder is shown instead.",
     "attach": "Attach files (images go with the message, other files as @path)",
+    "resume": {
+      "title": "Resume a session",
+      "search": "Search sessions…",
+      "empty": "No other session of this project to resume.",
+      "gone": "That session is gone; pick another one."
+    },
+    "cmd": {
+      "running": "This command runs in the terminal: the chat comes back when its screen is closed.",
+      "gaveUp": "The command could not be started in the terminal; it is left open for you (Chat goes back)."
+    },
+    "agents": {
+      "back": "← Back to the chat",
+      "empty": "This agent has not written anything yet.",
+      "label": "Agents running ({count}):",
+      "running": "running",
+      "runningTool": "{tool} · {count} tools",
+      "done": "done",
+      "stopped": "stopped"
+    },
     "gui": {
       "terminalTitle": "Continue this session in the terminal (when Claude is not working)",
       "stop": "Stop",
@@ -766,6 +785,16 @@
       "keepPlanning": "Keep planning",
       "switchFailed": "Could not switch this tab: {error}",
       "busySwitch": "Claude is working or waiting for you: switch when it is done.",
+      "busyWhy": {
+        "task": "A task sent to this tab has not reported yet: switch when it is done.",
+        "asks": "Claude is waiting for your answer above: answer it first.",
+        "turn": "Claude is working: switch when it is done (or Stop it first).",
+        "agents": "Agents or background commands of this session are still running: switch when they are done.",
+        "recent": "Something was just typed into this tab: try again in a few seconds.",
+        "permission": "A tab of this project is waiting for an approval: answer it first.",
+        "draft": "The terminal's input box has unsent text: send or clear it first.",
+        "session": "This session has no conversation to continue yet: write a first message, then switch."
+      },
       "ended": "The session ended (exit {code}). Start it again to go on with the same conversation.",
       "endedError": "Claude stopped with an error (exit {code}):",
       "restart": "Start again"
