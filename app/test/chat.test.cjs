@@ -557,7 +557,7 @@ test('v3.117 chat:command: a GUI tab moves to its terminal for the command (neve
   assert.match(body, /switchMode\(id, 'terminal', \{ temp: true \}\)/);
   // typed only when the prompt box is up and nothing else could take the keys
   const go = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:commandGo'"), MAIN.indexOf('\n});\n', MAIN.indexOf("ipcMain.handle('chat:commandGo'")));
-  assert.match(go, /if \(!r \|\| !idleSession\(id\) \|\| attention\.get\(r\.project\.id\) === 'permission'\) return 'wait';/);
+  assert.match(go, /if \(!r \|\| guiTaskOpen\(id\) \|\| guiRecent\(id\) \|\| !idleSession\(id\) \|\| attention\.get\(r\.project\.id\) === 'permission'\) return 'wait';/);
   assert.match(go, /if \(!R\.canTypePrompt\(/);
   assert.match(go, /if \(handoffLocked\(id\)\) return 'wait';/);
   assert.match(go, /cmdTyped\.set\(id, activity\.get\(id\)\?\.inputAt \|\| Date\.now\(\)\);/);
@@ -621,5 +621,5 @@ test('PR #20 review fixes: commandGo re-checks tasks and typing, tabStateOf park
   const body = (start, len) => MAIN.slice(MAIN.indexOf(start), MAIN.indexOf(start) + len);
   assert.match(body("ipcMain.handle('chat:commandGo'", 900), /guiTaskOpen\(id\) \|\| guiRecent\(id\) \|\| !idleSession\(id\)/);
   assert.match(body('function tabStateOf(', 700), /if \(cmdTabs\.has\(projectId\)\) return 'busy'/);
-  assert.match(body('function liveSids(', 900), /for \(const how of asleep\.values\(\)\)[^\n]*validSid\(how\?\.sessionId\)/);
+  assert.match(body('function liveSids(', 1400), /for \(const how of asleep\.values\(\)\)[^\n]*validSid\(how\?\.sessionId\)/);
 });
