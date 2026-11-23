@@ -2822,6 +2822,9 @@ agentOffice.chat.commandGo(ptyId)       // 'chat:commandGo': the prompt box is o
   chat comes back with a sample output line.
 - **Tests**: `app/test/tui-menu.test.mjs` "v3.117 promptReady …"; `app/test/chat.test.cjs` "v3.117 …" (output items,
   the link, `isCommand`, the wiring of `chat:command`, `switchMode` and the watch by source text).
+- **Guards** (review of PR #20): `chat:commandGo` also waits while `guiTaskOpen(id) || guiRecent(id)` (a task or typing that
+  arrived during the restart stops the command); `tabStateOf` reports `busy` for a tab in `cmdTabs`, so routines, paired
+  devices and HQ dispatch never type into a command's menu.
 - **Unverified**: the screen check was written against the prompt box and pickers of Claude Code 2.1.286/2.1.311 as
   the earlier menu tests captured them; not tried with every command's screen, in the packaged app, or on Linux.
 
@@ -2852,3 +2855,5 @@ agentOffice.chat.resume(ptyId, sessionId)   // 'chat:resume' → 'moved' | 'busy
   Locale keys `chat.resume.*`. Dev-mock `?chat&gui`: three sample sessions.
 - **Tests**: `app/test/chat.test.cjs` "v3.118 …" (order, names, own session, empty files, missing folders; the IPC's
   checks by source text).
+- **Sleeping tabs** (review of PR #20): `liveSids` also holds every `asleep` entry's `sessionId`, so the picker never offers a
+  session a sleeping tab will resume. A claude started outside the app on the same session cannot be detected.

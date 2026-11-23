@@ -3221,6 +3221,7 @@ function tabStateOf(projectId) {
   const t = terms.get(projectId);
   if (!p || !t) return 'gone';
   if (handoffLocks.has(projectId)) return 'busy';   // being handed off: remote commands wait (and fail once it left)
+  if (cmdTabs.has(projectId)) return 'busy';   // v3.117 a command's own screen (/model, /mcp, ...) may be open: nothing is typed into it
   const { configDir } = A.accountOf(state, p);
   const claude = readJson(Z.claudePidFile(configDir, app.getPath('home'), t.pid));
   const sid = validSid(claude?.sessionId);
@@ -5642,7 +5643,7 @@ ipcMain.handle('chat:commandGo', (_e, id) => {
   if (!p || !t || t.gui || !cmdTabs.has(id) || Date.now() > p.until) { cmdPending.delete(id); return 'gone'; }
   if (handoffLocked(id)) return 'wait';
   const r = P.resolvePty(state, id);
-  if (!r || !idleSession(id) || attention.get(r.project.id) === 'permission') return 'wait';
+  if (!r || guiTaskOpen(id) || guiRecent(id) || !idleSession(id) || attention.get(r.project.id) === 'permission') return 'wait';   // a task or new typing since the restart stops the command
   const claude = readJson(Z.claudePidFile(A.accountOf(state, r.project).configDir, app.getPath('home'), t.pid));
   const sid = validSid(claude?.sessionId);
   if (!R.canTypePrompt({ claude, office: sid ? office()?.readSession(sid) : undefined })) return 'wait';

@@ -615,3 +615,11 @@ test('v3.118 chat:resume: only a listed session of a GUI tab, never while anythi
   assert.match(preload, /sessions: \(id\) => ipcRenderer\.invoke\('chat:sessions', id\)/);
   assert.match(preload, /resume: \(id, sid\) => ipcRenderer\.invoke\('chat:resume', id, sid\)/);
 });
+
+test('PR #20 review fixes: commandGo re-checks tasks and typing, tabStateOf parks cmdTabs, liveSids skips sleeping sessions', () => {
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = (start, len) => MAIN.slice(MAIN.indexOf(start), MAIN.indexOf(start) + len);
+  assert.match(body("ipcMain.handle('chat:commandGo'", 900), /guiTaskOpen\(id\) \|\| guiRecent\(id\) \|\| !idleSession\(id\)/);
+  assert.match(body('function tabStateOf(', 700), /if \(cmdTabs\.has\(projectId\)\) return 'busy'/);
+  assert.match(body('function liveSids(', 900), /for \(const how of asleep\.values\(\)\)[^\n]*validSid\(how\?\.sessionId\)/);
+});
