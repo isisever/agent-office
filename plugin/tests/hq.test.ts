@@ -20,7 +20,7 @@ test('run-through (v3.95, v3.103 default): HQ owns the request and never asks th
   for (const part of ['You own a request the person typed until it is finished', 'Never ask the person to approve, confirm, pick or press anything; decide and dispatch',
     'Plan the whole job in the turn the person typed it', 'as stages (office_dispatch with `then`) where order matters',
     'send one corrected, self-contained follow-up to the same target under the same request id', 'what you sent and why',
-    "at most 4 such follow-ups per request, within 2 hours of the person's prompt", 'in later turns the app allows only a few follow-ups', 'never into a project that runs with Skip permissions (refused: skip-permissions)',
+    'it keeps their authority until you close it with office_summary (at most 24 hours)', 'wait in the order queue (status queued, reason order-queue)', 'never go into a project that runs with Skip permissions (refused: skip-permissions)',
     'A refused dispatch is not retried: finish what can be finished and name it in the final answer',
     'Come back only with the finished result or a real blocker', 'credentials', 'an outward-facing or destructive step', "a decision that is the person's",
     "a mail member's desk waiting for approval", 'a task on another device waiting there', 'in one message at the end',
