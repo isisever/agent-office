@@ -2936,3 +2936,55 @@ type VoiceSettings = { enabled: boolean, language: 'auto' | 'tr' | 'en', model: 
   choice, permission rule, binary path, down-sampler, PCM16, talk key, text insertion; `createVoice` with a fake
   whisper-server: one recording, chunk cap, cancel, reuse, sha check once, idle stop, stop during start, port retry,
   foreign answers, binary states, a bad model; `copyBinDir` with library symlinks; the wiring by source text).
+
+## Studio experience (v3.120)
+
+An optional second experience in the same window, like Claude Desktop's Code view. The Office (pixel office, the left
+panel, the tab strip) stays the default; Studio puts a session sidebar and the active session's chat in their place.
+
+```ts
+agentOffice.prefs.get()  // + experience: 'office' | 'studio'   (state.json `experience`; written once set, 'office' when unset or unknown)
+agentOffice.prefs.set({ experience })   // anything but the two values is ignored; a change moves idle tabs like the chat view (v3.108)
+agentOffice.studio.sessions()  // 'studio:sessions' → { experience, user: { name, email, account }, projects: StudioProject[] } | null
+agentOffice.studio.open(projectId, ref)   // 'studio:open', ref { n } | { sessionId } → { ok, projectId, n } | { ok: false, error: 'invalid' | 'gone' }
+type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permission' | 'done' | null,
+  running: { ptyId, n, title, isRunning: boolean, isAsleep: boolean }[],   // the main tab (n 1) first, then tabs by number; no shell tabs
+  recent: { sessionId, title, at }[] }                                     // newest first, at most 10 per project
+```
+
+- **The setting**: Settings → Experience (Office / Studio), or ⌘⇧E (Ctrl+Shift+E on Linux and Windows) in either
+  experience. Main keeps it in state.json (`experience`, only `'studio'` is read back, so a first start is the Office);
+  `src/studio.js` `normalizeExperience`. The renderer puts `body.studio` on and mounts `renderer/studio.js`.
+- **Layout**: `body.studio` hides `#sidebar`, `#office`, `#divider`, `#tabs`, `#tab-add` and the side panels; Studio's
+  `#studio-sidebar` comes first in `#body` and the main region is the Office's own `#terminal`, so the chat view
+  (`renderer/chat.js`, v3.80) is reused, not rendered twice. With no session (no project) the start screen shows
+  "What's next, <name>?": the display name of the active project's Claude account (`oauthAccount.displayName` in its
+  `.claude.json`, re-read only when it changes), none when there is no name. Studio always uses the Claude look; light
+  or dark follows the system (the person's look and mode stay saved for the Office). Switching back only removes the
+  class: panes, tabs and sessions are never closed by a switch.
+- **Chat**: `guiEligible` takes `studio`: in Studio a Claude Code tab runs as a GUI chat as with the chat view on (not
+  HQ, a shell, another engine, a tab switched to its terminal). On Windows GUI chat stays off, so Studio shows those
+  sessions' terminals in the main region.
+- **Sidebar**, top to bottom: + New session (⌘N: a new tab in the project's folder, `tabs:add` 'same'), search (⌘K:
+  filters the lists by title and project), pinned HQ (the HQ session), Reports and Routines (HQ's board in the main
+  region), a project picker with its Running and Recent sessions, paired machines (read-only, from `link:get`), and the
+  account at the bottom (name or e-mail, Settings, back to the Office). The list refreshes every 10 s and on every
+  project/tab change.
+- **Keys** (`src/studio-keys.mjs` `studioKey`, registered before the Office's keys): in Studio only, ⌘N, ⌘K and ⌘1…9
+  (the n-th running session of the shown project; Ctrl+Shift+… on Linux and Windows). In the Office only the toggle is
+  taken; ⌘1…9 still picks a project there.
+- **IPC**: `studio:sessions` and `studio:open` answer only the app's own window (`e.sender === win.webContents`, like
+  `voice:*`). `studio:open` takes a project id string that exists and either an integer `n` (the main tab or an existing
+  tab: nothing starts, the renderer selects it and a sleeping one wakes as when shown) or a `sessionId` that must be in
+  that project's Recent list: it opens as a new tab of the project and continues that conversation (`--resume`), and
+  leaves Recent. Anything else is `invalid`; a project or tab no longer there is `gone`.
+- **The 24 h rule**: in Studio, a session asleep for more than 24 hours closes by itself and is listed under Recent
+  (state.json `studioRecent`: `{ projectId, sessionId, title, dir, at }`, newest first, at most 50, projects that still
+  exist, written only when not empty). Only an extra Claude Code tab with a session to continue closes, never a
+  project's main tab, HQ, a desk, a worktree tab or a shell. Main checks every 5 minutes; the time asleep counts from
+  the first check that saw it asleep and starts again after an app restart.
+- **Remote**: a paired machine is only listed. A remote target stays send-as-task plus a read-only view (HQ, v3.46);
+  Studio adds no remote sessions.
+- **Tests**: `app/test/studio.test.cjs` (experience values and its persistence wiring, the recent list, the 24 h rule,
+  session listing and order, the account name, the keys, `guiEligible` with `studio`, the IPC's sender and argument
+  checks by source text).
