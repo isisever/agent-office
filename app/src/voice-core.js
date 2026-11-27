@@ -64,10 +64,38 @@ function toWav(chunks) {
   return Buffer.concat([wavHeader(pcm.length), pcm]);
 }
 
-/** whisper-server's argument list (no shell): local address only, the given port, the model. */
-function serverArgs({ modelPath, port, threads }) {
+/**
+ * whisper-server's argument list (no shell). `host` is a unix socket path ending in `.sock` (macOS, Linux: whisper-server
+ * binds AF_UNIX for such a host and ignores the port) or 127.0.0.1 with a port (Windows).
+ */
+function serverArgs({ modelPath, host = '127.0.0.1', port = 8080, threads }) {
+  const sock = host.endsWith('.sock');
+  if (!sock && host !== '127.0.0.1') throw new Error('host');
+  if (sock && !path.isAbsolute(host)) throw new Error('host');
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('port');
-  return ['-m', modelPath, '--host', '127.0.0.1', '--port', String(port), '-t', String(Math.max(1, Math.min(8, threads | 0 || 4))), '-nt'];
+  return ['-m', modelPath, '--host', host, '--port', String(port), '-t', String(Math.max(1, Math.min(8, threads | 0 || 4))), '-nt'];
+}
+
+/** A unix socket path must fit sockaddr_un (104 bytes on macOS, 108 on Linux; with room for the NUL). */
+const SOCKET_PATH_MAX = 100;
+
+/** Did whisper-server's output say it could not bind (the only start failure worth another try)? */
+const bindFailed = (log) => /couldn't bind to (server|unix) socket/.test(String(log || ''));
+
+/** A multipart/form-data body (fields, then one file) for http.request. */
+function multipartBody(fields, file) {
+  const boundary = `----agentoffice${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+  const parts = [];
+  for (const [k, v] of Object.entries(fields)) {
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+  }
+  if (file) {
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.field}"; filename="${file.name}"\r\nContent-Type: ${file.type}\r\n\r\n`));
+    parts.push(Buffer.from(file.data));
+    parts.push(Buffer.from('\r\n'));
+  }
+  parts.push(Buffer.from(`--${boundary}--\r\n`));
+  return { body: Buffer.concat(parts), contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
 /** The language sent with the first request: the setting itself ('auto' lets whisper detect it). */
@@ -134,6 +162,6 @@ function binaryPath({ packaged, resourcesPath, appDir, platform, arch }) {
 
 module.exports = {
   SAMPLE_RATE, MAX_PCM_BYTES, MAX_CHUNK_BYTES, IDLE_MS, HF_REVISION, MODELS, LANGUAGES, SHORTCUTS, DEFAULTS,
-  modelUrl, normalizeSettings, wavHeader, toWav, serverArgs, requestLanguage, retryLanguage, transcriptOf,
+  modelUrl, normalizeSettings, wavHeader, toWav, serverArgs, SOCKET_PATH_MAX, bindFailed, multipartBody, requestLanguage, retryLanguage, transcriptOf,
   sha256File, modelOk, mediaDecision, binaryPath,
 };

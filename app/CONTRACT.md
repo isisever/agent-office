@@ -2894,18 +2894,23 @@ type VoiceSettings = { enabled: boolean, language: 'auto' | 'tr' | 'en', model: 
   the text is shown in the status line with Copy. "Send after speaking" (off by default) then sends the composer
   through the composer's registered send only (the chat's submit, the HQ row's form); any other field is never sent.
 - **Speech to text** (`src/voice.js`, pure parts `src/voice-core.js`): `whisper-server` from Resources/whisper
-  (development: `app/vendor/whisper/<os>-<arch>/`), spawned without a shell with `-m <model> --host 127.0.0.1 --port
-  <free port> -t <n> -nt` on first use and killed after 5 minutes without a transcription (the timer is cleared while a
-  transcription runs and set again after it, success or failure), when voice is turned off, when the window closes and
-  at quit; a server still starting is killed too and its transcription ends `cancelled`. The binary is checked once
-  per run by running `whisper-server --help`: missing → `no-binary`, present but not running → `broken-binary`; any
-  other failure is `failed`. The port is ours only when our child says it bound it, or the port answers with
-  whisper-server's own page and our child is still running a moment later (someone else holding the port makes it
-  exit); otherwise another free port is tried (3 tries). Before each request the child must still be the running
-  server, and an answer without whisper's `text` is refused. The WAV is
-  built in memory and posted to `/inference` (`verbose_json`, temperature 0). Language: the setting; "Auto" lets
-  whisper detect it and, when it hears neither Turkish nor English, transcribes once more as the app's language
-  (Turkish when the app speaks Turkish, else English).
+  (development: `app/vendor/whisper/<os>-<arch>/`), spawned without a shell on first use. macOS and Linux: `--host
+  <socket>.sock` (whisper-server's unix-socket mode) in `userData/voice/run`, a folder made 0700 (a private 0700 temp
+  folder when that path would not fit a socket address), a fresh name per start; requests go over the socket
+  (`http.request({ socketPath })`), no TCP port is opened, and nobody else can sit at that path. Windows: `--host
+  127.0.0.1 --port <free port>`; there a port can be taken between choosing it and the bind, so the server counts only
+  when the port answers with whisper-server's own page and our child is still running a moment later (a child that
+  lost the bind exits). Either way it is ready when it answers with that page while our child runs. Only a failed bind
+  (`couldn't bind` in its output, TCP only) is retried on another port, up to 3 times; any other exit or a timeout
+  ends the start. A `stop()` while the port is chosen or the child starts cancels it (`cancelled`) and kills the
+  child. It is killed after 5 minutes without a transcription (the timer is cleared while a transcription runs and
+  set again after it, success or failure), when voice is turned off, when the window closes and at quit. The binary
+  is checked by running `whisper-server --help`: missing → `no-binary`, present but not running → `broken-binary`
+  (checked again on the next try; only `ok` is kept for the run); any other failure is `failed`. Before each request
+  the child must still be the running server, and an answer without whisper's `text` is refused. The WAV is built in
+  memory and posted to `/inference` (`verbose_json`, temperature 0). Language: the setting; "Auto" lets whisper
+  detect it and, when it hears neither Turkish nor English, transcribes once more as the app's language (Turkish
+  when the app speaks Turkish, else English).
 - **Models**: downloaded on first use (or "Download now" in Settings) into `userData/voice/models` from the official
   `ggerganov/whisper.cpp` Hugging Face repository at a pinned revision; size and sha256 are checked while streaming
   to a `.part` file, which takes its name only when both match (the `.part` is deleted on any failure). A model already

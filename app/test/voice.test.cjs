@@ -70,7 +70,12 @@ test('WAV header: 44 bytes, mono 16-bit 16 kHz, sizes', () => {
   assert.equal(wav.readInt16LE(46), -1);
 });
 
-test('serverArgs: 127.0.0.1 only, the port and model, no shell strings', () => {
+test('serverArgs: a .sock path or 127.0.0.1, the port and model, no shell strings', () => {
+  assert.deepEqual(VC.serverArgs({ modelPath: 'm', host: '/u/voice/run/ws-1.sock', threads: 2 }), ['-m', 'm', '--host', '/u/voice/run/ws-1.sock', '--port', '8080', '-t', '2', '-nt']);
+  assert.throws(() => VC.serverArgs({ modelPath: 'm', host: '0.0.0.0', port: 1, threads: 2 }));
+  assert.throws(() => VC.serverArgs({ modelPath: 'm', host: 'rel.sock', threads: 2 }));
+  assert.equal(VC.bindFailed("couldn't bind to server socket: hostname=127.0.0.1 port=1"), true);
+  assert.equal(VC.bindFailed('failed to load model'), false);
   const a = VC.serverArgs({ modelPath: '/m/ggml small.bin', port: 4567, threads: 32 });
   assert.deepEqual(a, ['-m', '/m/ggml small.bin', '--host', '127.0.0.1', '--port', '4567', '-t', '8', '-nt']);
   assert.equal(VC.serverArgs({ modelPath: 'x', port: 1, threads: 0 })[7], '4');
@@ -191,25 +196,29 @@ test('wiring: no shell, local-only server, audio never written, entitlements and
 
 // --- createVoice with a fake whisper-server (no binary, no network)
 const { EventEmitter } = require('node:events');
-const { createVoice, probeBinary } = require('../src/voice.js');
+const { createVoice, probeBinary, httpRequest } = require('../src/voice.js');
 
-function fakeProc({ listen = true, exitAtOnce = false } = {}) {
+/** listen: answers once started; exit: 'bind' (couldn't bind) | 'other' (any other failure) at once */
+function fakeProc({ listen = true, exit = null } = {}) {
   return (bin, args) => {
     const p = new EventEmitter();
-    p.args = args; p.exitCode = null; p.signalCode = null; p.killed = false;
+    p.args = args; p.exitCode = null; p.signalCode = null; p.killed = false; p.listening = false;
+    p.host = args[args.indexOf('--host') + 1]; p.port = args[args.indexOf('--port') + 1];
     p.stdout = new EventEmitter(); p.stderr = new EventEmitter();
     p.kill = () => { if (p.exitCode !== null) return; p.killed = true; p.exitCode = 143; setImmediate(() => p.emit('exit', 143)); };
-    const port = args[args.indexOf('--port') + 1];
     setImmediate(() => {
-      if (exitAtOnce) { p.exitCode = 1; p.stderr.emit('data', 'bind failed\n'); p.emit('exit', 1); return; }
-      if (listen) p.stderr.emit('data', `whisper server listening at http://127.0.0.1:${port}\n`);
+      if (exit) {
+        p.stderr.emit('data', exit === 'bind' ? `\ncouldn't bind to server socket: hostname=127.0.0.1 port=${p.port}\n` : 'error: failed to load model\n');
+        p.exitCode = 1; p.emit('exit', 1); return;
+      }
+      if (listen) p.listening = true;
     });
     return p;
   };
 }
 
 function rig(t, over = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-rig-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vr-'));
   t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); delete VC.MODELS.fake; });
   const data = Buffer.from('fake model bytes');
   VC.MODELS.fake = { file: 'fake.bin', size: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') };
@@ -218,23 +227,34 @@ function rig(t, over = {}) {
   const spawned = [];
   const spawnImpl = over.spawn || fakeProc();
   let port = 40000;
-  const calls = { modelOk: 0, infer: 0 };
+  const calls = { modelOk: 0, infer: 0, probe: 0, freePort: 0 };
+  const owner = (ep) => spawned.find((p) => (ep.socketPath ? p.host === ep.socketPath : p.port === String(ep.port)));
   const v = createVoice({
     userData: dir, binary: '/bin/whisper-server', emit: () => {}, uiLang: () => 'en',
     settings: () => ({ enabled: true, language: 'auto', model: 'fake', sendAfter: false, shortcut: 'off' }),
     deps: {
+      platform: over.platform || 'darwin',
       spawn: (b, a, o) => { const p = spawnImpl(b, a, o); spawned.push(p); return p; },
-      freePort: async () => ++port,
-      probeBinary: async () => over.binary || 'ok',
+      freePort: async () => { calls.freePort++; if (over.onFreePort) over.onFreePort(); return ++port; },
+      probeBinary: async () => { calls.probe++; return typeof over.binary === 'function' ? over.binary() : over.binary || 'ok'; },
       modelOk: async () => { calls.modelOk++; return over.modelOk ?? true; },
-      fetch: over.fetch || (async () => { calls.infer++; return { ok: true, json: async () => ({ text: ' hello there ', language: 'english' }) }; }),
-      idleMs: over.idleMs ?? 60000, startMs: over.startMs ?? 2000,
+      fetch: over.fetch,
+      request: async (ep, opts) => {
+        if (over.foreign && opts.method === 'GET') return { status: 200, body: Buffer.from(over.foreign) };
+        const p = owner(ep);
+        if (!p || !p.listening || p.exitCode !== null) throw new Error('ECONNREFUSED');
+        if (opts.method === 'GET') return { status: 200, body: Buffer.from('<title>Whisper.cpp Server</title>') };
+        calls.infer++;
+        return { status: 200, body: Buffer.from(JSON.stringify(over.answer || { text: ' hello there ', language: 'english' })) };
+      },
+      idleMs: over.idleMs ?? 60000, startMs: over.startMs ?? 3000, graceMs: 50,
     },
   });
   t.after(() => v.stop());
   return { v, dir, spawned, calls, data };
 }
 const second = () => Buffer.alloc(VC.SAMPLE_RATE * 2);   // 1 s of silence
+const say = async (v) => { const id = v.begin(); v.chunk(id, second()); return v.finish(id); };
 
 test('createVoice: one recording at a time, chunk size cap, cancel', async (t) => {
   const { v } = rig(t);
@@ -253,15 +273,17 @@ test('createVoice: one recording at a time, chunk size cap, cancel', async (t) =
   assert.deepEqual(await v.finish(c), { ok: true, text: '' });   // under 0.3 s
 });
 
-test('createVoice: transcribes through our own child, reuses it, sha checked once per run, idle timer after', async (t) => {
-  const { v, spawned, calls } = rig(t);
-  let id = v.begin(); v.chunk(id, second());
-  assert.deepEqual(await v.finish(id), { ok: true, text: 'hello there' });
+test('createVoice (macOS/Linux): a unix socket in a 0700 folder, no TCP port; reused; sha once; idle timer after', async (t) => {
+  const { v, spawned, calls, dir } = rig(t);
+  assert.deepEqual(await say(v), { ok: true, text: 'hello there' });
   assert.equal(spawned.length, 1);
-  assert.deepEqual(spawned[0].args.slice(2, 6), ['--host', '127.0.0.1', '--port', '40001']);
+  const host = spawned[0].host;
+  assert.match(host, /\.sock$/);
+  assert.equal(calls.freePort, 0);
+  assert.equal(fs.statSync(path.dirname(host)).mode & 0o777, 0o700);
+  assert.ok(host.startsWith(path.join(dir, 'voice', 'run')) || host.startsWith(os.tmpdir()));
   assert.equal(v._state().idle, true);
-  id = v.begin(); v.chunk(id, second());
-  assert.equal((await v.finish(id)).text, 'hello there');
+  assert.equal((await say(v)).text, 'hello there');
   assert.equal(spawned.length, 1);
   assert.equal(calls.modelOk, 1);
   v.stop();
@@ -271,8 +293,7 @@ test('createVoice: transcribes through our own child, reuses it, sha checked onc
 
 test('createVoice: the idle timer stops the server', async (t) => {
   const { v, spawned } = rig(t, { idleMs: 30 });
-  const id = v.begin(); v.chunk(id, second());
-  await v.finish(id);
+  await say(v);
   await new Promise((r) => setTimeout(r, 80));
   assert.equal(spawned[0].killed, true);
   assert.equal(v._state().server, null);
@@ -280,72 +301,104 @@ test('createVoice: the idle timer stops the server', async (t) => {
 
 test('createVoice: stop() during start kills the starting process; the transcription is cancelled', async (t) => {
   const { v, spawned } = rig(t, { spawn: fakeProc({ listen: false }) });
-  const id = v.begin(); v.chunk(id, second());
-  const done = v.finish(id);
+  const done = say(v);
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(spawned.length, 1);
   v.stop();
   const r = await done;
-  assert.equal(r.ok, false);
   assert.equal(r.error, 'cancelled');
   assert.equal(spawned[0].killed, true);
   assert.equal(v._state().startingProc, null);
 });
 
-test('createVoice: a port lost before the bind is retried on another port; a silent server times out', async (t) => {
+test('createVoice: stop() while the port is being found → nothing is spawned', async (t) => {
+  let vv = null;
+  const { v, spawned } = rig(t, { platform: 'win32', onFreePort: () => vv.stop() });
+  vv = v;
+  assert.equal((await say(v)).error, 'cancelled');
+  assert.equal(spawned.length, 0);
+});
+
+test('createVoice (Windows): a lost port is retried; another failure is not; a silent server times out', async (t) => {
   let n = 0;
-  const flaky = (b, a, o) => fakeProc({ exitAtOnce: n++ === 0 })(b, a, o);
-  const { v, spawned } = rig(t, { spawn: flaky });
-  const id = v.begin(); v.chunk(id, second());
-  assert.equal((await v.finish(id)).ok, true);
-  assert.equal(spawned.length, 2);
-  assert.notEqual(spawned[0].args[5], spawned[1].args[5]);
-  const slow = rig(t, { spawn: fakeProc({ listen: false }), startMs: 30 });
-  const id2 = slow.v.begin(); slow.v.chunk(id2, second());
-  assert.equal((await slow.v.finish(id2)).error, 'failed');
+  const flaky = (b, a, o) => fakeProc({ exit: n++ === 0 ? 'bind' : null })(b, a, o);
+  const w = rig(t, { platform: 'win32', spawn: flaky });
+  assert.equal((await say(w.v)).ok, true);
+  assert.equal(w.spawned.length, 2);
+  assert.deepEqual(w.spawned.map((p) => p.host), ['127.0.0.1', '127.0.0.1']);
+  assert.notEqual(w.spawned[0].port, w.spawned[1].port);
+  const other = rig(t, { platform: 'win32', spawn: fakeProc({ exit: 'other' }) });
+  assert.equal((await say(other.v)).error, 'failed');
+  assert.equal(other.spawned.length, 1);
+  const always = rig(t, { platform: 'win32', spawn: fakeProc({ exit: 'bind' }) });
+  assert.equal((await say(always.v)).error, 'failed');
+  assert.equal(always.spawned.length, 3);
+  const sockFail = rig(t, { spawn: fakeProc({ exit: 'bind' }) });
+  assert.equal((await say(sockFail.v)).error, 'failed');
+  assert.equal(sockFail.spawned.length, 1);   // a socket path is ours: no retry
+  const slow = rig(t, { spawn: fakeProc({ listen: false }), startMs: 60 });
+  assert.equal((await say(slow.v)).error, 'failed');
   assert.ok(slow.spawned.every((p) => p.killed));
 });
 
-test('createVoice: without the bound line, our child is accepted only by whisper-server\'s page and when it stays alive', async (t) => {
-  const page = (html) => async (url) => (String(url).endsWith('/inference')
-    ? { ok: true, json: async () => ({ text: 'ok' }) }
-    : { ok: true, text: async () => html });
-  const good = rig(t, { spawn: fakeProc({ listen: false }), fetch: page('<title>Whisper.cpp Server</title>') });
-  let id = good.v.begin(); good.v.chunk(id, second());
-  assert.deepEqual(await good.v.finish(id), { ok: true, text: 'ok' });
-  const foreign = rig(t, { spawn: fakeProc({ listen: false }), fetch: page('<title>nginx</title>'), startMs: 900 });
-  id = foreign.v.begin(); foreign.v.chunk(id, second());
-  assert.equal((await foreign.v.finish(id)).error, 'failed');
-  // the page answers, but our child exits (the port was someone else's): another port is tried
+test('createVoice (Windows): a foreign page, or our child dying after the answer, is not our server', async (t) => {
+  const foreign = rig(t, { platform: 'win32', spawn: fakeProc({ listen: false }), foreign: '<title>nginx</title>', startMs: 700 });
+  assert.equal((await say(foreign.v)).error, 'failed');
+  // someone else answers with the page, our child exits on its failed bind: another port
   let n = 0;
-  const dies = (b, a, o) => { const p = fakeProc({ listen: false })(b, a, o); if (n++ === 0) setTimeout(() => { p.exitCode = 1; p.emit('exit', 1); }, 350); return p; };
-  const raced = rig(t, { spawn: dies, fetch: page('<title>Whisper.cpp Server</title>') });
-  id = raced.v.begin(); raced.v.chunk(id, second());
-  assert.equal((await raced.v.finish(id)).ok, true);
+  const dies = (b, a, o) => fakeProc({ exit: n++ === 0 ? 'bind' : null })(b, a, o);
+  const raced = rig(t, { platform: 'win32', spawn: dies });
+  assert.equal((await say(raced.v)).ok, true);
   assert.equal(raced.spawned.length, 2);
 });
 
 test('createVoice: an answer that is not whisper-server\'s is refused', async (t) => {
-  const { v } = rig(t, { fetch: async () => ({ ok: true, json: async () => ({ hello: 'other server' }) }) });
-  const id = v.begin(); v.chunk(id, second());
-  assert.equal((await v.finish(id)).error, 'failed');
+  const { v } = rig(t, { answer: { hello: 'other server' } });
+  assert.equal((await say(v)).error, 'failed');
 });
 
-test('createVoice: binary states and a bad model file', async (t) => {
+test('createVoice: binary states (re-checked until ok) and a bad model file', async (t) => {
   for (const b of ['no-binary', 'broken-binary']) {
     const { v, spawned } = rig(t, { binary: b });
-    const id = v.begin(); v.chunk(id, second());
-    assert.equal((await v.finish(id)).error, b);
+    assert.equal((await say(v)).error, b);
     assert.equal(spawned.length, 0);
     assert.equal((await v.status()).binaryState, b);
   }
+  let state = 'broken-binary';
+  const fixed = rig(t, { binary: () => state });
+  assert.equal((await say(fixed.v)).error, 'broken-binary');
+  state = 'ok';
+  assert.equal((await say(fixed.v)).ok, true);   // probed again, not cached as broken
+  const probes = fixed.calls.probe;
+  await say(fixed.v);
+  await fixed.v.status();
+  assert.equal(fixed.calls.probe, probes);        // 'ok' is kept for the run
   // the model on disk fails its sha256: removed and downloaded again; a damaged download leaves no .part
   const bad = rig(t, { modelOk: false, fetch: async () => ({ ok: true, body: [Buffer.from('X'.repeat(16))] }) });
-  const id = bad.v.begin(); bad.v.chunk(id, second());
-  const r = await bad.v.finish(id);
-  assert.equal(r.error, 'checksum');
+  assert.equal((await say(bad.v)).error, 'checksum');
   assert.deepEqual(fs.readdirSync(path.join(bad.dir, 'voice', 'models')), []);
   assert.equal(bad.spawned.length, 0);
+});
+
+test('httpRequest over a unix socket, and multipartBody', { skip: process.platform === 'win32' }, async (t) => {
+  const http = require('node:http');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vs-'));
+  const sock = path.join(dir, 's.sock');
+  let got = null;
+  const srv = http.createServer((req, res) => {
+    const c = []; req.on('data', (d) => c.push(d));
+    req.on('end', () => { got = { method: req.method, url: req.url, type: req.headers['content-type'], body: Buffer.concat(c).toString() }; res.end('{"text":"hi"}'); });
+  });
+  await new Promise((r) => srv.listen(sock, r));
+  t.after(() => { srv.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const { body, contentType } = VC.multipartBody({ language: 'tr' }, { field: 'file', name: 'speech.wav', type: 'audio/wav', data: Buffer.from('RIFF') });
+  const res = await httpRequest({ socketPath: sock }, { method: 'POST', path: '/inference', body, headers: { 'Content-Type': contentType }, timeoutMs: 2000 });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.toString(), '{"text":"hi"}');
+  assert.equal(got.url, '/inference');
+  assert.match(got.type, /^multipart\/form-data; boundary=/);
+  assert.match(got.body, /name="language"\r\n\r\ntr\r\n/);
+  assert.match(got.body, /name="file"; filename="speech.wav"\r\nContent-Type: audio\/wav\r\n\r\nRIFF\r\n/);
 });
 
 test('probeBinary: missing → no-binary, present but not runnable → broken-binary', async () => {

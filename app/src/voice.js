@@ -1,12 +1,13 @@
 // Voice input (contract v3.119): the main side. Keeps the one active recording's PCM16 chunks in memory (never on
 // disk), downloads the model on first use (size and sha256 checked; the file on disk is checked again once per run),
-// runs whisper.cpp's whisper-server on 127.0.0.1 at a free port (spawned without a shell, stopped after IDLE_MS without
-// use) and turns a recording into text. Pure parts: src/voice-core.js.
-/* global AbortSignal, FormData */
+// runs whisper.cpp's whisper-server (spawned without a shell, stopped after IDLE_MS without use) and turns a recording
+// into text. macOS and Linux: the server listens on a unix socket in a 0700 folder only this user can enter, so nothing
+// else can sit where it should be. Windows: 127.0.0.1 at a free port. Pure parts: src/voice-core.js.
 'use strict';
 const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
@@ -31,8 +32,21 @@ function probeBinary(binary) {
   });
 }
 
-/** whisper-server's own line once it has bound the port: only our child prints it on its stderr. */
-const listeningRe = (port) => new RegExp(`listening at http://127\\.0\\.0\\.1:${port}\\b`);
+/** One HTTP request to the server: over its unix socket, or 127.0.0.1:port. → { status, body: Buffer } */
+function httpRequest(endpoint, { method, path: p, body, headers = {}, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const where = endpoint.socketPath ? { socketPath: endpoint.socketPath } : { host: '127.0.0.1', port: endpoint.port };
+    const req = http.request({ ...where, method, path: p, headers: body ? { ...headers, 'Content-Length': body.length } : headers }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks) }));
+      res.on('error', reject);
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+    req.end(body);
+  });
+}
 
 /**
  * @param {{ userData: string, binary: string, emit: (payload: object) => void, uiLang: () => string,
@@ -48,10 +62,12 @@ function createVoice({ userData, binary, emit, uiLang, settings, deps = {} }) {
   const idleMs = deps.idleMs ?? VC.IDLE_MS;
   const startMs = deps.startMs ?? 120000;
   const graceMs = deps.graceMs ?? 400;
+  const useSocket = (deps.platform || process.platform) !== 'win32';
+  const request = deps.request || httpRequest;
   const modelsDir = path.join(userData, 'voice', 'models');
   /** the one active recording */
   let rec = null;
-  /** @type {{ proc: any, port: number, model: string } | null} */
+  /** @type {{ proc: any, endpoint: { socketPath?: string, port?: number }, model: string } | null} */
   let server = null;
   /** the process being started, and a token a stop() invalidates */
   let startingProc = null;
@@ -61,14 +77,16 @@ function createVoice({ userData, binary, emit, uiLang, settings, deps = {} }) {
   /** @type {Map<string, Promise<string>>} */
   const downloads = new Map();
   const verified = new Set();   // models whose sha256 was checked this run
-  let binaryState = null;       // 'ok' | 'no-binary' | 'broken-binary', once per run
+  let binaryState = null;       // 'ok' | 'no-binary' | 'broken-binary'
   let idleTimer = null;
 
   const modelPath = (id) => path.join(modelsDir, VC.MODELS[id].file);
   const modelPresent = (id) => { try { return fs.statSync(modelPath(id)).size === VC.MODELS[id].size; } catch { return false; } };
   const alive = (p) => p && p.exitCode === null && p.signalCode == null && !p.killed;
+  /** 'ok' is remembered for the run; a missing or broken binary is checked again next time (it may be fixed). */
   async function binaryOk() {
-    if (!binaryState) binaryState = await probe(binary);
+    if (binaryState === 'ok') return 'ok';
+    binaryState = await probe(binary);
     return binaryState;
   }
 
@@ -147,14 +165,37 @@ function createVoice({ userData, binary, emit, uiLang, settings, deps = {} }) {
     idleTimer.unref?.();
   }
 
+  /** Removes the socket file (and the private temp folder, when one was used). */
+  function dropSocket(endpoint) {
+    if (!endpoint.socketPath) return;
+    fs.rmSync(endpoint.socketPath, { force: true });
+    if (path.basename(path.dirname(endpoint.socketPath)).startsWith('aov-')) fs.rmSync(path.dirname(endpoint.socketPath), { recursive: true, force: true });
+  }
+
+  /** The 0700 folder for the socket (userData/voice/run; a private temp folder when that path is too long). */
+  function socketPath() {
+    let dir = path.join(userData, 'voice', 'run');
+    const name = `ws-${crypto.randomBytes(6).toString('hex')}.sock`;
+    if (path.join(dir, name).length > VC.SOCKET_PATH_MAX) dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aov-'));
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    const file = path.join(dir, name);
+    fs.rmSync(file, { force: true });
+    return file;
+  }
+
   /**
-   * One try at a port. Resolves when OUR child has the port: it printed that it bound it (seen only when its output is
-   * not buffered), or the port answers with whisper-server's own page AND the child is still running a moment later
-   * (if someone else held the port, our child fails to bind and exits). Rejects when it exits or takes too long.
+   * One start. Resolves when the server answers with whisper-server's own page and our child is running.
+   * Unix socket: the socket is in a folder only this user can enter, named afresh for this child, so an answer there is
+   * our child's. TCP (Windows): a port can be taken between choosing it and the bind; then our child fails to bind and
+   * exits, so it must still be running a moment after the answer. Rejects with the child's output when it exits, or on
+   * a timeout; `bind` on the error says whether another port is worth a try.
    */
-  function launch(file, port, gen) {
+  function launch(file, endpoint, gen) {
     return new Promise((resolve, reject) => {
-      const proc = spawn(binary, VC.serverArgs({ modelPath: file, port, threads: os.cpus().length - 1 }), { shell: false, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      if (gen !== generation) { reject(new Error('cancelled')); return; }
+      const host = endpoint.socketPath || '127.0.0.1';
+      const proc = spawn(binary, VC.serverArgs({ modelPath: file, host, port: endpoint.port || 8080, threads: os.cpus().length - 1 }), { shell: false, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       startingProc = proc;
       let log = '';
       let done = false;
@@ -165,26 +206,24 @@ function createVoice({ userData, binary, emit, uiLang, settings, deps = {} }) {
         if (startingProc === proc) startingProc = null;
         if (err) { try { proc.kill(); } catch {} reject(err); } else resolve(proc);
       };
-      const timer = setTimeout(() => finish(new Error('server did not start')), startMs);
-      const onData = (d) => {
-        log = (log + d).slice(-4000);
-        if (listeningRe(port).test(log)) finish(gen === generation ? null : new Error('cancelled'));
-      };
+      const fail = (msg) => { const e = new Error(gen === generation ? msg : 'cancelled'); /** @type {any} */ (e).bind = VC.bindFailed(log); return e; };
+      const timer = setTimeout(() => finish(fail('server did not start')), startMs);
+      const onData = (d) => { log = (log + d).slice(-4000); };
       proc.stdout?.on('data', onData);
       proc.stderr?.on('data', onData);
+      proc.on('error', (e) => finish(fail(String(e?.message || e))));
+      proc.on('exit', () => finish(fail(`server exited: ${log.split('\n').slice(-3).join(' ')}`)));
       (async () => {
         while (!done) {
           await new Promise((r) => setTimeout(r, 300));
           if (done) return;
           let page = '';
-          try { const res = await doFetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) }); page = await res.text(); } catch { continue; }
+          try { page = (await request(endpoint, { method: 'GET', path: '/', timeoutMs: 1000 })).body.toString('utf8'); } catch { continue; }
           if (!/Whisper\.cpp Server/.test(page)) continue;
-          await new Promise((r) => setTimeout(r, graceMs));
+          if (!endpoint.socketPath) await new Promise((r) => setTimeout(r, graceMs));
           if (!done && alive(proc)) finish(gen === generation ? null : new Error('cancelled'));
         }
       })();
-      proc.on('error', (e) => finish(e));
-      proc.on('exit', () => finish(new Error(gen === generation ? `server exited: ${log.split('\n').slice(-3).join(' ')}` : 'cancelled')));
     });
   }
 
@@ -193,41 +232,40 @@ function createVoice({ userData, binary, emit, uiLang, settings, deps = {} }) {
     if (starting) return starting;
     starting = (async () => {
       if (server) { try { server.proc.kill(); } catch {} server = null; }
+      const gen = generation;
       const b = await binaryOk();
       if (b !== 'ok') throw new Error(b);
-      const gen = generation;
       const file = await verifiedModel(id);
       if (gen !== generation) throw new Error('cancelled');
       emit({ phase: 'starting' });
-      let lastErr = null;
-      for (let attempt = 0; attempt < 3; attempt++) {   // a port taken between freePort and the bind: try another
-        const port = await getPort();
+      for (let attempt = 0; ; attempt++) {
+        const endpoint = useSocket ? { socketPath: socketPath() } : { port: await getPort() };
+        if (gen !== generation) throw new Error('cancelled');   // stop() while the port was being found
         try {
-          const proc = await launch(file, port, gen);
-          const s = { proc, port, model: id };
-          proc.on('exit', () => { if (server === s) server = null; });
+          const proc = await launch(file, endpoint, gen);
+          const s = { proc, endpoint, model: id };
+          proc.on('exit', () => { if (server === s) server = null; dropSocket(endpoint); });
           server = s;
           return s;
         } catch (e) {
-          lastErr = e;
+          dropSocket(endpoint);
           if (String(e?.message) === 'cancelled' || gen !== generation) throw new Error('cancelled');
+          // only a lost port is worth another one (3 tries); any other failure ends the start
+          if (useSocket || !e?.bind || attempt >= 2) throw e;
         }
       }
-      throw lastErr || new Error('server did not start');
     })();
     try { return await starting; } finally { starting = null; }
   }
 
   async function infer(s, wav, language) {
     if (!alive(s.proc) || server !== s) throw new Error('server gone');
-    const form = new FormData();
-    form.append('file', new Blob([wav], { type: 'audio/wav' }), 'speech.wav');
-    form.append('response_format', 'verbose_json');
-    form.append('temperature', '0');
-    form.append('language', language);
-    const res = await doFetch(`http://127.0.0.1:${s.port}/inference`, { method: 'POST', body: form, signal: AbortSignal.timeout(120000) });
-    if (!res.ok) throw new Error(`inference: HTTP ${res.status}`);
-    const json = await res.json();
+    const { body, contentType } = VC.multipartBody({ response_format: 'verbose_json', temperature: '0', language },
+      { field: 'file', name: 'speech.wav', type: 'audio/wav', data: wav });
+    const res = await request(s.endpoint, { method: 'POST', path: '/inference', body, headers: { 'Content-Type': contentType }, timeoutMs: 120000 });
+    if (res.status !== 200) throw new Error(`inference: HTTP ${res.status}`);
+    let json;
+    try { json = JSON.parse(res.body.toString('utf8')); } catch { json = null; }
     if (!json || typeof json !== 'object' || typeof json.text !== 'string') throw new Error('not whisper-server');
     return json;
   }
@@ -285,4 +323,4 @@ function createVoice({ userData, binary, emit, uiLang, settings, deps = {} }) {
   };
 }
 
-module.exports = { createVoice, freePort, probeBinary, listeningRe };
+module.exports = { createVoice, freePort, probeBinary, httpRequest };
