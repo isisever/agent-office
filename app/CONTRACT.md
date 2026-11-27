@@ -3687,6 +3687,12 @@ idle sleep. Economy mode bundles the cheaper choices behind one switch; budgets 
   through `hqDispatch`, so they wait the same way. On Raise, Ignore today or a budget change the held rows are marked
   `rejected` / `budget-released` and dispatched again. Remote targets are not gated here. The person's own typing
   (terminal, chat, Studio) never passes this gate.
+- The held tasks (`{ qid, args, at }` per project) are kept in `userData/budget-held.json` (`src/budget-held.js`,
+  `{ v: 1, held }`, written with `writeAtomic` after every change), so they survive a restart. Caps: 20 per project,
+  100 in all, 64 KB of args per task; a task pushed out by a cap closes its row `rejected` / `budget-cap`. The file is
+  read on first use; every budget state computed for the meter (`tokenBriefs`, at start and every 60 s) that is no
+  longer blocked releases the project's held tasks, which covers a new day or week as well as Raise, Ignore today and
+  a budget change. A held row removed or closed by hand meanwhile (no longer `queued` / `budget`) is not sent again.
 - UI: a thin meter (`.sb-budget`) under the Office project row's cost line, under each Studio sidebar project group
   (`.st-budget`), and next to the project name in the board's report grouped by project (`.bv-budget`); colours ok /
   warn / over; tooltip `sidebar.budgetMeter`. The "budget reached" banner (`renderer/budget-banner.js`) lists each

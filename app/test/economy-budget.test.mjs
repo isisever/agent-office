@@ -112,3 +112,61 @@ test('economy view: effects, meter and banners', async () => {
   assert.deepEqual(V.bannersOf(briefs).map((b) => b.id), ['a']);
   assert.deepEqual(V.bannersOf(briefs, new Set(['a'])), []);
 });
+
+// v3.133 the held budget tasks survive a restart (src/budget-held.js; main.js writes them to userData)
+const BH = require('../src/budget-held.js');
+const SF = require('../src/state-file.js');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+test('budget held: restored from disk after a restart and released once the budget allows', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-held-'));
+  const file = path.join(dir, 'budget-held.json');
+  try {
+    // first run: two tasks held for project a, one for b, written atomically
+    let held = BH.fromJson(SF.readState(file).raw);
+    assert.equal(held.size, 0);
+    held = BH.add(held, 'a', { qid: 'q1', args: { project: 'A', task: 'one' } }, 1).held;
+    held = BH.add(held, 'a', { qid: 'q2', args: { project: 'A', task: 'two' } }, 2).held;
+    held = BH.add(held, 'b', { qid: 'q3', args: { project: 'B', task: 'three' } }, 3).held;
+    SF.writeAtomic(file, JSON.stringify(BH.toJson(held)));
+    assert.deepEqual(fs.readdirSync(dir), ['budget-held.json']);
+
+    // restart: the map comes back from the file as it was
+    const back = BH.fromJson(SF.readState(file).raw);
+    assert.deepEqual([...back.keys()].sort(), ['a', 'b']);
+    assert.deepEqual(back.get('a').map((h) => h.qid), ['q1', 'q2']);
+    assert.equal(back.get('a')[1].args.task, 'two');
+
+    // still blocked: nothing goes out; a new day (or Raise / Ignore today) no longer blocks: a's tasks are released
+    assert.equal(BH.releasable(back, 'a', { blocked: true }), false);
+    assert.equal(BH.releasable(back, 'a', { blocked: false, level: 'ok' }), true);
+    assert.equal(BH.releasable(back, 'c', { blocked: false }), false);
+    const { held: rest, taken } = BH.take(back, 'a');
+    assert.deepEqual(taken.map((h) => h.qid), ['q1', 'q2']);
+    assert.deepEqual([...rest.keys()], ['b']);
+
+    // a row removed from the board by hand meanwhile is not re-sent
+    const board = { tasks: [{ id: 'q1', status: 'queued', reason: 'budget' }, { id: 'q2', status: 'rejected', reason: 'removed' }] };
+    assert.deepEqual(taken.filter((h) => BH.stillHeld(board, h.qid)).map((h) => h.qid), ['q1']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('budget held: capped, malformed entries skipped', () => {
+  let held = new Map();
+  const dropped = [];
+  for (let i = 0; i < BH.MAX_PER_PROJECT + 3; i++) {
+    const r = BH.add(held, 'a', { qid: `q${i}`, args: { task: String(i) } }, i);
+    held = r.held; dropped.push(...r.dropped);
+  }
+  assert.equal(held.get('a').length, BH.MAX_PER_PROJECT);
+  assert.deepEqual(dropped.map((d) => d.qid), ['q0', 'q1', 'q2']);
+  assert.equal(held.get('a')[0].qid, 'q3');
+  for (let p = 0; p < 10; p++) for (let i = 0; i < BH.MAX_PER_PROJECT; i++) held = BH.add(held, `p${p}`, { qid: `p${p}-${i}`, args: {} }, 1000 + p * 100 + i).held;
+  assert.equal([...held.values()].reduce((n, l) => n + l.length, 0), BH.MAX_TOTAL);
+  assert.equal(BH.add(new Map(), 'a', { qid: 'big', args: { task: 'x'.repeat(BH.MAX_ARGS_BYTES + 1) } }).dropped.length, 1);
+  const raw = { held: { a: [{ qid: 'ok', args: {} }, { qid: 5, args: {} }, { qid: 'noargs' }, null], b: 'x' } };
+  assert.deepEqual([...BH.fromJson(raw).entries()].map(([k, v]) => [k, v.map((h) => h.qid)]), [['a', ['ok']]]);
+  assert.equal(BH.fromJson(null).size, 0);
+});

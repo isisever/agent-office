@@ -30,6 +30,7 @@ const SC = require('./src/shared-config.js');
 const LEAN = require('./src/mcp-lean.js');
 const ECO = require('./src/economy.js');   // v3.133 economy mode
 const BG = require('./src/budget.js');     // v3.133 token budgets
+const BH = require('./src/budget-held.js'); // v3.133 tasks held for a budget, kept across restarts
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
 const ST = require('./src/staff.js');
@@ -1158,10 +1159,20 @@ async function tokenBriefs() {
 // shown (one per level, period and day), and the tasks held with the reason 'budget' (released on Raise / Ignore today)
 const budgetCache = new Map();
 const budgetNoticed = new Set();
-/** @type {Map<string, { qid: string, args: any }[]>} */
-const budgetHeld = new Map();
+// The held tasks live in userData/budget-held.json (src/budget-held.js), so the rows queued with the reason 'budget'
+// are released after a restart too: read lazily, written atomically after every change.
+const budgetHeldFile = () => path.join(app.getPath('userData'), 'budget-held.json');
+/** @type {Map<string, any[]> | null} */
+let budgetHeldMap = null;
+const budgetHeld = () => { if (!budgetHeldMap) budgetHeldMap = BH.fromJson(SF.readState(budgetHeldFile()).raw); return budgetHeldMap; };
+function saveBudgetHeld(/** @type {Map<string, any[]>} */ map) {
+  budgetHeldMap = map;
+  try { SF.writeAtomic(budgetHeldFile(), JSON.stringify(BH.toJson(map))); } catch (e) { console.error('budget held:', e.message); }
+}
 function budgetSeen(/** @type {any} */ p, /** @type {any} */ b) {
   budgetCache.set(p.id, b);
+  // a new day or week (or a budget changed elsewhere) no longer blocks: the tasks held for it go out now
+  if (BH.releasable(budgetHeld(), p.id, b)) budgetRelease(p.id);
   const key = BG.noticeKey(b, Date.now());
   if (!key || b.ignored || budgetNoticed.has(`${p.id}|${key}`)) return;
   budgetNoticed.add(`${p.id}|${key}`);
@@ -1171,10 +1182,11 @@ function budgetSeen(/** @type {any} */ p, /** @type {any} */ b) {
 const budgetBlocked = (/** @type {string} */ id) => budgetCache.get(id)?.blocked === true;
 /** Re-dispatch the tasks held for the project's budget once it no longer blocks. */
 function budgetRelease(/** @type {string} */ id) {
-  const held = budgetHeld.get(id) || [];
-  budgetHeld.delete(id);
+  const { held: rest, taken } = BH.take(budgetHeld(), id);
+  if (taken.length) saveBudgetHeld(rest);
   budgetCache.delete(id);
-  for (const h of held) {
+  for (const h of taken) {
+    if (!BH.stillHeld(loadHqBoard(), h.qid)) continue;   // removed or closed by hand meanwhile
     hqStatus(h.qid, 'rejected', 'budget-released');
     hqDispatch(h.args).catch((e) => console.error('budget release:', e.message));
   }
@@ -2628,7 +2640,9 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     const qid = `b${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
     const b = loadHqBoard();
     saveHqBoard(HQ.addTask(b, { id: qid, request, title: String(args.title || ''), task: HQ.redact(String(args.task || '')), status: 'queued', reason: 'budget', pub: 'self', machineName: selfName(), project: target.name }));
-    budgetHeld.set(target.id, [...(budgetHeld.get(target.id) || []), { qid, args }]);
+    const { held, dropped } = BH.add(budgetHeld(), target.id, { qid, args });
+    saveBudgetHeld(held);
+    for (const d of dropped) if (d.qid) hqStatus(d.qid, 'rejected', 'budget-cap');
     return { id: qid, status: 'queued', reason: 'budget', request };
   }
   // v3.83 team: a task for a staff member goes to the member's desk in that project. Before consent only the checks
