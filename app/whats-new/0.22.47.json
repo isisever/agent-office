@@ -31,6 +31,18 @@
         "en": "The board's Reports tab counts the work closed this week, last week, in 30 days or in your own range, by project, type or member, with the average time, tokens and cost.",
         "tr": "Panonun Raporlar sekmesi bu hafta, geçen hafta, son 30 günde ya da seçtiğiniz aralıkta kapanan işleri projeye, türe ya da üyeye göre sayıyor; ortalama süre, token ve maliyetle birlikte."
       }
+    },
+    {
+      "id": "economy-budgets",
+      "experience": "both",
+      "title": {
+        "en": "Economy mode and token budgets",
+        "tr": "Tasarruf modu ve token bütçeleri"
+      },
+      "body": {
+        "en": "The leaf next to Awake turns on economy mode: a 150K context, Sonnet agents, Savings Strict, no shared MCP servers and a longer idle sleep, in every project that does not override it. Each project can also get a daily or weekly budget in tokens or USD, with a thin meter in the sidebar and the board's report; at 100% HQ tasks and routines wait until you raise it or ignore it for today. Your own typing is never blocked.",
+        "tr": "Uyanık kal'ın yanındaki yaprak tasarruf modunu açar: kendi ayarı olmayan her projede 150K bağlam, Sonnet ajanlar, Tasarruf Sıkı, paylaşılan MCP sunucusu yok ve daha uzun boşta uyku. Her projeye ayrıca token ya da USD cinsinden günlük veya haftalık bütçe verebilirsiniz; kenar çubuğunda ve panonun raporunda ince bir gösterge çıkar. %100'de HQ görevleri ve rutinler, siz artırana ya da bugün için yok sayana kadar bekler. Kendi yazdıklarınız hiç engellenmez."
+      }
     }
   ]
 }
