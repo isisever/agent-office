@@ -466,6 +466,8 @@ function waitFields(w) {
   const tab = line(w.tab, 96).replace(/["`]/g, '');
   const ahead = w.pos > 1 ? ` ${w.pos - 1} earlier task(s) in that tab's queue go first.` : '';
   const blockedBy = w.state === 'busy' && WAIT_BLOCKS.includes(w.blockedBy) ? w.blockedBy : '';
+  const lock = w.waitsFor ? line(w.waitsFor, 96).replace(/["`]/g, '') : '';
+  if (lock && !blockedBy) return { waiting: w.state, waitsFor: lock, note: `Accepted. It waits for the "${lock}" tab: the project allows one tab at work at a time. It will be typed into the "${tab}" tab by itself once that tab is free; nothing for the person to type or fetch.${ahead}` };
   if (blockedBy) return { waiting: w.state, blockedBy, note: `Accepted. The "${tab}" tab ${WAIT_ASK[blockedBy]}. The app then types the task by itself; the person must not type or fetch the task.${ahead}` };
   return { waiting: w.state, note: `Accepted. It will be typed into the "${tab}" tab by itself ${WAIT_WHEN[w.state]}; nothing for the person to type or fetch.${ahead}` };
 }

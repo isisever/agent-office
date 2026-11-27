@@ -2268,7 +2268,8 @@ function hqWaits() {
     // v3.93 the pump's own view (linkTabState): a staff desk that waits on its project's lock reads 'busy', not 'ready'
     const ts = terms.has(w.project) ? linkTabState(w.project) : 'gone';
     const { state: st, blockedBy } = HQ.waitEntry(ts, asleep.has(w.project), attention.get(w.project) === 'permission', Boolean(activity.get(w.project)?.draft));
-    out[t.id] = { state: st, project: t.project, pos: w.pos, len: w.len, expiresAt: w.expiresAt, tab: t.staff ? `${t.project} · ${t.staff}` : t.project, ...(blockedBy ? { blockedBy } : {}) };
+    const waitsFor = t.staff ? deskLockOf(w.project) : '';   // v3.126 the board and HQ say which tab holds the lock
+    out[t.id] = { state: st, project: t.project, pos: w.pos, len: w.len, expiresAt: w.expiresAt, tab: t.staff ? `${t.project} · ${t.staff}` : t.project, ...(blockedBy ? { blockedBy } : {}), ...(waitsFor ? { waitsFor } : {}) };
   }
   // v3.48 a remote task: held in the outbox (machine offline), or why it waits there (task-status)
   const l = linkHost.link();
@@ -3260,11 +3261,26 @@ function linkTabState(projectId) {
   const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
   if (desk?.tab?.staffId) {
     const ts = tabStateOf(projectId);
-    const project = P.findProject(state, desk.project.id);
-    if (ts === 'ready' && project && ST.deskWaits(project, projectId, P.ptyIdsOf(project), (id) => terms.has(id) && (tabStateOf(id) === 'busy' || tabWorkRunning(id)))) return 'busy';
+    if (ts === 'ready' && deskLockOf(projectId)) return 'busy';
     return ts;
   }
   return P.findProject(state, projectId) ? tabStateOf(projectId) : 'gone';
+}
+/** A tab's name for people: '<project> · <member>' for a desk, else the project's name. */
+function tabLabel(id) {
+  const r = P.resolvePty(state, id);
+  if (!r) return String(id);
+  const m = r.tab?.staffId ? memberById(r.tab.staffId) : null;
+  return m ? `${r.project.name} · ${m.name}` : r.project.name;
+}
+/** v3.126 the project's lock for a desk (ST.deskWaitsFor: not in a parallel project): the name of the tab its HQ task
+ *  waits for, or ''. One rule for every path of the queue: typing, the first start and the restart with a prompt. */
+function deskLockOf(projectId) {
+  const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
+  if (!desk?.tab?.staffId) return '';
+  const project = P.findProject(state, desk.project.id);
+  const id = project ? ST.deskWaitsFor(project, projectId, P.ptyIdsOf(project), (x) => terms.has(x) && (tabStateOf(x) === 'busy' || tabWorkRunning(x))) : '';
+  return id ? tabLabel(id) : '';
 }
 /** A tab's state for typing from outside; resolves through resolvePty, so HQ ('hq') is known (v3.47 routines). */
 function tabStateOf(projectId) {
@@ -3330,6 +3346,7 @@ function startLink() {
     tabState: linkTabState,
     asleep: (id) => asleep.has(id), attentionOf: (id) => attention.get(id) || '',   // v3.48 task-status for a device's task
     hqDesk: (id) => hqDesks.has(String(id)),   // v3.126
+    deskLock: (id) => deskLockOf(String(id)),   // v3.126 the project's lock holds on the start and restart paths too
     startWith: startWithPrompt,   // v3.83 amendment: a tab that takes no typing yet gets the task as its first prompt
     type: typePrompt,
     answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices

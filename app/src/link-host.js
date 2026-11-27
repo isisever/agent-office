@@ -584,6 +584,8 @@ function setupLink(d) {
             c.reply('rejected', 'stopped-here');
             continue;
           }
+          // v3.126 the project's lock: a desk whose project has another tab at work is not started either (it waits)
+          if (c.revive && c.device.pub === SELF && d.deskLock?.(project)) break;
           if (c.revive && d.manage && mayRevive(c.device)) {
             // one budget per project, not per queued entry; the first try is at once (asleep) or after a short settle (stopped), see v3.104
             let b = reviveBudget.get(project);

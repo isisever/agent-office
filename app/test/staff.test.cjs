@@ -222,7 +222,8 @@ test('main.js: HQ dispatch to staff â€” checks, the desk, the lock, the memberâ€
   const fn = (name) => src.slice(src.indexOf(`function ${name}(`), src.indexOf('\n}\n', src.indexOf(`function ${name}(`)));
   const hs = fn('hqStaffDesk');
   for (const r of ['staff-local-only', 'no-team', 'unknown-staff', 'staff-not-allowed']) assert.ok(hs.includes(`'${r}'`), r);
-  assert.match(fn('linkTabState'), /ST\.deskWaits\(/);
+  assert.match(fn('linkTabState'), /deskLockOf\(projectId\)/);
+  assert.match(fn('deskLockOf'), /ST\.deskWaitsFor\(/);
   assert.match(fn('officeDispatch'), /linkHost\.dispatchLocal\(into,/);
   assert.match(src, /if \(roleFile\) env\.AGENT_OFFICE_ROLE = roleFile;/);
   assert.match(src, /if \(project\.hq && teamOn\(\)\) env\.AGENT_OFFICE_TEAM = '1';/);
@@ -548,4 +549,12 @@ test('v3.124 deskRestartNeeded: only what a running desk was started with', () =
   assert.equal(ST.deskRestartNeeded(m, { ...m, mail: [] }), true);
   assert.equal(ST.deskRestartNeeded(m, { ...m, projects: 'all' }), true);
   assert.equal(ST.deskRestartNeeded(m, { ...m, name: 'Ada L' }), true);
+});
+
+test('v3.126 deskWaitsFor: names the tab a desk waits for; parallel desks of HQ never wait on each other', () => {
+  const busy = new Set(['p1:3']);
+  assert.equal(ST.deskWaitsFor({}, 'p1:2', ['p1', 'p1:2', 'p1:3'], (id) => busy.has(id)), 'p1:3', 'another desk at work holds the lock');
+  assert.equal(ST.deskWaitsFor({ parallel: true }, 'p1:2', ['p1', 'p1:2', 'p1:3'], () => true), '', 'parallel: each desk has its own worktree');
+  assert.equal(ST.deskWaitsFor({}, 'p1:2', ['p1', 'p1:2'], () => false), '');
+  assert.equal(ST.deskWaits({}, 'p1:2', ['p1', 'p1:3'], (id) => busy.has(id)), true, 'deskWaits is deskWaitsFor as a boolean');
 });

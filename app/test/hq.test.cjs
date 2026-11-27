@@ -1631,3 +1631,14 @@ test('v3.126 wakes: a report releases the next stage at once; queueing pumps at 
   assert.match(lh, /fs\.watch\(rdir,/);
   assert.match(lh, /setInterval\(\(\) => \{ watchReports\(\); scanReports\(\); \}, REPORT_POLL_MS\)/, 'the poll stays as the fallback');
 });
+
+test('v3.126 waitFields: a desk waiting on its project lock names the tab it waits for', () => {
+  const f = HQ.waitFields({ state: 'busy', tab: 'acme · Ayşe', pos: 1, len: 1, waitsFor: 'acme · Mert' });
+  assert.equal(f.waiting, 'busy');
+  assert.equal(f.waitsFor, 'acme · Mert');
+  assert.match(f.note, /waits for the "acme · Mert" tab/);
+  const p = HQ.waitFields({ state: 'busy', tab: 'acme · Ayşe', pos: 1, len: 1, waitsFor: 'acme', blockedBy: 'permission' });
+  assert.equal(p.blockedBy, 'permission', 'what only the person can clear still comes first');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'link-host.js'), 'utf8');
+  assert.match(src, /c\.device\.pub === SELF && d\.deskLock\?\.\(project\)\) break;/, 'the first start respects the lock');
+});

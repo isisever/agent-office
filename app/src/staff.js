@@ -360,8 +360,13 @@ function appMadeWorktree(userData, projectId, tab) {
  * @param {{ parallel?: boolean, tabs?: any[] } } project @param {string} deskPty @param {string[]} ptyIds the project's ptys
  */
 function deskWaits(project, deskPty, ptyIds, busyOf) {
-  if (project?.parallel === true) return false;
-  return ptyIds.some((id) => id !== deskPty && busyOf(id));
+  return Boolean(deskWaitsFor(project, deskPty, ptyIds, busyOf));
+}
+/** v3.126 the pty id of the tab the desk waits for (the first busy one), or '' (no wait, or a parallel project: each
+ *  desk has its own worktree there, so HQ's desks never wait on each other or on the boss tab). */
+function deskWaitsFor(project, deskPty, ptyIds, busyOf) {
+  if (project?.parallel === true) return '';
+  return ptyIds.find((id) => id !== deskPty && busyOf(id)) || '';
 }
 
 /** The role file a desk's session reads (AGENT_OFFICE_ROLE, plugin hooks/staff.ts). Never a token or a path outside. */
@@ -405,5 +410,5 @@ function findMember(staff, key) {
 module.exports = {
   personalDraft, personalTarget, setPersonalDraft, takePersonalDraft, routePersonalSetting, applyPersonalDraft, NOT_ALLOWED_HINT,
   STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, deskRestartNeeded, removeMember,
-  dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, appMadeWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
+  dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, appMadeWorktree, deskWaits, deskWaitsFor, deskRoleFile, machineStaff, findMember,
 };
