@@ -1,0 +1,56 @@
+name: AgentOfficeRemote
+options:
+  bundleIdPrefix: com.thinkone.agentoffice
+  deploymentTarget:
+    iOS: "16.6"
+include:
+  - path: AgentOfficeRemote/addons/addons.yml
+    relativePaths: true
+packages:
+  BareKit:
+    url: https://github.com/holepunchto/bare-kit-swift
+    exactVersion: 2.4.3
+settings:
+  base:
+    DEVELOPMENT_TEAM: APLT36UD92
+targets:
+  AgentOfficeRemote:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.6"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thinkone.agentoffice.remote
+        PRODUCT_NAME: AgentOfficeRemote
+        INFOPLIST_KEY_CFBundleDisplayName: Agent Office Remote
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+    info:
+      path: AgentOfficeRemote/Info.plist
+      properties:
+        CFBundleDisplayName: Agent Office Remote
+        UILaunchScreen: {}
+        NSLocalNetworkUsageDescription: Finds your Agent Office desktop on the local network.
+    entitlements:
+      path: AgentOfficeRemote/AgentOfficeRemote.entitlements
+      properties:
+        com.apple.developer.kernel.extended-virtual-addressing: true
+    dependencies:
+      - package: BareKit
+        product: BareKit
+    sources:
+      - path: AgentOfficeRemote
+        excludes:
+          - addons
+          - app.bundle
+      - path: AgentOfficeRemote/app.bundle
+        type: file
+        buildPhase: resources
+        optional: true
+    scheme:
+      preActions:
+        - name: Link and pack the worklet
+          settingsTarget: AgentOfficeRemote
+          script: |
+            cd "${PROJECT_DIR}/core" && PATH="${PATH}:/opt/homebrew/bin:/usr/local/bin" npm run -s prebuild
