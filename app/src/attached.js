@@ -18,7 +18,9 @@ function norm(p) {
  */
 function sentPaths(text) {
   const out = [];
-  for (const m of String(text ?? '').matchAll(/(?:^|\s)@(?:"([^"\n]+)"|(\S+))/g)) {
+  // Quoted lines (a reply's "> " excerpt) are someone else's words: their mentions never count as attached.
+  const own = String(text ?? '').split('\n').filter((l) => !/^\s*>/.test(l)).join('\n');
+  for (const m of own.matchAll(/(?:^|\s)@(?:"([^"\n]+)"|(\S+))/g)) {
     const p = norm(m[1] || m[2] || '');
     if (p) out.push(p);
   }

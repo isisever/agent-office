@@ -700,6 +700,8 @@ test('v3.121 attached files: only paths the person attached in this tab open; ot
   // the @paths of a message the person sent (the chat's mention format); relative mentions and e-mail are not paths
   assert.deepEqual(ATT.sentPaths('look at @/u/a.txt and @"/u/My File.pdf"\n\n@src/x.js mail me@host.com @/u/b'), ['/u/a.txt', '/u/My File.pdf', '/u/b']);
   assert.deepEqual(ATT.sentPaths(''), []);
+  assert.deepEqual(ATT.sentPaths('> quoted @/u/theirs.html\n\nmine @/u/mine.txt'), ['/u/mine.txt']);   // a reply's quote is not attached
+
 
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const body = (start, n) => MAIN.slice(MAIN.indexOf(start), MAIN.indexOf(start) + n);

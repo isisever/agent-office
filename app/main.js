@@ -5001,6 +5001,7 @@ function dropTab(project, n) {
   killPty(id);
   asleep.delete(id);
   sizes.delete(id);
+  attachedFiles.forget(id);   // v3.121 a closed tab's attached paths go with it
   try { fs.rmSync(path.join(usageRoot(), project.accountId, `${usageKey(id)}.json`), { force: true }); } catch {}
   commit(P.removeTab(state, project.id, n));
 }
