@@ -1,5 +1,23 @@
 {
   "_name": "English",
+  "studio": {
+    "newSession": "New session",
+    "search": "Search",
+    "hq": "HQ",
+    "reports": "Reports",
+    "routines": "Routines",
+    "project": "Project",
+    "running": "Running",
+    "recent": "Recent",
+    "none": "Nothing here yet",
+    "machines": "Paired machines",
+    "online": "Online",
+    "offline": "Offline",
+    "settings": "Settings",
+    "toOffice": "Office",
+    "greeting": "What's next?",
+    "greetingName": "What's next, {name}?"
+  },
   "app": {
     "appTitle": "AGENT OFFICE",
     "appTitlePlain": "Agent Office",
@@ -41,6 +59,10 @@
     "asleep": " (asleep: starts when opened)"
   },
   "sidebar": {
+    "experience": "Experience",
+    "experienceTitle": "Office: the pixel office, projects and tabs. Studio: a Claude Code view with a session sidebar. ⌘⇧E (Ctrl+Shift+E) switches.",
+    "experienceOffice": "Office",
+    "experienceStudio": "Studio",
     "idle": "idle",
     "working": "{n} working",
     "delivered": "{n} delivered",

@@ -157,6 +157,11 @@ export function mountSidebar(el, on) {
   const reloadMcpBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setReloadMcp?.(e.target.checked) });
   const reloadMcpRow = h('label', { class: 'sb-botcolor sb-langrow' }, reloadMcpLabel, reloadMcpBox);
   // Claude Code tabs shown as a conversation, the terminal one click away (contract v3.80, chat.js)
+  // v3.120 the experience: the Office (default) or Studio, a Claude Code view in the same window (⌘⇧E switches too)
+  let experienceValue = 'office';
+  const experienceLabel = h('span', {});
+  const experienceSelect = h('select', { class: 'sb-acct sb-lang', onchange: (e) => on.setExperience?.(e.target.value) });
+  const experienceRow = h('label', { class: 'sb-botcolor sb-langrow' }, experienceLabel, experienceSelect);
   const chatViewLabel = h('span', {});
   const chatViewBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setChatView?.(e.target.checked) });
   const chatViewRow = h('label', { class: 'sb-botcolor sb-langrow' }, chatViewLabel, chatViewBox);
@@ -246,6 +251,10 @@ export function mountSidebar(el, on) {
     shareMcpRow.title = t('sidebar.shareMcpTitle');
     reloadMcpLabel.textContent = t('sidebar.reloadMcp');
     reloadMcpRow.title = t('sidebar.reloadMcpTitle');
+    experienceLabel.textContent = t('sidebar.experience');
+    experienceRow.title = t('sidebar.experienceTitle');
+    experienceSelect.replaceChildren(...['office', 'studio'].map((v) => h('option', { value: v }, t(v === 'studio' ? 'sidebar.experienceStudio' : 'sidebar.experienceOffice'))));
+    experienceSelect.value = experienceValue;
     chatViewLabel.textContent = t('sidebar.chatView');
     chatViewRow.title = t('sidebar.chatViewTitle');
     office3dLabel.textContent = t('sidebar.office3d');
@@ -1035,7 +1044,7 @@ export function mountSidebar(el, on) {
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, ...voiceSettingsRows(), langRow, lookRow, modeRow, office3dRow, chatViewRow, themeRow, botRow, skillsSection()],
+      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, ...voiceSettingsRows(), langRow, lookRow, modeRow, office3dRow, experienceRow, chatViewRow, themeRow, botRow, skillsSection()],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 
@@ -1470,6 +1479,7 @@ export function mountSidebar(el, on) {
     setReloadMcp(on) { reloadMcpBox.checked = on !== false; },
     /** "Chat view" setting (v3.80; off unless set). */
     setChatView(on) { chatViewBox.checked = on === true; },
+    setExperience(v) { experienceValue = v === 'studio' ? 'studio' : 'office'; experienceSelect.value = experienceValue; },
     /** v3.85 mail accounts ({ accounts, encryption }) and the outbox ({ drafts, pending }). */
     setMailAccounts(v) { mail?.setAccounts(v); },
     setMailOutbox(v) { mail?.setOutbox(v); },

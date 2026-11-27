@@ -1659,3 +1659,40 @@ select option.rt-off { color: #888; }
 #voice-hud > span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 body.voice-recording #voice-hud { border-color: var(--danger, #c0392b); }
 .voice-model-state { font-size: 11px; }
+
+/* ---- Studio experience (contract v3.120, renderer/studio.js) ----
+   body.studio hides the Office (scene, left panel, tab strip, side panels) and shows Studio's sidebar; the main region
+   is the Office's own #terminal, filling the window. Removing the class shows the Office exactly as it was. Studio
+   always uses the Claude look (app.js forces data-look="claude", light/dark from the system). */
+#studio-sidebar { display: none; }
+body.studio #sidebar, body.studio #office, body.studio #divider, body.studio #tabs, body.studio #tab-add,
+body.studio #agent-panel, body.studio #usage-panel, body.studio #machines-panel, body.studio #hq-board,
+body.studio #chat-switch { display: none !important; }
+body.studio #terminal { flex: 1 1 0; max-height: none; }
+body.studio #terminal #empty { display: none; }
+/* the HQ board (reports, routines) in place of the chat, opened from Studio's pinned entries */
+body.studio.studio-board #hq-board { display: block !important; flex: 1 1 0; overflow: auto; }
+body.studio.studio-board #terminal { display: none; }
+body.studio #studio-sidebar {
+  flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  overflow-y: auto; background: var(--status-bg); border: var(--line-w) solid var(--line); border-radius: var(--radius);
+  color: var(--text);
+}
+#studio-sidebar .st-new { text-align: left; padding: 6px 8px; font-weight: 600; }
+#studio-sidebar .st-search, #studio-sidebar .st-picker { width: 100%; box-sizing: border-box; padding: 4px 6px; font: inherit; }
+#studio-sidebar .st-pins { display: flex; flex-direction: column; }
+#studio-sidebar .st-head { margin-top: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.65; }
+#studio-sidebar .st-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--radius); cursor: pointer; }
+#studio-sidebar .st-row:hover, #studio-sidebar .st-row.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+#studio-sidebar .st-device { cursor: default; }
+#studio-sidebar .st-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#studio-sidebar .st-key, #studio-sidebar .st-email, #studio-sidebar .st-none { font-size: 11px; opacity: 0.6; }
+#studio-sidebar .st-machines { margin-top: auto; }
+#studio-sidebar .st-account { display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+#studio-sidebar .st-user { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+#studio-start {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  background: var(--bg); z-index: 2;
+}
+#studio-start[hidden] { display: none; }
+#studio-start .st-greeting { font-size: 24px; margin: 0; }

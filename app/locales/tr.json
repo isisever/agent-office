@@ -1,5 +1,23 @@
 {
   "_name": "Türkçe",
+  "studio": {
+    "newSession": "Yeni oturum",
+    "search": "Ara",
+    "hq": "HQ",
+    "reports": "Raporlar",
+    "routines": "Rutinler",
+    "project": "Proje",
+    "running": "Çalışan",
+    "recent": "Son",
+    "none": "Henüz bir şey yok",
+    "machines": "Eşlenmiş makineler",
+    "online": "Çevrimiçi",
+    "offline": "Çevrimdışı",
+    "settings": "Ayarlar",
+    "toOffice": "Ofis",
+    "greeting": "Sırada ne var?",
+    "greetingName": "Sırada ne var, {name}?"
+  },
   "app": {
     "appTitle": "AGENT OFİS",
     "appTitlePlain": "Agent Ofis",
@@ -41,6 +59,10 @@
     "asleep": " (uykuda: açınca başlar)"
   },
   "sidebar": {
+    "experience": "Deneyim",
+    "experienceTitle": "Ofis: piksel ofis, projeler ve sekmeler. Stüdyo: oturum kenar çubuklu bir Claude Code görünümü. ⌘⇧E (Ctrl+Shift+E) geçiş yapar.",
+    "experienceOffice": "Ofis",
+    "experienceStudio": "Stüdyo",
     "idle": "boşta",
     "working": "{n} çalışan",
     "delivered": "{n} teslim",
