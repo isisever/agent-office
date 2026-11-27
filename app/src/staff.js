@@ -360,8 +360,29 @@ function appMadeWorktree(userData, projectId, tab) {
  * @param {{ parallel?: boolean, tabs?: any[] } } project @param {string} deskPty @param {string[]} ptyIds the project's ptys
  */
 function deskWaits(project, deskPty, ptyIds, busyOf) {
-  if (project?.parallel === true) return false;
-  return ptyIds.some((id) => id !== deskPty && busyOf(id));
+  return Boolean(deskWaitsFor(project, deskPty, ptyIds, busyOf));
+}
+/** v3.126 the pty id of the tab the desk waits for (the first busy one), or '' (no wait, or a parallel project: each
+ *  desk has its own worktree there, so HQ's desks never wait on each other or on the boss tab). */
+function deskWaitsFor(project, deskPty, ptyIds, busyOf) {
+  if (project?.parallel === true) return '';
+  return ptyIds.find((id) => id !== deskPty && busyOf(id)) || '';
+}
+
+/**
+ * v3.126 a keyed lock: lock(key, fn) runs fn after every earlier run with the same key has ended (resolved or not) and
+ * returns its promise; runs with different keys go concurrently. Used so several HQ dispatches open their desks at the
+ * same time while two never race on the same desk or the same repository's worktrees.
+ */
+function createKeyedLock() {
+  const tails = new Map();
+  return (key, fn) => {
+    const run = (tails.get(key) || Promise.resolve()).then(() => fn());
+    const tail = run.then(() => {}, () => {});
+    tails.set(key, tail);
+    tail.then(() => { if (tails.get(key) === tail) tails.delete(key); });
+    return run;
+  };
 }
 
 /** The role file a desk's session reads (AGENT_OFFICE_ROLE, plugin hooks/staff.ts). Never a token or a path outside. */
@@ -405,5 +426,5 @@ function findMember(staff, key) {
 module.exports = {
   personalDraft, personalTarget, setPersonalDraft, takePersonalDraft, routePersonalSetting, applyPersonalDraft, NOT_ALLOWED_HINT,
   STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, deskRestartNeeded, removeMember,
-  dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, appMadeWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
+  dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, appMadeWorktree, deskWaits, deskWaitsFor, createKeyedLock, deskRoleFile, machineStaff, findMember,
 };

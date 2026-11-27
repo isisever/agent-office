@@ -438,6 +438,7 @@ function remoteHarness({ online = true, ask = true } = {}) {
       return { id, status: o.hold && !env.online ? 'held' : 'sent' };
     };
     const tabStateOf = () => 'ready'; const hqOnScreen = () => false; const inboxWaiting = () => false; const startPty = () => {}; const typePrompt = () => true; const hqRestarter = { tick: () => {} };
+    const hqChainSweep = () => {}; const hqDesks = new Set();   // v3.126 onOfficeReport sweeps the chain; hqDispatch marks desks
     const hqSettings = () => ({ enabled: true }); const hqWaits = () => ({});   // v3.96 hqDispatch reads the wait of a remote task
   `;
   env.link = link;

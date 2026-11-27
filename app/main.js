@@ -1903,6 +1903,9 @@ let linkHost = null;
 // v3.83 amendment: tabs started with a queued task as their first prompt (the pty object), so one is never restarted twice
 const stoppedHere = new Map();   // v3.99 tab id -> when its claude ended by itself (the person quit it in the tab; never an app or remote stop: those go through killPty)
 const startedWith = new Map();
+/** v3.126 desks HQ started (not running when its task was dispatched): one left 'starting' with no prompt is restarted
+ *  with the task at once, not after the queue's STARTING_MS (link-host startingAction). */
+const hqDesks = new Set();
 /** The queue's way into a tab that takes no typing: starts it (gone) or restarts it (running, but never had a prompt and
  *  the person is not typing in it) with `text` as its first prompt. Claude Code tabs of a project or desk only, never
  *  HQ; → false when refused (the queue keeps waiting). */
@@ -2120,6 +2123,7 @@ function onOfficeReport({ id, pub, report }) {
   rec.status = 'reported';
   saveDispatches();
   const done = hqOnReport(id, report);   // v3.46 board row, tasks/<id>/report.{json,md}; requests whose tasks all ended
+  hqChainSweep();   // v3.126 the next stage is released now, not at the next hqTick (≤ 5 s)
   // v3.47/v3.49 a routine's own project or remote run: HQ was not asked, no HQ inbox rows (also when the run already ended)
   if (rec.routine) { routinesOnDone(done); return; }
   const sid = bossSid(rec.tab);
@@ -2264,7 +2268,8 @@ function hqWaits() {
     // v3.93 the pump's own view (linkTabState): a staff desk that waits on its project's lock reads 'busy', not 'ready'
     const ts = terms.has(w.project) ? linkTabState(w.project) : 'gone';
     const { state: st, blockedBy } = HQ.waitEntry(ts, asleep.has(w.project), attention.get(w.project) === 'permission', Boolean(activity.get(w.project)?.draft));
-    out[t.id] = { state: st, project: t.project, pos: w.pos, len: w.len, expiresAt: w.expiresAt, tab: t.staff ? `${t.project} · ${t.staff}` : t.project, ...(blockedBy ? { blockedBy } : {}) };
+    const waitsFor = t.staff ? deskLockOf(w.project) : '';   // v3.126 the board and HQ say which tab holds the lock
+    out[t.id] = { state: st, project: t.project, pos: w.pos, len: w.len, expiresAt: w.expiresAt, tab: t.staff ? `${t.project} · ${t.staff}` : t.project, ...(blockedBy ? { blockedBy } : {}), ...(waitsFor ? { waitsFor } : {}) };
   }
   // v3.48 a remote task: held in the outbox (machine offline), or why it waits there (task-status)
   const l = linkHost.link();
@@ -2521,7 +2526,10 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   if (!remote) {
     const p = byName(state.projects, args.project);
     const startId = args.desk || p?.id;   // v3.83 a staff member's desk, else the project's boss tab
-    if (startId && !terms.has(startId)) projectOp('start', startId);   // a stopped or sleeping target starts first; pump waits for 'starting'
+    // v3.126 a desk is never started here: the queue starts it once with the task as its first prompt (no 'starting'
+    // spell, no restart). A desk HQ starts is marked, so a start without a prompt is restarted with it at once.
+    if (args.desk) { if (terms.has(args.desk)) hqDesks.delete(args.desk); else hqDesks.add(args.desk); }
+    if (startId && HQ.preStartTarget({ running: terms.has(startId), desk: Boolean(args.desk) })) projectOp('start', startId);   // a stopped or sleeping boss starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
     // review fix: a target of the person's own typed turn (main memory, hqMinter): later follow-ups may go back there
     if (p && !approved && consent === 'none' && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') hqMinter.addTarget(request, hqLocalKey(p, staffId));
@@ -3253,11 +3261,26 @@ function linkTabState(projectId) {
   const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
   if (desk?.tab?.staffId) {
     const ts = tabStateOf(projectId);
-    const project = P.findProject(state, desk.project.id);
-    if (ts === 'ready' && project && ST.deskWaits(project, projectId, P.ptyIdsOf(project), (id) => terms.has(id) && (tabStateOf(id) === 'busy' || tabWorkRunning(id)))) return 'busy';
+    if (ts === 'ready' && deskLockOf(projectId)) return 'busy';
     return ts;
   }
   return P.findProject(state, projectId) ? tabStateOf(projectId) : 'gone';
+}
+/** A tab's name for people: '<project> · <member>' for a desk, else the project's name. */
+function tabLabel(id) {
+  const r = P.resolvePty(state, id);
+  if (!r) return String(id);
+  const m = r.tab?.staffId ? memberById(r.tab.staffId) : null;
+  return m ? `${r.project.name} · ${m.name}` : r.project.name;
+}
+/** v3.126 the project's lock for a desk (ST.deskWaitsFor: not in a parallel project): the name of the tab its HQ task
+ *  waits for, or ''. One rule for every path of the queue: typing, the first start and the restart with a prompt. */
+function deskLockOf(projectId) {
+  const desk = String(projectId).includes(':') ? P.resolvePty(state, projectId) : null;
+  if (!desk?.tab?.staffId) return '';
+  const project = P.findProject(state, desk.project.id);
+  const id = project ? ST.deskWaitsFor(project, projectId, P.ptyIdsOf(project), (x) => terms.has(x) && (tabStateOf(x) === 'busy' || tabWorkRunning(x))) : '';
+  return id ? tabLabel(id) : '';
 }
 /** A tab's state for typing from outside; resolves through resolvePty, so HQ ('hq') is known (v3.47 routines). */
 function tabStateOf(projectId) {
@@ -3322,6 +3345,8 @@ function startLink() {
     },
     tabState: linkTabState,
     asleep: (id) => asleep.has(id), attentionOf: (id) => attention.get(id) || '',   // v3.48 task-status for a device's task
+    hqDesk: (id) => hqDesks.has(String(id)),   // v3.126
+    deskLock: (id) => deskLockOf(String(id)),   // v3.126 the project's lock holds on the start and restart paths too
     startWith: startWithPrompt,   // v3.83 amendment: a tab that takes no typing yet gets the task as its first prompt
     type: typePrompt,
     answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices
@@ -4495,7 +4520,13 @@ async function syncDeskRules(p, tab, m) {
  * Opens (and starts) a member's desk in a project: the existing one, or a new tab (a worktree of its own when the
  * project allows parallel work). → { ok, id } | { ok: false, error: 'unknown' | 'staff-not-allowed' | 'engine' | 'git' }
  */
-async function openDesk(projectId, staffId, { start = true } = {}) {
+// v3.126 desks open concurrently (several HQ dispatches at once); one desk, and one repository's `git worktree add`,
+// at a time (ST.createKeyedLock): two dispatches to the same member never make two tabs or race on its worktree
+const deskLock = ST.createKeyedLock();
+function openDesk(projectId, staffId, o = {}) {
+  return deskLock(`desk\0${projectId}\0${staffId}`, () => openDeskNow(projectId, staffId, o));
+}
+async function openDeskNow(projectId, staffId, { start = true } = {}) {
   const p = P.findProject(state, projectId);
   const m = memberById(staffId);
   if (!p || !m || p.hq) return { ok: false, error: 'unknown' };
@@ -4516,12 +4547,15 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
     const repo = await gitTop(p.dir);
     if (!repo) return { ok: false, error: 'git' };
     const wt = ST.deskWorktree(app.getPath('userData'), p.id, m.id);
-    if (!fs.existsSync(wt.root)) {
+    const made = await deskLock(`repo\0${repo}`, async () => {
+      if (fs.existsSync(wt.root)) return true;
       try { fs.mkdirSync(path.dirname(wt.root), { recursive: true }); } catch {}
       const has = (await git(['-C', repo, 'rev-parse', '--verify', '--quiet', `refs/heads/${wt.branch}`])).ok;
       const g = await git(['-C', repo, 'worktree', 'add', ...(has ? [wt.root, wt.branch] : ['-b', wt.branch, wt.root])]);
-      if (!g.ok) { console.error('desk worktree:', g.stderr); return { ok: false, error: 'git' }; }
-    }
+      if (!g.ok) console.error('desk worktree:', g.stderr);
+      return g.ok;
+    });
+    if (!made) return { ok: false, error: 'git' };
     let real = p.dir;
     try { real = fs.realpathSync(p.dir); } catch {}
     Object.assign(tab, { dir: P.worktreeDir(repo, wt.root, real), worktree: { root: wt.root, repo, branch: wt.branch } });

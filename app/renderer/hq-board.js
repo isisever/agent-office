@@ -264,7 +264,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     if (!w) return null;
     const min = Math.max(0, Math.ceil((w.expiresAt - Date.now()) / 60000));
     return el('div', { class: 'hq-task-wait' },
-      el('span', {}, [t(`hq.wait.${w.state}`, { project: w.project, machine: w.machine || '' }), w.len > 1 ? t('hq.wait.pos', { n: w.pos, len: w.len }) : '', t('hq.wait.expires', { min })].filter(Boolean).join(' · ')),
+      el('span', {}, [w.waitsFor ? t('hq.wait.lock', { tab: w.waitsFor }) : t(`hq.wait.${w.state}`, { project: w.project, machine: w.machine || '' }), w.len > 1 ? t('hq.wait.pos', { n: w.pos, len: w.len }) : '', t('hq.wait.expires', { min })].filter(Boolean).join(' · ')),
       w.cancel === false ? null : el('button', { class: 'hq-link', title: t('hq.wait.cancelTip'), onclick: async (e) => { e.stopPropagation(); const v = await api.hq.cancel(x.id); if (v) { view = v; render(); } } }, t('hq.wait.cancel')));
   }
   const RESUME_MS = 7 * 24 * 3600 * 1000;

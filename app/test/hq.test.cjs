@@ -1597,3 +1597,48 @@ test('v3.103 normalizeHq: the old settings migrate away; askBeforeDispatch kept 
   assert.deepEqual(s.hq, { accountId: 'work', enabled: true });
   assert.equal(P.normalizeState({ projects: [], hq: { askBeforeDispatch: true } }).hq.askBeforeDispatch, true);
 });
+
+test('v3.126 preStartTarget: a desk is never pre-started; a stopped boss is, a running target is not', () => {
+  assert.equal(HQ.preStartTarget({ running: false, desk: true }), false, 'the queue starts a desk with the task as its first prompt');
+  assert.equal(HQ.preStartTarget({ running: true, desk: true }), false);
+  assert.equal(HQ.preStartTarget({ running: false, desk: false }), true, 'a stopped or sleeping boss starts first');
+  assert.equal(HQ.preStartTarget({ running: true, desk: false }), false);
+});
+
+test('v3.126 startingAction: an HQ-started desk without a prompt restarts at once; other tabs wait STARTING_MS; a locked desk waits', () => {
+  const now = 1e6;
+  assert.equal(LH.startingAction({ since: now, now, hqDesk: true }), 'restart', 'no 20 s wait for a desk HQ started');
+  assert.equal(LH.startingAction({ since: now, now }), 'wait');
+  assert.equal(LH.startingAction({ since: now - LH.STARTING_MS + 1, now }), 'wait');
+  assert.equal(LH.startingAction({ since: now - LH.STARTING_MS, now }), 'restart', 'any other tab after STARTING_MS');
+  assert.equal(LH.startingAction({ since: now - 10 * LH.STARTING_MS, now, hqDesk: true, locked: true }), 'wait', 'the project lock holds on the restart path too');
+});
+
+test('v3.126 hqDispatch never pre-starts a desk; the queue knows HQ-started desks', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.doesNotMatch(src, /if \(startId && !terms\.has\(startId\)\) projectOp\('start', startId\)/);
+  assert.match(src, /HQ\.preStartTarget\(\{ running: terms\.has\(startId\), desk: Boolean\(args\.desk\) \}\)/);
+  assert.match(src, /hqDesk: \(id\) => hqDesks\.has\(String\(id\)\)/);
+});
+
+test('v3.126 wakes: a report releases the next stage at once; queueing pumps at once; reports are watched', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = src.slice(src.indexOf('function onOfficeReport('), src.indexOf('\n}\n', src.indexOf('function onOfficeReport(')));
+  assert.ok(body.indexOf('hqChainSweep();') > body.indexOf('hqOnReport(id, report)'), 'onOfficeReport sweeps the chain after the board row');
+  assert.ok(body.indexOf('hqChainSweep();') < body.indexOf('if (rec.routine)'), 'before any early return');
+  const lh = fs.readFileSync(path.join(__dirname, '..', 'src', 'link-host.js'), 'utf8');
+  assert.match(lh, /queue\.set\(project, q\);[\s\S]{0,300}?\n {4}pump\(\);/, 'a queued entry is pumped at once');
+  assert.match(lh, /fs\.watch\(rdir,/);
+  assert.match(lh, /setInterval\(\(\) => \{ watchReports\(\); scanReports\(\); \}, REPORT_POLL_MS\)/, 'the poll stays as the fallback');
+});
+
+test('v3.126 waitFields: a desk waiting on its project lock names the tab it waits for', () => {
+  const f = HQ.waitFields({ state: 'busy', tab: 'acme · Ayşe', pos: 1, len: 1, waitsFor: 'acme · Mert' });
+  assert.equal(f.waiting, 'busy');
+  assert.equal(f.waitsFor, 'acme · Mert');
+  assert.match(f.note, /waits for the "acme · Mert" tab/);
+  const p = HQ.waitFields({ state: 'busy', tab: 'acme · Ayşe', pos: 1, len: 1, waitsFor: 'acme', blockedBy: 'permission' });
+  assert.equal(p.blockedBy, 'permission', 'what only the person can clear still comes first');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'link-host.js'), 'utf8');
+  assert.match(src, /c\.device\.pub === SELF && d\.deskLock\?\.\(project\)\) break;/, 'the first start respects the lock');
+});

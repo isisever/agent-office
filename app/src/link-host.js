@@ -21,12 +21,22 @@ const RESETTABLE = new Set(['keys-decrypt', 'keys-format', 'keys-file']);   // v
 const SET_ASIDE = ['keys.bin', 'keys.bin.ao1', 'own.bin', 'own.bin.ao1', 'devices.json', 'keys.bin.tmp', 'own.bin.tmp'];
 const SELF = 'self';                    // v3.35 the device of a task dispatched to a project of this machine
 const REPORT_POLL_MS = 5000;
+const REPORT_DEBOUNCE_MS = 150;   // v3.126 a burst of writes in the reports dir is one scan
 const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/starts its gone boss at most this often
 const REVIVE_STALE_MS = 10 * 60 * 1000;  // a budget untouched this long starts over
 const REVIVE_GAP_MS = 60 * 1000;          // between the start tries of one budget (and the first one after the person's own stop, see pump)
 const REVIVE_SETTLE_MS = 3000;            // v3.104 a stopped (not asleep) tab may still be shutting down: its first start waits this long
 const PUMP_MS = 1500;
-const STARTING_MS = 20 * 1000;              // v3.83 amendment: a tab 'starting' this long gets HQ's task as its first prompt
+const STARTING_MS = 20 * 1000;
+/**
+ * v3.126 a tab that is 'starting' (no first prompt yet) while HQ's task waits for it → 'restart' (main restarts it with
+ * the task as its first prompt) or 'wait'. A desk HQ started itself restarts at once; any other tab after STARTING_MS.
+ * A desk that waits on its project's lock (`locked`) never restarts: the lock holds on every path.
+ */
+function startingAction({ since, now, hqDesk = false, locked = false }) {
+  if (locked) return 'wait';
+  return now - since >= (hqDesk ? 0 : STARTING_MS) ? 'restart' : 'wait';
+}              // v3.83 amendment: a tab 'starting' this long gets HQ's task as its first prompt
 const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks between gone-sightings = a new gone spell
 
 /**
@@ -574,6 +584,8 @@ function setupLink(d) {
             c.reply('rejected', 'stopped-here');
             continue;
           }
+          // v3.126 the project's lock: a desk whose project has another tab at work is not started either (it waits)
+          if (c.revive && c.device.pub === SELF && d.deskLock?.(project)) break;
           if (c.revive && d.manage && mayRevive(c.device)) {
             // one budget per project, not per queued entry; the first try is at once (asleep) or after a short settle (stopped), see v3.104
             let b = reviveBudget.get(project);
@@ -624,7 +636,7 @@ function setupLink(d) {
         // v3.99 never for another device's task: a tab the person here just opened is not restarted for it
         if (s === 'starting' && c.revive && c.device.pub === SELF && d.startWith) {
           if (!startingSince.has(project)) startingSince.set(project, now);
-          if (now - startingSince.get(project) >= STARTING_MS) {
+          if (startingAction({ since: startingSince.get(project), now, hqDesk: Boolean(d.hqDesk?.(project)), locked: Boolean(d.deskLock?.(project)) }) === 'restart') {
             let ok; try { ok = deliver(c, project, (text) => d.startWith(project, text)); } catch { ok = false; }
             startingSince.delete(project);
             if (ok) { q.shift(); break; }
@@ -833,7 +845,25 @@ function setupLink(d) {
       if (used || old || !report) fs.rmSync(f, { force: true });
     }
   }
-  const reportTimer = setInterval(scanReports, REPORT_POLL_MS);
+  // v3.126 a report is taken as soon as the plugin writes it (fs.watch on the reports dir, debounced); the poll stays
+  // as the fallback (a dir made later, a watch that errored or missed an event), and retries the watch each round
+  let reportWatch = null;
+  let reportKick = null;
+  function watchReports() {
+    const rdir = d.reportsDir;
+    if (reportWatch || !rdir) return;
+    try {
+      reportWatch = fs.watch(rdir, () => {
+        if (reportKick) return;
+        reportKick = setTimeout(() => { reportKick = null; scanReports(); }, REPORT_DEBOUNCE_MS);
+        reportKick.unref?.();
+      });
+      reportWatch.on('error', () => { try { reportWatch?.close(); } catch { /* gone */ } reportWatch = null; });
+      reportWatch.unref?.();
+    } catch { reportWatch = null; }   // no dir yet: the poll tries again
+  }
+  watchReports();
+  const reportTimer = setInterval(() => { watchReports(); scanReports(); }, REPORT_POLL_MS);
   reportTimer.unref?.();
 
   const ipc = (ch, fn) => d.ipcMain.handle(ch, async (_e, ...a) => { const l = start(); if (!l) return view(); await fn(l, ...a); return view(); });
@@ -934,7 +964,7 @@ function setupLink(d) {
     /** Paired offices a project can be handed to (online ones first); v3.121 never a phone. */
     devices() { const l = start(); return l ? C.offices(l.devices).map((x) => ({ id: x.pub, name: x.name, online: l.conns.has(x.pub) })) : []; },
     handOff, unknownFor, askAgain, keepHere,
-    destroy() { clearInterval(pumpTimer); clearInterval(reportTimer); clearInterval(sessTimer); relay?.destroy(); return link?.destroy(); },
+    destroy() { clearInterval(pumpTimer); clearInterval(reportTimer); clearTimeout(reportKick); try { reportWatch?.close(); } catch { /* gone */ } reportWatch = null; clearInterval(sessTimer); relay?.destroy(); return link?.destroy(); },
   };
 }
 
@@ -954,4 +984,4 @@ function taskOpenIn(queue, link, localInto, tab, now) {
   return false;
 }
 
-module.exports = { setupLink, loadTaskIds, saveTaskIds, ttlOf, remoteTaskOpen, taskOpenIn, LOCAL_OPEN_MS, QUEUE_TTL_MS };
+module.exports = { setupLink, startingAction, STARTING_MS, loadTaskIds, saveTaskIds, ttlOf, remoteTaskOpen, taskOpenIn, LOCAL_OPEN_MS, QUEUE_TTL_MS };

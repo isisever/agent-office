@@ -1644,7 +1644,8 @@
       "offline": "waiting — {machine} is offline; sent when it is back",
       "sending": "sending to {machine}…",
       "cancel": "Cancel",
-      "cancelTip": "Remove this task from the project's queue"
+      "cancelTip": "Remove this task from the project's queue",
+      "lock": "waits for {tab}"
     },
     "stage": {
       "waiting": "waits for #{id} to report",

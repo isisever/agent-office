@@ -222,11 +222,13 @@ test('main.js: HQ dispatch to staff â€” checks, the desk, the lock, the memberâ€
   const fn = (name) => src.slice(src.indexOf(`function ${name}(`), src.indexOf('\n}\n', src.indexOf(`function ${name}(`)));
   const hs = fn('hqStaffDesk');
   for (const r of ['staff-local-only', 'no-team', 'unknown-staff', 'staff-not-allowed']) assert.ok(hs.includes(`'${r}'`), r);
-  assert.match(fn('linkTabState'), /ST\.deskWaits\(/);
+  assert.match(fn('linkTabState'), /deskLockOf\(projectId\)/);
+  assert.match(fn('deskLockOf'), /ST\.deskWaitsFor\(/);
   assert.match(fn('officeDispatch'), /linkHost\.dispatchLocal\(into,/);
   assert.match(src, /if \(roleFile\) env\.AGENT_OFFICE_ROLE = roleFile;/);
   assert.match(src, /if \(project\.hq && teamOn\(\)\) env\.AGENT_OFFICE_TEAM = '1';/);
-  assert.match(fn('openDesk'), /ST\.deskWorktree\(app\.getPath\('userData'\)/);
+  assert.match(fn('openDeskNow'), /ST\.deskWorktree\(app\.getPath\('userData'\)/);
+  assert.match(fn('openDesk'), /deskLock\(`desk/);
 });
 
 test('v3.83 amendment: a personal workspace is its owner\'s alone; normalizeState keeps staffOwner', () => {
@@ -388,7 +390,7 @@ test('v3.83 review fix: only a folder the app made (or a real, empty one) is tru
   const tp = fn('trustPersonalDesk');
   assert.match(tp, /const r = P\.resolvePty\(state, id\);\n {2}if \(!r\?\.tab\?\.staffId \|\| !r\.project\.staffOwner \|\| r\.project\.appMade !== true \|\| r\.dir !== r\.project\.dir\) return;/);
   assert.match(tp, /PD\.trustFolder\(A\.accountOf\(state, r\.project\)\.configDir, app\.getPath\('home'\), r\.dir\)/);
-  const od = fn('openDesk');
+  const od = fn('openDeskNow');
   assert.equal(od.split('trustPersonalDesk(id);').length, 3, 'an existing desk and a new one');
   assert.ok(od.lastIndexOf('trustPersonalDesk(id);') < od.lastIndexOf('startPty(id)'), 'before the session starts');
 });
@@ -548,4 +550,29 @@ test('v3.124 deskRestartNeeded: only what a running desk was started with', () =
   assert.equal(ST.deskRestartNeeded(m, { ...m, mail: [] }), true);
   assert.equal(ST.deskRestartNeeded(m, { ...m, projects: 'all' }), true);
   assert.equal(ST.deskRestartNeeded(m, { ...m, name: 'Ada L' }), true);
+});
+
+test('v3.126 deskWaitsFor: names the tab a desk waits for; parallel desks of HQ never wait on each other', () => {
+  const busy = new Set(['p1:3']);
+  assert.equal(ST.deskWaitsFor({}, 'p1:2', ['p1', 'p1:2', 'p1:3'], (id) => busy.has(id)), 'p1:3', 'another desk at work holds the lock');
+  assert.equal(ST.deskWaitsFor({ parallel: true }, 'p1:2', ['p1', 'p1:2', 'p1:3'], () => true), '', 'parallel: each desk has its own worktree');
+  assert.equal(ST.deskWaitsFor({}, 'p1:2', ['p1', 'p1:2'], () => false), '');
+  assert.equal(ST.deskWaits({}, 'p1:2', ['p1', 'p1:3'], (id) => busy.has(id)), true, 'deskWaits is deskWaitsFor as a boolean');
+});
+
+test('v3.126 createKeyedLock: one run per key at a time, different keys concurrently, a failure does not block the key', async () => {
+  const lock = ST.createKeyedLock();
+  const log = [];
+  const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
+  const a = gate();
+  const r1 = lock('repo', async () => { log.push('a1'); await a.p; log.push('a1-end'); return 1; });
+  const r2 = lock('repo', async () => { log.push('a2'); return 2; });
+  const r3 = lock('other', async () => { log.push('b'); return 3; });
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(log, ['a1', 'b'], 'the same key waits; another key runs at once');
+  a.open();
+  assert.deepEqual(await Promise.all([r1, r2, r3]), [1, 2, 3]);
+  assert.deepEqual(log, ['a1', 'b', 'a1-end', 'a2']);
+  await assert.rejects(lock('k', async () => { throw new Error('git'); }));
+  assert.equal(await lock('k', async () => 'next'), 'next');
 });
