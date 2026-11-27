@@ -1294,6 +1294,9 @@
     "hqAskStages": "Müdür bu makinede {n} aşamalı görev vermek istiyor. Her aşama, ondan önceki tam rapor verince kendiliğinden başlar.",
     "hqAskStagesNote": "Her aşamanın tam metni Panoda (bekleyen kartlar); bekleyen bir aşamayı oradan iptal edebilirsin.",
     "hqRequestDone": "Müdür: bir istek bitti ({n} görev)",
+    "hqOrder_start": "Müdür: emriniz başladı",
+    "hqOrder_needs": "Müdür: emriniz sizi bekliyor",
+    "hqOrder_end": "Müdür: emriniz tamamlandı",
     "hqGaveUp": "Müdür 5 kez başlayamadı ve durdu. Yeniden denemek için Müdür'ü açın.",
     "routineDone": "Rutin: {name}",
     "routineAllGood": "Her şey yolunda",
@@ -1562,6 +1565,8 @@
       "new-unattended-target": "Gönderilmedi: bir devam görevi kendiliğinden onaylayan bir projeye yalnızca isteği oraya kendiniz gönderdiyseniz gidebilir"
     },
     "byInitiative": "Müdür bunu kendiliğinden gönderdi",
+    "orderQueued": "sırada ({n} önde)",
+    "autoContinued": "Müdür devam ettirdi",
     "openFolder": "Müdür klasörünü aç",
     "board": "Müdür panosu",
     "empty": "Henüz görev yok. Müdür'e bir istek yaz.",

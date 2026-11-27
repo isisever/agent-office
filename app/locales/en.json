@@ -1313,6 +1313,9 @@
     "hqAskStages": "HQ wants to give {n} staged tasks on this machine. Each stage starts by itself when the one before it has fully reported.",
     "hqAskStagesNote": "The full text of every stage is on the Board (waiting cards); you can cancel a waiting stage there.",
     "hqRequestDone": "HQ: a request finished ({n} tasks)",
+    "hqOrder_start": "HQ: your order started",
+    "hqOrder_needs": "HQ: your order needs you",
+    "hqOrder_end": "HQ: your order is finished",
     "hqGaveUp": "HQ stopped after failing to start 5 times. Open HQ to try again.",
     "routineDone": "Routine: {name}",
     "routineAllGood": "All good",
@@ -1590,6 +1593,8 @@
       "new-unattended-target": "Not sent: a follow-up may go into a project that approves by itself only if you sent the request there yourself"
     },
     "byInitiative": "HQ sent this on its own",
+    "orderQueued": "queued ({n} ahead)",
+    "autoContinued": "continued by HQ",
     "openFolder": "Open HQ folder",
     "board": "HQ board",
     "empty": "No tasks yet. Type a request into HQ.",

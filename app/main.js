@@ -61,6 +61,7 @@ const LH = require('./src/link-host.js');
 const LC = require('./src/link-core.js');
 const OM = require('./src/office-mcp.js');
 const HQ = require('./src/hq.js');
+const HO = require('./src/hq-order.js');
 const CH = require('./src/hq-chain.js');
 const DR = require('./src/desk-rules.js');
 const ROUT = require('./src/routines.js');
@@ -1870,7 +1871,7 @@ function noteInput(id, d) {
   if (w) w.input = FB.inputAfter(w.input, d, Date.now(), lastSid.get(id) || null);
 }
 function hqWriteTyped(id, d) {
-  if (HQ.submitsTyped(activity.get(id)?.draft, d)) hqMinter.mint();
+  if (HQ.submitsTyped(activity.get(id)?.draft, d)) hqMintTyped();
   const a = activity.get(id);
   if (a) { a.at = Date.now(); a.draft = Z.draftAfter(a.draft, d); if (GS.typesInput(d)) a.inputAt = a.at; }
   noteInput(id, d);
@@ -2229,6 +2230,71 @@ const hqMinter = HQ.createMinter();
 // review fix: waiting stage id → { digest of its stage.json record (CH.stageDigest), asked: the person accepted it in
 // the dialog }. Main memory only: after a restart a stage has no entry and gets the dialog at its release.
 const hqStages = new Map();
+// v3.130 orders (src/hq-order.js): the sealed store of open orders, accepted stage digests and the order queue. Opened
+// on first use (userData is known then); its open orders get their typed authority back in the minter.
+let hqOrderStore = null;
+function hqOrders() {
+  if (!hqOrderStore) {
+    hqOrderStore = HO.createOrderStore({ file: path.join(hqDir(), 'orders.json'), key: HO.orderKey(path.join(hqDir(), 'order-key.bin'), safeStorage) });
+    for (const o of hqOrderStore.open()) hqMinter.restoreOrder(o.id, o.at);
+  }
+  return hqOrderStore;
+}
+/** The person typed a request in HQ: its id is minted and recorded as an order. */
+function hqMintTyped() { const id = hqMinter.mint(); hqOrders().add(id); return id; }
+const hqOrderOpen = (request) => typeof request === 'string' && Boolean(request) && hqOrders().isOpen(request) && hqMinter.isOrder(request);
+/** One OS notice per order and kind ('start', 'needs', 'end'). */
+function hqOrderNotice(request, kind) {
+  if (kind !== 'end' && !hqOrderOpen(request)) return;
+  if (hqOrders().noticeOnce(request, kind)) notify(T(`main.hqOrder_${kind}`), '', null);
+}
+/** v3.130 a task of an open order over the caps or a full project queue waits in the order queue (FIFO, priority
+ *  first) instead of being refused. `id`/`seq`: a released item that met a full queue again keeps its row and place. */
+function hqOrderEnqueue(args, request, why, { typed = false, id = '', seq = undefined } = {}) {
+  const qid = id || `q${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
+  const plain = { machine: String(args.machine || ''), project: String(args.project || ''), title: String(args.title || ''), task: String(args.task || ''), request, ...(args.staff ? { staff: String(args.staff) } : {}) };
+  const q = hqOrders().enqueue({ id: qid, request, args: plain, typed, priority: Number(args.priority) || 0, seq });
+  if (!q.ok) return { status: 'rejected', reason: q.reason === 'order-queue-full' ? q.reason : why };
+  let b = loadHqBoard();
+  if (!b.tasks.some((t) => t.id === qid)) b = HQ.addTask(b, { id: qid, request, title: plain.title, task: HQ.redact(plain.task), status: 'queued', pub: isHere(plain.machine) ? 'self' : '', machineName: plain.machine || selfName(), project: plain.project, ...(plain.staff ? { staff: plain.staff } : {}) });
+  saveHqBoard({ ...b, tasks: b.tasks.map((t) => (t.id === qid ? { ...t, status: 'queued', reason: 'order-queue', orderQueued: true } : t)) });
+  hqOrderAhead();
+  return { id: qid, status: 'queued', reason: 'order-queue', waitingFor: why, ahead: Math.max(0, hqOrders().ahead(qid)), request };
+}
+/** The board rows of queued order tasks say how many go before them ("queued (n ahead)"). */
+function hqOrderAhead() {
+  const q = hqOrders();
+  const b = loadHqBoard();
+  let changed = false;
+  const tasks = b.tasks.map((t) => {
+    if (t.orderQueued !== true || HQ.TERMINAL.has(t.status)) return t;
+    const n = Math.max(0, q.ahead(t.id));
+    if (t.ahead === n) return t;
+    changed = true;
+    return { ...t, ahead: n };
+  });
+  if (changed) saveHqBoard({ ...b, tasks });
+}
+let hqOrderPumping = false;
+/** Every tick: queued order tasks go as slots free up. A row whose item is gone (store unreadable, order closed) ends. */
+async function hqOrderPump() {
+  if (hqOrderPumping) return;
+  hqOrderPumping = true;
+  try {
+    const q = hqOrders();
+    for (const t of loadHqBoard().tasks) if (t.orderQueued === true && !HQ.TERMINAL.has(t.status) && q.ahead(t.id) < 0) hqStatus(t.id, 'expired', 'order-queue-lost');
+    for (const x of q.queue()) if (!hqOrderOpen(x.request)) { q.remove(x.id); hqStatus(x.id, 'rejected', 'order-closed'); }
+    const tried = new Set();
+    for (let i = 0; i < 8; i++) {
+      const item = HO.nextRelease(q.queue(), (x) => !tried.has(x.id) && !HQ.capReason(loadHqBoard(), x.request));
+      if (!item) break;
+      tried.add(item.id);
+      /** @type {any} */ const r = await hqDispatch(item.args, { fromQueue: item, waitingId: item.id, excludeId: item.id });
+      if (r?.status === 'rejected') { q.remove(item.id); const cur = loadHqBoard().tasks.find((t) => t.id === item.id); if (cur && !HQ.TERMINAL.has(cur.status)) hqStatus(item.id, 'rejected', r.reason || 'failed'); }
+    }
+    hqOrderAhead();
+  } finally { hqOrderPumping = false; }
+}
 const hqGate = ROUT.createWriteGate({ holdMs: ENTER_DELAY_MS + 1000 });
 let hqLastKey = 0;       // v3.47 last keystroke in HQ's terminal (a routine waits 15 s after it)
 let shownTab = '';       // the tab the renderer shows (pty:wake / hq:open)
@@ -2303,6 +2369,7 @@ function hqStatus(id, status, reason) {
   const b = loadHqBoard();
   if (!b.tasks.some((t) => t.id === id)) return;
   const n = HQ.setStatus(b, id, status, reason);
+  if (status === 'needs-approval') hqOrderNotice(b.tasks.find((t) => t.id === id)?.request, 'needs');   // v3.130 once per order
   const { board, done } = HQ.finishRequests(n);
   saveHqBoard(board);
   hqRequestsDone(done);
@@ -2313,7 +2380,7 @@ function hqRequestsDone(all) {
   const sid = bossSid(HQ.HQ_ID);
   for (const r of done) {
     if (sid) inboxRow(sid, HQ.HQ_ID, { kind: 'request-done', request: r.id, n: r.n });
-    if (!win?.isFocused()) notify(T('main.hqRequestDone', { n: r.n }), '', null);   // one notice per request, not per task
+    if (!win?.isFocused() && !hqOrderOpen(r.id)) notify(T('main.hqRequestDone', { n: r.n }), '', null);   // v3.130 an open order says so once, at its end   // one notice per request, not per task
   }
 }
 /** A report for a board task: files under tasks/<id>/; → the requests that just finished (rows written by the caller). */
@@ -2342,7 +2409,15 @@ function hqSummary(args) {
   const b = loadHqBoard();
   saveHqBoard({ ...b, requests: b.requests.map((r) => (r.id === args.request ? { ...r, summary: `requests/${r.id}.md` } : r)) });
   routinesOnSummary(String(args.request), text);
+  hqOrderClose(String(args.request));
   return { ok: true, file: f };
+}
+/** v3.130 an order ends (office_summary, the person): its queued tasks are dropped, later turns follow today's rules. */
+function hqOrderClose(request) {
+  const open = hqOrderOpen(request);
+  for (const id of hqOrders().close(request)) hqStatus(id, 'rejected', 'order-closed');
+  hqMinter.closeOrder(request);
+  if (open) hqOrderNotice(request, 'end');
 }
 const isHere = (machine) => !machine || machine.toLowerCase() === selfName().toLowerCase() || /^(this|local|here)( machine)?$/i.test(machine);
 /** The consent dialog for one task. v3.103 shown only with `askBeforeDispatch` on, or for a dispatch without a request
@@ -2361,7 +2436,8 @@ function tagRoutineRec(id, rrun) {
 }
 /** v3.91 a task HQ sent on its own (no dialog): the person is told right then (the same notice a held card uses).
  *  v3.103 that is every dispatch made in a later turn of a request (not the turn the person typed). */
-function notifyInitiative(title, target) {
+function notifyInitiative(title, target, request = '') {
+  if (hqOrderOpen(request)) { hqOrderNotice(request, 'start'); return; }   // v3.130 one notice per order
   notify(T('main.hqInitiativeSent', { title: LC.cleanLine(String(title || ''), 80), target: LC.cleanLine(String(target || ''), 80) }), '', null);
 }
 /** v3.91 Skip permissions for HQ's initiative: the project's switch, or the target tab (the member's desk, else the
@@ -2414,7 +2490,8 @@ function hqRemoteTarget(key, machine, project) {
   return { machine: pub, projectId, remote: true, skip: HQ.remoteSkips(l.peerCatalog?.get(pub), projectId) };
 }
 /** v3.99 a task went to a paired machine without a dialog on this one: the person is told here, every time. */
-function notifyRemoteSent(project, machine) {
+function notifyRemoteSent(project, machine, request = '') {
+  if (hqOrderOpen(request)) { hqOrderNotice(request, 'start'); return; }   // v3.130 one notice per order
   notify(T('main.hqRemoteSent', { project: LC.cleanLine(String(project || ''), 80), machine: LC.cleanLine(String(machine || ''), 80) }), '', null);
 }
 /** HQ's office_dispatch: caps, consent, auto-start of a local target, 4 h queue wait, dispatcher-side pacing for devices. */
@@ -2423,7 +2500,7 @@ function notifyRemoteSent(project, machine) {
 // v3.91 consentGiven: an approved call whose consent is known (a first stage of a consented chain, a held card the
 // person allowed); its row is stamped `consented`
 // v3.99 noDialog: a stage for a paired machine that went without a dialog (the chain's rule decided): the person is told when it is sent
-async function hqDispatch(args, { approved = false, excludeId = '', waitingId = '', sentByInitiative = false, consentGiven = false, noDialog = false } = {}) {
+async function hqDispatch(args, { approved = false, excludeId = '', waitingId = '', sentByInitiative = false, consentGiven = false, noDialog = false, fromQueue = /** @type {any} */ (null) } = {}) {
   const capBoard = () => { const b = loadHqBoard(); return excludeId ? { ...b, tasks: b.tasks.filter((t) => t.id !== excludeId) } : b; };
   // only ids the minter issued; else the current one; else the one capped 'adhoc' bucket. An approved held task keeps
   // the request it was held under (v3.47: no re-resolve).
@@ -2431,6 +2508,9 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const request = approved ? String(args.request || HQ.ADHOC) : HQ.resolveRequest(hqMinter, typeof args.request === 'string' ? args.request : '', { ask });
   const board = capBoard();   // an approved held task does not count against itself
   const cap = HQ.capReason(board, request);
+  // v3.130 an open order: the excess waits in the order queue (a released item over the caps again stays where it is)
+  if (cap && fromQueue) return { id: fromQueue.id, status: 'queued', reason: 'order-queue', request };
+  if (cap && !approved && !ask && hqOrderOpen(request)) return hqOrderEnqueue(args, request, cap, { typed: hqMinter.isLive(request) });
   if (cap) return { status: 'rejected', reason: cap };
   // v3.83 amendment: a task for a staff member outside any project goes to the member's personal workspace. One
   // that does not exist yet is made only after the person's consent (below): `personal` is the member it is for.
@@ -2458,7 +2538,8 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     args = { ...args, staffName: c.staffName, ...(c.targetName ? { targetName: c.targetName } : {}) };
   }
   const noAsk = Boolean(rrun) && ROUT.routineNoAsk(routineById(rrun.routine), { remote, projectId: key ? key.id : target?.id || '', pub: key?.pub || '', ask });   // a project/remote routine: only its own target; v3.107 follows askBeforeDispatch
-  const consent = approved ? 'none' : HQ.consentFor({ ask, remote, request, minter: hqMinter, routineNoAsk: noAsk });
+  // v3.130 a queued item of the person's own typed turn keeps that turn's answer (the sealed store kept it)
+  const consent = approved || (fromQueue?.typed === true && !ask && hqOrderOpen(request)) ? 'none' : HQ.consentFor({ ask, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
   if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
   // v3.103 a dispatch in a later turn of a request the person typed (consent 'follow') needs no dialog and is not
@@ -2518,6 +2599,11 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   }
   const staffId = args.staff && teamOn() ? ST.findMember(state.staff, args.staff)?.id || '' : '';
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
+  if (fromQueue) {   // v3.130 leaves the order queue: its row counts toward the caps again
+    hqOrders().remove(fromQueue.id);
+    const b0 = loadHqBoard();
+    saveHqBoard({ ...b0, tasks: b0.tasks.map((t) => { if (t.id !== fromQueue.id) return t; const y = { ...t, reason: 'released' }; delete y.orderQueued; delete y.ahead; return y; }) });
+  }
   const row = (r, extra) => {
     if (waitingId) {
       if (!r.id || r.status === 'rejected') return hqStatus(waitingId, 'rejected', r.reason || 'failed');
@@ -2528,6 +2614,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     }
     if (!r.id || r.status === 'rejected') return;
     saveHqBoard(HQ.addTask(loadHqBoard(), { id: r.id, request, title: args.title, task, status: r.status, reason: r.reason, prompt: rrun ? rrun.name : '', ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), ...(byInitiative ? { byInitiative: true } : {}), ...(consented && !byInitiative ? { consented: true } : {}), ...extra }));   // v3.99 a paired machine's row is stamped too
+    hqOrderNotice(request, 'start');   // v3.130 one notice when an order starts
     const f = HQ.taskFile(hqDir(), r.id, 'brief.md');
     if (f) try { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); SF.writeAtomic(f, `# ${LC.cleanLine(args.title || '', 80)}\n\nProject: ${extra.project} (${extra.machineName})\n\n${task}\n`); } catch {}
   };
@@ -2539,12 +2626,16 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     if (args.desk) { if (terms.has(args.desk)) hqDesks.delete(args.desk); else hqDesks.add(args.desk); }
     if (startId && HQ.preStartTarget({ running: terms.has(startId), desk: Boolean(args.desk) })) projectOp('start', startId);   // a stopped or sleeping boss starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
+    // v3.130 the project's queue is full: an open order's task waits in the order queue instead of being refused
+    if (/** @type {any} */ (r).status === 'rejected' && /** @type {any} */ (r).reason === 'queue-full' && !approved && !ask && hqOrderOpen(request)) {
+      return hqOrderEnqueue(args, request, 'queue-full', fromQueue ? { id: fromQueue.id, typed: fromQueue.typed, seq: fromQueue.seq } : { typed: consent === 'none' });
+    }
     // review fix: a target of the person's own typed turn (main memory, hqMinter): later follow-ups may go back there
     if (p && !approved && consent === 'none' && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') hqMinter.addTarget(request, hqLocalKey(p, staffId));
     if (p) {
       row(r, { pub: 'self', machineName: selfName(), project: p.name, projectId: p.id, ...(args.staffName ? { staff: args.staffName, ...(staffId ? { staffId } : {}) } : {}) });
       // v3.91 no dialog was shown: the person is told at the moment it is sent
-      if (byInitiative && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') notifyInitiative(args.title, args.staffName ? `${args.staffName} @ ${p.name}` : p.name);
+      if (byInitiative && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') notifyInitiative(args.title, args.staffName ? `${args.staffName} @ ${p.name}` : p.name, request);
     } else if (waitingId) row(r, {});   // v3.79 a released stage whose project is gone: its row is refused
     // v3.47 a routine's own project run: its report finishes the run and writes no HQ inbox row
     tagRoutineRec(/** @type {any} */ (r).id, rrun);
@@ -2568,7 +2659,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   // v3.99 no dialog was shown here for this remote task (the paired-machines setting in a live typed turn, HQ's
   // initiative, or a chain's stage under the same rule): one notice on this machine when it is sent or kept for sending
   const quiet = noDialog || (!approved && (consent === 'none' || byInitiative));
-  const told = (r) => { if (quiet && r?.id && r.status !== 'rejected') notifyRemoteSent(pname, dv.name); };
+  const told = (r) => { if (quiet && r?.id && r.status !== 'rejected') notifyRemoteSent(pname, dv.name, request); };
   // v3.96 a task that waits says why (held in the outbox, paced, queued there, a prompt only the person there can answer)
   const remoteWait = (r) => HQ.remoteWaitFields({ machine: pub, machineName: dv.name, project: pname, status: r.status, reason: r.reason }, hqWaits()[r.id]);
   if (!online) {
@@ -2718,7 +2809,7 @@ async function hqDispatchStages(args, request, rrun) {
 function hqWaitRow(s, request, after) {
   const id = `w${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
   saveHqBoard(HQ.addTask(loadHqBoard(), { id, request, title: s.title, task: s.task, status: CH.WAITING, after, pub: s.pub, machineName: s.machineName, project: s.projectName, ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff, ...(s.staffId ? { staffId: s.staffId } : {}) } : {}), ...(s.byInitiative ? { byInitiative: true } : s.consented ? { consented: true } : {}) }));
-  if (s.byInitiative) notifyInitiative(s.title, s.staff ? `${s.staff} @ ${s.projectName}` : s.projectName);   // v3.91 no dialog was shown
+  if (s.byInitiative) notifyInitiative(s.title, s.staff ? `${s.staff} @ ${s.projectName}` : s.projectName, request);   // v3.91 no dialog was shown
   const f = HQ.taskFile(hqDir(), id, 'brief.md');
   if (f) try {
     fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
@@ -2726,6 +2817,7 @@ function hqWaitRow(s, request, after) {
     const rec = { machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}), ...(s.personalFor ? { personalStaff: s.personalFor.id } : {}), ...(s.remote && s.noDialog ? { noDialog: true } : {}) };
     SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify(rec));
     hqStages.set(id, { digest: CH.stageDigest(JSON.parse(JSON.stringify(rec))), asked: s.asked === true });   // compared at release
+    if (hqOrderOpen(request)) hqOrders().stage(id, CH.stageDigest(JSON.parse(JSON.stringify(rec))));   // v3.130 sealed: released after a restart without a dialog
   } catch (e) { console.error('hq stage:', e.message); }
   return id;
 }
@@ -2738,8 +2830,12 @@ async function hqReleaseStage({ id, after, resumed = false }) {
   const st = readJson(HQ.taskFile(hqDir(), id, 'stage.json'));
   if (!st || typeof st.task !== 'string' || !st.task) { hqStatus(id, 'rejected', 'stage-lost'); return; }
   // review fix: stage.json is a file a session can edit: its record must be the one accepted (digest kept in memory)
-  const known = hqStages.get(id);
+  let known = hqStages.get(id);
   hqStages.delete(id);
+  // v3.130 after a restart: an open order's stage whose record matches the sealed digest is known; a tampered or
+  // unknown one (or no OS key) gets today's dialog
+  if (!known && hqOrderOpen(t.request) && hqOrders().stageOk(id, CH.stageDigest(st))) known = { digest: CH.stageDigest(st), asked: false };
+  hqOrders().dropStage(id);
   if (known && known.digest !== CH.stageDigest(st)) { hqStatus(id, 'rejected', 'stage-changed'); hqChainSweep(); return; }
   // v3.83 fix: a stage for a member's personal workspace that did not exist at consent: checked now (the member is
   // still there, the team on) and made only after the follow-up rule and any dialog below, never before
@@ -2821,7 +2917,22 @@ function hqChainSweep() {
       const { board, done } = HQ.finishRequests(b);
       saveHqBoard(board);
       const sid = bossSid(HQ.HQ_ID);
-      if (sid) for (const x of block) inboxRow(sid, HQ.HQ_ID, { kind: 'stage-blocked', id: x.id, reason: x.reason });
+      for (const x of block) {
+        // v3.130 an open order continues one blocked stage on its own (with a note); a second block waits for the person
+        const t = loadHqBoard().tasks.find((y) => y.id === x.id);
+        if (t && stateWritable && HO.mayAutoContinue({ task: t, open: hqOrderOpen(t.request), used: hqOrders().autoUsed(t.request), ask: state.hq?.askBeforeDispatch === true })) {
+          const r = CH.resume(loadHqBoard(), x.id, { maxOpen: HQ.MAX_OPEN });
+          if (r.ok) {
+            hqOrders().takeAuto(t.request);
+            saveHqBoard({ ...r.board, tasks: r.board.tasks.map((y) => (y.id === x.id ? { ...y, autoContinued: true } : y)) });
+            if (sid) inboxRow(sid, HQ.HQ_ID, { kind: 'stage-blocked', id: x.id, reason: x.reason, autoContinued: true });
+            hqReleaseStage({ id: x.id, after: r.after, resumed: true }).catch((e) => console.error('hq stage:', e.message));
+            continue;
+          }
+        }
+        if (t) hqOrderNotice(t.request, 'needs');
+        if (sid) inboxRow(sid, HQ.HQ_ID, { kind: 'stage-blocked', id: x.id, reason: x.reason });
+      }
       hqRequestsDone(done);
     }
     for (const x of release) hqReleaseStage(x).catch((e) => console.error('hq stage:', e.message));
@@ -2840,7 +2951,9 @@ function hqTick() {
     hqWasRunning = running;
   }
   hqPacer.flush();
-  hqChainSweep();   // v3.79 stages whose previous stage ended: released (≤ 5 s after its report), blocked or expired
+  hqOrders();   // v3.130 open orders back in the minter before any stage is released
+  hqChainSweep();
+  hqOrderPump().catch((e) => console.error('hq orders:', e.message));   // v3.79 stages whose previous stage ended: released (≤ 5 s after its report), blocked or expired
   hqWaitsPush();
   const l = linkHost?.link();
   if (l) {
@@ -2895,7 +3008,8 @@ ipcMain.handle('hq:markRead', (_e, id) => { const b = loadHqBoard(); saveHqBoard
 ipcMain.handle('hq:cancel', (_e, id) => {
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return hqView();
   const t = loadHqBoard().tasks.find((x) => x.id === id);
-  if (t && t.status === CH.WAITING) hqStatus(id, 'rejected', 'cancelled');   // v3.79 a waiting stage: the stages after it are blocked
+  if (t && t.orderQueued === true && !HQ.TERMINAL.has(t.status)) { hqOrders().remove(id); hqStatus(id, 'rejected', 'cancelled'); }   // v3.130 waiting in the order queue
+  else if (t && t.status === CH.WAITING) hqStatus(id, 'rejected', 'cancelled');   // v3.79 a waiting stage: the stages after it are blocked
   else if (t && t.status === 'queued' && t.machine === 'self') linkHost?.cancel(id);   // its reply sets the card (hqStatus)
   else if (t && t.status === 'queued') { linkHost?.cancelRemote(id); hqMirrorRemote(); }   // v3.48 held here, or queued there (cap task-status)
   return hqView();
@@ -5424,7 +5538,7 @@ ipcMain.handle('projects:menu', (_e, id) => {
 ipcMain.on('pty:write', (_e, id, d) => {
   if (handoffLocked(id)) { lockedNotice(id); return; }
   if (P.isHqId(id)) { hqLastKey = Date.now(); if (hqGate.queue(d)) return; }   // v3.47 held during a routine prompt's paste→Enter
-  if (P.isHqId(id) && HQ.submitsTyped(activity.get(id)?.draft, d)) hqMinter.mint();   // v3.46 the person typed an HQ request
+  if (P.isHqId(id) && HQ.submitsTyped(activity.get(id)?.draft, d)) hqMintTyped();   // v3.46 the person typed an HQ request
   if (!terms.has(id)) wake(id);
   if (terms.get(id)?.gui) return;   // v3.108 a GUI chat tab has no terminal: keys from its hidden xterm are no draft
   const a = activity.get(id);
@@ -5664,7 +5778,7 @@ ipcMain.handle('chat:send', (_e, id, text, images) => {
   const why = CHAT.sendRefused({ text: body || (img.images.length ? 'image' : ''), running: terms.has(id), locked: handoffLocked(id), draft: !gui && Boolean(activity.get(id)?.draft), permission: !gui && attention.get(r.project.id) === 'permission' });
   if (why) { if (why === 'locked') lockedNotice(id); return why; }
   attachedFiles.add(id, ATT.sentPaths(body));   // v3.121 the @paths the person sent from this composer may open as chips
-  if (P.isHqId(id)) { hqLastKey = Date.now(); hqMinter.mint(); }
+  if (P.isHqId(id)) { hqLastKey = Date.now(); hqMintTyped(); }
   if (gui || !img.images.length) return typePrompt(id, body, { images: img.images }) ? 'ok' : 'not-running';
   // a terminal tab: each image goes to a file of the app's (0600) and in as @path, which Claude Code attaches
   const paths = saveChatImages(img.images);
