@@ -1417,6 +1417,23 @@ export function mountSidebar(el, on) {
   return {
     /** The general settings popup (v3.42); its ⚙ button sits in the title bar (app.js). */
     openSettings,
+    /** v3.120 Studio's ⌘K palette: a project's settings popup (the row's ⚙), by id; false when there is no such project. */
+    openProjectSettings(/** @type {string} */ id) {
+      const p = projects.find((/** @type {any} */ x) => x.id === id);
+      if (p) openProjectSettings(p);
+      return Boolean(p);
+    },
+    /** v3.120 the Settings popup's Skills section on its own (the same rows and calls). */
+    openSkills() {
+      openModal(t('sidebar.skills'), [skillsSection()], [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
+    },
+    /** v3.120 the Settings popup's voice rows on their own; false when voice is not available. */
+    openVoice() {
+      const rows = voiceSettingsRows();
+      if (!rows.length) return false;
+      openModal(t('studio.cmd.voice'), rows, [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
+      return true;
+    },
     /** Language setting, active language and languages: { setting: 'auto' | code, lang, languages: [{ code, name }] }. */
     setLanguage(li) {
       if (!li) return;

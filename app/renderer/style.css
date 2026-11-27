@@ -1679,7 +1679,7 @@ body.studio #studio-sidebar {
   color: var(--text);
 }
 #studio-sidebar .st-new { text-align: left; padding: 6px 8px; font-weight: 600; }
-#studio-sidebar .st-search, #studio-sidebar .st-picker { width: 100%; box-sizing: border-box; padding: 4px 6px; font: inherit; }
+#studio-sidebar .st-search { width: 100%; box-sizing: border-box; padding: 4px 6px; font: inherit; }
 #studio-sidebar .st-pins { display: flex; flex-direction: column; }
 #studio-sidebar .st-head { margin-top: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.65; }
 #studio-sidebar .st-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--radius); cursor: pointer; }
@@ -1690,6 +1690,43 @@ body.studio #studio-sidebar {
 #studio-sidebar .st-machines { margin-top: auto; }
 #studio-sidebar .st-account { display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
 #studio-sidebar .st-user { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+/* the project groups: every project, collapsible, with its account badge, Running and Recent sessions */
+#studio-sidebar .st-group { display: flex; flex-direction: column; margin-top: 2px; }
+#studio-sidebar .st-group-head { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: var(--radius); font-weight: 600; }
+#studio-sidebar .st-group-head.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+#studio-sidebar .st-group-head .st-project { cursor: pointer; }
+#studio-sidebar .st-caret, #studio-sidebar .st-add { background: none; border: 0; padding: 0 4px; color: inherit; cursor: pointer; opacity: 0.7; font: inherit; }
+#studio-sidebar .st-add { opacity: 0; }
+#studio-sidebar .st-group-head:hover .st-add, #studio-sidebar .st-add:focus-visible { opacity: 0.8; }
+#studio-sidebar .st-badge {
+  flex: 0 1 auto; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 400;
+  padding: 0 5px; border: 1px solid var(--line); border-radius: 8px; opacity: 0.75;
+}
+#studio-sidebar .st-session { padding-left: 22px; }
+#studio-sidebar .st-sub { padding-left: 22px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.5; margin-top: 2px; }
+#studio-sidebar .st-group.current .st-session.active { font-weight: 600; }
+/* ⌘K command palette */
+#studio-palette { position: fixed; inset: 0; z-index: 45; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; background: var(--overlay); }
+#studio-palette[hidden] { display: none; }
+#studio-palette .st-pal {
+  width: min(560px, calc(100vw - 32px)); max-height: 60vh; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--status-bg); color: var(--text); border: var(--line-w) solid var(--line); border-radius: var(--radius); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+#studio-palette .st-pal-input { margin: 8px; padding: 6px 8px; font: inherit; font-size: 14px; }
+#studio-palette .st-pal-list { overflow-y: auto; padding: 0 4px 6px; }
+#studio-palette .st-pal-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius); cursor: pointer; }
+#studio-palette .st-pal-row.active { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+#studio-palette .st-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#studio-palette .st-pal-kind, #studio-palette .st-none { font-size: 11px; opacity: 0.6; padding: 4px 8px; }
+/* an Office sidebar panel (team, accounts, MCP, devices, projects) shown on its own over Studio (studio.showPanel) */
+#studio-panel-back { position: fixed; inset: 0; z-index: 40; background: var(--overlay); }
+#studio-panel-back[hidden] { display: none; }
+body.studio.studio-panel #sidebar {
+  display: flex !important; flex-direction: column; position: fixed; z-index: 41; top: 48px; left: 50%; transform: translateX(-50%);
+  width: min(440px, calc(100vw - 32px)); max-width: none; max-height: calc(100vh - 96px); overflow-y: auto; padding: 8px;
+  background: var(--status-bg); border: var(--line-w) solid var(--line); border-radius: var(--radius);
+}
+body.studio.studio-panel #sidebar > :not(.studio-shown) { display: none !important; }
 #studio-start {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
   background: var(--bg); z-index: 2;

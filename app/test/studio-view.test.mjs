@@ -42,10 +42,12 @@ test('groups: the account label is passed through, missing is empty', () => {
   assert.deepEqual(studioGroups(projects).map((x) => x.account), ['Personal', 'Work', '']);
 });
 
-test('current project: the picked one, else the active one, else the first by name', () => {
-  assert.equal(currentProjectId(projects, 'c'), 'c');
-  assert.equal(currentProjectId(projects, 'gone'), 'b');
-  assert.equal(currentProjectId(projects.map((p) => ({ ...p, active: false }))), 'a');
+test('current project: the active one, else the last picked one, else the first by name', () => {
+  assert.equal(currentProjectId(projects, 'c'), 'b');
+  const noneActive = projects.map((p) => ({ ...p, active: false }));   // HQ is selected
+  assert.equal(currentProjectId(noneActive, 'c'), 'c');
+  assert.equal(currentProjectId(noneActive, 'gone'), 'a');
+  assert.equal(currentProjectId(noneActive), 'a');
   assert.equal(currentProjectId([]), '');
 });
 

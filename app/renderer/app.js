@@ -1108,7 +1108,7 @@ api.clipboard.onPaste?.(async () => {
 });
 
 // v3.120 Studio keys (src/studio-keys.mjs): ⌘⇧E (Ctrl+Shift+E) switches Office / Studio; in Studio only, ⌘N new
-// session, ⌘K search and ⌘1…9 its sessions (the Office's ⌘1…9 below stays as it is). Registered first, so it wins.
+// session, ⌘K the command palette and ⌘1…9 its sessions (the Office's ⌘1…9 below stays as it is). Registered first, so it wins.
 window.addEventListener('keydown', (e) => {
   const k = studioKey({ mac: isMac, meta: e.metaKey, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, code: e.code }, experience);
   if (!k || (k.type !== 'toggle' && !studio)) return;
@@ -1116,7 +1116,7 @@ window.addEventListener('keydown', (e) => {
   e.stopImmediatePropagation();
   if (k.type === 'toggle') setExperience(otherExperience(experience));
   else if (k.type === 'new') studio?.newSession();
-  else if (k.type === 'search') studio?.focusSearch();
+  else if (k.type === 'search') studio?.openPalette();   // ⌘K: the command palette (renderer/studio.js)
   else studio?.selectIndex(k.index);
 }, true);
 
@@ -1345,5 +1345,38 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   toggle: () => setExperience(otherExperience(experience)),
   activePty,
   hasSession: () => Boolean(activePty()),
+  commands: (projectId) => studioCommands(projectId),
 } });
+/**
+ * v3.120 Studio's ⌘K palette: every Office feature Studio has no button for. Each one calls the Office's own handler
+ * or shows the Office's own panel (studio.showPanel: the sidebar panel on its own over Studio), never a copy.
+ * @param {string} projectId the project Studio acts on (src/studio-view.mjs currentProjectId)
+ */
+function studioCommands(projectId) {
+  const p = projects.find((x) => x.id === projectId) || null;
+  const act = activeProject();
+  const n = act && act.id !== HQ_ROW.id ? tabOf(act) : MAIN_TAB;
+  const cmd = (id, run, when = true) => (when ? [{ id, label: t(`studio.cmd.${id}`), keywords: t(`studio.cmdKeys.${id}`), run }] : []);
+  const panel = (sel, fallback) => () => { if (!studio?.showPanel(sel)) fallback?.(); };
+  return [
+    ...cmd('team', panel('#sb-panel-team', () => sidebar?.openSettings())),   // team mode off: Settings has its switch
+    ...cmd('worktree', () => { leaveBoard(); addTab(p.id, 'worktree'); }, Boolean(p)),
+    ...cmd('newTab', () => { leaveBoard(); addTab(p.id); }, Boolean(p)),   // main's "+" menu: same folder, worktree, a desk, a shell
+    ...cmd('closeTab', () => closeTab(act.id, n), Boolean(act) && act.id !== HQ_ROW.id && n !== MAIN_TAB),
+    ...cmd('accounts', panel('.sb-accounts')),
+    ...cmd('projectAccount', () => sidebar?.openProjectSettings(p.id), Boolean(p)),
+    ...cmd('mcp', panel('#sb-panel-mcp')),
+    ...cmd('skills', () => sidebar?.openSkills()),
+    ...cmd('voice', () => { if (!sidebar?.openVoice()) sidebar?.openSettings(); }),
+    ...cmd('pair', panel('#sb-devices')),
+    ...cmd('remoteTask', () => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); }),   // HQ's board: send-as-task to any target
+    ...cmd('addProject', () => addProject()),
+    ...cmd('projectSettings', () => sidebar?.openProjectSettings(p.id), Boolean(p)),
+    ...cmd('openFolder', () => api.projects.openFolder?.(p.id).catch((e) => console.error(e)), Boolean(p)),
+    ...cmd('removeProject', () => removeProject(p), Boolean(p)),
+    ...cmd('projects', panel('#sb-panel-projects')),
+    ...cmd('settings', () => sidebar?.openSettings()),
+    ...cmd('office', () => setExperience('office')),
+  ];
+}
 studio?.setOn(studioOn);

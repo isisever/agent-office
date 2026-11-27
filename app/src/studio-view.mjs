@@ -32,12 +32,13 @@ export function studioGroups(projects, { query = '', currentId = '' } = {}) {
 }
 
 /**
- * The project ⌘1…9 and ⌘N act on: the one the person picked in the sidebar, else the active project, else the first.
+ * The project ⌘1…9 and ⌘N act on: the active project, else (HQ or nothing is active) the one the person last picked
+ * in the sidebar, else the first by name.
  * @param {any[]} projects @param {string} [picked]
  */
 export function currentProjectId(projects, picked = '') {
   const list = Array.isArray(projects) ? projects : [];
-  return (list.find((p) => p.id === picked) || list.find((p) => p.active) || list.slice().sort(byName)[0] || { id: '' }).id;
+  return (list.find((p) => p.active) || list.find((p) => p.id === picked) || list.slice().sort(byName)[0] || { id: '' }).id;
 }
 
 /**

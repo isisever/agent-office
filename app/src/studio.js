@@ -173,10 +173,10 @@ function tabTitle(project, tab, staff) {
  * What the Studio sidebar lists: per project, its running sessions (the main tab first, then the tabs by number; a
  * plain shell tab is no session) and its recent ones (newest first, at most RECENT_PER_PROJECT). Asleep sessions are
  * running ones that will start again when shown.
- * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[] }} o
+ * accountOf(project) → the label of the Claude account the project runs on (A.accountOf, the Office's account name);
+ * only the label is listed, never a token or a config folder.
+ * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[], accountOf?: (p: any) => unknown }} o
  */
-// accountOf(project) → the label of the Claude account the project runs on (A.accountOf, the Office's account name);
-// only the label is listed, never a token or a config folder.
 function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '' }) {
   const byId = new Map((status || []).map((s) => [s.id, s]));
   const rec = Array.isArray(recent) ? recent : [];
