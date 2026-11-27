@@ -3259,3 +3259,20 @@ chat:read gui += { modes: string[], autoApprove: boolean }   // the account's pi
   options (Off / While agents work / Always) as `menuitemradio`s (arrow keys, Esc closes) and drives the Office's
   keepAwake select, so it is the Settings value and handler. Active (not Off): accent colour and a filled cup;
   `keepAwakeView(options, value)` is pure and tested. The setting also stays in Settings → Sessions.
+
+### Team in Studio (v3.122)
+
+- With team mode on, Studio's sidebar has a TEAM section (`renderer/studio.js drawTeam`, pure parts in
+  `src/studio-team.mjs`): members grouped by department (`byDepartment`), each with an initials avatar, their role
+  (`roleOf`) and a live state from the desk states (`sidebar.teamData().desks`): `needs` when a desk session of theirs
+  is waiting for the person (Studio's session rows now carry the desk tab's `staffId`), else `working` when a desk is
+  busy, else `idle`. A click expands the member's open desks (an `off` desk is left out); a desk click opens and focuses
+  it through the Office's `openDesk` (the same path as the TEAM panel's desk chips). "+ Add member" opens the Office's
+  role wizard (`sidebar.addMember`), which goes on to the member editor.
+- A desk chat's header carries a chip with the member's name and role; its mode picker stays held by the desk rules
+  (v3.120).
+- The start screen has a Who? picker (shown when team mode is on and a member may work on the selected project):
+  Me (default) or such a member. `whoPlan(who, projectId, staff, projects)` gives `{ kind: 'session' }` (the existing
+  start plan) or `{ kind: 'desk', projectId, staffId }`: the Office's `openDesk(projectId, staffId)`, then the prompt
+  is sent to that desk's session (retried while its chat starts); on failure the prompt stays in the box.
+- Tests: `test/studio-team.test.mjs` (initials, state, grouping, Who? options and plan).

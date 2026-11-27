@@ -8,6 +8,7 @@
 import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
 import { icon } from './studio-icons.js';
 import { mountSettingsPage } from './studio-settings.js';
+import { teamGroups, whoOptions, whoPlan } from '../src/studio-team.mjs';
 import { hasText } from './i18n.js';
 import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText } from '../src/studio-ux.mjs';
 
@@ -36,7 +37,8 @@ function el(tag, props = {}, ...kids) {
  *     selectSession: (projectId: string, n: number) => void, newSession: (projectId: string) => void,
  *     selectProject: (projectId: string) => void, selectHq: () => void, openBoard: () => void,
  *     openOfficeSettings: () => void, sidebar: () => any, showPanel: (selector: string) => boolean,
- *     appInfo: () => { version: string | null, ready: string | null }, installUpdate: () => void, toggle: () => void, activePty: () => string | null, hasSession: () => boolean,
+ *     appInfo: () => { version: string | null, ready: string | null }, installUpdate: () => void, toggle: () => void,
+ *     openDesk: (projectId: string, staffId: string) => Promise<void>, startDesk: (projectId: string, staffId: string, text: string) => Promise<{ ok: boolean }>, activePty: () => string | null, hasSession: () => boolean,
  *     startSession: (projectId: string, plan: { tabMode: 'same' | 'worktree', settings: [string, string][], reuseN?: number }, text: string) => Promise<{ ok: boolean, n: number, failed?: { step: string, why: string, detail: string } }>,
  *     projectSettings: (projectId: string) => void, showAccounts: () => void, isMac: boolean,
  *     commands: (projectId: string) => StudioCommand[],
@@ -64,9 +66,12 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const pins = el('div', { class: 'st-pins' });
   const lists = el('div', { class: 'st-lists' });
   const machines = el('div', { class: 'st-machines' });
+  const teamEl = el('div', { class: 'st-team' });   // v3.122 the Team section (team mode on)
+  /** @type {Set<string>} */
+  const openMembers = new Set();
   const account = el('div', { class: 'st-account' });
   const searchBox = el('label', { class: 'st-searchbox' }, icon('search', 14), search);
-  const bar = el('aside', { id: 'studio-sidebar', hidden: true }, newBtn, searchBox, pins, lists, machines, account);
+  const bar = el('aside', { id: 'studio-sidebar', hidden: true }, newBtn, searchBox, pins, lists, teamEl, machines, account);
   const greeting = el('p', { class: 'st-greeting' });
   // v3.120 Studio UX start screen: a centered composer with the project, its account, branch or new worktree, model
   // and permission mode; sending starts the session with those choices (tabs:add, then chat:setting, then the prompt)
@@ -77,12 +82,13 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const startWtLabel = el('span', {});
   const startModel = /** @type {HTMLSelectElement} */ (el('select', { class: 'st-start-pick' }));
   const startMode = /** @type {HTMLSelectElement} */ (el('select', { class: 'st-start-pick' }));
+  const startWho = /** @type {HTMLSelectElement} */ (el('select', { class: 'st-start-pick st-start-who' }));   // v3.122 Who? Me or a member
   const startSend = /** @type {HTMLButtonElement} */ (el('button', { class: 'st-start-send', type: 'submit' }, icon('send', 16)));
   const startNote = el('div', { class: 'st-start-note', role: 'status' });
   const startForm = el('form', { class: 'st-start-box', onsubmit: (/** @type {Event} */ e) => { e.preventDefault(); sendStart(); } },
     startText,
     el('div', { class: 'st-start-row' },
-      startProject, startAccount, el('label', { class: 'st-start-wt' }, startWorktree, startWtLabel),
+      startProject, startWho, startAccount, el('label', { class: 'st-start-wt' }, startWorktree, startWtLabel),
       el('span', { class: 'st-start-gap' }), startModel, startMode, startSend));
   const start = el('div', { id: 'studio-start', hidden: true }, greeting, startForm, startNote);
   startText.addEventListener('keydown', (e) => {
@@ -106,7 +112,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const settingsPage = mountSettingsPage({
     el, t, host: /** @type {HTMLElement} */ (document.getElementById('terminal') || document.body),
     studioTheme: () => studioTheme(), setStudioTheme: (v) => setStudioTheme(v),
-    hooks: { sidebar: hooks.sidebar, showPanel: hooks.showPanel, selectHq: hooks.selectHq, openBoard: hooks.openBoard, appInfo: hooks.appInfo, installUpdate: hooks.installUpdate },
+    hooks: { sidebar: hooks.sidebar, showPanel: hooks.showPanel, selectHq: hooks.selectHq, openBoard: hooks.openBoard, appInfo: hooks.appInfo, installUpdate: hooks.installUpdate, openTeam: () => { teamEl.scrollIntoView?.({ block: 'start' }); } },
   });
   function openSettings(/** @type {string} */ section = '') {
     if (!on) { hooks.openOfficeSettings(); return; }
@@ -143,6 +149,16 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startBusy = true;
     startSend.disabled = true;
     startNote.textContent = t('studio.start.starting');
+    const td = teamInfo();
+    const who = whoPlan(startWho.value, id, td?.staff || [], td?.projects || []);
+    if (who.kind === 'desk') {
+      let ok = false;
+      try { ok = (await hooks.startDesk(who.projectId, who.staffId, text)).ok; } catch (e) { console.error(e); }
+      startBusy = false;
+      startSend.disabled = false;
+      if (ok) { startText.value = ''; startNote.textContent = ''; starting = false; picked = id; refresh(); } else startNote.textContent = t('studio.team.deskFailed');
+      return;
+    }
     const plan = startPlan({ worktree: startWorktree.checked, model: startModel.value, mode: startMode.value }, [...startModel.options].filter((o) => !o.disabled).map((o) => o.value), startLists.get(id)?.caps || null);
     const reuseN = startTab && startTab.projectId === id && startTab.tabMode === plan.tabMode ? startTab.n : 0;
     /** @type {{ ok: boolean, n: number, failed?: { step: string, why: string, detail: string } }} */
@@ -267,6 +283,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     machines.replaceChildren(...(devices.length ? [el('div', { class: 'st-head' }, t('studio.machines')),
       ...devices.map((d) => el('div', { class: 'st-row st-device', title: d.online ? t('studio.online') : t('studio.offline') },
         icon('device'), el('span', { class: 'st-title' }, d.name), el('span', { class: `sb-dot${d.online ? ' live' : ''}` })))] : []));
+    drawTeam();
     // the footer: the current project's Claude account (main's user is the active project's; a picked project's label)
     const u = view.user || {};
     const cur = current();
@@ -297,6 +314,14 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startAccount.replaceChildren(el('span', { class: 'st-badge', title: t('studio.account') }, proj?.account || '—'),
       el('button', { type: 'button', class: 'st-link', title: t('studio.start.changeAccountTitle'), onclick: () => proj && hooks.projectSettings(proj.id) }, t('studio.start.changeAccount')));
     startWtLabel.textContent = t('studio.start.worktree');
+    // v3.122 Who?: Me, or a team member allowed on this project (team mode on)
+    const td = teamInfo();
+    const whoList = td?.teamMode ? whoOptions(td.staff, startProject.value, td.projects) : [];
+    const keepWho = startWho.value;
+    startWho.replaceChildren(...whoList.map((o) => el('option', { value: o.value }, o.value === 'me' ? t('studio.team.me') : o.name)));
+    startWho.value = whoList.some((o) => o.value === keepWho) ? keepWho : 'me';
+    startWho.hidden = whoList.length < 2;
+    startWho.title = t('studio.team.who');
     drawStartModels(proj?.id || '');
     startModel.title = t('chat.pick.modelTitle');
     // v3.120 what a new tab of this project can apply (main's studio:models caps): a terminal tab offers neither
@@ -365,8 +390,37 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     headTitle.textContent = shown.title || t('studio.untitled');
     headTitle.title = t('studio.renameTitle');
     const chip = (/** @type {string} */ ic, /** @type {string} */ text, /** @type {string} */ tip) => (text ? el('span', { class: 'st-chip', title: `${tip}: ${text}` }, icon(ic, 12), el('span', {}, text)) : null);
-    headChips.replaceChildren(...[chip('folder', proj?.name || '', t('studio.project')), chip('branch', shown.branch, t('studio.branch')), chip('user', proj?.account || '', t('studio.account'))].filter((x) => x !== null));
+    const tdh = shown.staffId ? teamInfo() : null;
+    const member = tdh ? tdh.staff.find((/** @type {any} */ m) => m.id === shown.staffId) : null;
+    const memberText = member ? [member.name, teamGroups({ staff: [member], presets: tdh.presets, lang: tdh.lang })[0]?.members[0]?.role].filter(Boolean).join(' · ') : '';
+    headChips.replaceChildren(...[chip('team', memberText, t('studio.team.member')), chip('folder', proj?.name || '', t('studio.project')), chip('branch', shown.branch, t('studio.branch')), chip('user', proj?.account || '', t('studio.account'))].filter((x) => x !== null));
     headState.replaceChildren(...(shown.waiting ? [el('span', { class: 'st-wait' }, t('studio.waiting'))] : shown.busy ? [el('span', { class: 'st-spin' }), el('span', {}, t('studio.working'))] : []));
+  }
+
+  // ---- v3.122 the Team section: members by department, live state, their open desks ----
+  const teamInfo = () => { try { return hooks.sidebar()?.teamData?.() || null; } catch { return null; } };
+  function drawTeam() {
+    const td = teamInfo();
+    if (!td?.teamMode) { teamEl.replaceChildren(); return; }
+    /** @type {Set<string>} */
+    const waiting = new Set();
+    for (const p of view.projects) for (const s of p.running) if (s.staffId && s.waiting) waiting.add(`${p.id}|${s.staffId}`);
+    const groups = teamGroups({ staff: td.staff, presets: td.presets, desks: td.desks, projects: td.projects, waiting, lang: td.lang });
+    const stateText = (/** @type {string} */ s) => t(`studio.team.state.${s}`);
+    teamEl.replaceChildren(el('div', { class: 'st-head' }, t('studio.team.title')),
+      ...groups.flatMap((g) => [
+        ...(g.head && groups.length > 1 ? [el('div', { class: 'st-team-dept' }, g.head)] : []),
+        ...g.members.flatMap((m) => {
+          const open = openMembers.has(m.id);
+          return [el('button', { class: `st-row st-member${open ? ' open' : ''}`, type: 'button', 'aria-expanded': String(open), title: `${m.name} · ${m.role} · ${stateText(m.state)}`,
+            onclick: () => { if (open) openMembers.delete(m.id); else openMembers.add(m.id); drawTeam(); } },
+          el('span', { class: 'st-avatar st-member-avatar', 'aria-hidden': 'true' }, m.initials),
+          el('span', { class: 'st-title' }, m.name, el('span', { class: 'st-member-role' }, m.role)),
+          el('span', { class: `st-member-state ${m.state}`, title: stateText(m.state), 'aria-label': stateText(m.state) })),
+          ...(open ? (m.desks.length ? m.desks.map((d) => el('button', { class: 'st-row st-desk', type: 'button', title: stateText(d.state), onclick: () => hooks.openDesk(d.projectId, m.id) },
+            el('span', { class: `st-member-state ${d.state}` }), el('span', { class: 'st-title' }, d.name))) : [el('div', { class: 'st-none st-desk' }, t('studio.team.noDesks'))]) : [])];
+        })]),
+      el('button', { class: 'st-row st-team-add', type: 'button', onclick: () => hooks.sidebar()?.addMember?.() }, icon('plus', 14), el('span', { class: 'st-title' }, t('studio.team.add'))));
   }
 
   // ---- the account menu (footer): Studio's theme, Settings, accounts, back to the Office ----

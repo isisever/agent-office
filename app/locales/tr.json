@@ -139,6 +139,21 @@
         "office": "Ofis",
         "about": "Hakkında ve güncellemeler"
       }
+    },
+    "team": {
+      "title": "Ekip",
+      "me": "Ben",
+      "who": "Kim çalışacak",
+      "add": "Üye ekle",
+      "member": "Ekip üyesi",
+      "noDesks": "Açık masa yok",
+      "deskFailed": "Masa başlatılamadı; mesaj korunuyor.",
+      "state": {
+        "idle": "Boşta",
+        "working": "Çalışıyor",
+        "needs": "Sizi bekliyor",
+        "asleep": "Uykuda"
+      }
     }
   },
   "app": {

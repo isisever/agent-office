@@ -1441,6 +1441,10 @@ export function mountSidebar(el, on) {
       const pair = officeControls[key];
       return pair ? { label: pair[0], control: pair[1], reset: key === 'bot' ? botReset : null } : null;
     },
+    /** v3.122 Studio's Team section: team mode, members, role presets, desk states and projects (read-only). */
+    teamData: () => ({ teamMode: team.teamMode, staff: team.staff, presets: team.presets, desks, projects, lang: locale() }),
+    /** v3.122 Studio's "+ Add member": the Office's role wizard (a saved role goes on to the member editor). */
+    addMember: () => openWizard(),
     /** v3.122 the Skills packs (fresh rows, the same calls as the popup's). */
     skillsSection: () => skillsSection(),
     /** v3.122 the accounts (id, label, sign-in state) and the Office's own sign-in call. */

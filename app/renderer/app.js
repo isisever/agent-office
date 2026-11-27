@@ -1403,6 +1403,19 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   sidebar: () => sidebar,
   showPanel: (sel) => Boolean(studio?.showPanel(sel)),
   appInfo: () => ({ version: appVersion, ready: updateVersion }),
+  openDesk: (projectId, staffId) => { leaveBoard(); return openDesk(projectId, staffId); },
+  // v3.122 the start screen's Who?: the Office's desk-start path, then the prompt in that desk's session
+  startDesk: async (projectId, staffId, text) => {
+    leaveBoard();
+    await openDesk(projectId, staffId);
+    const pty = activePty();
+    if (!pty || !pty.startsWith(`${projectId}:`)) return { ok: false };
+    if (!text) return { ok: true };
+    for (let i = 0; i < 20; i++) {   // the desk's chat may still be starting
+      try { await api.chat.send(pty, text); return { ok: true }; } catch { await new Promise((r) => setTimeout(r, 500)); }
+    }
+    return { ok: false };
+  },
   installUpdate: () => { if (confirm(t('app.updateConfirm'))) api.update?.install(); },
   toggle: () => setExperience(otherExperience(experience)),
   activePty,

@@ -139,6 +139,21 @@
         "office": "Office",
         "about": "About & updates"
       }
+    },
+    "team": {
+      "title": "Team",
+      "me": "Me",
+      "who": "Who works on it",
+      "add": "Add member",
+      "member": "Team member",
+      "noDesks": "No open desks",
+      "deskFailed": "The desk could not start; the prompt is kept.",
+      "state": {
+        "idle": "Idle",
+        "working": "Working",
+        "needs": "Needs you",
+        "asleep": "Asleep"
+      }
     }
   },
   "app": {

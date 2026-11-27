@@ -598,3 +598,17 @@ body.studio #studio-settings .st-notice { display: flex; align-items: center; ga
 body.studio #studio-settings .st-notice .st-icon { flex: none; color: var(--st-accent); }
 @media (max-width: 760px) { body.studio #studio-settings .st-set-nav { flex-basis: 52px; } body.studio #studio-settings .st-set-nav-item span { display: none; } }
 @media (prefers-reduced-motion: reduce) { body.studio #studio-settings :is(.st-switch, .st-switch-knob) { transition: none; } }
+
+/* ---- v3.122 Team section: members with initials, role and live state; their desks below ---- */
+body.studio #studio-sidebar .st-team-dept { padding: 6px 8px 2px; color: var(--st-faint); font-size: 11px; }
+body.studio #studio-sidebar .st-member { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+body.studio #studio-sidebar .st-member .st-title { display: flex; flex-direction: column; gap: 1px; line-height: 1.2; }
+body.studio #studio-sidebar .st-member-role { color: var(--st-muted); font-size: 11.5px; }
+body.studio #studio-sidebar .st-member-avatar { width: 24px; height: 24px; font-size: 10.5px; }
+body.studio #studio-sidebar .st-member-state { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--st-border-strong); }
+body.studio #studio-sidebar .st-member-state.working { background: var(--st-accent); }
+body.studio #studio-sidebar .st-member-state.needs { background: #d4a72c; box-shadow: 0 0 0 3px rgba(212, 167, 44, .25); }
+body.studio #studio-sidebar .st-member-state.asleep { background: none; border: 1px dashed var(--st-border-strong); }
+body.studio #studio-sidebar .st-desk { width: 100%; padding-left: 40px; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+body.studio #studio-sidebar .st-team-add { width: 100%; border: 0; background: none; font: inherit; color: var(--st-muted); text-align: left; cursor: pointer; }
+body.studio #studio-start .st-start-who[hidden] { display: none; }
