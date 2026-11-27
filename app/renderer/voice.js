@@ -254,6 +254,11 @@ function renderRows() {
 }
 
 /** The voice rows for the Settings popup (built once, kept up to date). */
+/** v3.122 the voice rows' labels and controls (Studio's Settings page drives them); null when voice is not available. */
+export function voiceControls() {
+  return voiceSettingsRows().length ? rows : null;
+}
+
 export function voiceSettingsRows() {
   if (!api()) return [];
   if (!rows) {

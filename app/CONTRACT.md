@@ -3225,3 +3225,54 @@ chat:read gui += { modes: string[], autoApprove: boolean }   // the account's pi
   machine (`HQ.consentFor`, src/hq.js): the normal card, or `follow` where that rule allows it for such a turn. It never
   gets the consent of a typed turn. Face-ID-signed approvals from the phone come in P2.
 - **Not in P1.** Approve/deny and stop come in P2.
+
+## Studio Settings page and the shared settings model (v3.122)
+
+- `src/settings-model.mjs` is the one list of app settings: `SECTIONS` (Studio's nav: General, Sessions, Accounts,
+  Projects, Team, Voice, MCP & skills, Devices & phone, HQ & routines, Office, About & updates) and `SETTINGS`
+  (`{ key, section, type, office?, officeOnly?, studioOnly? }`). `OFFICE_ORDER` is the Office popup's row order; the
+  popup (`sidebar.js openSettings`) lays its rows out from it and looks as before. Every Office row is in the model
+  exactly once (the five voice rows share the `voice` slot); tests: `test/settings-model.test.mjs`.
+- The model holds no setting logic. `sidebar.settingControl(key)` returns the Office's own label and control; Studio's
+  page (`renderer/studio-settings.js`) reads that control and drives it by setting its value and firing its own
+  `change` / `input` event, so the Office's handler runs and both views always show the same value. Labels are the
+  Office's own label text; descriptions are `settings.desc.<key>`, Studio-only labels `settings.label.<key>`.
+- Opening: the ⚙ button in Studio's sidebar footer, ⌘, (Ctrl+, elsewhere; `studioKey` → `settings`, Studio only), the
+  account menu, the ⌘K palette (Settings, Voice, Skills, Team when off) and the title bar's ⚙ all open the page inside
+  Studio; outside Studio the Office popup. Esc or the back arrow returns to the chat; Esc in a non-empty search clears
+  it first.
+- Page: a section nav with icons, a search over label and description (matching rows from every section; the nav
+  marks the first section with a match, Enter jumps there). Rows: title, a muted one-line description, the control on
+  the right, in rounded cards. Switches are `role="switch"`; choices with 2–4 options are segmented (`role="radio"`),
+  more a quiet select. Status lines (voice model state, voice not in this build, updates) are inline notices.
+- Projects: a project picker and the project popup's own account, Auto-approve, skip-permissions and context-cap
+  controls inline (`sidebar.projectInline(id)`, the popup's draft; Save applies the account first), plus "All project
+  settings…" for the popup. Accounts: the list with labels and the Office's Log in call; "Manage accounts", MCP
+  servers and Devices & phone show the Office's own panel over Studio (`studio.showPanel`).
+- About & updates shows the running version and, when an update is downloaded, Restart to update (`update:install`).
+  There is no manual "check now" IPC; updates download on their own.
+
+### Keep awake in the title bar (v3.122)
+
+- `#keep-awake` sits next to the Studio switch in both experiences (`renderer/keep-awake-button.js`): a cup icon and a
+  short label (hidden under 760 px), `no-drag`, `aria-haspopup="menu"`. Its menu lists the keepAwake setting's own
+  options (Off / While agents work / Always) as `menuitemradio`s (arrow keys, Esc closes) and drives the Office's
+  keepAwake select, so it is the Settings value and handler. Active (not Off): accent colour and a filled cup;
+  `keepAwakeView(options, value)` is pure and tested. The setting also stays in Settings → Sessions.
+
+### Team in Studio (v3.122)
+
+- With team mode on, Studio's sidebar has a TEAM section (`renderer/studio.js drawTeam`, pure parts in
+  `src/studio-team.mjs`): members grouped by department (`byDepartment`), each with an initials avatar, their role
+  (`roleOf`) and a live state from the desk states (`sidebar.teamData().desks`): `needs` when a desk session of theirs
+  is waiting for the person (Studio's session rows now carry the desk tab's `staffId`), else `working` when a desk is
+  busy, else `idle`. A click expands the member's open desks (an `off` desk is left out); a desk click opens and focuses
+  it through the Office's `openDesk` (the same path as the TEAM panel's desk chips). "+ Add member" opens the Office's
+  role wizard (`sidebar.addMember`), which goes on to the member editor.
+- A desk chat's header carries a chip with the member's name and role; its mode picker stays held by the desk rules
+  (v3.120).
+- The start screen has a Who? picker (shown when team mode is on and a member may work on the selected project):
+  Me (default) or such a member. `whoPlan(who, projectId, staff, projects)` gives `{ kind: 'session' }` (the existing
+  start plan) or `{ kind: 'desk', projectId, staffId }`: the Office's `openDesk(projectId, staffId)`, then the prompt
+  is sent to that desk's session (retried while its chat starts); on failure the prompt stays in the box.
+- Tests: `test/studio-team.test.mjs` (initials, state, grouping, Who? options and plan).

@@ -107,13 +107,13 @@ export function startStep(result, elapsed, limit = START_WAIT_MS) {
 
 /**
  * v3.120 why a start step failed, for the note under the start box → { why: 'locked' | 'busy' | 'not-running' |
- * 'bad' | 'gone' | 'error' | 'other', detail } (detail: claude's own message after 'error:').
+ * 'bad' | 'gone' | 'unsupported' | 'error' | 'other', detail } (detail: claude's own message after 'error:').
  * @param {unknown} result
  */
 export function startFailure(result) {
   const r = typeof result === 'string' ? result : '';
   if (r.startsWith('error:')) return { why: 'error', detail: r.slice(6).trim().slice(0, 200) };
-  if (['locked', 'busy', 'not-running', 'bad', 'gone'].includes(r)) return { why: r, detail: '' };
+  if (['locked', 'busy', 'not-running', 'bad', 'gone', 'unsupported'].includes(r)) return { why: r, detail: '' };
   return { why: 'other', detail: '' };
 }
 

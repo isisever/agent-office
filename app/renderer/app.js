@@ -9,7 +9,9 @@ import { mountDevices, mergeRemote } from './devices.js';
 import { setLang, onLang, t } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
 import { mountStudio } from './studio.js';
+import { mountKeepAwake } from './keep-awake-button.js';
 import { startStep, startFailure } from '../src/studio-ux.mjs';
+import { deskTarget, deskSend } from '../src/studio-team.mjs';
 import { studioKey, otherExperience, experienceSwitch } from '../src/studio-keys.mjs';
 import { chatShownFor, chatButtonFor } from '../src/chat-view.mjs';
 import { themeChoices, effectiveTheme } from '../src/themes.mjs';
@@ -655,15 +657,19 @@ function withStaff(d) {
     return { id: m.id, name: m.name, busy: at.length > 0, projects: at };
   }) };
 }
-/** v3.83 opens a member's desk in a project and shows it. */
+/**
+ * v3.83 opens a member's desk in a project and shows it.
+ * @returns {Promise<string | null>} the desk's pty id, or null when the desk did not open
+ */
 async function openDesk(projectId, staffId) {
   const r = await (projectId ? api.staff?.desk(projectId, staffId) : api.staff?.personal?.(staffId))?.catch(() => null);
-  if (!r?.ok) { if (r?.error) alert(t(`staff.deskError.${['staff-not-allowed', 'engine', 'git'].includes(r.error) ? r.error : 'failed'}`)); return; }
+  if (!r?.ok || !r.id) { if (r?.error) alert(t(`staff.deskError.${['staff-not-allowed', 'engine', 'git'].includes(r.error) ? r.error : 'failed'}`)); return null; }
   applyProjects(await api.projects.list());
   const [pid, n] = String(r.id).split(':');
   selectProject(pid);
   if (n) selectTab(pid, Number(n));
   setTimeout(focusActive, 50);   // v3.90: the desk's input is ready to type in
+  return tabPtyId(pid, n ? Number(n) : MAIN_TAB);
 }
 async function addProject() {
   try {
@@ -890,6 +896,7 @@ async function removeAccount(a) {
 // ---- Sidebar ----
 sidebar = mountSidebar($('sidebar'), {
   select: selectProject,
+  showPanel: (sel) => Boolean(studio?.showPanel(sel)),   // v3.122 an Office panel on its own over Studio
   addProject,
   setBotColor,
   removeProject,
@@ -1037,7 +1044,7 @@ function setCollapsed(c) {
   store.set('sidebarCollapsed', c ? '1' : '0');
   requestAnimationFrame(() => panes.get(activePty())?.term.fit());
 }
-$('settings').addEventListener('click', () => sidebar?.openSettings());
+$('settings').addEventListener('click', () => (studio?.isOn() ? studio.openSettings() : sidebar?.openSettings()));
 $('toggle-sidebar').addEventListener('click', () => {
   setCollapsed(!document.body.classList.contains('sidebar-collapsed'));
   focusActive();
@@ -1173,6 +1180,7 @@ window.addEventListener('keydown', (e) => {
   else if (k.type === 'newWorktree') studio?.newWorktreeSession();
   else if (k.type === 'focus') { if (!studio?.focusStart()) focusActive(); }   // ⌘L the composer
   else if (k.type === 'search') studio?.openPalette();   // ⌘K: the command palette (renderer/studio.js)
+  else if (k.type === 'settings') studio?.openSettings();   // v3.122 ⌘, Studio's Settings page
   else studio?.selectIndex(k.index);
 }, true);
 
@@ -1397,7 +1405,19 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   selectProject: (projectId) => { leaveBoard(); selectProject(projectId); },
   selectHq: () => { leaveBoard(); selectProject(HQ_ROW.id); },
   openBoard: () => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); },   // HQ's board: reports, routines
-  openSettings: () => sidebar?.openSettings(),
+  openOfficeSettings: () => sidebar?.openSettings(),
+  sidebar: () => sidebar,
+  showPanel: (sel) => Boolean(studio?.showPanel(sel)),
+  appInfo: () => ({ version: appVersion, ready: updateVersion }),
+  openDesk: (projectId, staffId) => { leaveBoard(); return openDesk(projectId, staffId); },
+  // v3.122 the start screen's Who?: the Office's desk-start path, then the prompt in exactly that desk's session
+  // (never the active one): a bounded retry while its chat starts, 'ok' required, any other answer is a failure
+  startDesk: async (projectId, staffId, text) => {
+    leaveBoard();
+    const pty = deskTarget(await openDesk(projectId, staffId), projectId);
+    return deskSend({ pty, text, send: (id, x) => api.chat.send(id, x), wait: () => new Promise((r) => setTimeout(r, 400)) });
+  },
+  installUpdate: () => { if (confirm(t('app.updateConfirm'))) api.update?.install(); },
   toggle: () => setExperience(otherExperience(experience)),
   activePty,
   hasSession: () => Boolean(activePty()),
@@ -1407,6 +1427,7 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   showAccounts: () => studioCommands(studio?.currentProject() || '').find((c) => c.id === 'accounts')?.run(),
   isMac,
 } });
+mountKeepAwake({ button: $('keep-awake'), t, control: () => sidebar?.settingControl('keepAwake') || null });
 /**
  * v3.120 Studio's ⌘K palette: every Office feature Studio has no button for. Each one calls the Office's own handler
  * or shows the Office's own panel (studio.showPanel: the sidebar panel on its own over Studio), never a copy.
@@ -1419,15 +1440,15 @@ function studioCommands(projectId) {
   const cmd = (id, run, when = true) => (when ? [{ id, label: t(`studio.cmd.${id}`), keywords: t(`studio.cmdKeys.${id}`), run }] : []);
   const panel = (sel, fallback) => () => { if (!studio?.showPanel(sel)) fallback?.(); };
   return [
-    ...cmd('team', panel('#sb-panel-team', () => sidebar?.openSettings())),   // team mode off: Settings has its switch
+    ...cmd('team', panel('#sb-panel-team', () => studio?.openSettings('team'))),   // team mode off: Settings has its switch
     ...cmd('worktree', () => { leaveBoard(); addTab(p.id, 'worktree'); }, Boolean(p)),
     ...cmd('newTab', () => { leaveBoard(); addTab(p.id); }, Boolean(p)),   // main's "+" menu: same folder, worktree, a desk, a shell
     ...cmd('closeTab', () => closeTab(act.id, n), Boolean(act) && act.id !== HQ_ROW.id && n !== MAIN_TAB),
     ...cmd('accounts', panel('.sb-accounts')),
     ...cmd('projectAccount', () => sidebar?.openProjectSettings(p.id), Boolean(p)),
     ...cmd('mcp', panel('#sb-panel-mcp')),
-    ...cmd('skills', () => sidebar?.openSkills()),
-    ...cmd('voice', () => { if (!sidebar?.openVoice()) sidebar?.openSettings(); }),
+    ...cmd('skills', () => studio?.openSettings('mcp')),
+    ...cmd('voice', () => studio?.openSettings('voice')),
     ...cmd('pair', panel('#sb-devices')),
     ...cmd('remoteTask', () => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); }),   // HQ's board: send-as-task to any target
     ...cmd('addProject', () => addProject()),
@@ -1435,7 +1456,7 @@ function studioCommands(projectId) {
     ...cmd('openFolder', () => api.projects.openFolder?.(p.id).catch((e) => console.error(e)), Boolean(p)),
     ...cmd('removeProject', () => removeProject(p), Boolean(p)),
     ...cmd('projects', panel('#sb-panel-projects')),
-    ...cmd('settings', () => sidebar?.openSettings()),
+    ...cmd('settings', () => studio?.openSettings()),
     ...cmd('office', () => setExperience('office')),
   ];
 }

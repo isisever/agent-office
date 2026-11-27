@@ -188,15 +188,15 @@ function listSessions({ projects, status, recent, activeId = null, staff = [], a
     const st = byId.get(p.id) || {};
     const tabSt = new Map((st.tabs || []).map((t) => [t.n, t]));
     const tabs = (Array.isArray(p.tabs) ? p.tabs : []).filter((t) => !t.shell).slice().sort((a, b) => a.n - b.n);
-    const row = (ptyId, n, label, isRunning, isAsleep) => {
+    const row = (ptyId, n, label, isRunning, isAsleep, staffId = '') => {
       const info = (isRunning && infoOf(ptyId)) || null;
       const name = info ? String(info.title || info.prompt || '').slice(0, 200) : '';
       return { ptyId, n, title: name, label, branch: info?.branch || '', at: Number(info?.at) || 0,
-        busy: info?.busy === true, waiting: info?.waiting === true, isRunning, isAsleep };
+        busy: info?.busy === true, waiting: info?.waiting === true, isRunning, isAsleep, ...(staffId ? { staffId } : {}) };
     };
     const running = [
       row(p.id, MAIN_TAB, p.name, st.isRunning === true, st.isAsleep === true),
-      ...tabs.map((t) => row(`${p.id}:${t.n}`, t.n, tabTitle(p, t, staff), tabSt.get(t.n)?.isRunning === true, tabSt.get(t.n)?.isAsleep === true)),
+      ...tabs.map((t) => row(`${p.id}:${t.n}`, t.n, tabTitle(p, t, staff), tabSt.get(t.n)?.isRunning === true, tabSt.get(t.n)?.isAsleep === true, t.staffId || '')),
     ];
     const recentHere = rec.filter((r) => r.projectId === p.id).sort((a, b) => b.at - a.at).slice(0, RECENT_PER_PROJECT)
       .map((r) => ({ sessionId: r.sessionId, title: r.title || baseName(r.dir) || p.name, at: r.at }));
