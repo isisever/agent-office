@@ -1,37 +1,76 @@
 {
   "version": "0.22.45",
-  "_note": "Placeholder: these features are on another branch and arrive in 0.22.45. Review the texts and targets when that branch merges.",
   "items": [
     {
       "id": "studio-settings",
-      "experience": "studio",
-      "title": { "en": "Settings, the Studio way", "tr": "Studio'ya özel Ayarlar" },
+      "experience": "both",
+      "title": { "en": "Settings, the Studio way", "tr": "Studio'nun kendi Ayarlar sayfası" },
       "body": {
-        "en": "Studio now has its own Settings page, with every Office setting grouped and searchable.",
-        "tr": "Studio'nun artık kendi Ayarlar sayfası var; Ofis'in tüm ayarları gruplanmış ve aranabilir halde."
+        "en": "Studio has its own Settings page (⌘,): every setting grouped into sections, with a search box. It drives the same controls as the Office's popup, so a change in one shows in the other.",
+        "tr": "Studio'nun artık kendi Ayarlar sayfası var (⌘,): tüm ayarlar bölümlere ayrılmış ve aranabilir. Ofis'in açılır penceresiyle aynı denetimleri kullanır; birinde yaptığınız değişiklik diğerinde de görünür."
       },
-      "try": { "label": { "en": "Open Settings", "tr": "Ayarları aç" }, "action": "open-settings" }
+      "try": { "label": { "en": "Open Settings", "tr": "Ayarları aç" }, "action": "open-studio-settings" },
+      "target": "#studio-settings .st-set-nav"
     },
     {
       "id": "keep-awake-title-bar",
       "experience": "both",
       "title": { "en": "Keep awake from the title bar", "tr": "Başlık çubuğundan uyanık tutun" },
       "body": {
-        "en": "Keep the Mac awake while agents work, straight from the title bar, without opening Settings.",
-        "tr": "Ajanlar çalışırken Mac'i uyanık tutmayı Ayarlar'ı açmadan doğrudan başlık çubuğundan yönetin."
+        "en": "The cup in the title bar keeps the computer from sleeping while agents work, or always. It is the same setting as in Settings, one click away.",
+        "tr": "Başlık çubuğundaki fincan, ajanlar çalışırken ya da her zaman bilgisayarın uyumasını engeller. Ayarlar'daki ayarın aynısıdır, yalnızca bir tık uzağınızda."
       },
-      "try": { "label": { "en": "Show the setting", "tr": "Ayarı göster" }, "action": "open-settings:keep-awake" },
-      "target": "[data-settings-section=\"keep-awake\"]"
+      "try": { "label": { "en": "Show me", "tr": "Göster" }, "action": "spotlight" },
+      "target": "#keep-awake"
     },
     {
       "id": "team-in-studio",
       "experience": "studio",
       "title": { "en": "Your team in Studio", "tr": "Ekibiniz Studio'da" },
       "body": {
-        "en": "The Team panel now opens in Studio too, so you can see and manage your staff without switching back to the Office.",
-        "tr": "Ekip paneli artık Studio'da da açılıyor; ekibinizi Ofis'e geri dönmeden görüp yönetebilirsiniz."
+        "en": "With team mode on, Studio's sidebar has a Team section with your members and their desks. Settings → Team turns team mode on.",
+        "tr": "Ekip modu açıkken Studio'nun kenar çubuğunda üyelerinizin ve masalarının olduğu bir Ekip bölümü bulunur. Ekip modunu Ayarlar → Ekip'ten açabilirsiniz."
       },
-      "try": { "label": { "en": "Open Team", "tr": "Ekibi aç" }, "action": "open-team" }
+      "try": { "label": { "en": "Show the team", "tr": "Ekibi göster" }, "action": "open-team" }
+    },
+    {
+      "id": "who-picker",
+      "experience": "studio",
+      "title": { "en": "Who should do it?", "tr": "Bu işi kim yapsın?" },
+      "body": {
+        "en": "A new session's start screen has a Who? picker: work yourself, or hand the first message to a team member allowed on that project.",
+        "tr": "Yeni bir oturumun başlangıç ekranında bir Kim? seçicisi var: işi kendiniz yapın ya da ilk mesajı o projede çalışabilen bir ekip üyesine verin."
+      },
+      "try": { "label": { "en": "Start a session", "tr": "Oturum başlat" }, "action": "open-start-screen" },
+      "target": ".st-start-who"
+    },
+    {
+      "id": "message-actions",
+      "experience": "both",
+      "title": { "en": "Message actions as icons", "tr": "Simge olarak mesaj eylemleri" },
+      "body": {
+        "en": "Copy, reply and edit now sit as small icons under each chat bubble, out of the way until you need them.",
+        "tr": "Kopyala, yanıtla ve düzenle artık her sohbet balonunun altında küçük simgeler olarak duruyor; ihtiyaç duyana kadar gözünüze batmıyor."
+      }
+    },
+    {
+      "id": "windows-installer",
+      "experience": "both",
+      "title": { "en": "The Windows installer builds again", "tr": "Windows kurulum dosyası yeniden derleniyor" },
+      "body": {
+        "en": "A release fix: the Windows installer is part of every release again.",
+        "tr": "Bir sürüm düzeltmesi: Windows kurulum dosyası yeniden her sürümde yer alıyor."
+      }
+    },
+    {
+      "id": "whats-new",
+      "experience": "both",
+      "title": { "en": "What's new, after every update", "tr": "Her güncellemeden sonra Neler yeni" },
+      "body": {
+        "en": "This tour. It shows once after an update; open it again from Help → What's New, ⌘K in Studio, or Settings → About.",
+        "tr": "Bu tur. Bir güncellemeden sonra bir kez görünür; Yardım → Neler Yeni'den, Studio'da ⌘K ile ya da Ayarlar → Hakkında'dan yeniden açabilirsiniz."
+      },
+      "try": { "label": { "en": "Show it in Settings", "tr": "Ayarlarda göster" }, "action": "open-settings:about" }
     }
   ]
 }

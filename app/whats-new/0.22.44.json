@@ -20,8 +20,7 @@
         "en": "Use the switch at the top right of the window, ⌘⇧E (Ctrl+Shift+E) or Settings → Experience. Tabs and sessions stay as they are; idle sessions move to the chat, busy ones once they finish.",
         "tr": "Pencerenin sağ üstündeki düğmeyi, ⌘⇧E (Ctrl+Shift+E) kısayolunu ya da Ayarlar → Deneyim'i kullanın. Sekmeler ve oturumlar olduğu gibi kalır; boştaki oturumlar sohbete hemen, meşgul olanlar işleri bitince geçer."
       },
-      "try": { "label": { "en": "Show the setting", "tr": "Ayarı göster" }, "action": "open-settings:experience" },
-      "target": "[data-settings-section=\"experience\"]"
+      "try": { "label": { "en": "Show the setting", "tr": "Ayarı göster" }, "action": "open-settings:experience" }
     },
     {
       "id": "account-models",
