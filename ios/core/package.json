@@ -8,14 +8,16 @@
     "link": "bare-link --preset ios --out ../AgentOfficeRemote/addons . && node addons-yml.mjs",
     "pack": "bare-pack --preset ios --linked --base . --out ../AgentOfficeRemote/app.bundle worklet.js",
     "dev": "node dev-run.mjs",
-    "prebuild": "npm run -s link && npm run -s pack"
+    "prebuild": "npm run -s addon && npm run -s link && npm run -s pack",
+    "addon": "cd addons/scrypt-ll && npm install --no-audit --no-fund && bare-make generate --platform ios --arch arm64 --build build-ios && bare-make build --build build-ios && bare-make install --build build-ios && bare-make generate --platform ios --arch arm64 --simulator --build build-sim && bare-make build --build build-sim && bare-make install --build build-sim"
   },
   "dependencies": {
     "hyperswarm": "4.17.2",
     "hyperdht": "6.34.1",
     "udx-native": "1.21.3",
     "sodium-native": "5.1.0",
-    "b4a": "^1.6.7"
+    "b4a": "^1.6.7",
+    "scrypt-ll": "file:./addons/scrypt-ll"
   },
   "devDependencies": {
     "bare-link": "^3.2.2",

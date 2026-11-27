@@ -1,6 +1,6 @@
 // The iOS worklet's crypto shim (ios/core/crypto-shim.js, on sodium-native) must give byte-for-byte the same
 // results as Node crypto for everything link-core uses, and ios/core/pair.js must match link-core's pairing.
-// Needs `npm install` in ios/core. Not part of CI yet.
+// Needs `npm install` in ios/core: without it every test here is skipped (CI stays green).
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -9,8 +9,10 @@ const path = require('node:path');
 const Module = require('node:module');
 
 const CORE = path.join(__dirname, '..', '..', 'ios', 'core');
-const shim = require(path.join(CORE, 'crypto-shim.js'));
-const pair = require(path.join(CORE, 'pair.js'));
+let shim = null;
+let pair = null;
+try { shim = require(path.join(CORE, 'crypto-shim.js')); pair = require(path.join(CORE, 'pair.js')); } catch { /* ios/core deps not installed */ }
+const skip = shim ? false : 'ios/core dependencies not installed (npm install in ios/core)';
 const LINK_CORE = path.join(__dirname, '..', 'src', 'link-core.js');
 const real = require(LINK_CORE);
 
@@ -33,7 +35,7 @@ const CODES = ['acid-aged-also-area-army', 'tree-toad-tile-tide-tent', 'jazz-kit
 const PUB_A = 'a1'.repeat(32);
 const PUB_B = Buffer.from('b2'.repeat(32), 'hex');
 
-test('sha256 and HMAC-SHA256 match Node crypto', () => {
+test('sha256 and HMAC-SHA256 match Node crypto', { skip }, () => {
   const inputs = ['', 'abc', 'x'.repeat(1000), Buffer.from([0, 1, 2, 255])];
   for (const d of inputs) {
     assert.deepEqual(shim.createHash('sha256').update(d).digest(), crypto.createHash('sha256').update(d).digest());
@@ -43,7 +45,7 @@ test('sha256 and HMAC-SHA256 match Node crypto', () => {
   }
 });
 
-test('scrypt matches the RFC 7914 vector and Node crypto', () => {
+test('scrypt matches the RFC 7914 vector and Node crypto', { skip }, () => {
   const rfc = 'fdbabe1c9d3472007856e7190d01e9fe7c6ad7cbc8237830e77376634b3731622eaf30d92e22a3886ff109279d9830dac727afb94a83ee6d8360cbdfa2cc0640';
   assert.equal(shim.scryptSync('password', 'NaCl', 64, { N: 1024, r: 8, p: 16 }).toString('hex'), rfc);
   for (const [N, r, p, len] of [[16, 1, 1, 64], [256, 8, 2, 33], [1 << 15, 8, 1, 64]]) {
@@ -52,7 +54,7 @@ test('scrypt matches the RFC 7914 vector and Node crypto', () => {
   }
 });
 
-test('randomBytes and timingSafeEqual behave like Node', () => {
+test('randomBytes and timingSafeEqual behave like Node', { skip }, () => {
   assert.equal(shim.randomBytes(5).length, 5);
   assert.notDeepEqual(shim.randomBytes(32), shim.randomBytes(32));
   assert.equal(shim.timingSafeEqual(Buffer.from('abc'), Buffer.from('abc')), true);
@@ -60,7 +62,7 @@ test('randomBytes and timingSafeEqual behave like Node', () => {
   assert.throws(() => shim.timingSafeEqual(Buffer.from('a'), Buffer.from('ab')));
 });
 
-test('link-core pairing functions give the same bytes on the shim as on Node crypto', () => {
+test('link-core pairing functions give the same bytes on the shim as on Node crypto', { skip }, () => {
   for (const code of CODES) {
     const t0 = Date.now();
     const a = real.pairSecrets(code);
@@ -83,7 +85,7 @@ test('link-core pairing functions give the same bytes on the shim as on Node cry
   assert.equal(onShim.makeCode(fixed), real.makeCode(fixed));
 });
 
-test('ios/core/pair.js matches link-core', () => {
+test('ios/core/pair.js matches link-core', { skip }, () => {
   assert.deepEqual(pair.WORDS, real.WORDS);
   for (const code of CODES) {
     const a = real.pairSecrets(code);
@@ -97,4 +99,32 @@ test('ios/core/pair.js matches link-core', () => {
   assert.equal(pair.codeFromInput('agentoffice://pair?v=1&c=ACID%20aged-also-area-army&n=Mac'), 'acid-aged-also-area-army');
   assert.equal(pair.codeFromInput('Acid Aged Also Area Army'), real.normalizeCode('Acid Aged Also Area Army'));
   assert.equal(pair.codeFromInput('nope'), null);
+});
+
+// v3.121 the native ROMix (ios/core/addons/scrypt-ll/romix.c), built here as a tiny CLI with the host C compiler, gives
+// byte-for-byte Node's scryptSync for the pairing parameters, plugged into the shim exactly as the worklet does.
+test('native ROMix (scrypt-ll) matches Node scryptSync for the pairing parameters', { skip, timeout: 120000 }, (t) => {
+  const { execFileSync, spawnSync } = require('node:child_process');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const dir = path.join(CORE, 'addons', 'scrypt-ll');
+  const exe = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'romix-')), 'romix-cli');
+  try { execFileSync('cc', ['-O2', '-o', exe, path.join(dir, 'romix-cli.c'), path.join(dir, 'romix.c')], { stdio: 'ignore' }); } catch { t.skip('no C compiler'); return; }
+  const romix = (block, r, N) => {
+    const out = spawnSync(exe, { input: `${r} ${N} ${Buffer.from(block).toString('hex')}\n`, encoding: 'utf8', maxBuffer: 1 << 20 });
+    assert.equal(out.status, 0);
+    block.set(Buffer.from(out.stdout.trim(), 'hex'));
+  };
+  shim.setRomix(romix);
+  try {
+    const rfc = 'fdbabe1c9d3472007856e7190d01e9fe7c6ad7cbc8237830e77376634b3731622eaf30d92e22a3886ff109279d9830dac727afb94a83ee6d8360cbdfa2cc0640';
+    assert.equal(Buffer.from(shim.scryptSync('password', 'NaCl', 64, { N: 1024, r: 8, p: 16 })).toString('hex'), rfc);
+    for (const code of ['acid-aged-also-area-army', 'tail-tank-team-tent-tide']) {
+      const t0 = Date.now();
+      const got = shim.scryptSync(code, 'agent-office/link/pair/v1', 64, { N: 1 << 15, r: 8, p: 1 });
+      const t1 = Date.now();
+      assert.deepEqual(Buffer.from(got), crypto.scryptSync(code, 'agent-office/link/pair/v1', 64, { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }));
+      t.diagnostic?.(`${code}: shim with native ROMix (CLI, incl. process start) ${t1 - t0} ms`);
+    }
+  } finally { shim.setRomix(null); }
 });

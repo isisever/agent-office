@@ -127,6 +127,14 @@ function roMix(block, r, N) {
   }
 }
 
+// The native ROMix (ios/core/addons/scrypt-ll, portable C): JS ROMix takes about 10 s on an iPhone (no JIT). Loaded
+// when the addon is linked (the worklet); Node and an unlinked build keep the JS one. setRomix swaps it (tests).
+let nativeRomix = null;
+try { nativeRomix = require('scrypt-ll').romix; } catch { nativeRomix = null; }
+/** @param {null | ((block: Uint8Array, r: number, N: number) => void)} fn */
+const setRomix = (fn) => { nativeRomix = fn; };
+const romixKind = () => (nativeRomix ? 'native' : 'js');
+
 function scryptSync(password, salt, keylen, opts = {}) {
   const N = opts.N ?? opts.cost ?? 16384;
   const r = opts.r ?? opts.blockSize ?? 8;
@@ -134,8 +142,8 @@ function scryptSync(password, salt, keylen, opts = {}) {
   if (N < 2 || (N & (N - 1)) !== 0) throw new RangeError('crypto-shim: N must be a power of two > 1');
   const pw = toBytes(password);
   const B = pbkdf2Sha256Once(pw, toBytes(salt), 128 * r * p);
-  for (let i = 0; i < p; i++) roMix(B.subarray(i * 128 * r, (i + 1) * 128 * r), r, N);
+  for (let i = 0; i < p; i++) (nativeRomix || roMix)(B.subarray(i * 128 * r, (i + 1) * 128 * r), r, N);
   return pbkdf2Sha256Once(pw, B, keylen);
 }
 
-module.exports = { createHash, createHmac, scryptSync, randomBytes, timingSafeEqual };
+module.exports = { createHash, createHmac, scryptSync, randomBytes, timingSafeEqual, setRomix, romixKind };
