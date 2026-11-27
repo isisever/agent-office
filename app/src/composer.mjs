@@ -48,13 +48,38 @@ export function fileKind(name, type = '') {
 
 /**
  * A chip's texts: { name, kind, meta } — meta is the size when known, else the extension in capitals, else ''.
- * @param {{ path?: string, size?: number, type?: string }} [f]
+ * @param {{ path?: string, size?: number, type?: string, dir?: boolean }} [f]
  */
-export function chipInfo({ path = '', size, type = '' } = {}) {
+export function chipInfo({ path = '', size, type = '', dir = false } = {}) {
   const name = baseName(path);
+  if (dir) return { name, kind: 'folder', meta: '' };
   const sz = formatSize(size);
   const dot = name.lastIndexOf('.');
   return { name, kind: fileKind(name, type), meta: sz || (dot > 0 ? name.slice(dot + 1).toUpperCase() : '') };
+}
+
+/**
+ * v3.121 the composer's chips after adding `incoming`: the chips already there keep their place, the new ones follow
+ * in the order given (drop, paste or picker order); a path already there (or twice in `incoming`) is added once, and
+ * an entry without a path is skipped. Returns a new list; folders stay one chip (never expanded).
+ * @template {{ path: string }} F @param {F[]} list @param {F[]} incoming @returns {F[]}
+ */
+export function addChips(list, incoming) {
+  const out = (list || []).slice();
+  const seen = new Set(out.map((f) => f.path));
+  for (const f of incoming || []) {
+    if (!f || typeof f.path !== 'string' || !f.path || seen.has(f.path)) continue;
+    seen.add(f.path);
+    out.push(f);
+  }
+  return out;
+}
+
+/** v3.121 the hint while files are dragged over the chat: "Drop 3 files" (one: "Drop 1 file"; count unknown: "Drop files here"). */
+export function dropText(count, t) {
+  const n = Number.isInteger(count) && count > 0 ? count : 0;
+  if (!n) return t('chat.drop.any');
+  return n === 1 ? t('chat.drop.one') : t('chat.drop.many', { count: n });
 }
 
 /** One path as Claude Code reads a mention: @path, quoted when it has a space (the chat's own insertPaths format). */

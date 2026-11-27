@@ -11,7 +11,7 @@ import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } fr
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
-import { chipInfo, withMentions, splitMentions, pickerState, MODEL_OPTIONS, MODE_OPTIONS } from '../src/composer.mjs';
+import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, MODEL_OPTIONS, MODE_OPTIONS } from '../src/composer.mjs';
 import { icon } from './studio-icons.js';
 
 const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
@@ -133,9 +133,11 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   // it. In the Office the box and the row are display: contents and the controls keep their one-line order (style.css);
   // the file chips, the pickers and the overflow menu are Studio's only (studio.css).
   /** @type {{ path: string, size?: number, type?: string }[]} */
-  const fileChips = [];
+  /** @type {{ path: string, size?: number, type?: string, dir?: boolean }[]} */
+  let fileChips = [];
   let picks = { model: '', mode: '' };   // what this chat's pickers last set (main's gui.settings wins when it has them)
   const chipBar = h('div', { class: 'chat-chips' });
+  const dropHint = h('div', { class: 'chat-drop-hint', 'aria-live': 'polite' });   // v3.121 "Drop 3 files" while dragging
   chipBar.hidden = true;
   const modelSel = h('select', { class: 'chat-pick chat-pick-model', onchange: () => setting('model', modelSel.value) });
   const modeSel = h('select', { class: 'chat-pick chat-pick-mode', onchange: () => setting('mode', modeSel.value) });
@@ -149,7 +151,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     h('span', { class: 'chat-more-wrap chat-studio-only' }, more, moreMenu), stop, send);
   const form = h('div', { class: 'chat-form' }, slash, atList, input, row, term);
   form.hidden = Boolean(source);
-  const composer = h('div', { class: 'chat-composer' }, imgBar, chipBar, form);
+  const composer = h('div', { class: 'chat-composer' }, dropHint, imgBar, chipBar, form);
   // v3.115 sub-agents: the running ones above the input (as the terminal lists them); one opens its own conversation
   // in place of the chat (read-only; ← Back returns). A paired device's chat has none (source).
   const agentBar = h('div', { class: 'chat-agents' });
@@ -740,48 +742,90 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       blobs.push({ blob: new Blob([im.data], { type: im.type }), path: im.path });
     }
     if (blobs.length) addImages(blobs.map((b) => b.blob), (f) => { const b = blobs.find((x) => x.blob === f); if (b) insertPaths([b.path]); });
-    if (paths.length) attachPaths(paths);
+    if (paths.length) attachPaths(paths, Array.isArray(r.dirs) ? r.dirs : []);
     else input.focus();
   }
   if (!source) {
     const dragOn = (/** @type {boolean} */ on) => el.classList.toggle('chat-drag', on);   // v3.121 Studio highlights the drop target
-    el.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; dragOn(true); });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      dragOn(true);
+      // v3.121 how many are coming (items are readable while dragging, files only on drop)
+      const n = [...(e.dataTransfer?.items || [])].filter((i) => i.kind === 'file').length;
+      dropHint.textContent = dropText(n, t);
+    });
     el.addEventListener('dragleave', (e) => { if (!(e.relatedTarget instanceof Node) || !el.contains(e.relatedTarget)) dragOn(false); });
     el.addEventListener('drop', (e) => {
       e.preventDefault(); e.stopPropagation();
       dragOn(false);
       const files = [...(e.dataTransfer?.files || [])];
+      // v3.121 a dropped folder is one chip (never expanded): the entry says what it is, a File cannot
+      const dirAt = new Set([...(e.dataTransfer?.items || [])].filter((i) => i.kind === 'file')
+        .map((i, k) => { try { return i.webkitGetAsEntry?.()?.isDirectory ? k : -1; } catch { return -1; } }).filter((k) => k >= 0));
+      const isDirFile = (/** @type {File} */ f) => dirAt.has(files.indexOf(f));
       const pathOf = (/** @type {File} */ f) => { try { return api.pathForFile?.(f) || ''; } catch { return ''; } };
       if (!studioOn()) { insertPaths(files.map(pathOf).filter(Boolean)); return; }
       // Studio: images go with the message as images (a GUI chat), every other file as a chip (sent as @path)
-      const imgs = gui ? files.filter((f) => IMAGE_TYPES.includes(f.type)) : [];
+      const imgs = gui ? files.filter((f) => !isDirFile(f) && IMAGE_TYPES.includes(f.type)) : [];
       if (imgs.length) addImages(imgs, (f) => { const p = pathOf(f); if (p) addFiles([{ path: p, size: f.size, type: f.type }]); });
-      addFiles(files.filter((f) => !imgs.includes(f)).map((f) => ({ path: pathOf(f), size: f.size, type: f.type })).filter((f) => f.path));
+      addFiles(files.filter((f) => !imgs.includes(f)).map((f) => (isDirFile(f) ? { path: pathOf(f), dir: true } : { path: pathOf(f), size: f.size, type: f.type })).filter((f) => f.path));
     });
   }
 
   // ---- v3.121 Studio's composer: file chips, sent media, the model / permission pickers
   const studioOn = () => document.body.classList.contains('studio');
-  /** A file chip: kind icon, name, size (or extension); ✕ when it can be removed. */
-  function fileChip(/** @type {{ path: string, size?: number, type?: string }} */ f, /** @type {(() => void) | null} */ onRemove = null) {
+  /** v3.121 a chip opens in its default app or shows in Finder (main shows what would run code instead of opening it). */
+  async function openChip(/** @type {string} */ p, /** @type {'open' | 'reveal'} */ how) {
+    let r = 'gone';
+    try { r = api.chat.openFile ? await api.chat.openFile(p, how) : 'gone'; } catch (e) { console.error(e); }
+    if (r === 'gone') note(t('chat.fileGone'));
+    else if (r === 'shown') note(t('chat.fileShown'));
+  }
+  /** v3.121 a chip's context menu: Open, Show in Finder, and Remove for a chip that is not sent yet. */
+  function chipMenu(/** @type {MouseEvent} */ e, /** @type {string} */ p, /** @type {(() => void) | null} */ onRemove) {
+    e.preventDefault(); e.stopPropagation();
+    document.querySelector('.chat-chip-menu')?.remove();
+    const item = (/** @type {string} */ label, /** @type {() => void} */ run) => h('button', { class: 'chat-more-item', type: 'button', onclick: () => { m.remove(); run(); } }, label);
+    const m = h('div', { class: 'chat-chip-menu chat-more-menu', role: 'menu' },
+      item(t('chat.fileOpen'), () => openChip(p, 'open')), item(revealLabel(), () => openChip(p, 'reveal')),
+      onRemove ? item(t('chat.fileRemove'), onRemove) : null);
+    m.style.left = `${e.clientX}px`; m.style.top = `${e.clientY}px`;
+    document.body.append(m);
+    const close = (/** @type {Event} */ ev) => { if (!(ev.target instanceof Node) || !m.contains(ev.target)) { m.remove(); window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', close, true); } };
+    setTimeout(() => { window.addEventListener('pointerdown', close, true); window.addEventListener('keydown', close, true); });
+  }
+  /** v3.121 an image in the image bar, larger, over the chat; a click or Escape closes it. */
+  function previewImage(/** @type {string} */ src) {
+    const o = h('div', { class: 'chat-preview', role: 'dialog', 'aria-label': t('chat.imageAlt'), tabindex: '-1', onclick: () => o.remove(), onkeydown: (/** @type {KeyboardEvent} */ e) => { if (e.key === 'Escape') { e.stopPropagation(); o.remove(); } } },
+      h('img', { src, alt: t('chat.imageAlt') }));
+    document.body.append(o);
+    o.focus();
+  }
+  /** A file chip: kind icon, name, size (or extension); ✕ when it can be removed. A click opens it, a right click has the menu. */
+  function fileChip(/** @type {{ path: string, size?: number, type?: string, dir?: boolean }} */ f, /** @type {(() => void) | null} */ onRemove = null) {
     const c = chipInfo(f);
-    return h('span', { class: `chat-file-chip kind-${c.kind}`, title: f.path },
+    return h('span', { class: `chat-file-chip kind-${c.kind}`, title: f.path, role: 'button', tabindex: '0',
+      onclick: (/** @type {MouseEvent} */ e) => { if (!(e.target instanceof Element) || !e.target.closest('.chat-image-x')) openChip(f.path, 'open'); },
+      onkeydown: (/** @type {KeyboardEvent} */ e) => { if (e.key === 'Enter' && e.target === e.currentTarget) openChip(f.path, 'open'); },
+      oncontextmenu: (/** @type {MouseEvent} */ e) => chipMenu(e, f.path, onRemove) },
       h('span', { class: 'chat-file-icon' }, icon('file', 16)),
       h('span', { class: 'chat-file-text' }, h('span', { class: 'chat-file-name' }, c.name), c.meta ? h('span', { class: 'chat-file-meta' }, c.meta) : null),
       onRemove ? h('button', { class: 'chat-image-x', type: 'button', title: t('chat.fileRemove'), 'aria-label': t('chat.fileRemove'), onclick: onRemove }, '✕') : null);
   }
   function drawChips() {
-    chipBar.replaceChildren(...fileChips.map((f, i) => fileChip(f, () => { fileChips.splice(i, 1); drawChips(); input.focus(); })));
+    chipBar.replaceChildren(...fileChips.map((f) => fileChip(f, () => { fileChips = fileChips.filter((x) => x.path !== f.path); drawChips(); input.focus(); })),
+      fileChips.length > 1 ? h('button', { class: 'chat-chips-clear', type: 'button', onclick: () => { fileChips = []; drawChips(); input.focus(); } }, t('chat.fileClear')) : '');
     chipBar.hidden = !fileChips.length;
   }
   function addFiles(/** @type {{ path: string, size?: number, type?: string }[]} */ list) {
-    for (const f of list) if (f.path && !fileChips.some((c) => c.path === f.path)) fileChips.push(f);
+    fileChips = addChips(fileChips, list);
     drawChips();
     input.focus();
   }
   /** Files from the picker or the clipboard: chips in Studio, @path in the input in the Office. */
-  function attachPaths(/** @type {string[]} */ paths) {
-    if (studioOn() && !source) addFiles(paths.map((p) => ({ path: p })));
+  function attachPaths(/** @type {string[]} */ paths, /** @type {string[]} */ dirs = []) {
+    if (studioOn() && !source) addFiles(paths.map((p) => (dirs.includes(p) ? { path: p, dir: true } : { path: p })));
     else insertPaths(paths);
   }
   /** A person's message: its text, then (Studio) the images sent with it and the files it mentions as chips. */
@@ -831,7 +875,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   }
   function drawImages() {
     imgBar.replaceChildren(...images.map((im, i) => h('span', { class: 'chat-image-chip' },
-      h('img', { src: `data:${im.type};base64,${im.data}`, alt: t('chat.imageAlt') }),
+      h('img', { src: `data:${im.type};base64,${im.data}`, alt: t('chat.imageAlt'), onclick: () => previewImage(`data:${im.type};base64,${im.data}`) }),
       h('button', { class: 'chat-image-x', title: t('chat.imageRemove'), onclick: () => { images.splice(i, 1); drawImages(); input.focus(); } }, '✕'))));
     imgBar.hidden = !images.length;
   }
@@ -920,7 +964,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       if (studioOn()) echo(out, sent);
       else echo(sent.length ? `${out}${out.trim() ? '\n\n' : ''}${t('chat.images', { count: sent.length })}` : out);
       images.length = 0; drawImages();
-      fileChips.length = 0; drawChips();
+      fileChips = []; drawChips();   // only after a send that worked: a failed one keeps them
       input.value = '';
       replyTo('');
       fitInput();

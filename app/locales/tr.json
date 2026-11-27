@@ -805,6 +805,11 @@
     "imageAlt": "Yapıştırılan görsel",
     "imageRemove": "Bu görseli kaldır",
     "more": "Diğer",
+    "fileOpen": "Aç",
+    "fileClear": "Tümünü çıkar",
+    "fileGone": "Bu dosya artık yok.",
+    "fileShown": "Bu dosya açılınca kod çalıştırabilir; bu yüzden klasöründe gösterildi.",
+    "drop": { "any": "Dosyaları buraya bırakın", "one": "1 dosyayı bırakın", "many": "{count} dosyayı bırakın" },
     "fileRemove": "Bu dosyayı çıkar",
     "pick": {
       "modelTitle": "Sonraki turlar için model",

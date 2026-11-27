@@ -5487,6 +5487,16 @@ ipcMain.handle('chat:reveal', (_e, id, p) => {
   if (target.root) eShell.openPath(target.path); else eShell.showItemInFolder(target.path);
   return target.gone ? 'gone' : 'ok';
 });
+// v3.121 a composer or sent-message chip: open it in its default app ('open') or show it in Finder ('reveal'). Any existing
+// absolute path the person attached; what would run code is only shown (FM.openTarget) → 'ok' | 'shown' | 'gone'
+ipcMain.handle('chat:openFile', async (e, p, how) => {
+  if (e.sender !== win?.webContents) return 'gone';
+  const target = FM.openTarget(p);
+  if (!target) return 'gone';
+  if (how === 'reveal' || target.action === 'reveal') { eShell.showItemInFolder(target.path); return how === 'reveal' ? 'ok' : 'shown'; }
+  const err = await eShell.openPath(target.path);
+  return err ? 'gone' : 'ok';
+});
 // v3.113 the attach button: the native file picker in the tab's folder. Images (a GUI tab only, up to 10 MB) come back as bytes for
 // the image bar; every other file (and every image in a terminal tab) as its full path for @path.
 ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
@@ -5494,7 +5504,8 @@ ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
   if (!r || r.tab?.shell) return null;
   const res = await dialog.showOpenDialog(win, {
     title: T('main.chatPickFiles'),
-    properties: ['openFile', 'multiSelections'],
+    // v3.121 several at once; on macOS folders too (elsewhere a folder picker could not pick files)
+    properties: process.platform === 'darwin' ? ['openFile', 'openDirectory', 'multiSelections'] : ['openFile', 'multiSelections'],
     ...(isDir(r.dir) ? { defaultPath: r.dir } : {}),
   });
   if (res.canceled || !res.filePaths.length) return null;
@@ -5502,7 +5513,10 @@ ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
   const paths = [];
   /** @type {{ type: string, data: Buffer, path: string }[]} */
   const images = [];
+  /** @type {string[]} */
+  const dirs = [];
   for (const p of res.filePaths.slice(0, 50)) {
+    if (isDir(p)) { dirs.push(p); paths.push(p); continue; }
     const type = wantImages ? FM.imageType(p) : '';
     if (type && images.length < 5) {
       try {
@@ -5512,7 +5526,7 @@ ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
     }
     paths.push(p);
   }
-  return { paths, images };
+  return { paths, images, dirs };
 });
 // The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).
 ipcMain.handle('chat:send', (_e, id, text, images) => {

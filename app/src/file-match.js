@@ -118,4 +118,21 @@ const PICK_IMAGE_MAX = 10 * 1024 * 1024;   // larger images are not read into th
 /** The image type of a picked file by its name, or '' when it is not an image the API takes. */
 const imageType = (p) => IMAGE_EXT[path.extname(String(p)).toLowerCase()] || '';
 
-module.exports = { FILES_MAX, parseGitFiles, walkFiles, rankFiles, mention, insidePath, revealTarget, imageType, PICK_IMAGE_MAX };
+/**
+ * v3.121 what opening an attached file does: { path, action: 'open' | 'reveal' } or null (not an absolute path, or
+ * gone). A file opens in its default app; anything that would run code when opened (an app bundle, an executable, a
+ * script or installer by its extension) is shown in Finder instead; a folder opens.
+ */
+const RUNS_EXT = new Set(['app', 'command', 'tool', 'sh', 'zsh', 'bash', 'csh', 'fish', 'exe', 'bat', 'cmd', 'com', 'msi', 'ps1', 'vbs', 'js', 'jar', 'pkg', 'dmg', 'scpt', 'applescript', 'workflow', 'terminal', 'desktop', 'appimage', 'run', 'bin', 'url', 'webloc', 'inetloc', 'lnk']);
+function openTarget(p, fsx = fs) {
+  if (typeof p !== 'string' || !p || p.includes('\0') || !path.isAbsolute(p)) return null;
+  let st;
+  try { st = fsx.statSync(p); } catch { return null; }
+  const ext = path.extname(p).slice(1).toLowerCase();
+  if (RUNS_EXT.has(ext)) return { path: p, action: 'reveal' };
+  if (st.isDirectory()) return { path: p, action: 'open' };
+  if (!st.isFile() || (process.platform !== 'win32' && (st.mode & 0o111))) return { path: p, action: 'reveal' };
+  return { path: p, action: 'open' };
+}
+
+module.exports = { openTarget, FILES_MAX, parseGitFiles, walkFiles, rankFiles, mention, insidePath, revealTarget, imageType, PICK_IMAGE_MAX };

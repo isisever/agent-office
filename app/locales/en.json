@@ -815,6 +815,11 @@
     "imageAlt": "Pasted image",
     "imageRemove": "Remove this image",
     "more": "More",
+    "fileOpen": "Open",
+    "fileClear": "Remove all",
+    "fileGone": "This file is no longer there.",
+    "fileShown": "This file could run code when opened, so it is shown in its folder instead.",
+    "drop": { "any": "Drop files here", "one": "Drop 1 file", "many": "Drop {count} files" },
     "fileRemove": "Remove this file",
     "pick": {
       "modelTitle": "Model for the next turns",

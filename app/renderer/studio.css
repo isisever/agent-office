@@ -421,3 +421,27 @@ body.studio .chat-host.chat-drag .chat-composer { border-color: var(--st-accent)
 body.studio .chat-sent-images, body.studio .chat-sent-files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 body.studio .chat-sent-images img { max-width: 220px; max-height: 160px; border-radius: var(--st-radius-s); border: 1px solid var(--st-border); display: block; }
 body.studio .chat-msg.user .chat-file-chip { background: var(--st-raised); }
+
+/* v3.121 chips: open on click, a menu on right click, Remove all; the drop count; the image preview */
+body.studio .chat-file-chip { cursor: pointer; }
+body.studio .chat-file-chip:focus-visible { outline: 2px solid var(--st-accent); outline-offset: 1px; }
+body.studio .chat-file-chip.kind-folder .chat-file-icon { color: var(--st-accent-ink); background: color-mix(in srgb, var(--st-accent) 10%, transparent); }
+body.studio .chat-chips-clear {
+  align-self: center; height: 28px; padding: 0 10px; border: 0; border-radius: var(--st-radius-s); background: none;
+  color: var(--st-muted); font: 500 12.5px/1 var(--st-font); cursor: pointer;
+}
+body.studio .chat-chips-clear:hover { background: var(--st-hover); color: var(--st-text); }
+body.studio .chat-image-chip img { cursor: zoom-in; }
+.chat-drop-hint { display: none; }
+body.studio .chat-host.chat-drag .chat-drop-hint:not(:empty) {
+  display: block; padding: 2px 4px 8px; color: var(--st-accent-ink); font: 600 13px/1.3 var(--st-font);
+}
+.chat-chip-menu { position: fixed; z-index: 1200; min-width: 160px; }
+body:not(.studio) .chat-chip-menu { background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px; }
+body:not(.studio) .chat-chip-menu .chat-more-item { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: 5px 10px; cursor: pointer; font: inherit; }
+.chat-preview {
+  position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 32px;
+  background: rgba(0, 0, 0, .72); cursor: zoom-out; outline: none;
+}
+.chat-preview img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 12px 40px rgba(0, 0, 0, .4); }
+body.studio .chat-more-menu.chat-chip-menu { position: fixed; right: auto; bottom: auto; z-index: 1200; }

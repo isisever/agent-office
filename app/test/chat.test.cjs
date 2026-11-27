@@ -446,7 +446,8 @@ test('v3.113 Show in Finder: real paths on both sides, worktree tabs, files that
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const pick = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:pick'"), MAIN.indexOf("ipcMain.handle('chat:pick'") + 1400);
   assert.match(pick, /dialog\.showOpenDialog\(win, \{/);
-  assert.match(pick, /properties: \['openFile', 'multiSelections'\]/);
+  assert.match(pick, /: \['openFile', 'multiSelections'\]/, 'several files at once on every system');
+  assert.match(pick, /\['openFile', 'openDirectory', 'multiSelections'\]/, 'v3.121 folders too on macOS');
   assert.match(pick, /defaultPath: r\.dir/);
   assert.match(pick, /FM\.imageType\(p\)/);
   assert.match(pick, /st\.size <= FM\.PICK_IMAGE_MAX/);
@@ -624,4 +625,27 @@ test('PR #20 review fixes: commandGo re-checks tasks and typing, tabStateOf park
   assert.match(body("ipcMain.handle('chat:commandGo'", 900), /guiTaskOpen\(id\) \|\| guiRecent\(id\) \|\| !idleSession\(id\)/);
   assert.match(body('function tabStateOf(', 700), /if \(cmdTabs\.has\(projectId\)\) return 'busy'/);
   assert.match(body('function liveSids(', 1400), /for \(const how of asleep\.values\(\)\)[^\n]*validSid\(how\?\.sessionId\)/);
+});
+
+test('v3.121 openTarget: a chip opens in its default app; what could run code is only shown; gone or relative is null', () => {
+  const FM = require('../src/file-match.js');
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ao-open-')));
+  try {
+    for (const f of ['a.txt', 'run.command', 'x.sh']) fs.writeFileSync(path.join(d, f), 'x');
+    fs.mkdirSync(path.join(d, 'folder'));
+    fs.mkdirSync(path.join(d, 'Tool.app'));
+    assert.deepEqual(FM.openTarget(path.join(d, 'a.txt')), { path: path.join(d, 'a.txt'), action: 'open' });
+    assert.equal(FM.openTarget(path.join(d, 'folder')).action, 'open');
+    assert.equal(FM.openTarget(path.join(d, 'Tool.app')).action, 'reveal');
+    assert.equal(FM.openTarget(path.join(d, 'run.command')).action, 'reveal');
+    assert.equal(FM.openTarget(path.join(d, 'x.sh')).action, 'reveal');
+    if (process.platform !== 'win32') { fs.writeFileSync(path.join(d, 'tool'), 'x'); fs.chmodSync(path.join(d, 'tool'), 0o755); assert.equal(FM.openTarget(path.join(d, 'tool')).action, 'reveal'); }
+    assert.equal(FM.openTarget(path.join(d, 'gone.txt')), null);
+    assert.equal(FM.openTarget('a.txt'), null);
+    assert.equal(FM.openTarget(''), null);
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /ipcMain\.handle\('chat:openFile', async \(e, p, how\) => \{\n\s+if \(e\.sender !== win\?\.webContents\) return 'gone';/);
+  const R = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat.js'), 'utf8');
+  assert.match(R, /fileChips = \[\]; drawChips\(\); {3}\/\/ only after a send that worked/, 'chips clear only after a successful send');
 });
