@@ -139,7 +139,15 @@ function scryptSync(password, salt, keylen, opts = {}) {
   const N = opts.N ?? opts.cost ?? 16384;
   const r = opts.r ?? opts.blockSize ?? 8;
   const p = opts.p ?? opts.parallelization ?? 1;
-  if (N < 2 || (N & (N - 1)) !== 0) throw new RangeError('crypto-shim: N must be a power of two > 1');
+  const maxmem = opts.maxmem ?? 32 * 1024 * 1024;
+  const int = (v, min, max) => Number.isSafeInteger(v) && v >= min && v <= max;
+  // the same limits as Node's scryptSync: bad parameters throw before any memory is taken
+  if (!int(keylen, 0, 0x7fffffff)) throw new RangeError('crypto-shim: keylen must be an integer in 0..2^31-1');
+  if (!int(N, 2, 2 ** 32) || (N & (N - 1)) !== 0) throw new RangeError('crypto-shim: N must be a power of two > 1');
+  if (!int(r, 1, 0x3fffffff) || !int(p, 1, 0x3fffffff) || r * p >= 2 ** 30) throw new RangeError('crypto-shim: invalid r or p');
+  if (!int(maxmem, 0, Number.MAX_SAFE_INTEGER)) throw new RangeError('crypto-shim: maxmem must be a non-negative integer');
+  if (128 * N * r > maxmem) throw new RangeError('crypto-shim: 128 * N * r exceeds maxmem');
+  if (N * r > 2 ** 22) throw new RangeError('crypto-shim: N * r is above the native ROMix limit (2^22)');
   const pw = toBytes(password);
   const B = pbkdf2Sha256Once(pw, toBytes(salt), 128 * r * p);
   for (let i = 0; i < p; i++) (nativeRomix || roMix)(B.subarray(i * 128 * r, (i + 1) * 128 * r), r, N);

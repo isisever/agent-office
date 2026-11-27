@@ -37,7 +37,10 @@ static void block_mix(uint32_t *B, uint32_t *Y, uint32_t r) {
 }
 
 int scrypt_romix(uint8_t *block, uint32_t r, uint32_t N) {
+  if (r == 0 || N < 2 || (N & (N - 1)) != 0) return -1;
+  if ((uint64_t) N * r > SCRYPT_LL_MAX_NR) return -1;   // also keeps N * words * 4 far below SIZE_MAX
   size_t words = 32 * (size_t) r;
+  if (words > SIZE_MAX / 4 / N) return -1;                // overflow guard for 32-bit size_t
   uint32_t *X = malloc(words * 4), *Y = malloc(words * 4), *V = malloc((size_t) N * words * 4);
   if (!X || !Y || !V) { free(X); free(Y); free(V); return -1; }
   for (size_t i = 0; i < words; i++) {
@@ -45,12 +48,12 @@ int scrypt_romix(uint8_t *block, uint32_t r, uint32_t N) {
     X[i] = (uint32_t) p[0] | ((uint32_t) p[1] << 8) | ((uint32_t) p[2] << 16) | ((uint32_t) p[3] << 24);
   }
   for (uint32_t i = 0; i < N; i++) {
-    memcpy(&V[i * words], X, words * 4);
+    memcpy(&V[(size_t) i * words], X, words * 4);
     block_mix(X, Y, r);
   }
   for (uint32_t i = 0; i < N; i++) {
     uint32_t j = X[(2 * r - 1) * 16] & (N - 1);
-    for (size_t k = 0; k < words; k++) X[k] ^= V[j * words + k];
+    for (size_t k = 0; k < words; k++) X[k] ^= V[(size_t) j * words + k];
     block_mix(X, Y, r);
   }
   for (size_t i = 0; i < words; i++) {

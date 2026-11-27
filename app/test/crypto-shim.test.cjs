@@ -128,3 +128,31 @@ test('native ROMix (scrypt-ll) matches Node scryptSync for the pairing parameter
     }
   } finally { shim.setRomix(null); }
 });
+
+test('scryptSync rejects bad parameters like Node (stricter for zero r or p), before taking memory', { skip }, () => {
+  const bad = [
+    [64, { N: 1000, r: 8, p: 1 }], [64, { N: 1, r: 8, p: 1 }], [64, { N: 1024, r: 0, p: 1 }], [64, { N: 1024, r: 1.5, p: 1 }],
+    [64, { N: 1024, r: 8, p: 0 }], [64, { N: 1024, r: 8, p: -1 }], [-1, { N: 1024, r: 8, p: 1 }], [1.5, { N: 1024, r: 8, p: 1 }],
+    ['64', { N: 1024, r: 8, p: 1 }], [64, { N: 1024, r: 8, p: 1, maxmem: -1 }], [64, { N: 1 << 15, r: 8, p: 1, maxmem: 1 << 20 }],
+    [64, { N: 1 << 20, r: 8, p: 1, maxmem: 2 ** 40 }],   // within maxmem, but above the native ROMix cap (N * r <= 2^22)
+  ];
+  for (const [keylen, opts] of bad) {
+    assert.throws(() => shim.scryptSync('pw', 'salt', keylen, opts), RangeError, JSON.stringify([keylen, opts]));
+  }
+  assert.equal(shim.scryptSync('pw', 'salt', 0, { N: 16, r: 1, p: 1 }).length, 0);
+});
+
+test('native ROMix (scrypt-ll) refuses bad N, r and N * r above the cap without allocating', { skip }, (t) => {
+  const { execFileSync, spawnSync } = require('node:child_process');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const dir = path.join(CORE, 'addons', 'scrypt-ll');
+  const exe = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'romix-')), 'romix-cli');
+  try { execFileSync('cc', ['-O2', '-o', exe, path.join(dir, 'romix-cli.c'), path.join(dir, 'romix.c')], { stdio: 'ignore' }); } catch { t.skip('no C compiler'); return; }
+  const run = (r, N) => spawnSync(exe, { input: `${r} ${N} ${'00'.repeat(128 * r)}\n`, encoding: 'utf8' }).status;
+  assert.equal(run(1, 16), 0);
+  assert.equal(run(1, 1000), 3);          // not a power of two
+  assert.equal(run(1, 1), 3);             // N < 2
+  assert.equal(run(8, 1 << 20), 3);       // N * r = 2^23 > 2^22
+  assert.equal(run(64, 1 << 17), 3);      // N * r = 2^23
+});

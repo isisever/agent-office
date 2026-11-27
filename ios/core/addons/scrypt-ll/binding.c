@@ -1,5 +1,7 @@
-// Bare addon: romix(block: Uint8Array of 128 * r bytes, r, N) replaces block with scrypt's ROMix, in place.
+// Bare addon: romix(block: Uint8Array of 128 * r bytes, r, N; N * r <= SCRYPT_LL_MAX_NR) replaces block with scrypt's ROMix, in place.
 #include <bare.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <js.h>
 
 #include "romix.h"
@@ -13,11 +15,15 @@ scrypt_ll_romix(js_env_t *env, js_callback_info_t *info) {
     return NULL;
   }
   void *data;
-  size_t len;
+  size_t len;   // an element count: for a Uint8Array also the byte length
   uint32_t r, n;
-  if (js_get_typedarray_info(env, argv[0], NULL, &data, &len, NULL, NULL) != 0 ||
+  bool is_typedarray = false;
+  js_typedarray_type_t type;
+  if (js_is_typedarray(env, argv[0], &is_typedarray) != 0 || !is_typedarray ||
+      js_get_typedarray_info(env, argv[0], &type, &data, &len, NULL, NULL) != 0 || type != js_uint8array ||
       js_get_value_uint32(env, argv[1], &r) != 0 || js_get_value_uint32(env, argv[2], &n) != 0 ||
-      r == 0 || r > 64 || len != 128 * (size_t) r || n < 2 || n > (1u << 20) || (n & (n - 1)) != 0) {
+      r == 0 || r > 64 || len != 128 * (size_t) r || n < 2 || n > (1u << 20) || (n & (n - 1)) != 0 ||
+      (uint64_t) n * r > SCRYPT_LL_MAX_NR) {
     js_throw_error(env, NULL, "romix: bad arguments");
     return NULL;
   }

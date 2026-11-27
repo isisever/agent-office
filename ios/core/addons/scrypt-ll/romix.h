@@ -5,7 +5,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// block: 128 * r bytes, replaced by ROMix(block). N: a power of two > 1. Returns 0, or -1 when memory runs out.
+// The largest N * r accepted: V takes 128 * N * r bytes, so this caps it at 512 MiB (pairing uses N 2^15, r 8: 32 MiB).
+#define SCRYPT_LL_MAX_NR (1u << 22)
+
+// block: 128 * r bytes, replaced by ROMix(block). N: a power of two > 1, r > 0, N * r <= SCRYPT_LL_MAX_NR.
+// Returns 0, or -1 for bad parameters or when memory runs out.
 int scrypt_romix(uint8_t *block, uint32_t r, uint32_t N);
 
 #endif
