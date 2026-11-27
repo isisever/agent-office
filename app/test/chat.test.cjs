@@ -740,3 +740,33 @@ test('v3.121 chat:setting: only from the window; a skip-permissions or desk sess
   assert.match(MAIN, /guiModeLock\.set\(id, STU\.modeLock\(\{ skip: P\.skipPermissionsArgs\(project\)\.length > 0, desk: Boolean\(mailMcp\) \|\| Boolean\(r\.tab\?\.staffId\) \|\| guarded !== settings \}\)\);/);
   assert.match(MAIN, /modeLock: guiModeLock\.get\(id\) \|\| ''/, 'the chat learns the lock with its GUI info');
 });
+
+test('v3.120 sessionNames: a /rename that scrolled out of both windows is kept; only appended lines are read; split lines wait', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-names-'));
+  const f = path.join(d, 's.jsonl');
+  const pad = (n) => `${Array.from({ length: n }, (_, i) => JSON.stringify({ type: 'user', message: { role: 'user', content: `${'ğx'.repeat(50)}${i}` } })).join('\n')}\n`;
+  const size = () => fs.statSync(f).size;
+  fs.writeFileSync(f, `${pad(10)}${JSON.stringify({ type: 'custom-title', customTitle: 'Early' })}\n`);
+  let n = C.sessionNames(f, size());
+  assert.equal(n.custom, 'Early');
+  assert.equal(n.end, size());
+  fs.appendFileSync(f, pad(500));
+  n = C.sessionNames(f, size(), n);
+  fs.appendFileSync(f, `${JSON.stringify({ type: 'custom-title', customTitle: 'Mid' })}\n${pad(2000)}`);
+  n = C.sessionNames(f, size(), n);
+  assert.equal(n.custom, 'Mid');
+  assert.equal(C.sessionInfo(f, size()).title, 'Early');   // the windows alone miss it
+  assert.equal(C.sessionInfo(f, size(), fs, n).title, 'Mid');
+  fs.appendFileSync(f, '{"type":"custom-ti');
+  n = C.sessionNames(f, size(), n);
+  assert.equal(n.custom, 'Mid');
+  fs.appendFileSync(f, 'tle","customTitle":"Split"}\n');
+  n = C.sessionNames(f, size(), n);
+  assert.equal(n.custom, 'Split');
+  assert.equal(n.end, size());
+  assert.equal(C.sessionNames(f, 10, n).custom, '');   // a shorter file is not the one remembered
+  fs.rmSync(d, { recursive: true, force: true });
+});

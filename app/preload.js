@@ -154,6 +154,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     interrupt: (id) => ipcRenderer.invoke('chat:interrupt', id),         // stop the running turn → 'ok' | 'not-running'
     sessions: (id) => ipcRenderer.invoke('chat:sessions', id),           // v3.118 /resume in a GUI chat tab: the project's sessions → [{ id, title, prompt, branch, at, size }]
     resume: (id, sid) => ipcRenderer.invoke('chat:resume', id, sid),     // v3.118 continue one of them in this tab → 'moved' | 'busy:<why>' | 'gone' | 'locked' | 'not-running' | 'unsupported'
+    rename: (id, name) => ipcRenderer.invoke('chat:rename', id, name),   // v3.120 Studio header rename → 'ok' (a GUI chat ran /rename) | 'terminal' (type it with chat.send) | 'not-running' | 'locked' | 'bad'
     command: (id, text) => ipcRenderer.invoke('chat:command', id, text),   // v3.117 a command with a screen of its own → 'moved' (its terminal) | 'terminal' (send it with chat.send) | 'busy:<why>' | 'locked' | 'not-running' | 'unsupported' | 'bad-command'
     mode: (id, mode) => ipcRenderer.invoke('chat:mode', id, mode),       // 'terminal' | 'gui' → 'ok' (view only) | 'moved' (restarted in that mode) | 'busy:<why>' (v3.116) | 'locked' | 'unsupported'
     commandGo: (id) => ipcRenderer.invoke('chat:commandGo', id),         // v3.117 its prompt box is on screen: type the waiting command → 'typed' | 'wait' | 'gone'

@@ -239,4 +239,15 @@ function endNote(stderr) {
   return lines.join('\n').slice(-END_NOTE_MAX);
 }
 
-module.exports = { settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+/**
+ * v3.120 the /rename message for a GUI chat: Claude Code's stream-json input runs `/rename <name>` locally (checked
+ * with claude 2.1.332: a session_title_changed event and a custom-title line, no model turn). One line, control
+ * characters out, at most 120 characters; '' when no name is left.
+ */
+function renameCommand(name) {
+  // eslint-disable-next-line no-control-regex
+  const n = typeof name === 'string' ? name.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120).trim() : '';
+  return n ? `/rename ${n}` : '';
+}
+
+module.exports = { renameCommand, settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };

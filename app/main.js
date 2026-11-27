@@ -5684,14 +5684,18 @@ function probeModels(configDir) {
   timer.unref?.();
   try { child.stdin.write(ML.initLine('ao-probe')); } catch { end(); }
 }
-// the start screen's model list for a project's account → { models, loading }
+// the start screen's model list for a project's account → { models, loading, gui, modeLock }; v3.120 gui: a new tab
+// of the project runs as a GUI chat (else a terminal: Windows, or not a Claude project, so chat:setting cannot apply a
+// pick); modeLock: what holds a new tab's permission mode (STU.modeLock: a skip-permissions project starts in bypass)
 ipcMain.handle('studio:models', (_e, projectId) => {
   const p = state.projects.find((x) => x.id === String(projectId));
-  if (!p || P.engineOf(p) !== 'claude') return { models: ML.FALLBACK, loading: false };
+  if (!p || P.engineOf(p) !== 'claude') return { models: ML.FALLBACK, loading: false, gui: false, modeLock: '' };
   const { configDir } = A.accountOf(state, p);
   const key = ML.accountKey(configDir);
   if (!ML.cachedModels(readModelCache(), key)) probeModels(configDir);
-  return ML.startModels(readModelCache(), key, modelProbes.has(key));
+  const gui = guiTab('', { project: p, tab: null }, { studio: true });
+  const modeLock = STU.modeLock({ skip: P.skipPermissionsArgs(p).length > 0 });
+  return { ...ML.startModels(readModelCache(), key, modelProbes.has(key)), gui, modeLock };
 });
 function guiInfo(id) {
   const t = terms.get(id);
@@ -5798,6 +5802,21 @@ ipcMain.handle('chat:resume', (_e, id, sid) => {
   if (GS.switchPlan(facts) === 'busy') return `busy:${GS.switchWhy(facts)}`;
   startPty(id, { sessionId: sid, resume: true });
   return 'moved';
+});
+// v3.120 Studio's header renames a session: a GUI chat takes `/rename <name>` as a message (Claude Code's stream-json
+// input runs it locally: no turn, no restart; the transcript gets its custom-title line), never through chat:command,
+// whose terminal move would restart claude. → 'ok' | 'terminal' (a terminal tab: the renderer types it with
+// chat:send) | 'not-running' | 'locked' | 'bad'
+ipcMain.handle('chat:rename', (e, id, name) => {
+  if (!fromWin(e)) return 'bad';
+  id = String(id);
+  const cmd = GS.renameCommand(name);
+  if (!cmd) return 'bad';
+  const t = terms.get(id);
+  if (!t) return 'not-running';
+  if (handoffLocked(id)) { lockedNotice(id); return 'locked'; }
+  if (!t.gui) return 'terminal';
+  return typePrompt(id, cmd) ? 'ok' : 'not-running';
 });
 // v3.117 a command that opens a screen of its own (/resume, /model, /mcp, …): a GUI chat tab has no terminal for it,
 // so claude continues the same session in its terminal (only while nothing runs, as chat:mode) and the command is
@@ -6243,7 +6262,9 @@ ipcMain.handle('studio:sessions', (e) => {
 });
 // v3.120 Studio UX: a running session's name, branch and last activity from its transcript (read again only when the
 // file changed) and its live state (GUI chat: a turn runs, an approval or a question is open).
-/** @type {Map<string, { key: string, info: { title: string, prompt: string, branch: string } }>} */
+// v3.120 names: the last /rename and Claude Code title seen up to a byte offset, so only what was appended since is read
+// again for them (a rename in the middle of a long transcript is kept once seen; CHAT.sessionNames)
+/** @type {Map<string, { key: string, names: { end: number, custom: string, ai: string }, info: { title: string, prompt: string, branch: string } }>} */
 const studioInfoCache = new Map();
 function studioTabInfo(ptyId) {
   const tt = terms.get(ptyId);
@@ -6259,7 +6280,12 @@ function studioTabInfo(ptyId) {
     try { st = fs.statSync(file); } catch { continue; }
     const key = `${st.size}:${st.mtimeMs}`;
     let hit = studioInfoCache.get(file);
-    if (!hit || hit.key !== key) { hit = { key, info: CHAT.sessionInfo(file, st.size) }; studioInfoCache.set(file, hit); }
+    if (!hit || hit.key !== key) {
+      const names = CHAT.sessionNames(file, st.size, hit?.names);
+      hit = { key, names, info: CHAT.sessionInfo(file, st.size, fs, names) };
+      studioInfoCache.delete(file);
+      studioInfoCache.set(file, hit);
+    }
     if (studioInfoCache.size > 200) studioInfoCache.delete(studioInfoCache.keys().next().value);
     return { ...hit.info, at: Math.round(st.mtimeMs), ...live };
   }

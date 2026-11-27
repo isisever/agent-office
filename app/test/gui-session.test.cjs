@@ -387,3 +387,10 @@ test('GUI chat setting: waits for claude\'s control_response; an error reply cha
   c.emit('exit', 0, null);
   assert.equal(await lost, 'gone');
 });
+
+test('v3.120 renameCommand: the /rename message for a GUI chat, one clean line of at most 120 characters', () => {
+  assert.equal(GS.renameCommand('  My\nname\u0007 '), '/rename My name');
+  assert.equal(GS.renameCommand('x'.repeat(300)), `/rename ${'x'.repeat(120)}`);
+  assert.equal(GS.renameCommand('  '), '');
+  assert.equal(GS.renameCommand(null), '');
+});
