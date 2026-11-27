@@ -7,6 +7,10 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const HQ = require('../src/hq.js');
+const HO = require('../src/hq-order.js');
+// v3.130 a typed id is an order until it is closed. These tests cover the follow-up rules after an order is closed
+// (today's v3.91/v3.103 rules): the minter closes every order it mints.
+const legacyMinter = (o) => { const m = HQ.createMinter(o); const mint = m.mint; m.mint = (a) => { const id = mint(a); m.closeOrder(id); return id; }; return m; };
 const P = require('../src/projects.js');
 const OM = require('../src/office-mcp.js');
 const LH = require('../src/link-host.js');
@@ -80,7 +84,7 @@ test('redaction runs before every dispatch', () => {
 
 test('consent matrix: the app is the only gate; no dialog by default for the live minted id, a dialog only with askBeforeDispatch or adhoc', () => {
   let t = 1000;
-  const m = HQ.createMinter({ now: () => t, rand: () => 'x' });
+  const m = legacyMinter({ now: () => t, rand: () => 'x' });
   const id = m.mint();
   for (const [ask, remote, request, want] of [
     [false, false, id, 'none'], [false, true, id, 'none'], [true, true, id, 'app'], [true, false, id, 'app'],   // v3.101 a paired machine follows the same rule
@@ -100,7 +104,7 @@ test('consent matrix: the app is the only gate; no dialog by default for the liv
 
 test('request ids: only minted ones are accepted, else the current one, else the capped adhoc bucket', () => {
   let t = 1000;
-  const m = HQ.createMinter({ now: () => t, rand: () => 'x' });
+  const m = legacyMinter({ now: () => t, rand: () => 'x' });
   assert.equal(HQ.resolveRequest(m, 'rmadeup'), HQ.ADHOC);
   assert.equal(HQ.resolveRequest(m, ''), HQ.ADHOC);
   const a = m.mint(); t += 1;
@@ -341,7 +345,7 @@ test('office MCP: the HQ tab lists 7 tools (v3.87 office_task), a project boss 4
 
 test('a foreign request id resolves to the current id and consentFor sees it live (real path)', () => {
   let t = 1000;
-  const m = HQ.createMinter({ now: () => t, rand: () => 'x' });
+  const m = legacyMinter({ now: () => t, rand: () => 'x' });
   const cur = m.mint();
   const request = HQ.resolveRequest(m, 'rforged');
   assert.equal(request, cur);
@@ -792,7 +796,7 @@ test('v3.89 amendment: a report the person\'s own prompt may have shaped is mark
 const WEB = { projectId: 'p-web' };
 const initiativeCase = () => {
   const clock = { t: 1000 };
-  const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
+  const m = legacyMinter({ now: () => clock.t, rand: () => 'x' });
   const id = m.mint();
   const board = HQ.addTask(HQ.emptyBoard(), { id: 't1', request: id, title: 'first', pub: 'self', project: 'web', projectId: 'p-web', status: 'reported', consented: true }, clock.t);
   m.clear();   // a report came in: the typed id is no longer live
@@ -1353,7 +1357,7 @@ test('v3.98 remote rows carry their device key, also for a project id with a col
 // --- v3.99 remote targets are equal: the paired-machines setting and the machine + project target identity
 test('v3.99/v3.103 follow-up: a paired machine target must name the machine by its key; any project there', () => {
   const clock = { t: 1000 };
-  const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
+  const m = legacyMinter({ now: () => clock.t, rand: () => 'x' });
   const id = m.mint();
   const PUB = 'ab'.repeat(32);
   const OTHER = 'cd'.repeat(32);
@@ -1379,7 +1383,7 @@ test('v3.99/v3.103 follow-up: a paired machine target must name the machine by i
 });
 
 test('v3.101 consent: a paired machine follows the same rules as a local target; the remote setting is gone and migrates away', () => {
-  const m = HQ.createMinter({ now: () => 1000, rand: () => 'x' });
+  const m = legacyMinter({ now: () => 1000, rand: () => 'x' });
   const id = m.mint();
   for (const ask of [false, true]) for (const request of [id, 'rforged', '', HQ.ADHOC]) {
     assert.equal(HQ.consentFor({ ask, remote: true, request, minter: m, now: 1000 }), HQ.consentFor({ ask, remote: false, request, minter: m, now: 1000 }), `${ask} ${request}`);
@@ -1398,12 +1402,12 @@ test('v3.101 consent: a paired machine follows the same rules as a local target;
   assert.match(main, /skip: HQ\.remoteSkips\(l\.peerCatalog\?\.get\(pub\), projectId\)/);
   assert.match(main, /skips: answersPrompts\(p\.id\)/);
   assert.doesNotMatch(main, /dispatchRemoteWithoutAsking/);
-  assert.match(main, /notifyRemoteSent\(pname, dv\.name\)/);   // the notice for a remote task sent without a dialog stays
+  assert.match(main, /notifyRemoteSent\(pname, dv\.name, request\)/);   // the notice for a remote task sent without a dialog stays
 });
 
 test('v3.101 review: a paired machine\'s project gets a follow-up only when its catalog says it does not skip', () => {
   const clock = { t: 1000 };
-  const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
+  const m = legacyMinter({ now: () => clock.t, rand: () => 'x' });
   const id = m.mint();
   const PUB = 'ab'.repeat(32);
   assert.match(fnBody('hqDispatch'), /confirmHqDispatch\(args, remote\)/);
@@ -1424,7 +1428,7 @@ test('v3.101 review: a paired machine\'s project gets a follow-up only when its 
 // --- v3.103 no consent dialog by default: consentFor, followRefusal, takeInitiative, resolveRequest, normalizeHq
 const v103 = () => {
   const clock = { t: 1000 };
-  const m = HQ.createMinter({ now: () => clock.t, rand: () => 'x' });
+  const m = legacyMinter({ now: () => clock.t, rand: () => 'x' });
   return { clock, m };
 };
 
@@ -1641,4 +1645,117 @@ test('v3.126 waitFields: a desk waiting on its project lock names the tab it wai
   assert.equal(p.blockedBy, 'permission', 'what only the person can clear still comes first');
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'link-host.js'), 'utf8');
   assert.match(src, /c\.device\.pub === SELF && d\.deskLock\?\.\(project\)\) break;/, 'the first start respects the lock');
+});
+
+// --- v3.130 orders from HQ
+test('v3.130 order authority: a typed id keeps its authority until closed, with a 24 h ceiling', () => {
+  let t = 1_000_000;
+  const m = HQ.createMinter({ now: () => t });
+  const id = m.mint();
+  const routine = m.mint({ origin: 'routine', run: 'x' });
+  assert.equal(m.isOrder(id), true);
+  assert.equal(m.isOrder(routine), false);   // a routine's id is never an order
+  m.clear();                                  // the first report ends the turn, not the order
+  t += 5 * 3600 * 1000;                       // past the old 2 h window
+  assert.equal(HQ.consentFor({ request: id, minter: m, now: t }), 'follow');
+  assert.equal(HQ.resolveRequest(m, id, { now: t }), id);
+  t = 1_000_000 + HO.ORDER_MS;                // the ceiling
+  assert.equal(m.isOrder(id), false);
+  assert.equal(HQ.consentFor({ request: id, minter: m, now: t }), 'app');
+  const id2 = m.mint();
+  m.closeOrder(id2);                          // closed: today's follow-up rules again
+  assert.equal(m.isOrder(id2), false);
+  t += 3 * 3600 * 1000;
+  assert.equal(HQ.consentFor({ request: id2, minter: m, now: t }), 'app');
+  assert.equal(HQ.consentFor({ request: HQ.ADHOC, minter: m, now: t }), 'app');   // adhoc keeps the dialog
+  assert.equal(HQ.consentFor({ request: id2, minter: m, ask: true, now: t }), 'app');
+});
+
+test('v3.130 order follow-ups: no count and no cap refusal, Skip and new-unattended rules stay', () => {
+  let t = 5_000_000;
+  const m = HQ.createMinter({ now: () => t });
+  const id = m.mint();
+  m.clear();
+  const board = { tasks: [], requests: [{ id, at: t, prompt: '', tasks: [], done: false, initiative: 40 }] };
+  const local = { projectId: 'p', staffId: '', skip: false };
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [local], now: t }), null);   // 40 sent: no follow-up-cap
+  const full = { tasks: Array.from({ length: HQ.MAX_OPEN }, (_, i) => ({ id: `t${i}`, request: id, status: 'running' })), requests: board.requests };
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board: full, targets: [local], now: t }), null);   // the caps queue, not refuse
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [{ ...local, skip: true }], now: t }), 'skip-permissions');
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [{ ...local, auto: true, seen: false }], now: t }), 'new-unattended-target');
+  m.closeOrder(id);
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [local], now: t }), 'follow-up-cap');
+});
+
+test('v3.130 caps ignore rows waiting in the order queue', () => {
+  const tasks = Array.from({ length: HQ.MAX_OPEN }, (_, i) => ({ id: `q${i}`, request: 'r1', status: 'queued', orderQueued: true }));
+  assert.equal(HQ.capReason({ tasks, requests: [] }, 'r1'), null);
+  assert.equal(HQ.capReason({ tasks: tasks.map((x) => ({ ...x, orderQueued: false })), requests: [] }, 'r1'), 'open-cap');
+});
+
+test('v3.130 sealed store: digest verify, tamper and unknown key fall back, restart restores open orders', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-order-'));
+  const file = path.join(dir, 'orders.json');
+  const key = Buffer.alloc(32, 7);
+  let t = 10_000;
+  const a = HO.createOrderStore({ file, key, now: () => t });
+  a.add('r1', t); a.add('r2', t);
+  a.close('r2');
+  a.stage('w1', 'digest-1');
+  const b = HO.createOrderStore({ file, key, now: () => t });
+  assert.deepEqual(b.open(), [{ id: 'r1', at: 10_000 }]);
+  assert.equal(b.stageOk('w1', 'digest-1'), true);
+  assert.equal(b.stageOk('w1', 'digest-2'), false);    // the stage record changed: the dialog
+  assert.equal(b.stageOk('w9', 'digest-1'), false);    // unknown stage: the dialog
+  const m = HQ.createMinter({ now: () => t });
+  for (const o of b.open()) m.restoreOrder(o.id, o.at);
+  assert.equal(m.isOrder('r1'), true);
+  assert.equal(HQ.consentFor({ request: 'r1', minter: m, now: t }), 'follow');
+  assert.equal(HO.createOrderStore({ file, key: Buffer.alloc(32, 8), now: () => t }).stageOk('w1', 'digest-1'), false);   // another key
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, JSON.stringify({ ...raw, body: raw.body.replace('digest-1', 'digest-X') }));
+  const c = HO.createOrderStore({ file, key, now: () => t });
+  assert.equal(c.stageOk('w1', 'digest-X'), false);   // tampered: nothing is trusted
+  assert.deepEqual(c.open(), []);
+  assert.equal(HO.unseal(key, HO.seal(key, { x: 1 })).x, 1);
+  assert.equal(HO.unseal(null, HO.seal(key, { x: 1 })), null);
+  t += HO.ORDER_MS;
+  assert.equal(b.isOpen('r1'), false);   // the ceiling
+});
+
+test('v3.130 order queue: release order (priority, then FIFO), n ahead, ceiling 50, close drops it', () => {
+  const s = HO.createOrderStore({ file: '', key: null });
+  s.add('r1', Date.now());
+  const args = { project: 'p', task: 'x' };
+  for (const id of ['a', 'b', 'c']) assert.equal(s.enqueue({ id, request: 'r1', args }).ok, true);
+  s.enqueue({ id: 'u', request: 'r1', args, priority: 2 });
+  assert.deepEqual(HO.releaseOrder(s.queue()).map((x) => x.id), ['u', 'a', 'b', 'c']);
+  assert.equal(s.ahead('a'), 1);
+  assert.equal(s.ahead('c'), 3);
+  assert.equal(s.ahead('zz'), -1);
+  assert.equal(HO.nextRelease(s.queue(), (x) => x.id !== 'u').id, 'a');   // the first one that may run
+  s.remove('a');
+  s.enqueue({ id: 'a', request: 'r1', args, seq: 1 });   // met a full queue again: keeps its place
+  assert.equal(s.ahead('a'), 1);
+  for (let i = s.queue().length; i < HO.ORDER_QUEUE_MAX; i++) s.enqueue({ id: `x${i}`, request: 'r1', args });
+  assert.deepEqual(s.enqueue({ id: 'over', request: 'r1', args }), { ok: false, reason: 'order-queue-full' });
+  assert.equal(s.close('r1').length, HO.ORDER_QUEUE_MAX);
+  assert.equal(s.queue().length, 0);
+});
+
+test('v3.130 auto-continue: once per open order, only for a retryable block, never with ask on', () => {
+  const task = { id: 'w1', status: 'blocked', after: 't1', reason: 'after-failed' };
+  assert.equal(HO.mayAutoContinue({ task, open: true, used: 0 }), true);
+  assert.equal(HO.mayAutoContinue({ task, open: true, used: 1 }), false);   // the second block waits for the person
+  assert.equal(HO.mayAutoContinue({ task: { ...task, autoContinued: true }, open: true }), false);
+  assert.equal(HO.mayAutoContinue({ task, open: false }), false);
+  assert.equal(HO.mayAutoContinue({ task, open: true, ask: true }), false);
+  for (const reason of ['after-rejected', 'after-blocked', 'after-closed-by-hq', 'after-person-prompted']) assert.equal(HO.mayAutoContinue({ task: { ...task, reason }, open: true }), false, reason);
+  for (const reason of ['after-partial', 'after-expired', 'after-lost']) assert.equal(HO.mayAutoContinue({ task: { ...task, reason }, open: true }), true, reason);
+  const s = HO.createOrderStore({ file: '', key: null });
+  s.add('r1', Date.now());
+  assert.equal(s.autoUsed('r1'), 0); s.takeAuto('r1'); assert.equal(s.autoUsed('r1'), 1);
+  assert.equal(s.noticeOnce('r1', 'start'), true);
+  assert.equal(s.noticeOnce('r1', 'start'), false);   // one notice per order and kind
+  assert.equal(s.noticeOnce('r1', 'end'), true);
 });
