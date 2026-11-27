@@ -649,3 +649,36 @@ test('v3.121 openTarget: a chip opens in its default app; what could run code is
   const R = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat.js'), 'utf8');
   assert.match(R, /fileChips = \[\]; drawChips\(\); {3}\/\/ only after a send that worked/, 'chips clear only after a successful send');
 });
+
+test('v3.121 openTarget: a symbolic link and any bundle are only shown; launchers and scripts by extension too', () => {
+  const FM = require('../src/file-match.js');
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ao-open-')));
+  try {
+    fs.mkdirSync(path.join(d, 'Real.app', 'Contents'), { recursive: true });
+    fs.writeFileSync(path.join(d, 'Real.app', 'Contents', 'Info.plist'), '<plist/>');
+    fs.writeFileSync(path.join(d, 'shell.terminal'), '<plist/>');
+    fs.writeFileSync(path.join(d, 'plain.txt'), 'x');
+    // a bundle without a telling extension: Contents/Info.plist is enough
+    fs.mkdirSync(path.join(d, 'Thing', 'Contents'), { recursive: true });
+    fs.writeFileSync(path.join(d, 'Thing', 'Contents', 'Info.plist'), '<plist/>');
+    assert.equal(FM.openTarget(path.join(d, 'Thing')).action, 'reveal');
+    if (process.platform !== 'win32') {
+      fs.symlinkSync(path.join(d, 'Real.app'), path.join(d, 'notes'));        // a link to an app, with no extension
+      fs.symlinkSync(path.join(d, 'shell.terminal'), path.join(d, 'readme.txt'));   // a harmless name for a .terminal
+      fs.symlinkSync(path.join(d, 'plain.txt'), path.join(d, 'link.txt'));     // even a link to a plain file
+      fs.symlinkSync(path.join(d, 'nowhere'), path.join(d, 'dangling.txt'));
+      assert.deepEqual(FM.openTarget(path.join(d, 'notes')), { path: path.join(d, 'notes'), action: 'reveal' });
+      assert.deepEqual(FM.openTarget(path.join(d, 'readme.txt')), { path: path.join(d, 'readme.txt'), action: 'reveal' });
+      assert.equal(FM.openTarget(path.join(d, 'link.txt')).action, 'reveal');
+      assert.equal(FM.openTarget(path.join(d, 'dangling.txt')), null);
+    }
+    const exts = ['fileloc', 'prefPane', 'mpkg', 'pkg', 'action', 'workflow', 'kext', 'bundle', 'plugin', 'py', 'pl', 'rb', 'jar', 'scpt', 'applescript', 'terminal', 'webloc', 'inetloc', 'command', 'tool'];
+    for (const x of exts) {
+      assert.ok(FM.RUNS_EXT.has(x.toLowerCase()), x);
+      const f = path.join(d, `f.${x}`);
+      fs.writeFileSync(f, 'x');
+      assert.equal(FM.openTarget(f).action, 'reveal', x);
+    }
+    assert.equal(FM.openTarget(path.join(d, 'plain.txt')).action, 'open');
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
