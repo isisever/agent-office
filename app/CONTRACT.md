@@ -3385,3 +3385,31 @@ TEAM panel is unchanged.
 - Studio hooks (`app.js`): `saveMember`, `removeMember` (staff IPC, then `loadStaff`), `reloadTeam`, `teamTools`
   (`mcp:apps`). Sidebar API: `editMember(m, preset?)`. Strings `studio.teamPage.*`; existing `staff.*` reused.
 - **Not verified live**: the page in a running app (drawn and typechecked; the helpers are unit tested).
+
+## Leaner defaults: context cap and models (v3.127)
+
+Most tokens were Opus re-reading very long boss contexts (Auto let Claude Code compact only near the 1M window) and
+Opus subagents (a forced per-project pin). The defaults now favour short contexts and Sonnet agents; saved choices stay.
+
+- **Context cap.** `Project.contextCap` takes `100000 | 150000 | 200000 | 400000 | 1000000` (Full); anything else
+  loads as Auto and Auto is never written. `projects.js effectiveContextCap(p)` = the explicit cap, else
+  `CONTEXT_CAP_DEFAULT` (200000, `accounts.js`). `sessionEnv` always exports `AGENT_OFFICE_CONTEXT_CAP` and
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (Auto = 200000), so every Claude Code boss, HQ and desk session compacts near
+  200k unless its project says otherwise. Claude Code (checked in 2.1.332) accepts 100k and up and compacts near
+  min(cap, model window), so 200k is valid on `[1m]` models; Full (1M) is the old Auto on a 1M model. Command Code
+  keeps using an explicit cap only (`compactMode=fast`).
+- **UI.** The project settings popup and Studio Settings → Projects share `sidebar.js contextCapSelect`:
+  "Auto (200K)", 100K, 150K, 200K, 400K, "Full (1M)" (`sidebar.contextCapAuto` takes `{cap}`, `sidebar.contextCapFull`).
+  The GUI chat's context meter uses the effective cap (`gui:state.contextCap`).
+- **Subagent model.** `effectiveAgentModel(p)` = the pin, else `AGENT_MODEL_DEFAULT` ('sonnet'). `sessionEnv` always
+  exports `CLAUDE_CODE_SUBAGENT_MODEL` (and `AGENT_OFFICE_AGENT_MODEL`) and removes `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`;
+  the launch line runs `unset CLAUDE_CODE_SUBAGENT_MODEL_FORCE` after the rc files. Without FORCE, Claude Code keeps
+  the Agent tool's `model` parameter and the variable is only the default for an agent started without one; with
+  FORCE (v3.14 to v3.126) the parameter was dropped and every agent ran on the pin.
+- **Saved pins are kept.** No migration rewrites `agentModel`. A pinned Opus (`opus` or `claude-opus-*`) shows
+  `sidebar.agentModelOpusHint` under the select: "Opus for every sub-agent is costly; Sonnet is the default."
+  The Auto option reads "Auto (Sonnet)" (`sidebar.agentModelAuto` takes `{model}`).
+- **Manager brief** (`plugin/hooks/register.tsx` `MODEL_AUTO`): `model: "haiku"` for search, read and report agents,
+  "sonnet" for coding, "opus" only for review or design. A session that sets FORCE itself still gets the pinned line.
+- Tests: `test/main.test.cjs` (effective cap mapping, subagent env), `test/engine-caps.test.mjs`, plugin
+  `tests/office.test.tsx`. **Not verified live** in a running app.
