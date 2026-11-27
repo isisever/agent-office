@@ -55,6 +55,25 @@
         "en": "Save an order you send often as a template, from HQ's composer or an order card's menu. Pick it from Templates next to HQ's composer (or Run template… in ⌘K): it fills the composer with its type and targets, you edit it and press Send yourself. Rename or delete templates in Settings → HQ & routines.",
         "tr": "Sık gönderdiğiniz bir emri HQ yazma kutusundan ya da bir emir kartının menüsünden şablon olarak kaydedin. HQ yazma kutusunun yanındaki Şablonlar'dan (veya ⌘K'de Şablon çalıştır…) seçin: yazma kutusunu türü ve hedefleriyle doldurur, düzenleyip Gönder'e kendiniz basarsınız. Şablonları Ayarlar → HQ ve rutinler'de yeniden adlandırın ya da silin."
       }
+    },
+    {
+      "id": "order-tracking",
+      "experience": "both",
+      "title": {
+        "en": "Follow HQ's orders live, with their cost",
+        "tr": "HQ emirlerini maliyetiyle canlı izleyin"
+      },
+      "body": {
+        "en": "An Orders strip at the top of HQ shows each open order with its type, progress and targets, and a line that updates as its tasks start, wait, need you, finish or fail. It costs no tokens: HQ is only woken by a report or a block, as before. Order cards on the board and the reports now show tokens and cost. Click an order to open its card.",
+        "tr": "HQ'nun üstündeki Emirler şeridi her açık emri türü, ilerlemesi ve hedefleriyle gösterir; görevleri başladıkça, sıraya girdikçe, seni bekledikçe, bittikçe ya da başarısız oldukça satır yerinde güncellenir. Token harcamaz: HQ yine yalnızca bir rapor ya da engelle uyanır. Panodaki emir kartları ve raporlar artık token ve maliyeti gösterir. Kartını açmak için bir emre tıklayın."
+      },
+      "try": {
+        "label": {
+          "en": "Open the board",
+          "tr": "Panoyu aç"
+        },
+        "action": "open-board"
+      }
     }
   ]
 }

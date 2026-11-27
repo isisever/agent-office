@@ -17,6 +17,8 @@ const TITLE_MAX = 80;
 const TITLE_INPUT_MAX = 4000;                 // a chat title's raw text is cut to this before it is redacted
 const AGE_MS = 10 * 60 * 1000;                // release order: a waiting item is promoted one rank per this much waiting
 
+const OT = require('./order-track.js');   // v3.135 order cost
+
 const isObj = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x);
 const isStr = (x) => typeof x === 'string';
 const num = (x) => (Number.isFinite(x) && x > 0 ? x : 0);
@@ -111,6 +113,7 @@ function orderCard(request, tasks, meta = {}) {
   const projects = [...new Set(ts.map((t) => t.project).filter(Boolean))];
   const members = [...new Set(ts.map((t) => t.staff).filter(Boolean))];
   const first = ts[ts.length - 1] || ts[0];
+  const cost = OT.orderCost(ts, isObj(meta.usage) ? meta.usage : {});   // v3.135 local session deltas + remote report costs
   return {
     id: `o:${request.id}`, kind: 'order', request: request.id,
     title: line(request.prompt || first?.title || request.id, TITLE_MAX),
@@ -118,7 +121,7 @@ function orderCard(request, tasks, meta = {}) {
     typeBy: typeOf(meta.type) ? 'person' : typeOf(request.type) ? (request.typeBy === 'hq' ? 'hq' : 'auto') : 'auto',
     column, at: num(request.at), closedAt, durationMs: closedAt ? Math.max(0, closedAt - num(request.at)) : 0,
     project: projects.length === 1 ? projects[0] : projects.length ? `${projects.length} projects` : '', projects,
-    member: members[0] || '', members, tokens: num(meta.tokens), usd: num(meta.usd),
+    member: members[0] || '', members, tokens: cost.tokens, usd: cost.usd, ...(cost.unknown ? { costUnknown: cost.unknown } : {}),
     progress: { done: cols.filter((c) => c === 'done' || c === 'review').length, total: ts.length },
     tasks: ts.map((t) => ({ id: t.id, title: t.title || '', project: t.project || '', machine: t.machine || 'self', status: t.status, column: columnOf(t.status, t.reason), ...(t.staff ? { member: t.staff } : {}) })),
     ...(request.routine ? { routine: true } : {}),
@@ -167,7 +170,8 @@ function loadStore(raw) {
   const orders = {};
   for (const [k, v] of Object.entries(isObj(s.orders) ? s.orders : {})) {
     if (!ORDER_ID_RE.test(k) || !isObj(v)) continue;
-    const o = { ...(typeOf(v.type) ? { type: typeOf(v.type) } : {}), ...(num(v.doneAt) ? { doneAt: num(v.doneAt) } : {}) };
+    const usage = OT.cleanUsage(v.usage);
+    const o = { ...(typeOf(v.type) ? { type: typeOf(v.type) } : {}), ...(num(v.doneAt) ? { doneAt: num(v.doneAt) } : {}), ...(Object.keys(usage).length ? { usage } : {}) };
     if (Object.keys(o).length) orders[k] = o;
   }
   const taskSids = [...new Set((Array.isArray(s.taskSids) ? s.taskSids : []).filter((x) => isStr(x) && SID_RE.test(x)))];
@@ -307,6 +311,16 @@ function report(cards, { from = 0, to = Infinity, groupBy = 'project' } = {}) {
   return { groupBy: g, from, to: Number.isFinite(to) ? to : 0, rows: list, total: { ...total, usd: Math.round(total.usd * 100) / 100 } };
 }
 
+/** v3.135 one usage sample of an order's task (OT.observe) stored under orders[request].usage; the store unchanged when nothing moved. */
+function sampleUsage(store, request, taskId, sample, opts = {}) {
+  if (!isStr(request) || !ORDER_ID_RE.test(request) || !isStr(taskId)) return store;
+  const o = store.orders[request] || {};
+  const usage = isObj(o.usage) ? o.usage : {};
+  const next = OT.observe(usage[taskId], sample, opts);
+  if (!next || JSON.stringify(next) === JSON.stringify(usage[taskId])) return store;
+  return { ...store, orders: { ...store.orders, [request]: { ...o, usage: { ...usage, [taskId]: next } } } };
+}
+
 /** Token cost of one session from Claude Code's status line JSON (the app's usage files), only when it is that session. */
 function tokensFromStatus(obj, sessionId) {
   if (!isObj(obj) || !isStr(sessionId) || obj.session_id !== sessionId) return null;
@@ -320,5 +334,5 @@ module.exports = {
   TYPES, TYPE_RANK, COLUMNS, GROUPS, MAX_CLOSED, MAX_OPEN, MAX_TASK_SIDS, REVIEW_CLOSE_MS,
   typeOf, rankOf, classify, orderType, explicitType, agedRank, detachGone, AGE_MS, columnOf, chatColumn, compareCards, sortCards, byPriority,
   orderCard, chatCard, cardOf, emptyStore, loadStore, capStore, touchSession, autoClose, markDone, setType, validCardId, isTaskSession, markTaskSession,
-  boardCards, report, tokensFromStatus,
+  boardCards, report, tokensFromStatus, sampleUsage,
 };

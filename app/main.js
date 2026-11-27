@@ -75,6 +75,7 @@ const PTY = require('./src/pty-attach.js');
 const BM = require('./src/board-model.js');
 const FO = require('./src/hq-fanout.js');   // v3.132 fan-out orders and role assignment
 const OT = require('./src/order-templates.js');   // v3.134 order templates
+const OTK = require('./src/order-track.js');   // v3.135 live order tracking
 const STU = require('./src/studio.js');   // v3.120 Studio experience
 const WN = require('./src/whats-new.js');   // v3.123 What's new after an update
 const ATT = require('./src/attached.js');   // v3.121 the files a person attached in a chat composer
@@ -2395,7 +2396,9 @@ function updatePeerCache() {
   if (changed || Object.keys(next).length) try { SF.writeAtomic(peerCacheFile(), JSON.stringify(next)); } catch {}
 }
 const hqSettings = () => HQ.normalizeHq(state.hq);
-const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, paired: LC.offices(linkHost?.link()?.devices || []).length > 0, remotes: HQ.remoteRows(peerCache(), liveRemotes()), waits: hqWaits() });   // v3.99 paired: the Board shows the paired-machines checkbox
+/** v3.135 the open orders as strip items for HQ's live progress (app-side rows, never a prompt to HQ). */
+const hqOrderStrip = () => { try { return OTK.orderStrip(boardView().cards, hqWaits()); } catch { return []; } };
+const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, paired: LC.offices(linkHost?.link()?.devices || []).length > 0, remotes: HQ.remoteRows(peerCache(), liveRemotes()), orders: hqOrderStrip(), waits: hqWaits() });   // v3.99 paired: the Board shows the paired-machines checkbox
 /** v3.46 amendment: why each queued local task waits → { [taskId]: { state, project, pos, len, expiresAt } }.
  *  v3.93: a local entry also names its `tab` and, when busy, `blockedBy` ('permission' | 'draft'); HQ.waitFields turns
  *  the same entry into what HQ's tools return, so the Board and HQ never disagree. */
@@ -6791,6 +6794,19 @@ function boardCardsTick(now = Date.now()) {
     const member = r.project.staffOwner ? (memberById(r.project.staffOwner)?.name || '') : '';
     s = BM.touchSession(s, { sessionId: sid, projectId: r.project.id, ptyId: pid, project: r.project.name, member, title: info.title, prompt: info.prompt,
       busy, waiting: info.waiting === true, ...(tok || {}), studio: STU.normalizeExperience(state.experience) === 'studio' }, now, { redact: HQ.redact });
+  }
+  // v3.135 order cost: sample the session of each local task's tab; a task's cost is the delta of its session's totals
+  const disp = loadDispatches();
+  for (const t of loadHqBoard().tasks) {
+    if (t.machine !== 'self' || !t.request || !t.startedAt) continue;
+    const ent = s.orders[t.request]?.usage?.[t.id];
+    const final = HQ.TERMINAL.has(t.status);
+    if (ent?.f === 1 || (final && !ent && now - (t.finishedAt || 0) > 120000)) continue;
+    const pid = disp.get(t.id)?.into;
+    const r = pid && terms.has(pid) ? P.resolvePty(state, pid) : null;
+    const sid = r ? STU.validSessionId(studioTabInfo(pid)?.sessionId) : '';
+    const tok = sid ? BM.tokensFromStatus(readJson(path.join(usageRoot(), A.accountOf(state, r.project).id, `${usageKey(pid)}.json`)), sid) : null;
+    s = BM.sampleUsage(s, t.request, t.id, sid ? { sid, tokens: tok?.tokens || 0, usd: tok?.usd || 0 } : null, { fresh: Boolean(t.staff) && !ent, final });
   }
   s = BM.detachGone(s, new Set(terms.keys()), now);   // a card whose tab is gone (closed, app quit) goes to Review
   if (saveBoardStore(BM.autoClose(s, now))) send('board:cards', boardView());

@@ -2138,5 +2138,24 @@
       "too-many": "You have 50 templates already. Delete one first.",
       "gone": "That order is gone."
     }
+  },
+  "orders": {
+    "title": "Orders",
+    "openTip": "Open this order on the board",
+    "line": {
+      "order": "Order #{id}",
+      "progress": "{done}/{total} done",
+      "desk": "desk {member}",
+      "at": "{project} on {machine}",
+      "boss": "boss"
+    },
+    "state": {
+      "working": "{who} working on project {project}",
+      "queued": "{who} queued on project {project}",
+      "queuedAhead": "{who} queued on project {project}, {n} ahead",
+      "needs": "{who} needs you on project {project}",
+      "done": "{who} done on project {project}",
+      "failed": "{who} failed on project {project}"
+    }
   }
 }

@@ -31,11 +31,12 @@ import { mountRemoteView } from './remote-view.js';
 import { micButton } from './voice.js';
 import { templatesManager } from './templates-ui.js';
 import { mountBoardView } from './board-view.js';
+import { progressLine } from '../src/board-view.mjs';
 
 const ENGINE_NAMES = { claude: 'Claude Code', agy: 'Antigravity', commandcode: 'Command Code', opencode: 'OpenCode' };
 
-/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void }, openChat?: (card: any) => void, fillHq?: ((text: string) => void) | null }} o */
-export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openChat, fillHq = null }) {
+/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void }, openBoard?: () => void, openChat?: (card: any) => void, fillHq?: ((text: string) => void) | null }} o */
+export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openChat, openBoard, fillHq = null }) {
   if (!api?.hq || !sidebar) return null;
   let view = { board: { tasks: [], requests: [] }, settings: { enabled: true }, running: false, stopped: false, remotes: [] };
   let selected = false;
@@ -433,6 +434,46 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openCh
     for (const r of rows) { const pub = r.pub || r.key.slice(0, r.key.indexOf(':')); groups.set(pub, [...(groups.get(pub) || []), r]); }
     remoteList.replaceChildren(...[...groups.values()].flatMap((g) => [machineHead(g[0]), ...g.map(remoteRow)]));
   }
+  // v3.135 live order tracking: the open orders as app-side rows at the top of HQ's pane (Studio's HQ chat and the
+  // Office's HQ terminal). They come from main's view (`orders`), never from HQ's transcript, and cost no tokens.
+  // One row per order, updated in place; a click opens the order's card on the board.
+  const strip = el('div', { class: 'hq-orders', id: 'hq-orders', role: 'status', 'aria-live': 'polite', hidden: true },
+    el('span', { class: 'hq-orders-head' }, t('orders.title')));
+  const termPane = document.getElementById('terminal');
+  if (termPane) termPane.prepend(strip);
+  /** @type {Map<string, HTMLElement>} */ const stripRows = new Map();
+  function openOrder(/** @type {string} */ request) {
+    onSelect();
+    openBoard?.();
+    rtSel = null; showOffice = false; bv?.setTab('board'); bv?.setRequest(request); render();
+  }
+  function renderOrders() {
+    const items = Array.isArray(view.orders) ? view.orders : [];
+    strip.hidden = !selected || !items.length;
+    const typeName = (/** @type {string} */ x) => t(`board.type.${x}`);
+    const seen = new Set();
+    for (const it of items) {
+      seen.add(it.id);
+      let row = stripRows.get(it.id);
+      if (!row) {
+        row = el('button', { class: 'hq-order', type: 'button', 'data-id': it.id, title: t('orders.openTip'), onclick: () => openOrder(it.request) },
+          el('span', { class: 'bv-type hq-order-type' }), el('span', { class: 'hq-order-prog' }), el('span', { class: 'hq-order-line' }), el('span', { class: 'hq-order-targets' }));
+        stripRows.set(it.id, row);
+      }
+      const [chip, prog, text, targets] = /** @type {HTMLElement[]} */ ([...row.children]);
+      chip.className = `bv-type bv-${it.type} hq-order-type`;
+      chip.textContent = typeName(it.type);
+      prog.textContent = `${it.done}/${it.total}`;
+      prog.style.setProperty('--p', `${it.total ? Math.round((it.done / it.total) * 100) : 0}%`);
+      const line = progressLine(it, t, typeName);
+      text.textContent = line;
+      row.setAttribute('aria-label', line);
+      row.className = `hq-order is-${it.current?.state || 'queued'}`;
+      targets.textContent = (it.targets || []).map((/** @type {any} */ x) => `${x.project}${x.member ? ` @${x.member}` : ''}${x.machine && x.machine !== 'self' ? ` (${x.machine})` : ''}`).join(', ');
+      strip.append(row);   // keeps the order of main's list; an existing node only moves
+    }
+    for (const [id, row] of stripRows) if (!seen.has(id)) { row.remove(); stripRows.delete(id); }
+  }
   function render() {
     const tasks = view.board.tasks || [];
     dot.className = `sb-dot${view.running ? ' on' : ''}`;
@@ -454,6 +495,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openCh
     }
     renderBoard();
     renderRemote();
+    renderOrders();
   }
   api.routines?.onChange((v) => { if (v) { rv = v; render(); } });
   refresh();
@@ -466,6 +508,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openCh
   // lazy start: HQ's pty starts the first time the person opens HQ
   return {
     /** v3.131 the board at a tab ('board' or 'reports'): routines' editor closes, the Office view switches to the board. */
+    /** v3.135 opens an order's card on the board (the Orders strip). */
+    openOrder,
     showBoard(tab = 'board') { rtSel = null; showOffice = false; bv?.setTab(tab); render(); },
     setSelected(on) { selected = Boolean(on); if (!selected) rtSel = null; if (selected) api.hq.open?.().then((v) => { if (v) { view = v; render(); } }).catch(() => {}); render(); } };
 }

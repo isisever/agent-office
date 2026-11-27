@@ -2110,5 +2110,24 @@
       "too-many": "Zaten 50 şablonunuz var. Önce birini silin.",
       "gone": "Bu emir artık yok."
     }
+  },
+  "orders": {
+    "title": "Emirler",
+    "openTip": "Bu emri panoda aç",
+    "line": {
+      "order": "Emir #{id}",
+      "progress": "{done}/{total} bitti",
+      "desk": "{member} masası",
+      "at": "{machine} üzerinde {project}",
+      "boss": "patron"
+    },
+    "state": {
+      "working": "{who}, {project} projesinde çalışıyor",
+      "queued": "{who}, {project} projesinde sırada",
+      "queuedAhead": "{who}, {project} projesinde sırada, önünde {n} iş var",
+      "needs": "{who}, {project} projesinde seni bekliyor",
+      "done": "{who}, {project} projesinde bitirdi",
+      "failed": "{who}, {project} projesinde başarısız oldu"
+    }
   }
 }

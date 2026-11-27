@@ -95,7 +95,8 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
     const isOrder = c.kind === 'order';
     const open = isOrder && expanded.has(c.id);
     const age = c.durationMs || (c.at && !c.closedAt ? Date.now() - c.at : 0);
-    const cost = [fmtTokens(c.tokens) && `${fmtTokens(c.tokens)} ${t('board.tokens')}`, fmtCost(c.usd)].filter(Boolean).join(' · ');
+    // v3.135 an order with remote tasks whose report carried no cost adds "–" (unknown part)
+    const cost = [fmtTokens(c.tokens) && `${fmtTokens(c.tokens)} ${t('board.tokens')}`, fmtCost(c.usd), c.costUnknown ? '–' : ''].filter(Boolean).join(' · ');
     const click = () => {
       if (isOrder) { if (open) expanded.delete(c.id); else expanded.add(c.id); draw(); } else openChat(c);
     };

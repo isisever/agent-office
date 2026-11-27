@@ -5,6 +5,7 @@
 'use strict';
 const fs = require('fs');
 const BM = require('./board-model.js');   // v3.131 order types
+const OT = require('./order-track.js');   // v3.135 the cost a remote report carries
 const path = require('path');
 const { REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK } = require('./link-core.js');
 const { ORDER_MS } = require('./hq-order.js');
@@ -399,6 +400,7 @@ function applyReport(board, id, report, now = Date.now()) {
   return { ...board, tasks: board.tasks.map((t) => (t.id !== id ? t : {
     ...t, status: report?.partial ? 'partial' : 'reported', finishedAt: now, report: `tasks/${id}/report.md`, read: false,
     commits: (report?.commits || []).slice(0, REPORT2_COMMITS).map((c) => ({ hash: line(c.hash, 40), subject: line(c.subject, 200) })), prs: [...new Set([...(Array.isArray(report?.prs) ? report.prs.filter((u) => typeof u === 'string' && /^https:\/\/\S+$/.test(u)) : []), ...extractPrs(report?.summary)])].slice(0, 10),
+    ...(OT.reportCost(report) ? { cost: OT.reportCost(report) } : {}),   // v3.135 a remote report's own cost, if it carries one
     ...(report?.transcriptRef ? { transcript: line(report.transcriptRef, 64) } : {}), ...(report?.truncated ? { truncated: true } : {}),
     ...(report?.personPrompted === true ? { personPrompted: true } : {}),   // v3.89 amendment: the person typed in that session while the task ran
   })) };
