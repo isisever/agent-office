@@ -349,6 +349,8 @@ export function mountSidebar(el, on) {
           closeModal();
           addMenu = true; addFor = p.id;
           renderAccounts();
+          // v3.122 Studio hides this sidebar: show the accounts panel on its own over Studio (Studio's inline form)
+          if (document.body.classList.contains('studio')) on.showPanel?.('.sb-accounts');
           acctList.querySelector('.sb-add-menu')?.scrollIntoView?.({ block: 'nearest' });
           return;
         }

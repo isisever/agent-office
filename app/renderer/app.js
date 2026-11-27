@@ -891,6 +891,7 @@ async function removeAccount(a) {
 // ---- Sidebar ----
 sidebar = mountSidebar($('sidebar'), {
   select: selectProject,
+  showPanel: (sel) => Boolean(studio?.showPanel(sel)),   // v3.122 an Office panel on its own over Studio
   addProject,
   setBotColor,
   removeProject,
