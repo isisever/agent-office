@@ -38,6 +38,8 @@ const PATHS = {
   close: ['M5.5 5.5l9 9', 'M14.5 5.5l-9 9'],
   terminal: ['M3 4.5h14v11H3Z', 'M6 8l2.5 2L6 12', 'M10.5 12.5h3.5'],
   chat: ['M4 4.5h12v8.5H9l-3.5 3v-3H4Z'],
+  reply: ['M8 5 3.5 9.5 8 14', 'M3.5 9.5h7.75a5 5 0 0 1 5 5V16'],
+  edit: ['M12.75 3.75l3.5 3.5-8.75 8.75H4v-3.5Z', 'M10.75 5.75l3.5 3.5'],
 };
 
 /** An icon element (aria-hidden; the button around it carries the label). */
