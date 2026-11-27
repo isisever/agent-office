@@ -199,9 +199,9 @@ const MANAGER_TEMPLATE = `# Manager mode (Agent Office)
 You are the manager in Agent Office: a dispatcher who hands the work to agents and stays available to the person. Your agents are subagents you start with the Agent tool; they work in the background (set run_in_background if your Agent tool has it) while the person watches them at their desks, and you are told when each one finishes. The person can only talk to you between your turns, so keep your own turns short.
 
 - Delegate when the input is large and the answer small (investigating or reading code, builds, tests, long commands, batches of MCP calls) or when pieces can run in parallel: start those agents in the same message (in separate git worktrees when they would touch the same files). Don't delegate a small edit whose brief would be as long as the change: do trivial edits, quick commands and lookups yourself.
-- Brief each agent self-contained: deliverable, folder, non-goals (what not to touch), acceptance check (the exact command or condition proving it done), the facts file path. Put long context in a file and pass its path. Tell every agent to write long findings to a file and report at most 15 lines plus the path.
+- Brief each agent self-contained: deliverable, folder, non-goals (what not to touch), acceptance check (the exact command or condition proving it done), the facts file path. Put long context in a file and pass its path. Have every agent write its findings to a report file and hand back a short summary (≤10 lines) pointing to it.
 - Your own tool use: orientation, reviewing reports, merging, the final check.
-- One scoped task per agent. When an agent's job is done, start a fresh agent for the next task rather than sending the finished one more work: a continued agent re-reads its whole, ever-growing context on every request.
+- One scoped task per agent. A small follow-up to an agent's work: SendMessage that agent (it has the context). A new task: a fresh agent, as a continued one re-reads its growing context on every request.
 - {{MODEL}}
 - Consult the reviewer agent (Opus) only before a big plan locks, when one error hits twice, and before reporting a non-trivial change done (it reviews \`git diff\`).
 - While agents run, answer the person, take new requests and dispatch them. Don't redo an agent's work.
@@ -331,7 +331,7 @@ When the person names one of these projects, they mean that folder: read and wor
 // working alone gets a firmer reminder, with the count, every NUDGE_REPEAT own calls after that (never on every
 // call); once nudged in a turn, every later reminder of that turn is the firm one. Never for a subagent or a
 // teammate (their calls carry agentId).
-const NUDGE_AFTER = 6
+const NUDGE_AFTER = 12 // v3.129: was 6; a boss may do a short stretch itself before it is told to hand off
 const NUDGE_REPEAT = 10
 const nudgeText = (steps: number) =>
   `Agent Office manager mode: you've done ${steps} steps of this turn yourself without handing any off. Hand the rest of the work to background agents (Agent tool), in parallel where the pieces are independent, and stay available to the person; keep your own steps to orientation, reviewing results and the final check. If the person asked you to do this yourself, carry on.`

@@ -1198,7 +1198,8 @@ test('the manager brief says one scoped task per agent and which model each kind
   setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1' })
   const text = (await $.prompt.compose(mainLoop)).sections[1]?.text ?? ''
   expect(text).toContain('One scoped task per agent')
-  expect(text).toContain('start a fresh agent for the next task')
+  expect(text).toContain('SendMessage that agent (it has the context)')
+  expect(text).toContain('A new task: a fresh agent')
   expect(text).toContain('"haiku" for searches and lookups')
   expect(text).toContain('"sonnet" for mechanical edits, test and build runs and routine fixes')
   expect(text).toContain('design, hard debugging and reviews')
@@ -1469,7 +1470,7 @@ test("CwdChanged moves the main loop (bossDir, relative paths) and a subagent's 
   expect(stateOf(writes).stats.bossDir).toBe('/work/shop')
 })
 
-// manager mode's nudge: the main loop's own calls in a row this turn; the reminder rides the sixth call's result
+// manager mode's nudge: the main loop's own calls in a row this turn; the reminder rides the twelfth call's result
 function setUpNudge(on: Harness, env: Record<string, string> = { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1' }) {
   setUp(on, env)
   on('tool.call', (_$, e) => (e.tool === 'Write' ? ({ deny: 'no' }) : ({ result: 'ok' })) as never)
@@ -1478,21 +1479,21 @@ function setUpNudge(on: Harness, env: Record<string, string> = { HOME: '/home/te
 const nudgeOf = (answer: unknown) => ((answer as { context?: string[] }).context ?? []).filter(text => text.includes('Agent Office manager mode'))
 const mainCall = ($: Engine, tool: string, args: Record<string, unknown> = {}) => $.tool.call({ tool, ...args } as never)
 
-test('manager mode nudges the main loop on its sixth own call in a row this turn, then not on the next calls', async ($, on) => {
+test('manager mode nudges the main loop on its twelfth own call in a row this turn, then not on the next calls', async ($, on) => {
   setUpNudge(on)
   await $.session.start(start)
   await $.turn.start({ text: 'build it', turnId: 'turn-1' })
-  for (let i = 1; i <= 5; i++) expect(nudgeOf(await mainCall($, i % 2 ? 'Bash' : 'Read', { command: 'ls', file_path: '/a' }))).toEqual([])
-  const sixth = await mainCall($, 'mcp__shop__list_orders')
-  expect(nudgeOf(sixth)).toHaveLength(1)
-  expect(nudgeOf(sixth)[0]).toContain('6 steps')
-  expect((sixth as { result?: unknown }).result).toBe('ok')
+  for (let i = 1; i <= 11; i++) expect(nudgeOf(await mainCall($, i % 2 ? 'Bash' : 'Read', { command: 'ls', file_path: '/a' }))).toEqual([])
+  const twelfth = await mainCall($, 'mcp__shop__list_orders')
+  expect(nudgeOf(twelfth)).toHaveLength(1)
+  expect(nudgeOf(twelfth)[0]).toContain('12 steps')
+  expect((twelfth as { result?: unknown }).result).toBe('ok')
   // not on every call (the next one comes NUDGE_REPEAT calls later)
   for (let i = 0; i < 8; i++) expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toEqual([])
   // a new turn counts afresh
   await completeTurn($, 'answer')
   await $.turn.start({ text: 'more', turnId: 'turn-2' })
-  for (let i = 1; i <= 5; i++) expect(nudgeOf(await mainCall($, 'Edit', { file_path: '/a' }))).toEqual([])
+  for (let i = 1; i <= 11; i++) expect(nudgeOf(await mainCall($, 'Edit', { file_path: '/a' }))).toEqual([])
   expect(nudgeOf(await mainCall($, 'Edit', { file_path: '/a' }))).toHaveLength(1)
 })
 
@@ -1507,7 +1508,7 @@ test('handing work off resets the count; bookkeeping calls neither count nor res
   }
   expect(await run(['Bash', 'Bash', 'Bash', 'Bash', 'Bash', 'Agent', 'Bash', 'Bash', 'Bash', 'Bash', 'Bash'])).toEqual([])
   expect(await run(['SendMessage', 'Read', 'Read', 'TodoWrite', 'ToolSearch', 'Read', 'TaskOutput', 'Read', 'AskUserQuestion'])).toEqual([])
-  expect(await run(['Task', 'Read', 'Read', 'Read', 'Read', 'Read', 'Read'])).toEqual([6])
+  expect(await run(['Task', ...Array<string>(12).fill('Read')])).toEqual([12])
 })
 
 test("a refused call passes the nudge to the next; subagents' and teammates' calls never count", async ($, on) => {
@@ -1515,45 +1516,45 @@ test("a refused call passes the nudge to the next; subagents' and teammates' cal
   await $.session.start(start)
   await $.turn.start({ text: 'build it', turnId: 'turn-1' })
   for (let i = 0; i < 10; i++) expect(nudgeOf(await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'agent-1' } as never))).toEqual([])
-  for (let i = 0; i < 5; i++) await mainCall($, 'Read', { file_path: '/a' })
-  // the sixth is refused: its answer stays a plain deny, and the next call carries the nudge
+  for (let i = 0; i < 11; i++) await mainCall($, 'Read', { file_path: '/a' })
+  // the twelfth is refused: its answer stays a plain deny, and the next call carries the nudge
   const refused = await mainCall($, 'Write', { file_path: '/a', content: 'x' })
   expect(refused).toEqual({ deny: 'no' })
   expect(nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))).toHaveLength(1)
   expect(nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))).toEqual([])
 })
 
-test('a boss that keeps working alone gets a firmer reminder with the count every 10 own calls; a new turn starts gently', async ($, on) => {
+test('a boss that keeps working alone gets a firmer reminder with the count every 10 own calls after the twelfth; a new turn starts gently', async ($, on) => {
   setUpNudge(on)
   await $.session.start(start)
   await $.turn.start({ text: 'build it', turnId: 'turn-1' })
   const texts: [number, string][] = []
-  for (let i = 1; i <= 40; i++) for (const text of nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))) texts.push([i, text])
-  expect(texts.map(([i]) => i)).toEqual([6, 16, 26, 36])
-  expect(texts[0]?.[1]).toContain('6 steps of this turn yourself')
-  expect(texts[1]?.[1]).toContain('reminder 2 this turn: 16 steps in a row are your own')
+  for (let i = 1; i <= 42; i++) for (const text of nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))) texts.push([i, text])
+  expect(texts.map(([i]) => i)).toEqual([12, 22, 32, 42])
+  expect(texts[0]?.[1]).toContain('12 steps of this turn yourself')
+  expect(texts[1]?.[1]).toContain('reminder 2 this turn: 22 steps in a row are your own')
   expect(texts[1]?.[1]).toContain('Stop doing the work yourself now')
   expect(texts[1]?.[1]).toContain('your next call should be the Agent tool')
   expect(texts[1]?.[1]).toContain('if the person asked you to do this yourself, carry on')
-  expect(texts[3]?.[1]).toContain('reminder 4 this turn: 36 steps')
+  expect(texts[3]?.[1]).toContain('reminder 4 this turn: 42 steps')
   // a hand-off resets the count and the next reminder is the gentle text again (the boss may review and check)
   await mainCall($, 'Agent')
   const after: string[] = []
-  for (let i = 1; i <= 6; i++) after.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
+  for (let i = 1; i <= 12; i++) after.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
   expect(after).toHaveLength(1)
-  expect(after[0]).toContain('6 steps of this turn yourself')
+  expect(after[0]).toContain('12 steps of this turn yourself')
   // no hand-off since that one: the next is firm again
   const again: string[] = []
   for (let i = 1; i <= 10; i++) again.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
   expect(again).toHaveLength(1)
-  expect(again[0]).toContain('reminder 6 this turn: 16 steps')
+  expect(again[0]).toContain('reminder 6 this turn: 22 steps')
   // a new turn starts with the gentle one
   await completeTurn($, 'answer')
   await $.turn.start({ text: 'more', turnId: 'turn-2' })
   const fresh: string[] = []
-  for (let i = 1; i <= 6; i++) fresh.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
+  for (let i = 1; i <= 12; i++) fresh.push(...nudgeOf(await mainCall($, 'Read', { file_path: '/a' })))
   expect(fresh).toHaveLength(1)
-  expect(fresh[0]).toContain('6 steps of this turn yourself')
+  expect(fresh[0]).toContain('12 steps of this turn yourself')
 })
 
 test('the owed reminder carries the real count; a repeat-refused call keeps it owed', async ($, on) => {
@@ -1564,29 +1565,28 @@ test('the owed reminder carries the real count; a repeat-refused call keeps it o
   await $.turn.start({ text: 'build it', turnId: 'turn-1' })
   // calls 1-3 fail identically (the third marks the call refused); 4th is the repeat-refused one
   for (let i = 0; i < 3; i++) await mainCall($, 'Bash', { command: 'make' })
-  await mainCall($, 'Read', { file_path: '/a' })
-  await mainCall($, 'Read', { file_path: '/a' })
-  // the sixth call is the repeat-refused one: no result to carry the reminder, the seventh does
+  for (let i = 0; i < 8; i++) await mainCall($, 'Read', { file_path: '/a' })
+  // the twelfth call is the repeat-refused one: no result to carry the reminder, the thirteenth does
   expect(await mainCall($, 'Bash', { command: 'make' })).toMatchObject({ deny: expect.any(String) })
   const owed = nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))
   expect(owed).toHaveLength(1)
-  expect(owed[0]).toContain('7 steps of this turn yourself')
+  expect(owed[0]).toContain('13 steps of this turn yourself')
 })
 
 test('an HQ session (no Agent tool) is never nudged, even with manager mode on', async ($, on) => {
   setUpNudge(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_HQ: '1' })
   await $.session.start(start)
   await $.turn.start({ text: 'build it', turnId: 'turn-1' })
-  for (let i = 0; i < 14; i++) expect(nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))).toEqual([])
+  for (let i = 0; i < 26; i++) expect(nudgeOf(await mainCall($, 'Read', { file_path: '/a' }))).toEqual([])
 })
 
 test('office_dispatch from any server counts as a hand-off and resets the count', async ($, on) => {
   setUpNudge(on)
   await $.session.start(start)
   await $.turn.start({ text: 'build it', turnId: 'turn-1' })
-  for (let i = 0; i < 5; i++) await mainCall($, 'Bash', { command: 'ls' })
+  for (let i = 0; i < 11; i++) await mainCall($, 'Bash', { command: 'ls' })
   await mainCall($, 'mcp__agent-office__office_dispatch')
-  for (let i = 0; i < 5; i++) expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toEqual([])
+  for (let i = 0; i < 11; i++) expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toEqual([])
   expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toHaveLength(1)
 })
 
@@ -1598,7 +1598,7 @@ for (const [name, env] of [
     setUpNudge(on, env)
     await $.session.start(start)
     await $.turn.start({ text: 'build it', turnId: 'turn-1' })
-    for (let i = 0; i < 12; i++) expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toEqual([])
+    for (let i = 0; i < 24; i++) expect(nudgeOf(await mainCall($, 'Bash', { command: 'ls' }))).toEqual([])
   })
 }
 
@@ -1610,7 +1610,7 @@ test('the manager text delegates large-input and parallel work, keeps trivial ed
   expect(text).toContain('do trivial edits')
   expect(text).not.toContain('never trivial here')
   expect(text).toContain('Put long context in a file and pass its path')
-  expect(text).toContain('report at most 15 lines plus the path')
+  expect(text).toContain('hand back a short summary (≤10 lines) pointing to it')
   expect(text).toContain('One scoped task per agent')
   expect(text).toContain('stays available to the person')
   expect(text).toContain('run_in_background')
