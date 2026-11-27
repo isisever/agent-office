@@ -2350,7 +2350,7 @@ function updatePeerCache() {
 const hqSettings = () => HQ.normalizeHq(state.hq);
 /** v3.135 the open orders as strip items for HQ's live progress (app-side rows, never a prompt to HQ). */
 const hqOrderStrip = () => { try { return OT.orderStrip(boardView().cards, hqWaits()); } catch { return []; } };
-const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, paired: LC.offices(linkHost?.link()?.devices || []).length > 0, remotes: HQ.remoteRows(peerCache(), liveRemotes()), waits: hqWaits(), orders: hqOrderStrip() });   // v3.99 paired: the Board shows the paired-machines checkbox
+const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, paired: LC.offices(linkHost?.link()?.devices || []).length > 0, remotes: HQ.remoteRows(peerCache(), liveRemotes()), orders: hqOrderStrip(), waits: hqWaits() });   // v3.99 paired: the Board shows the paired-machines checkbox
 /** v3.46 amendment: why each queued local task waits → { [taskId]: { state, project, pos, len, expiresAt } }.
  *  v3.93: a local entry also names its `tab` and, when busy, `blockedBy` ('permission' | 'draft'); HQ.waitFields turns
  *  the same entry into what HQ's tools return, so the Board and HQ never disagree. */

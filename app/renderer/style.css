@@ -1886,3 +1886,18 @@ body.studio.studio-float #machines-panel.studio-shown { display: block !importan
 .bv-num { text-align: right !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bv-barcell { width: 40%; }
 .bv-bar { display: block; height: 8px; min-width: 2px; border-radius: 4px; background: var(--muted); }
+
+/* v3.135 live order tracking: the Orders strip at the top of HQ's pane (app rows, not HQ's transcript) */
+.hq-orders { display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; border-bottom: 1px solid var(--border, rgba(127,127,127,.25)); font-size: 12px; max-height: 30vh; overflow: auto; flex: 0 0 auto; }
+.hq-orders[hidden] { display: none; }
+.hq-orders-head { font-weight: 600; opacity: .7; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.hq-order { display: flex; align-items: center; gap: 8px; min-width: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+.hq-order:hover, .hq-order:focus-visible { background: rgba(127,127,127,.15); }
+.hq-order-type { cursor: inherit; flex: 0 0 auto; }
+.hq-order-prog { flex: 0 0 auto; font-variant-numeric: tabular-nums; padding: 0 6px; border-radius: 8px; background: linear-gradient(90deg, rgba(34,197,94,.35) var(--p, 0%), rgba(127,127,127,.15) var(--p, 0%)); }
+.hq-order-line { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hq-order-targets { flex: 0 1 auto; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .65; }
+.hq-order.is-needs .hq-order-line { color: #f59e0b; }
+.hq-order.is-failed .hq-order-line { color: #ef4444; }
+body.studio .hq-orders { background: var(--st-bg); color: var(--st-text); font-family: var(--st-font); border-bottom-color: var(--st-border, rgba(127,127,127,.25)); }
+body.studio.studio-board .hq-orders { display: none; }

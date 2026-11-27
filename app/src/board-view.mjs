@@ -165,8 +165,8 @@ export function progressLine(item, t = enT, typeName = (x) => x) {
   if (c) {
     const who = c.member ? t('orders.line.desk', { member: c.member }) : t('orders.line.boss');
     const project = c.machine && c.machine !== 'self' ? t('orders.line.at', { project: c.project, machine: c.machine }) : c.project;
-    const key = c.state === 'queued' && c.ahead > 0 ? 'orders.state.queuedAhead' : `orders.state.${c.state}`;
-    parts.push(t(key, { who, project, n: c.ahead }));
+    const v = { who, project, n: c.ahead };
+    parts.push(c.state === 'queued' && c.ahead > 0 ? t('orders.state.queuedAhead', v) : t(`orders.state.${c.state}`, v));
   }
   return parts.filter(Boolean).join(' · ');
 }

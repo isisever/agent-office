@@ -2079,5 +2079,24 @@
     "none": "(none)",
     "noReport": "Nothing was closed in this range.",
     "pickDates": "Pick a start and an end date."
+  },
+  "orders": {
+    "title": "Orders",
+    "openTip": "Open this order on the board",
+    "line": {
+      "order": "Order #{id}",
+      "progress": "{done}/{total} done",
+      "desk": "desk {member}",
+      "at": "{project} on {machine}",
+      "boss": "boss"
+    },
+    "state": {
+      "working": "{who} working on project {project}",
+      "queued": "{who} queued on project {project}",
+      "queuedAhead": "{who} queued on project {project}, {n} ahead",
+      "needs": "{who} needs you on project {project}",
+      "done": "{who} done on project {project}",
+      "failed": "{who} failed on project {project}"
+    }
   }
 }

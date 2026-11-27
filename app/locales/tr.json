@@ -2051,5 +2051,24 @@
     "none": "(yok)",
     "noReport": "Bu aralıkta kapanan bir şey yok.",
     "pickDates": "Bir başlangıç ve bitiş tarihi seç."
+  },
+  "orders": {
+    "title": "Emirler",
+    "openTip": "Bu emri panoda aç",
+    "line": {
+      "order": "Emir #{id}",
+      "progress": "{done}/{total} bitti",
+      "desk": "{member} masası",
+      "at": "{machine} üzerinde {project}",
+      "boss": "patron"
+    },
+    "state": {
+      "working": "{who}, {project} projesinde çalışıyor",
+      "queued": "{who}, {project} projesinde sırada",
+      "queuedAhead": "{who}, {project} projesinde sırada, önünde {n} iş var",
+      "needs": "{who}, {project} projesinde seni bekliyor",
+      "done": "{who}, {project} projesinde bitirdi",
+      "failed": "{who}, {project} projesinde başarısız oldu"
+    }
   }
 }

@@ -1422,7 +1422,8 @@ async function openBoardChat(card) {
   selectProject(r?.ok ? r.projectId : p.id);
   if (r?.ok) selectTab(r.projectId, r.n);
 }
-hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices, openChat: (card) => { openBoardChat(card); } });
+hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices, openChat: (card) => { openBoardChat(card); },
+  openBoard: () => { if (document.body.classList.contains('studio')) document.body.classList.add('studio-board'); } });   // v3.135 the Orders strip opens a card on the board
 
 // v3.120 Studio: its sidebar and start screen (renderer/studio.js); the main region is the Office's own #terminal
 const leaveBoard = () => document.body.classList.remove('studio-board');
