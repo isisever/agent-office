@@ -2,6 +2,7 @@
 // Done), sorted by type (bugfix, hotfix, feature) then age by src/board-model.js, plus a Reports tab. One component
 // for both experiences: the Office's HQ board (renderer/hq-board.js) and Studio's Board / Reports entries show it.
 // Every text from a card is put in with textContent: titles and names are data, never markup.
+import { saveFromOrder } from './templates-ui.js';
 import { TYPES, GROUPS, RANGES, projectsOf, membersOf, columnsOf, filterOptions, fmtDuration, fmtCost, fmtTokens, rangeOf, typeCounts, reportRows } from '../src/board-view.mjs';
 
 const POLL_MS = 30000;   // a fallback only: main pushes board:cards whenever the store changes
@@ -78,6 +79,16 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
           draw();
         } }, el('span', { class: `bv-dot bv-${x}` }), typeName(x)))) : null);
   }
+  /** v3.134 an order card's menu: Save as template (the order's original text, type and targets). */
+  function cardMenu(/** @type {any} */ c) {
+    const key = `m:${c.id}`;
+    const open = menuFor === key;
+    return el('span', { class: 'bv-type-wrap bv-more-wrap' },
+      el('button', { class: 'bv-more', title: t('board.more'), 'aria-label': t('board.more'), 'aria-haspopup': 'menu', 'aria-expanded': String(open),
+        onclick: (/** @type {Event} */ e) => { e.stopPropagation(); menuFor = open ? '' : key; draw(); } }, '⋯'),
+      open ? el('div', { class: 'bv-menu', role: 'menu' }, el('button', { class: 'bv-menu-item', role: 'menuitem',
+        onclick: async (/** @type {Event} */ e) => { e.stopPropagation(); menuFor = ''; note = await saveFromOrder(c.id, t); draw(); } }, t('templates.saveAs'))) : null);
+  }
   const sourceOf = (/** @type {any} */ c) => (c.kind === 'chat' ? 'chat' : c.routine ? 'routine' : 'order');
   function card(/** @type {any} */ c) {
     const isOrder = c.kind === 'order';
@@ -91,7 +102,8 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
       title: isOrder ? t('board.orderTip') : t('board.openChat'),
       onclick: click, onkeydown: (/** @type {KeyboardEvent} */ e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); click(); } } },
     el('div', { class: 'bv-card-top' }, typeChip(c), el('span', { class: `bv-source bv-src-${sourceOf(c)}` }, t(`board.source.${sourceOf(c)}`)),
-      isOrder && c.progress?.total ? el('span', { class: 'bv-progress', title: t('board.progressTip') }, `${c.progress.done}/${c.progress.total}`) : null),
+      isOrder && c.progress?.total ? el('span', { class: 'bv-progress', title: t('board.progressTip') }, `${c.progress.done}/${c.progress.total}`) : null,
+      isOrder ? cardMenu(c) : null),
     el('div', { class: 'bv-title' }, c.title || c.request || c.id),
     el('div', { class: 'bv-meta' }, ...projectsOf(c).map((p) => el('span', { class: 'bv-chip bv-proj' }, p)),
       ...membersOf(c).map((m) => el('span', { class: 'bv-chip bv-member' }, `@${m}`))),
