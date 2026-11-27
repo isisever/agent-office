@@ -3346,14 +3346,29 @@ TEAM panel is unchanged.
   description, packs, suggested tools and the brief read only in a folded `<details>`. "Add to team" (Hire):
   `prefillMember` (the role by id, its department label, its packs on, the app-added MCP servers it suggests ticked,
   as the member popup does); the person fills name, department, account and projects; `hireForm` → `staff:save`
-  (no id: an add); on success the Members tab. "Custom role" opens the Office's role wizard (`sidebar.openRoleWizard()`,
-  its popup; restyling it as a Studio chat sheet is left for later).
+  (no id: an add); on success the Members tab. The hire sheet is `openHire(v, def, onCancel)` in
+  `renderer/studio-team-roles.js` (Cancel goes back to the role's detail from the gallery, else closes). "Custom role"
+  opens the role wizard as a Studio chat sheet (below).
 - **Adding a member**: Studio offers the Office TEAM panel's two buttons with its labels: "+ Add team member"
   (`staff.add`: `sidebar.editMember(null)`, the Office's member form with its preset list, as a side sheet) and
   "Role wizard" (`staff.wizard.open`: `sidebar.openRoleWizard()`, which replaces v3.122's `sidebar.addMember()`), in
   the Team page header on every tab (team mode on) and under the sidebar's Team section (replacing its "+ Add member",
   `studio.team.add`, which opened the wizard). The Roles gallery stays the browse-and-hire path; its last card,
   "Custom role", also opens the wizard; the Roles tab opens with its search focused. The Office's TEAM panel is unchanged.
+- **Role wizard in Studio**: every Studio entry (Team page header, "Custom role", the sidebar's Team section) calls
+  `sidebar.openRoleWizard({ studio: true, addMember })`. `renderer/role-wizard.js` keeps one conversation (the same
+  `staff:wizard` / `roles:save` calls, messages, draft card and errors); with `studio` it mounts a right-side sheet
+  (`.rw-sheet`, `.rw-sheet-back`, appended to `body`) instead of the Office popup: a quiet "Role wizard" header
+  (`staff.wizard.title`) with a close button, the wizard's messages as plain prose, the person's in soft bubbles, and
+  the composer as Studio's rounded box with a round send button (`.rw-send`, label `staff.wizard.send`); ⌘↵ / Ctrl+↵
+  sends, plain Enter is a new line, as before. Escape (focus in the sheet) or a click on the backdrop closes it; the Team
+  page's own Escape waits while `.rw-sheet` is open. Styles only in `studio.css` under `body.studio .rw-sheet`. "Add a
+  member with this role" closes the sheet and calls `addMember(roleId, savedRole)`: Studio reloads the team
+  (`reloadTeam`), opens the Team page on the Roles tab and the hire sheet (`teamPage.hire`) with `wizardRoleDef(saved,
+  presets)` (`src/studio-team-page.mjs`: the reloaded library entry, else the saved role mapped to a RoleDef: name and
+  description as `{ en, tr }`, department, brief, skill packs, tools, writesCode, custom), so name, department, brief
+  and packs come prefilled and the person sets the member's name, account and projects. Outside Studio (and from the
+  Office member popup's own wizard link) the wizard stays the Office popup and goes on to the Office member form.
 - **Departments** (`drawDepartments`, `departmentCounts`, `renameForms`): each department with its member count;
   Rename (≤ 30, as main) saves each member of it with the new label through `staff:save`; members main refused are
   named with its reason. An empty name is refused; the same name (or a function's label unchanged) changes nothing.
