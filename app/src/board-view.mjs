@@ -139,3 +139,34 @@ export function reportRows(report) {
       orders: Number(r.orders) || 0, chats: Number(r.chats) || 0, pct: Math.round((count / max) * 100) };
   });
 }
+
+// v3.135 live order tracking: one strip item (src/order-track.js orderStrip) as a line
+const EN = {
+  'orders.line.order': 'Order #{id}',
+  'orders.line.progress': '{done}/{total} done',
+  'orders.line.desk': 'desk {member}',
+  'orders.line.at': '{project} on {machine}',
+  'orders.state.working': '{who} working on project {project}',
+  'orders.state.queued': '{who} queued on project {project}',
+  'orders.state.queuedAhead': '{who} queued on project {project}, {n} ahead',
+  'orders.state.needs': '{who} needs you on project {project}',
+  'orders.state.done': '{who} done on project {project}',
+  'orders.state.failed': '{who} failed on project {project}',
+  'orders.line.boss': 'boss',
+};
+/** English fallback for `progressLine` (the renderer passes its own t). */
+export const enT = (k, v = {}) => String(EN[k] ?? k).replace(/\{(\w+)\}/g, (_, x) => String(v[x] ?? ''));
+
+/** "Order #r12 · bugfix · 3/5 done · desk Ayşe working on project X": one strip item as a line. */
+export function progressLine(item, t = enT, typeName = (x) => x) {
+  if (!item || typeof item !== 'object') return '';
+  const parts = [t('orders.line.order', { id: item.request }), typeName(item.type), t('orders.line.progress', { done: item.done, total: item.total })];
+  const c = item.current;
+  if (c) {
+    const who = c.member ? t('orders.line.desk', { member: c.member }) : t('orders.line.boss');
+    const project = c.machine && c.machine !== 'self' ? t('orders.line.at', { project: c.project, machine: c.machine }) : c.project;
+    const key = c.state === 'queued' && c.ahead > 0 ? 'orders.state.queuedAhead' : `orders.state.${c.state}`;
+    parts.push(t(key, { who, project, n: c.ahead }));
+  }
+  return parts.filter(Boolean).join(' · ');
+}
