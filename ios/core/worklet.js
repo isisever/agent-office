@@ -1,37 +1,24 @@
-// Entry of the Bare worklet inside Agent Office Remote. Swift <-> worklet: newline-delimited JSON over Bare.IPC.
-// In:  {t:'start'} {t:'connect', input} {t:'suspend'} {t:'resume'}
-// Out: {t:'log', line} {t:'status', state} {t:'fatal', error}
+// Entry of the Bare worklet inside Agent Office Remote (v3.121 phone controller). Swift <-> worklet: newline-delimited
+// JSON frames of at most 64 KB over Bare.IPC; the commands and events are listed in controller.js.
 /* global Bare */
 'use strict';
 const b4a = require('b4a');
-const { createSpike } = require('./spike');
+const Hyperswarm = require('hyperswarm');
+const DHT = require('hyperdht');
+const crypto = require('./crypto-shim');
+const W = require('../../app/src/link-wire.js');
+const { createController } = require('./controller.js');
 
-const send = (m) => Bare.IPC.write(b4a.from(JSON.stringify(m) + '\n'));
-const log = (line) => { console.log(`[worklet] ${line}`); send({ t: 'log', line }); };
-const status = (state) => send({ t: 'status', state });
+const send = (m) => { const line = W.encode(m); if (line) Bare.IPC.write(b4a.from(line)); };
+const ctl = createController({ Hyperswarm, DHT, crypto, out: send });
 
 Bare.on('uncaughtException', (err) => send({ t: 'fatal', error: String(err?.stack || err) }));
 Bare.on('unhandledRejection', (err) => send({ t: 'fatal', error: String(err?.stack || err) }));
-Bare.on('suspend', () => log('Bare suspend event'));
-Bare.on('resume', () => log('Bare resume event'));
+Bare.on('suspend', () => { ctl.command({ t: 'suspend' }).catch(() => {}); });
+Bare.on('resume', () => { ctl.command({ t: 'resume' }).catch(() => {}); });
 
-const spike = createSpike({ log, status });
-
-let buf = '';
 Bare.IPC.on('data', (chunk) => {
-  buf += b4a.toString(chunk, 'utf8');
-  let i;
-  while ((i = buf.indexOf('\n')) >= 0) {
-    const line = buf.slice(0, i);
-    buf = buf.slice(i + 1);
-    let m;
-    try { m = JSON.parse(line); } catch { log('bad IPC frame'); continue; }
-    if (m.t === 'start') spike.start().catch((e) => log(`start failed: ${e.message}`));
-    else if (m.t === 'connect') spike.connect(m.input).catch((e) => log(`connect failed: ${e.message}`));
-    else if (m.t === 'suspend') spike.suspend();
-    else if (m.t === 'resume') spike.resume();
-  }
+  if (!ctl.push(b4a.toString(chunk, 'utf8'))) send({ t: 'fatal', error: 'an IPC frame over 64 KB' });
 });
 
-log('worklet up');
-spike.start().catch((e) => log(`start failed: ${e.message}`));
+send({ t: 'log', line: 'worklet up' });

@@ -23,6 +23,11 @@ final class WorkletModel: ObservableObject {
       self.ipc = ipc
       state = "starting"
       append("worklet started")
+      // v3.121 P1: the seed and the paired desktop live in UserDefaults for now; P3 moves them to the keychain
+      var initMsg: [String: Any] = ["t": "init", "name": "iPhone"]
+      if let seed = UserDefaults.standard.string(forKey: "ctlSeed") { initMsg["seed"] = seed }
+      if let paired = UserDefaults.standard.dictionary(forKey: "ctlPaired") { initMsg["paired"] = paired }
+      send(initMsg)
       Task { [weak self] in
         for await chunk in ipc { self?.receive(chunk) }
         self?.append("IPC closed")
@@ -33,15 +38,21 @@ final class WorkletModel: ObservableObject {
     }
   }
 
-  func connect(_ input: String) { send(["t": "connect", "input": input]) }
+  /// Pairs from a scanned or pasted `agentoffice://pair?...` URL.
+  func connect(_ input: String) { send(["t": "pair", "url": input]) }
+  /// Types one HQ turn on the paired desktop.
+  func sendHq(_ text: String) { send(["t": "send", "msg": ["t": "ctl-hq", "id": "i\(Int(Date().timeIntervalSince1970 * 1000))", "text": text]]) }
+  func forget() { UserDefaults.standard.removeObject(forKey: "ctlPaired"); send(["t": "forget"]) }
 
   func suspend() {
+    send(["t": "suspend"])
     worklet?.suspend(linger: 5000)
     append("suspend (linger 5 s)")
   }
 
   func resume() {
     worklet?.resume()
+    send(["t": "resume"])
     append("resume")
   }
 
@@ -53,7 +64,7 @@ final class WorkletModel: ObservableObject {
     state = "stopped"
   }
 
-  private func send(_ message: [String: String]) {
+  private func send(_ message: [String: Any]) {
     guard let ipc, var data = try? JSONSerialization.data(withJSONObject: message) else { return }
     data.append(0x0A)
     Task { try? await ipc.write(data) }
@@ -69,6 +80,11 @@ final class WorkletModel: ObservableObject {
       case "log": append(obj["line"] as? String ?? "")
       case "status": state = obj["state"] as? String ?? state
       case "fatal": state = "fatal"; append("FATAL \(obj["error"] as? String ?? "")")
+      case "ready": if let seed = obj["seed"] as? String { UserDefaults.standard.set(seed, forKey: "ctlSeed") }
+      case "paired": if let paired = obj["paired"] as? [String: Any] { UserDefaults.standard.set(paired, forKey: "ctlPaired"); append("paired with \(paired["name"] as? String ?? "?")") }
+      case "recv":
+        let msg = obj["msg"] as? [String: Any] ?? [:]
+        append("recv \(msg["t"] as? String ?? "?")")
       default: break
       }
     }

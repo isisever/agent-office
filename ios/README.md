@@ -21,7 +21,13 @@ without typing. Worklet log: `log show --predicate 'process == "AgentOfficeRemot
 
 ## Without a phone
 
-`node core/dev-run.mjs --selftest` runs a link-core inviter and the worklet's joiner logic in one process.
-`node core/dev-run.mjs --invite` prints a code to paste into the app. Never test against your real Agent Office.
+The phone side is `core/controller.js` (the IPC commands) on `core/ctl-client.js` (the v3.121 controller protocol),
+which use `app/src/link-wire.js` itself; bare-pack bundles it from there.
+
+- `node core/dev-run.mjs --selftest` pairs a desktop `Link` (app/src/link.js) and the phone on a local DHT testnet,
+  receives `ctl-view` and gets an HQ turn `queued`.
+- `node core/dev-run.mjs '<agentoffice://pair?... URL>'` plays the phone against a running desktop (use a dev profile,
+  `AGENT_OFFICE_USER_DATA`): lines on stdin become HQ turns, `/reports` asks for the reports.
+- `app/test/link-ctl.test.cjs` runs the same pairing in CI.
 
 Crypto shim check: `cd app && node --test test/crypto-shim.test.cjs` (needs `npm install` in ios/core; not in CI yet).
