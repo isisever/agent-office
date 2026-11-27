@@ -1853,7 +1853,7 @@ test('v3.130 sealed store: digest verify, tamper and unknown key fall back, rest
   assert.equal(b.isOpen('r1'), false);   // the ceiling
 });
 
-test('v3.131 order queue: an item keeps its type; release by priority, then aged type rank, then FIFO', () => {
+test('v3.131 order queue: an item keeps its type; release by aged type rank, then priority, then FIFO', () => {
   const BM = require('../src/board-model.js');
   const t0 = 1_000_000_000;
   let now = t0;
@@ -1866,7 +1866,7 @@ test('v3.131 order queue: an item keeps its type; release by priority, then aged
   now += 1000; s.enqueue({ id: 'p', request: 'r1', args, type: 'feature', priority: 1 });
   assert.equal(s.queue().find((x) => x.id === 'h').type, 'hotfix');
   const rank = (at) => (x) => BM.agedRank(x.type, x.at, at);
-  assert.deepEqual(HO.releaseOrder(s.queue(), rank(now)).map((x) => x.id), ['p', 'b', 'h', 'f']);   // explicit priority stays first
+  assert.deepEqual(HO.releaseOrder(s.queue(), rank(now)).map((x) => x.id), ['b', 'h', 'p', 'f']);   // type first (owner's order), priority breaks ties
   assert.equal(s.ahead('f', rank(now)), 3);
   assert.equal(HO.nextRelease(s.queue(), (x) => x.id !== 'p', rank(now)).id, 'b');
   // aging: after 2 x AGE_MS the feature ranks like a bugfix and, being older, goes first

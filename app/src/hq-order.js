@@ -36,9 +36,10 @@ function unseal(key, raw) {
 
 /** Queue release order: higher priority first, then by `rank(item)` (lower first: v3.131 the aged type rank,
  *  BM.agedRank; none given = equal), then first in, first out. */
+// Type rank first (the owner's bugfix > hotfix > feature, with aging), then an explicit priority, then arrival.
 const releaseOrder = (queue, rank = null) => {
   const r = typeof rank === 'function' ? (/** @type {any} */ x) => { const n = Number(rank(x)); return Number.isFinite(n) ? n : 0; } : () => 0;
-  return [...(Array.isArray(queue) ? queue : [])].sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0) || r(a) - r(b) || a.seq - b.seq);
+  return [...(Array.isArray(queue) ? queue : [])].sort((a, b) => r(a) - r(b) || (Number(b.priority) || 0) - (Number(a.priority) || 0) || a.seq - b.seq);
 };
 /** How many queued items are released before this one. -1 when it is not queued. */
 function aheadOf(queue, id, rank = null) { const i = releaseOrder(queue, rank).findIndex((x) => x.id === id); return i; }
