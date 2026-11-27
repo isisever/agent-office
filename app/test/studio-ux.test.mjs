@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionName, relativeParts, relativeTime, startPlan, modelName, contextLimit, contextUsage, shortTokens, firstName } from '../src/studio-ux.mjs';
+import { sessionName, relativeParts, relativeTime, startPlan, modelName, contextLimit, contextUsage, shortTokens, firstName, startPickers, startStep, startFailure, renameText, START_WAIT_MS } from '../src/studio-ux.mjs';
+import { readFileSync } from 'node:fs';
 
 test('sessionName: /rename, then Claude Code title, then the first prompt, else empty', () => {
   assert.equal(sessionName({ custom: 'Mine', ai: 'AI', prompt: 'p' }), 'Mine');
@@ -71,4 +72,64 @@ test('startPlan takes a model only from the offered list (the account\'s reporte
   assert.deepEqual(startPlan({ model: 'fable' }).settings, [], 'not in the fixed list');
   assert.deepEqual(startPlan({ model: 'fable' }, ['', 'fable']).settings, [['model', 'fable']]);
   assert.deepEqual(startPlan({ model: 'opus' }, ['', 'fable']).settings, []);
+});
+
+test('v3.120 startStep: only ok goes on; not-running and busy are tried again within the time bound; anything else fails', () => {
+  assert.equal(startStep('ok', 0), 'ok');
+  assert.equal(startStep('not-running', 100), 'retry');
+  assert.equal(startStep('busy', START_WAIT_MS - 1), 'retry');
+  assert.equal(startStep('busy', START_WAIT_MS), 'fail');
+  assert.equal(startStep('not-running', 5000, 1000), 'fail');
+  for (const r of ['locked', 'bad', 'gone', 'error:nope', 'error', 'moved', undefined, null, true]) assert.equal(startStep(r, 0), 'fail', String(r));
+});
+
+test('v3.120 startFailure names why a start step failed', () => {
+  assert.deepEqual(startFailure('locked'), { why: 'locked', detail: '' });
+  assert.deepEqual(startFailure('not-running'), { why: 'not-running', detail: '' });
+  assert.deepEqual(startFailure('error: model not allowed '), { why: 'error', detail: 'model not allowed' });
+  assert.deepEqual(startFailure(undefined), { why: 'other', detail: '' });
+  assert.deepEqual(startFailure('error'), { why: 'other', detail: '' });
+});
+
+test('v3.120 startPickers: the chat pickers\' lock rule for a new tab; a terminal tab offers neither', () => {
+  assert.deepEqual(startPickers(null), { model: true, mode: true, lock: '', shownMode: '' });
+  assert.deepEqual(startPickers({ gui: true, modeLock: '' }), { model: true, mode: true, lock: '', shownMode: '' });
+  assert.deepEqual(startPickers({ gui: true, modeLock: 'bypass' }), { model: true, mode: false, lock: 'bypass', shownMode: 'bypassPermissions' });
+  assert.deepEqual(startPickers({ gui: true, modeLock: 'desk' }), { model: true, mode: false, lock: 'desk', shownMode: '' });
+  assert.deepEqual(startPickers({ gui: false, modeLock: 'bypass' }), { model: false, mode: false, lock: '', shownMode: '' });
+});
+
+test('v3.120 startPlan drops a pick the new tab cannot apply (a held mode, a terminal tab)', () => {
+  assert.deepEqual(startPlan({ model: 'opus', mode: 'plan' }, undefined, { gui: true, modeLock: 'bypass' }).settings, [['model', 'opus']]);
+  assert.deepEqual(startPlan({ model: 'opus', mode: 'plan' }, undefined, { gui: false, modeLock: '' }).settings, []);
+  assert.deepEqual(startPlan({ model: 'opus', mode: 'plan' }, undefined, { gui: true, modeLock: '' }).settings, [['model', 'opus'], ['mode', 'plan']]);
+});
+
+test('v3.120 renameText: one line, no control characters, at most 120 characters', () => {
+  assert.equal(renameText('  a\n b\u0007c  '), 'a b c');
+  assert.equal(renameText('x'.repeat(200)).length, 120);
+  assert.equal(renameText(' \n '), '');
+  assert.equal(renameText(5), '');
+});
+
+test('v3.120 the start screen sends the prompt only after every setting answered ok, and reuses a failed start\'s tab', () => {
+  const app = readFileSync(new URL('../renderer/app.js', import.meta.url), 'utf8');
+  const body = app.slice(app.indexOf('async function startStudioSession('), app.indexOf('async function closeTab('));
+  assert.match(body, /startStep\(r, Date\.now\(\) - t0\)/);
+  assert.match(body, /if \(failed\) return \{ ok: false, n, failed \};\n {2}\}\n {2}const failed = await until\('prompt'/);
+  assert.match(body, /plan\.reuseN && p && tabsOf\(p\)\.some/);
+  const studio = readFileSync(new URL('../renderer/studio.js', import.meta.url), 'utf8');
+  assert.match(studio, /startTab\.projectId === id && startTab\.tabMode === plan\.tabMode \? startTab\.n : 0/);
+  assert.match(studio, /startLists\.get\(id\)\?\.caps \|\| null\)/);
+});
+
+test('v3.120 Studio renames a GUI session with chat:rename, never with chat:command (which restarts it)', () => {
+  const studio = readFileSync(new URL('../renderer/studio.js', import.meta.url), 'utf8');
+  const body = studio.slice(studio.indexOf('function renameStart('), studio.indexOf('const rel = ('));
+  assert.match(body, /api\.chat\.rename\(pty, name\)/);
+  assert.doesNotMatch(body, /chat\.command/);
+  const main = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  const h = main.slice(main.indexOf("ipcMain.handle('chat:rename'"), main.indexOf('\n});\n', main.indexOf("ipcMain.handle('chat:rename'")));
+  assert.match(h, /if \(!t\.gui\) return 'terminal';\n {2}return typePrompt\(id, cmd\)/);
+  assert.doesNotMatch(h, /switchMode|startPty/);
 });

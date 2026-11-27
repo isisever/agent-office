@@ -9,6 +9,7 @@ import { mountDevices, mergeRemote } from './devices.js';
 import { setLang, onLang, t } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
 import { mountStudio } from './studio.js';
+import { startStep, startFailure } from '../src/studio-ux.mjs';
 import { studioKey, otherExperience } from '../src/studio-keys.mjs';
 import { chatShownFor, chatButtonFor } from '../src/chat-view.mjs';
 import { themeChoices, effectiveTheme } from '../src/themes.mjs';
@@ -494,30 +495,40 @@ async function addTab(projectId, mode) {
 }
 /**
  * v3.120 Studio UX start screen: a new tab (same folder or a new worktree), then the chosen model and mode through
- * chat:setting once its GUI chat runs (tabs start with the project's own), then the first prompt. → started
- * @param {string} projectId @param {{ tabMode: 'same' | 'worktree', settings: [string, string][] }} plan @param {string} text
+ * chat:setting once its GUI chat runs (tabs start with the project's own), then the first prompt. Each setting must
+ * answer 'ok' (only 'not-running' and 'busy' are tried again, for START_WAIT_MS); anything else stops the start before
+ * the prompt is sent, so a prompt never runs with a mode or model other than the one chosen. plan.reuseN: the tab an
+ * earlier failed start of the same project created (used again instead of a second tab while it is still open).
+ * → { ok, n, failed?: { step: 'tab' | 'model' | 'mode' | 'prompt', why, detail } }
+ * @param {string} projectId @param {{ tabMode: 'same' | 'worktree', settings: [string, string][], reuseN?: number }} plan @param {string} text
  */
 async function startStudioSession(projectId, plan, text) {
   leaveBoard();
   selectProject(projectId);
-  const n = await addTab(projectId, plan.tabMode);
-  if (!n) return false;
+  const p = projects.find((x) => x.id === projectId);
+  const reuse = plan.reuseN && p && tabsOf(p).some((x) => x.n === plan.reuseN) ? plan.reuseN : 0;
+  const n = reuse || await addTab(projectId, plan.tabMode);
+  if (!n) return { ok: false, n: 0, failed: { step: 'tab', why: 'other', detail: '' } };
+  if (reuse) selectTab(projectId, n);
   const pty = tabPtyId(projectId, n);
   const wait = () => new Promise((r) => setTimeout(r, 400));
-  for (const [key, value] of plan.settings) {
-    for (let i = 0; i < 40; i++) {
-      const r = await api.chat.setting(pty, key, value).catch(() => 'error');
-      if (r !== 'not-running' && r !== 'busy') break;
+  /** @param {'model' | 'mode' | 'prompt'} step @param {() => Promise<any>} call */
+  const until = async (step, call) => {
+    const t0 = Date.now();
+    for (;;) {
+      const r = await call().catch(() => 'error');
+      const next = startStep(r, Date.now() - t0);
+      if (next === 'ok') return null;
+      if (next === 'fail') return { step, ...startFailure(r) };
       await wait();
     }
+  };
+  for (const [key, value] of plan.settings) {
+    const failed = await until(key === 'model' ? 'model' : 'mode', () => api.chat.setting(pty, key, value));
+    if (failed) return { ok: false, n, failed };
   }
-  for (let i = 0; i < 40; i++) {
-    const r = await api.chat.send(pty, text).catch(() => 'error');
-    if (r === 'ok') return true;
-    if (r !== 'not-running') return false;
-    await wait();
-  }
-  return false;
+  const failed = await until('prompt', () => api.chat.send(pty, text));
+  return failed ? { ok: false, n, failed } : { ok: true, n };
 }
 async function closeTab(projectId, n) {
   try {

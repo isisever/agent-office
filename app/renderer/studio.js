@@ -7,7 +7,7 @@
 
 import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
 import { icon } from './studio-icons.js';
-import { relativeTime, firstName, START_MODELS, START_MODES, startPlan } from '../src/studio-ux.mjs';
+import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText } from '../src/studio-ux.mjs';
 
 const REFRESH_MS = 5000;   // v3.120 Studio UX: the rows' live state (working, waiting) and the header follow within 5 s
 const THEME_KEY = 'ao.studio.theme';   // Studio's own light / dark choice ('system' | 'light' | 'dark', this window only)
@@ -34,7 +34,7 @@ function el(tag, props = {}, ...kids) {
  *     selectSession: (projectId: string, n: number) => void, newSession: (projectId: string) => void,
  *     selectProject: (projectId: string) => void, selectHq: () => void, openBoard: () => void,
  *     openSettings: () => void, toggle: () => void, activePty: () => string | null, hasSession: () => boolean,
- *     startSession: (projectId: string, plan: { tabMode: 'same' | 'worktree', settings: [string, string][] }, text: string) => Promise<boolean>,
+ *     startSession: (projectId: string, plan: { tabMode: 'same' | 'worktree', settings: [string, string][], reuseN?: number }, text: string) => Promise<{ ok: boolean, n: number, failed?: { step: string, why: string, detail: string } }>,
  *     projectSettings: (projectId: string) => void, showAccounts: () => void, isMac: boolean,
  *     commands: (projectId: string) => StudioCommand[],
  *   },
@@ -117,6 +117,9 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     draw();
     startText.focus();
   }
+  // v3.120 the tab a failed start created (its project and tab mode): sending again uses it, never a second tab
+  /** @type {{ projectId: string, tabMode: string, n: number } | null} */
+  let startTab = null;
   async function sendStart() {
     const id = startProject.value || currentId();
     const text = startText.value.trim();
@@ -124,24 +127,43 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startBusy = true;
     startSend.disabled = true;
     startNote.textContent = t('studio.start.starting');
-    let ok = false;
-    try { ok = await hooks.startSession(id, startPlan({ worktree: startWorktree.checked, model: startModel.value, mode: startMode.value }, [...startModel.options].filter((o) => !o.disabled).map((o) => o.value)), text); } catch (e) { console.error(e); }
+    const plan = startPlan({ worktree: startWorktree.checked, model: startModel.value, mode: startMode.value }, [...startModel.options].filter((o) => !o.disabled).map((o) => o.value), startLists.get(id)?.caps || null);
+    const reuseN = startTab && startTab.projectId === id && startTab.tabMode === plan.tabMode ? startTab.n : 0;
+    /** @type {{ ok: boolean, n: number, failed?: { step: string, why: string, detail: string } }} */
+    let r = { ok: false, n: 0 };
+    try { r = await hooks.startSession(id, { ...plan, reuseN }, text); } catch (e) { console.error(e); }
     startBusy = false;
     startSend.disabled = false;
-    if (ok) { startText.value = ''; startNote.textContent = ''; starting = false; picked = id; refresh(); } else startNote.textContent = t('studio.start.failed');
+    if (r.ok) { startTab = null; startText.value = ''; startNote.textContent = ''; starting = false; picked = id; refresh(); return; }
+    startTab = r.n ? { projectId: id, tabMode: plan.tabMode, n: r.n } : null;
+    // the prompt was not sent: it stays in the box, and the note names the step that failed and why
+    if (!startText.value.trim()) startText.value = text;
+    const f = r.failed;
+    startNote.textContent = f && f.step !== 'tab'
+      ? t('studio.start.stepFailed', { step: f.step === 'model' ? t('studio.start.step.theModel') : f.step === 'mode' ? t('studio.start.step.mode') : t('studio.start.step.prompt'), why: f.detail || t(`studio.start.why.${f.why}`) })
+      : t('studio.start.failed');
+    starting = true;
+    draw();
+    startText.focus();
   }
-  /** The header's title becomes a text box; Enter renames the session with /rename (v3.118 title order), Esc keeps it. */
+  /**
+   * The header's title becomes a text box; Enter renames the session with /rename (v3.118 title order), Esc keeps it.
+   * A GUI chat takes /rename as a message (Claude Code runs it locally: no turn, no restart); a terminal tab gets it
+   * typed. A rename never moves or restarts the session.
+   */
   function renameStart() {
     const pty = hooks.activePty();
     if (!shown || !pty || headTitle.querySelector('input')) return;
     const box = /** @type {HTMLInputElement} */ (el('input', { class: 'st-head-input', value: shown.title || '', maxlength: '120' }));
     const done = async (/** @type {boolean} */ save) => {
-      const name = box.value.replace(/\s+/g, ' ').trim();
+      const name = renameText(box.value);
       box.remove();
       draw();
       if (!save || !name || name === shown?.title) return;
-      let r = 'error';
-      try { r = await api.chat.command(pty, `/rename ${name}`); if (r === 'terminal') r = await api.chat.send(pty, `/rename ${name}`); } catch (e) { console.error(e); }
+      try {
+        const r = await api.chat.rename(pty, name);
+        if (r === 'terminal') await api.chat.send(pty, `/rename ${name}`);
+      } catch (e) { console.error(e); }
       setTimeout(refresh, 800);
     };
     box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); done(true); } else if (e.key === 'Escape') { e.preventDefault(); done(false); } });
@@ -257,10 +279,17 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startWtLabel.textContent = t('studio.start.worktree');
     drawStartModels(proj?.id || '');
     startModel.title = t('chat.pick.modelTitle');
-    const dv = startMode.value;
-    startMode.replaceChildren(...START_MODES.map((m) => el('option', { value: m }, m ? t(`chat.pick.mode.${m}`) : t('studio.start.modeDefault'))));
+    // v3.120 what a new tab of this project can apply (main's studio:models caps): a terminal tab offers neither
+    // picker, a skip-permissions project or a desk shows its mode as held and cannot be given another one
+    const can = startPickers(startLists.get(proj?.id || '')?.caps || null);
+    startModel.hidden = !can.model;
+    const dv = can.mode ? startMode.value : '';
+    const modeLabel = (/** @type {string} */ m) => (m ? t(`chat.pick.mode.${m}`) : can.shownMode ? t(`chat.pick.mode.${can.shownMode}`) : t('studio.start.modeDefault'));
+    startMode.replaceChildren(...(can.mode ? START_MODES : ['']).map((m) => el('option', { value: m }, modeLabel(m))));
     startMode.value = dv;
-    startMode.title = t('chat.pick.modeTitle');
+    startMode.disabled = !can.mode;
+    startMode.hidden = !can.model && !can.lock;
+    startMode.title = `${t('chat.pick.modeTitle')}${can.lock ? ` · ${t(`chat.pick.why.${can.lock}`)}` : ''}`;
     startText.placeholder = t('studio.start.placeholder');
     startSend.title = `${t('studio.start.send')} (Enter)`;
     startSend.setAttribute('aria-label', t('studio.start.send'));
@@ -270,7 +299,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
    * v3.120 Studio UX: the start screen's models are the selected project's account's (main's per-account cache, filled
    * by a session or a short probe). Until the probe answers: only the default option and a loading line.
    */
-  /** @type {Map<string, { models: any[], loading: boolean, at: number }>} */
+  /** @type {Map<string, { models: any[], loading: boolean, at: number, caps?: { gui: boolean, modeLock: string } | null }>} */
   const startLists = new Map();
   let startModelsAsked = '';
   let startModelsTimer = /** @type {any} */ (null);
@@ -288,8 +317,10 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startModelsAsked = projectId;
     api.chat.startModels(projectId).then((/** @type {any} */ r) => {
       startModelsAsked = '';
-      startLists.set(projectId, { models: Array.isArray(r?.models) ? r.models : [], loading: Boolean(r?.loading), at: Date.now() });
-      if (startProject.value === projectId) drawStartModels(projectId);
+      const caps = r && typeof r.gui === 'boolean' ? { gui: r.gui, modeLock: typeof r.modeLock === 'string' ? r.modeLock : '' } : null;
+      const had = JSON.stringify(startLists.get(projectId)?.caps || null);
+      startLists.set(projectId, { models: Array.isArray(r?.models) ? r.models : [], loading: Boolean(r?.loading), at: Date.now(), caps });
+      if (startProject.value === projectId) { if (had !== JSON.stringify(caps)) drawStart(current()); else drawStartModels(projectId); }
       if (r?.loading) { clearTimeout(startModelsTimer); startModelsTimer = setTimeout(() => { if (startProject.value === projectId && !start.hidden) drawStartModels(projectId); }, 1500); }
     }, () => { startModelsAsked = ''; startLists.set(projectId, { models: [], loading: false, at: Date.now() }); });
   }

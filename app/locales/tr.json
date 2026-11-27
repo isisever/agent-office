@@ -92,7 +92,22 @@
       "modelsLoading": "Bu hesabın modelleri yükleniyor…",
       "modeDefault": "Projenin varsayılan modu",
       "placeholder": "Ne üzerinde çalışalım?",
-      "send": "Oturumu başlat"
+      "send": "Oturumu başlat",
+      "stepFailed": "Başlatılmadı: {step} ayarlanamadı ({why}). Mesajın burada duruyor; seçimi değiştir ya da yeniden gönder.",
+      "step": {
+        "theModel": "model",
+        "mode": "izin modu",
+        "prompt": "mesaj"
+      },
+      "why": {
+        "locked": "bu proje kendi izin modunu korur",
+        "busy": "oturum meşgul kaldı",
+        "not-running": "sohbet zamanında başlamadı",
+        "bad": "bu seçim bu hesapta sunulmuyor",
+        "gone": "oturum kapandı",
+        "error": "Claude bunu reddetti",
+        "other": "bir şeyler ters gitti"
+      }
     }
   },
   "app": {

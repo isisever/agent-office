@@ -2,6 +2,8 @@
 // screen, the model label and the context ring. The DOM is renderer/studio.js and renderer/chat.js; main uses
 // sessionName for the running sessions' titles.
 
+import { pickerState } from './composer.mjs';
+
 /** The models and permission modes a start screen may choose ('' = the project's own default). */
 export const START_MODELS = ['', 'opus', 'sonnet', 'haiku'];
 export const START_MODES = ['', 'default', 'acceptEdits', 'plan'];
@@ -57,15 +59,69 @@ export function relativeTime(at, now, lang = 'en', nowLabel = '') {
  * mode; only values that differ from '' and are offered are kept).
  * @param {{ worktree?: boolean, model?: string, mode?: string } | null | undefined} choice
  * @param {string[]} [models] the model values offered (v3.120 the account's reported list; START_MODELS by default)
+ * @param {{ gui?: boolean, modeLock?: string } | null} [caps] what a new tab can apply (startPickers)
  * @returns {{ tabMode: 'same' | 'worktree', settings: [ 'model' | 'mode', string ][] }}
  */
-export function startPlan(choice, models = START_MODELS) {
+export function startPlan(choice, models = START_MODELS, caps = null) {
   const c = choice && typeof choice === 'object' ? choice : {};
+  const can = startPickers(caps);
   /** @type {[ 'model' | 'mode', string ][]} */
   const settings = [];
-  if (typeof c.model === 'string' && c.model && models.includes(c.model)) settings.push(['model', c.model]);
-  if (typeof c.mode === 'string' && c.mode && START_MODES.includes(c.mode)) settings.push(['mode', c.mode]);
+  if (can.model && typeof c.model === 'string' && c.model && models.includes(c.model)) settings.push(['model', c.model]);
+  if (can.mode && typeof c.mode === 'string' && c.mode && START_MODES.includes(c.mode)) settings.push(['mode', c.mode]);
   return { tabMode: c.worktree === true ? 'worktree' : 'same', settings };
+}
+
+/**
+ * v3.120 which start screen pickers a new session of the project can apply, from main's studio:models answer
+ * (caps: { gui, modeLock }; null while it is not known yet: both offered, the start still checks each result).
+ * The same lock rule as the chat's pickers (pickerState): a terminal tab (Windows, or the terminal chosen) has no
+ * chat:setting, so neither picker; a skip-permissions project ('bypass') or a desk ('desk') keeps its mode.
+ * @param {{ gui?: boolean, modeLock?: string } | null | undefined} caps
+ * @returns {{ model: boolean, mode: boolean, lock: '' | 'bypass' | 'desk', shownMode: string }}
+ */
+export function startPickers(caps) {
+  if (!caps || typeof caps !== 'object') return { model: true, mode: true, lock: '', shownMode: '' };
+  const st = pickerState(caps.gui === true ? { modeLock: caps.modeLock || '', live: { busy: false }, asks: [] } : null, {});
+  /** @type {'' | 'bypass' | 'desk'} */
+  const lock = st.lock === 'bypass' || st.lock === 'desk' ? st.lock : '';
+  return { model: st.enabled, mode: st.modeEnabled, lock, shownMode: lock === 'bypass' ? st.mode : '' };
+}
+
+/** How long the start screen waits for a new tab's chat to take a setting or the prompt. */
+export const START_WAIT_MS = 30000;
+
+/**
+ * v3.120 one chat:setting / chat:send answer during a start → 'ok' | 'retry' | 'fail'. Only 'not-running' (the
+ * chat is still starting) and 'busy' are tried again, and only while `elapsed` < `limit`; anything else ('locked',
+ * 'bad', 'gone', 'error:…', a rejected call) or the time running out fails, and the prompt is not sent.
+ * @param {unknown} result @param {number} elapsed @param {number} [limit]
+ */
+export function startStep(result, elapsed, limit = START_WAIT_MS) {
+  if (result === 'ok') return 'ok';
+  if ((result === 'not-running' || result === 'busy') && elapsed < limit) return 'retry';
+  return 'fail';
+}
+
+/**
+ * v3.120 why a start step failed, for the note under the start box → { why: 'locked' | 'busy' | 'not-running' |
+ * 'bad' | 'gone' | 'error' | 'other', detail } (detail: claude's own message after 'error:').
+ * @param {unknown} result
+ */
+export function startFailure(result) {
+  const r = typeof result === 'string' ? result : '';
+  if (r.startsWith('error:')) return { why: 'error', detail: r.slice(6).trim().slice(0, 200) };
+  if (['locked', 'busy', 'not-running', 'bad', 'gone'].includes(r)) return { why: r, detail: '' };
+  return { why: 'other', detail: '' };
+}
+
+/**
+ * v3.120 a session name for /rename: one line, control characters out, at most 120 characters ('' when nothing is left).
+ * @param {unknown} name
+ */
+export function renameText(name) {
+  // eslint-disable-next-line no-control-regex
+  return typeof name === 'string' ? name.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120).trim() : '';
 }
 
 const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'];

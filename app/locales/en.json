@@ -92,7 +92,22 @@
       "modelsLoading": "Loading this account's models…",
       "modeDefault": "Project default mode",
       "placeholder": "What should we work on?",
-      "send": "Start session"
+      "send": "Start session",
+      "stepFailed": "Not started: {step} could not be set ({why}). Your message is still here; change the choice or send again.",
+      "step": {
+        "theModel": "the model",
+        "mode": "the permission mode",
+        "prompt": "the message"
+      },
+      "why": {
+        "locked": "this project keeps its permission mode",
+        "busy": "the session stayed busy",
+        "not-running": "the chat did not start in time",
+        "bad": "this choice is not offered for this account",
+        "gone": "the session is gone",
+        "error": "Claude refused it",
+        "other": "something went wrong"
+      }
     }
   },
   "app": {
