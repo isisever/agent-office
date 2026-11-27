@@ -3532,7 +3532,22 @@ authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; w
   `HQ.redact`ed, and one over `TASK_MAX` is refused (`too-large`) before it is kept. Consent and the routine hold-off
   are decided before queueing (`HO.overCapRoute`): only consent `'none'` with nothing holding it off is queued as
   typed; a routine turn (or consent `'held'`) gets today's held card; anything else is queued untyped and decided
-  again at release. The queue does not release while a phone turn or an HQ routine turn is live (`HO.pumpMay`). `hqTick` releases them (higher `priority` first, then FIFO) as `capReason` allows; one that meets a full
+  again at release. The queue does not release while a phone turn or an HQ routine turn is live (`HO.pumpMay`: a
+  routine run counts only while its id is live in the minter, so the person's typed prompt lets the queue drain); it
+  is checked again before every release, since a release awaits. An item released from the queue that would become a
+  held card stays queued instead (`HO.heldAction`): it is still in the sealed queue and must not run twice.
+  Request cap: for an open order (`askBeforeDispatch` off) `capReason(..., { order: true })` counts only the
+  request's OPEN tasks against `MAX_PER_REQUEST` (8); removed and ended rows do not count. Without this, tasks queued
+  for `request-cap` could never be released, since ended tasks keep counting. Chosen over not queueing on
+  `request-cap`: the order still has bounds (`open-cap` 12 across HQ, 8 open at once per order, `ORDER_QUEUE_MAX` 50
+  waiting, the 24 h `ORDER_MS` ceiling, and the order ends at `office_summary`). A closed order is back to counting
+  every task it ever got.
+- **Residual risk: rollback of both files.** The generation is kept in `order-key.bin`, and that file is still a
+  file in userData. A process running as the user can copy `order-key.bin` and `orders.json` together and later put
+  both back. The restored pair matches its own generation, so an older state (an earlier open order, stage seal or
+  queue) is accepted. Keeping the last generation outside userData (for example in the macOS Keychain) is not done:
+  `safeStorage` only encrypts data and stores nothing itself, so it would need a new native keychain dependency. A
+  process that can do this already runs as the person and can type into HQ, so this gives it no authority it lacks. `hqTick` releases them (higher `priority` first, then FIFO) as `capReason` allows; one that meets a full
   project queue again keeps its place. At most `ORDER_QUEUE_MAX` (50) per order (`order-queue-full`). A queued item
   of the person's typed turn keeps that turn's consent; one queued in a later turn passes the follow-up rules at
   release. Closing the order drops its queue (`order-closed`); Cancel on the card removes it. Staged chains
