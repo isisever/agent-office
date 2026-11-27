@@ -99,6 +99,12 @@ test('hotkeys: the toggle everywhere, Studio keys only in Studio', async () => {
   assert.deepEqual(studioKey({ ...mac, meta: true, code: 'Digit9' }, 'studio'), { type: 'session', index: 8 });
   assert.equal(studioKey({ ...mac, meta: true, code: 'Digit0' }, 'studio'), null, '⌘0 stays HQ');
   assert.deepEqual(studioKey({ ...mac, meta: true, code: 'KeyN' }, 'studio'), { type: 'new' });
+  assert.deepEqual(studioKey({ ...mac, meta: true, shift: true, code: 'KeyN' }, 'studio'), { type: 'newWorktree' });
+  assert.deepEqual(studioKey({ ...lin, ctrl: true, shift: true, alt: true, code: 'KeyN' }, 'studio'), { type: 'newWorktree' });
+  assert.deepEqual(studioKey({ ...lin, ctrl: true, shift: true, code: 'KeyN' }, 'studio'), { type: 'new' });
+  assert.deepEqual(studioKey({ ...mac, meta: true, code: 'KeyL' }, 'studio'), { type: 'focus' });
+  assert.equal(studioKey({ ...mac, meta: true, shift: true, code: 'KeyN' }, 'office'), null);
+  assert.equal(studioKey({ ...mac, meta: true, code: 'KeyL' }, 'office'), null);
   assert.deepEqual(studioKey({ ...mac, meta: true, code: 'KeyK' }, 'studio'), { type: 'search' });
   assert.equal(studioKey({ ...mac, meta: true, alt: true, code: 'KeyK' }, 'studio'), null);
   assert.deepEqual(studioKey({ ...lin, ctrl: true, shift: true, code: 'Digit2' }, 'studio'), { type: 'session', index: 1 });
