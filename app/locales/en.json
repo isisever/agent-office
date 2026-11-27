@@ -211,7 +211,8 @@
       "rename": "Rename",
       "renameEmpty": "A department needs a name.",
       "renameFailed": "Some members kept the old name:"
-    }
+    },
+    "board": "Board"
   },
   "app": {
     "appTitle": "AGENT OFFICE",
@@ -2012,5 +2013,71 @@
       "bot": "The body colour of the office bots.",
       "version": "The running version of Agent Office."
     }
+  },
+  "board": {
+    "tab": {
+      "board": "Board",
+      "reports": "Reports"
+    },
+    "col": {
+      "todo": "To do",
+      "working": "Working",
+      "needs-you": "Needs you",
+      "review": "Review",
+      "done": "Done"
+    },
+    "type": {
+      "bugfix": "Bugfix",
+      "hotfix": "Hotfix",
+      "feature": "Feature"
+    },
+    "source": {
+      "order": "Order",
+      "chat": "Chat",
+      "routine": "Routine"
+    },
+    "filter": {
+      "project": "All projects",
+      "type": "All types",
+      "member": "All members"
+    },
+    "search": "Search cards",
+    "showAll": "Show all cards",
+    "typeTip": "Change the type",
+    "typeByPerson": "set by you",
+    "done": "Done",
+    "doneTip": "Close this card",
+    "empty": "Nothing here",
+    "gone": "That card is no longer on the board.",
+    "orderTip": "Show this order's tasks",
+    "openChat": "Open the conversation",
+    "progressTip": "Tasks finished",
+    "tokens": "tokens",
+    "range": {
+      "label": "Range",
+      "week": "This week",
+      "lastWeek": "Last week",
+      "days30": "Last 30 days",
+      "custom": "Custom",
+      "from": "From",
+      "to": "To"
+    },
+    "groupBy": {
+      "label": "Group by",
+      "project": "Project",
+      "type": "Type",
+      "member": "Member"
+    },
+    "report": {
+      "count": "Closed",
+      "avg": "Avg time",
+      "tokens": "Tokens",
+      "cost": "Cost",
+      "total": "Total"
+    },
+    "headline": "{range}: {bugfix} bugfix, {hotfix} hotfix, {feature} feature closed",
+    "none": "(none)",
+    "noReport": "Nothing was closed in this range.",
+    "pickDates": "Pick a start and an end date."
   }
 }

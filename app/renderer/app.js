@@ -1408,7 +1408,21 @@ try { applyProjects(await api.projects.list()); } catch (e) { console.error(e); 
 for (const ev of ['dragover', 'drop']) document.addEventListener(ev, (e) => e.preventDefault());
 
 // v3.46 HQ: the pinned row above PROJECTS, the Board in place of the office, paired devices' projects in the list
-hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices });
+/**
+ * v3.131 a chat card on the board opens its session: the tab that runs it (Office or Studio), else, in Studio, the
+ * recent session by its id (studio:open), else the card's project.
+ */
+async function openBoardChat(card) {
+  const p = projects.find((x) => x.id === card?.projectId);
+  if (!p) return;
+  const tab = card.ptyId === p.id ? MAIN_TAB : tabsOf(p).find((x) => tabPtyId(p.id, x.n) === card.ptyId)?.n || 0;
+  leaveBoard();
+  if (tab) { selectProject(p.id); selectTab(p.id, tab); return; }
+  const r = studioOn && card.sessionId ? await api.studio?.open(p.id, { sessionId: card.sessionId }).catch(() => null) : null;
+  selectProject(r?.ok ? r.projectId : p.id);
+  if (r?.ok) selectTab(r.projectId, r.n);
+}
+hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices, openChat: (card) => { openBoardChat(card); } });
 
 // v3.120 Studio: its sidebar and start screen (renderer/studio.js); the main region is the Office's own #terminal
 const leaveBoard = () => document.body.classList.remove('studio-board');
@@ -1417,7 +1431,7 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   newSession: (projectId) => { leaveBoard(); selectProject(projectId); addTab(projectId, 'same'); },
   selectProject: (projectId) => { leaveBoard(); selectProject(projectId); },
   selectHq: () => { leaveBoard(); selectProject(HQ_ROW.id); },
-  openBoard: () => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); },   // HQ's board: reports, routines
+  openBoard: (tab) => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); hqUi?.showBoard(tab === 'reports' ? 'reports' : 'board'); },   // v3.131 the board (renderer/board-view.js): Board, Reports; Routines
   openOfficeSettings: () => sidebar?.openSettings(),
   sidebar: () => sidebar,
   showPanel: (sel) => Boolean(studio?.showPanel(sel)),
@@ -1542,6 +1556,10 @@ const whatsNewActions = {
     return whatsNewPanel('#sb-panel-team') || (sidebar?.openSettings(), '');
   },
   // v3.124 Studio's Team page at its Roles tab, switching to Studio
+  'open-board': () => {   // v3.131 the board of orders and conversations, in either experience
+    if (experience === 'studio') { studio?.openBoard('board'); return '#hq-board .bv-tabs'; }
+    selectProject(HQ_ROW.id); hqUi?.showBoard('board'); return '#hq-board .bv-tabs';
+  },
   'open-team-page': () => { if (experience !== 'studio') setExperience('studio'); studio?.openTeam('roles'); return '#studio-team .st-team-tabs'; },
   'focus-composer': () => { if (!studio?.focusStart()) focusActive(); return ''; },
 };

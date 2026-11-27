@@ -211,7 +211,8 @@
       "rename": "Yeniden adlandır",
       "renameEmpty": "Departmanın bir adı olmalı.",
       "renameFailed": "Bazı üyelerde eski ad kaldı:"
-    }
+    },
+    "board": "Pano"
   },
   "app": {
     "appTitle": "AGENT OFİS",
@@ -1984,5 +1985,71 @@
       "bot": "Ofis robotlarının gövde rengi.",
       "version": "Çalışan Agent Office sürümü."
     }
+  },
+  "board": {
+    "tab": {
+      "board": "Pano",
+      "reports": "Raporlar"
+    },
+    "col": {
+      "todo": "Yapılacak",
+      "working": "Çalışıyor",
+      "needs-you": "Seni bekliyor",
+      "review": "İncele",
+      "done": "Bitti"
+    },
+    "type": {
+      "bugfix": "Hata",
+      "hotfix": "Acil",
+      "feature": "Özellik"
+    },
+    "source": {
+      "order": "Emir",
+      "chat": "Sohbet",
+      "routine": "Rutin"
+    },
+    "filter": {
+      "project": "Tüm projeler",
+      "type": "Tüm türler",
+      "member": "Tüm üyeler"
+    },
+    "search": "Kartlarda ara",
+    "showAll": "Tüm kartları göster",
+    "typeTip": "Türü değiştir",
+    "typeByPerson": "senin seçimin",
+    "done": "Bitti",
+    "doneTip": "Bu kartı kapat",
+    "empty": "Burada bir şey yok",
+    "gone": "Bu kart artık panoda değil.",
+    "orderTip": "Bu emrin görevlerini göster",
+    "openChat": "Sohbeti aç",
+    "progressTip": "Biten görevler",
+    "tokens": "token",
+    "range": {
+      "label": "Aralık",
+      "week": "Bu hafta",
+      "lastWeek": "Geçen hafta",
+      "days30": "Son 30 gün",
+      "custom": "Özel",
+      "from": "Başlangıç",
+      "to": "Bitiş"
+    },
+    "groupBy": {
+      "label": "Grupla",
+      "project": "Proje",
+      "type": "Tür",
+      "member": "Üye"
+    },
+    "report": {
+      "count": "Kapanan",
+      "avg": "Ort. süre",
+      "tokens": "Token",
+      "cost": "Maliyet",
+      "total": "Toplam"
+    },
+    "headline": "{range}: {bugfix} hata, {hotfix} acil, {feature} özellik kapandı",
+    "none": "(yok)",
+    "noReport": "Bu aralıkta kapanan bir şey yok.",
+    "pickDates": "Bir başlangıç ve bitiş tarihi seç."
   }
 }

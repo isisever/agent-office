@@ -162,6 +162,15 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       },
     });
   }
+  /** v3.131 the board (Board or Reports tab) in the main region; pages and panels over it close. */
+  function openBoard(/** @type {string} */ tab = 'board') {
+    menu.hidden = true;
+    closePalette();
+    hidePanel();
+    settingsPage.close();
+    teamPage.close();
+    hooks.openBoard(tab);
+  }
   function openSettings(/** @type {string} */ section = '') {
     if (!on) { hooks.openOfficeSettings(); return; }
     menu.hidden = true;
@@ -339,7 +348,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     search.placeholder = t('studio.search');
     pins.replaceChildren(
       el('div', { class: 'st-row st-pin', onclick: () => hooks.selectHq() }, icon('home'), el('span', { class: 'st-title' }, t('studio.hq'))),
-      el('div', { class: 'st-row st-pin', onclick: () => hooks.openBoard() }, icon('report'), el('span', { class: 'st-title' }, t('studio.reports'))),
+      el('div', { class: 'st-row st-pin', onclick: () => openBoard('board') }, icon('board'), el('span', { class: 'st-title' }, t('studio.board'))),
+      el('div', { class: 'st-row st-pin', onclick: () => openBoard('reports') }, icon('report'), el('span', { class: 'st-title' }, t('studio.reports'))),
       el('div', { class: 'st-row st-pin', onclick: () => hooks.openBoard() }, icon('clock'), el('span', { class: 'st-title' }, t('studio.routines'))),
       el('div', { class: 'st-row st-pin', title: `${modLabel}K`, onclick: () => openPalette() }, icon('command'), el('span', { class: 'st-title' }, t('studio.commands')), el('span', { class: 'st-key' }, `${modLabel}K`)));
     const groups = studioGroups(view.projects, { query, currentId: currentId() });
@@ -703,6 +713,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     openSettings,
     /** v3.124 Studio's Team page at a tab; the Office's Team panel outside Studio. */
     openTeam,
+    openBoard,
     focusSearch() { search.focus(); search.select(); },
     /** An Office sidebar panel on its own over Studio ('#sb-panel-team', '.sb-accounts', …); false when it is not there. */
     showPanel,

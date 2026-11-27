@@ -29,11 +29,12 @@ function el(tag, attrs = {}, ...kids) {
 // engine names on a remote row's status line (brand names, not translated)
 import { mountRemoteView } from './remote-view.js';
 import { micButton } from './voice.js';
+import { mountBoardView } from './board-view.js';
 
 const ENGINE_NAMES = { claude: 'Claude Code', agy: 'Antigravity', commandcode: 'Command Code', opencode: 'OpenCode' };
 
-/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void } }} o */
-export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
+/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void }, openChat?: (card: any) => void }} o */
+export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openChat }) {
   if (!api?.hq || !sidebar) return null;
   let view = { board: { tasks: [], requests: [] }, settings: { enabled: true }, running: false, stopped: false, remotes: [] };
   let selected = false;
@@ -222,7 +223,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
             el('button', { onclick: async () => { await api.routines.approve(h, false); refresh(); } }, t('routines.decline'))]),
           ...(x.request ? [
             el('button', { class: 'hq-link', onclick: async () => { summaryOf = summaryOf === x.id ? '' : x.id; summaryText = summaryOf ? await api.routines.summary(x.request) : ''; render(); } }, t('routines.openSummary')),
-            el('button', { class: 'hq-link', onclick: () => { boardFilter = x.request; rtSel = null; render(); } }, t('routines.showBoard'))] : [])),
+            el('button', { class: 'hq-link', onclick: () => { boardFilter = x.request; rtSel = null; bv?.setRequest(x.request); render(); } }, t('routines.showBoard'))] : [])),
         summaryOf === x.id ? el('pre', { class: 'hq-report' }, summaryText || t('hq.noReport')) : null)));
   }
   function renderRoutine() {
@@ -239,23 +240,38 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
     return true;
   }
   const refresh = () => api.routines?.get().then((v) => { if (v) { rv = v; render(); } }).catch(() => {});
+  /** One board task with its detail and actions (wait line, stage line with Continue / Cancel, Allow / Decline, report). */
+  function taskEl(x) {
+    return el('div', { class: `hq-task${x.read ? '' : ' unread'}`, onclick: () => showReport(x) },
+      el('div', { class: 'hq-task-title' }, x.title || x.id),
+      el('div', { class: 'hq-task-meta' }, `${x.staff ? `${x.staff} @ ` : ''}${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.orderQueued ? t('hq.orderQueued', { n: x.ahead || 0 }) : `${x.status}${x.reason ? ` (${t(`hq.reason.${x.reason}`) === `hq.reason.${x.reason}` ? x.reason : t(`hq.reason.${x.reason}`)})` : ''}`}${x.autoContinued ? ` · ${t('hq.autoContinued')}` : ''}${x.byInitiative ? ` · ${t('hq.byInitiative')}` : ''}${x.personPrompted ? ` · ${t('hq.personPrompted')}` : ''}`),
+      waitLine(x),
+      stageLine(x),
+      x.status === 'awaiting-consent' && api.routines ? el('div', { class: 'rt-actions' },
+        el('button', { onclick: async (e) => { e.stopPropagation(); await api.routines.approve(x.id, true); refresh(); } }, t('routines.allow')),
+        el('button', { onclick: async (e) => { e.stopPropagation(); await api.routines.approve(x.id, false); refresh(); } }, t('routines.decline'))) : null,
+      openReport === x.id ? el('pre', { class: 'hq-report' }, x.text || t('hq.noReport')) : null);
+  }
+  // v3.131 the board of orders and conversations (renderer/board-view.js): an order card opens its tasks drawn by taskEl
+  const bv = api.board ? mountBoardView({
+    api, t,
+    renderTasks: (card) => (card.tasks || []).map((ct) => (view.board.tasks || []).find((x) => x.id === ct.id) || ct).map(taskEl),
+    openChat: (card) => openChat?.(card),
+  }) : null;
   function renderBoard() {
     if (rtSel && renderRoutine()) return;
     rtBuilt = '';
+    if (bv) {
+      if (bv.el.parentElement !== board) board.replaceChildren(bv.el);
+      bv.render();
+      return;
+    }
     const tasks = (view.board.tasks || []).filter((x) => !boardFilter || x.request === boardFilter);
     board.replaceChildren(el('div', { class: 'hq-board-head' }, t('hq.board')), ...(tasks.length ? [] : [el('p', { class: 'hq-empty' }, t('hq.empty'))]),
       ...(boardFilter ? [el('button', { class: 'hq-link', onclick: () => { boardFilter = ''; render(); } }, `✕ ${boardFilter}`)] : []),
       el('div', { class: 'hq-cols' }, ...COLS.map(([key, sts]) => el('section', { class: 'hq-col' },
         el('h3', {}, t(`hq.col.${key}`)),
-        ...tasks.filter((x) => sts.includes(x.status)).map((x) => el('div', { class: `hq-task${x.read ? '' : ' unread'}`, onclick: () => showReport(x) },
-          el('div', { class: 'hq-task-title' }, x.title || x.id),
-          el('div', { class: 'hq-task-meta' }, `${x.staff ? `${x.staff} @ ` : ''}${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.orderQueued ? t('hq.orderQueued', { n: x.ahead || 0 }) : `${x.status}${x.reason ? ` (${t(`hq.reason.${x.reason}`) === `hq.reason.${x.reason}` ? x.reason : t(`hq.reason.${x.reason}`)})` : ''}`}${x.autoContinued ? ` · ${t('hq.autoContinued')}` : ''}${x.byInitiative ? ` · ${t('hq.byInitiative')}` : ''}${x.personPrompted ? ` · ${t('hq.personPrompted')}` : ''}`),
-          waitLine(x),
-          stageLine(x),
-          x.status === 'awaiting-consent' && api.routines ? el('div', { class: 'rt-actions' },
-            el('button', { onclick: async (e) => { e.stopPropagation(); await api.routines.approve(x.id, true); refresh(); } }, t('routines.allow')),
-            el('button', { onclick: async (e) => { e.stopPropagation(); await api.routines.approve(x.id, false); refresh(); } }, t('routines.decline'))) : null,
-          openReport === x.id ? el('pre', { class: 'hq-report' }, x.text || t('hq.noReport')) : null))))));
+        ...tasks.filter((x) => sts.includes(x.status)).map(taskEl)))));
   }
   /** v3.46 amendment: why a queued task of this machine waits (boss busy/starting/asleep/not running), its place in
    *  that project's queue, when it expires, and Cancel. */
@@ -446,5 +462,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
   window.addEventListener('keydown', (e) => { if (e.key === '0' && (isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey) { e.preventDefault(); onSelect(); } }, true);
   render();
   // lazy start: HQ's pty starts the first time the person opens HQ
-  return { setSelected(on) { selected = Boolean(on); if (!selected) rtSel = null; if (selected) api.hq.open?.().then((v) => { if (v) { view = v; render(); } }).catch(() => {}); render(); } };
+  return {
+    /** v3.131 the board at a tab ('board' or 'reports'): routines' editor closes, the Office view switches to the board. */
+    showBoard(tab = 'board') { rtSel = null; showOffice = false; bv?.setTab(tab); render(); },
+    setSelected(on) { selected = Boolean(on); if (!selected) rtSel = null; if (selected) api.hq.open?.().then((v) => { if (v) { view = v; render(); } }).catch(() => {}); render(); } };
 }
