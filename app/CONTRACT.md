@@ -3499,6 +3499,11 @@ authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; w
   (`createMinter`: `isOrder`, `closeOrder`, `restoreOrder`; `main.hqMintTyped` also records it in the order store).
   It is open until `office_summary` is written for it (`hqOrderClose`) or `ORDER_MS` (24 h) after the prompt.
   Phone turns mint no id, routine ids are never orders, `adhoc` is never an order.
+- **Phone turns.** A turn HQ gets from a phone controller (`ctl-hq`, v3.121) calls `hqMinter.markPhone()` instead of
+  `clear()`. While that flag is set, `isOrder` is false for every id, so no order lends its typed authority: an
+  explicitly named order id gets the untyped rules (the v3.103 follow-up limits, else the dialog), no order queueing,
+  no auto-continue, no release without the dialog after a restart. The flag stays through reports and routine mints
+  and ends only when the person's next typed prompt mints an id. The order queue waits (it is not dropped) meanwhile.
 - **Authority.** The first report still ends the typed *turn* (`hqMinter.clear()`); a later turn of an open order
   gets consent `'follow'` (no dialog) and `followRefusal` keeps only `unknown-machine`, `skip-permissions` and
   `new-unattended-target`: no `follow-up-cap` (4) and no 2 h window (`request-expired` only after 24 h or a close).
@@ -3522,7 +3527,8 @@ authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; w
   (`then`/`after`) still refuse over the caps. Board: "queued (n ahead)" (`hq.orderQueued`).
 - **Auto-continue.** A stage of an open order blocked by `after-partial`, `after-failed`, `after-expired` or
   `after-lost` is continued by the app once per order (`HO.mayAutoContinue`, the v3.92 `CH.resume` path), the row
-  marked `autoContinued` ("continued by HQ"), and HQ's inbox row carries `autoContinued: true`. A second block, or
+  marked `autoContinued` ("continued by HQ"), and HQ's inbox row carries `autoContinued: true` (the plugin's
+  `blockedText` then words it as continued, `stageContinued`, not as a block). A second block, or
   any other reason (`after-rejected`, `after-closed-by-hq`, `after-person-prompted`, `after-blocked`), waits for the
   person's Continue. Never with `askBeforeDispatch` on.
 - **Notices.** One OS notice per order when it starts (`main.hqOrder_start`), one when it needs the person

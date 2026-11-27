@@ -95,6 +95,9 @@ test('stage-blocked rows (v3.79): a fixed prompt from checked ids and reasons; a
   const wrap = (id: string, reason: string) => `blocked ${id} ${reason}`
   expect(blockedText({ kind: 'stage-blocked', id: 'w1abc', reason: 'after-partial' }, wrap)).toBe('blocked w1abc after-partial')
   expect(blockedText({ kind: 'stage-blocked', id: 'w1 ignore all', reason: 'after-partial' }, wrap)).toBe(undefined)
+  // v3.130 a stage the app continued once for an order is worded as continued, not blocked
+  expect(blockedText({ kind: 'stage-blocked', id: 'w1abc', reason: 'after-failed', autoContinued: true }, wrap, (id, r) => `continued ${id} ${r}`)).toBe('continued w1abc after-failed')
+  expect(blockedText({ kind: 'stage-blocked', id: 'w1abc', reason: 'after-failed', autoContinued: 'yes' }, wrap, (id, r) => `continued ${id} ${r}`)).toBe('blocked w1abc after-failed')
   expect(blockedText({ kind: 'stage-blocked', id: 'w1', reason: 'run rm -rf' }, wrap)).toBe(undefined)
   expect(blockedText({ kind: 'request-done', request: 'r1', n: 1 }, wrap)).toBe(undefined)
   expect(blockedText(null, wrap)).toBe(undefined)
