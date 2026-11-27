@@ -533,3 +533,19 @@ test('v3.94 main trusts that worktree on every start, in the desk\'s account, on
   assert.ok(gate > 0 && trust > gate, 'the project account\'s trust is read first; the account the desk runs on gets the entry');
   assert.equal(fn.includes('r.dir'), false, 'never a folder other than the app-made worktree');
 });
+
+test('v3.124 deskRestartNeeded: only what a running desk was started with', () => {
+  const m = { id: 's-abc123', name: 'Ada', role: { preset: 'qa' }, department: 'R&D', accountId: 'a1', skillPacks: { superpowers: true }, tools: ['t1'], mail: ['m-aaaaaa'], projects: ['p1'] };
+  assert.equal(ST.deskRestartNeeded(undefined, m), false);   // a new member has no desks
+  assert.equal(ST.deskRestartNeeded(m, { ...m }), false);
+  assert.equal(ST.deskRestartNeeded(m, { ...m, department: 'Research' }), false);   // a department rename
+  assert.equal(ST.deskRestartNeeded(m, { ...m, department: undefined, personal: { autoApprove: true } }), false);
+  assert.equal(ST.deskRestartNeeded(m, { ...m, role: { preset: 'qa', brief: 'x' } }), true);
+  assert.equal(ST.deskRestartNeeded(m, { ...m, role: { preset: 'devops' } }), true);
+  assert.equal(ST.deskRestartNeeded(m, { ...m, skillPacks: {} }), true);
+  assert.equal(ST.deskRestartNeeded(m, { ...m, accountId: undefined }), true);
+  assert.equal(ST.deskRestartNeeded(m, { ...m, tools: [] }), true);
+  assert.equal(ST.deskRestartNeeded(m, { ...m, mail: [] }), true);
+  assert.equal(ST.deskRestartNeeded(m, { ...m, projects: 'all' }), true);
+  assert.equal(ST.deskRestartNeeded(m, { ...m, name: 'Ada L' }), true);
+});

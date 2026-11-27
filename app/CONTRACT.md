@@ -3351,6 +3351,11 @@ TEAM panel is unchanged.
 - **Departments** (`drawDepartments`, `departmentCounts`, `renameForms`): each department with its member count;
   Rename (≤ 30, as main) saves each member of it with the new label through `staff:save`; members main refused are
   named with its reason. An empty name is refused; the same name (or a function's label unchanged) changes nothing.
+  The box keeps the person's draft (`renameBoxValue`) across the live redraws and a failed save; the forms are built
+  from the staff list as it is at Save, so an edit saved meanwhile is kept.
+- **Desk restarts** (amends v3.83): `staff:save` restarts a member's idle desks only when `ST.deskRestartNeeded(before,
+  after)` holds: the name, role (preset, own texts, brief, writesCode), skill packs, account, tools, mail or projects
+  changed. A department label alone (a Departments rename) restarts nothing. Tested in `test/staff.test.cjs`.
 - Studio hooks (`app.js`): `saveMember`, `removeMember` (staff IPC, then `loadStaff`), `reloadTeam`, `teamTools`
   (`mcp:apps`). Sidebar API: `editMember(m, preset?)`. Strings `studio.teamPage.*`; existing `staff.*` reused.
 - **Not verified live**: the page in a running app (drawn and typechecked; the helpers are unit tested).
