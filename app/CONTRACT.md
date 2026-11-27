@@ -2936,3 +2936,35 @@ type VoiceSettings = { enabled: boolean, language: 'auto' | 'tr' | 'en', model: 
   choice, permission rule, binary path, down-sampler, PCM16, talk key, text insertion; `createVoice` with a fake
   whisper-server: one recording, chunk cap, cancel, reuse, sha check once, idle stop, stop during start, port retry,
   foreign answers, binary states, a bad model; `copyBinDir` with library symlinks; the wiring by source text).
+
+## Phone controller (v3.121)
+
+(v3.119 is Voice input; v3.120 is reserved for Studio.) An iPhone running Agent Office Remote pairs with this machine as a
+**controller**: it reads a snapshot and types HQ turns, nothing else. It is never a remote office.
+
+- **Shared wire.** `src/link-wire.js` holds the framing (`LineReader`, `encode`, `MAX_FRAME`), the word list, `normalizeCode`,
+  `validatePair`, the `ctl-*` schema and `createWire(crypto)` (`makeCode`, `pairSecrets`, `pairProof`, `proofOk`, `pairTopic`).
+  The desktop injects Node crypto (`link-core.js` re-exports everything as before); the worklet injects `ios/core/crypto-shim.js`.
+  The desktop's bytes are unchanged (golden vectors in `test/link-ctl.test.cjs`).
+- **Pairing.** "+ Add phone" calls `link.invite({ kind: 'controller' })` (IPC `link:invitePhone`). The renderer shows a QR of
+  `agentoffice://pair?v=1&c=<5 words>&n=<desktop name>&k=<desktop Noise pub hex>&caps=ctl`. The code, scrypt parameters,
+  proofs, the 10-minute expiry, single use and the desktop's confirm dialog are those of v3.28/v3.101. Both `pair-hello`
+  and `pair-ok` carry `kind: 'controller'`; a kind mismatch fails the connection (a phone never joins a desktop code and a
+  desktop never joins a phone code). The phone's swarm firewall accepts only the key `k` from the QR.
+- **Device kind.** A controller is stored with `kind: 'controller'`, `own: false` and `ctl: true`. Its key is sealed in a
+  set `ctl` inside both keys.bin and own.bin, exactly like the `own` set (written only when a phone is paired, so files
+  without phones keep their earlier bytes). A controller in devices.json that is not in both sealed sets is inert.
+  `isController` is checked on every message. Controllers are excluded from `ownKeys`, `isPaused`, `view().devices`
+  (and so from remotes, `office_machines` and HQ targets); they are listed in `view().phones` with Forget (`link:remove`).
+- **Cap `ctl`.** The desktop sends a controller `hello` with `caps: ['ctl']` and only these messages:
+  - `ctl-view {seq, view: {name, projects[≤50]: {id, name, engine, status, working, sessions, attention, tool?}, hq: {status}, delivered}}`
+    on connect and whenever the published snapshot changes (at most once a second).
+  - `ctl-event {seq, event: {project | 'hq', status, at, attention?}}` for each status change.
+  - `ctl-hq-status {id, status: queued|delivered|rejected, reason?}` answering a `ctl-hq`.
+  - `ctl-reports {id, reports[≤20]: {id, at, project, title, summary ≤4000}}` answering a request.
+  The phone may send only `ping`, `hello`, `ctl-hq {id, text ≤ 32 KiB chars}` (sanitized and rate-limited like `cmd`;
+  this amends v3.101 for controllers only), `ctl-reports {id, limit ≤20}`, and `sess-open/keep/close` for project `hq`
+  only (other projects end with `not-allowed`). Anything else is dropped and counts toward the invalid-message limit.
+- **Host.** `setupLink` takes optional `ctlHq(text, { device, id })` (types the HQ turn; `false` = rejected `busy`) and
+  `ctlReports(limit)`. Without `ctlHq` every `ctl-hq` is rejected `no-hq`. `link.setCtlHq(status)` feeds the HQ status.
+- **Not in P1.** Approve/deny and stop come in P2.
