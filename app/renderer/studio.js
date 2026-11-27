@@ -139,8 +139,11 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     // the prompt was not sent: it stays in the box, and the note names the step that failed and why
     if (!startText.value.trim()) startText.value = text;
     const f = r.failed;
+    // each key in its own call: the locale test's key scanner does not read a t() nested inside another t()
+    const stepLabel = !f ? '' : f.step === 'model' ? t('studio.start.step.theModel') : f.step === 'mode' ? t('studio.start.step.mode') : t('studio.start.step.prompt');
+    const why = f && (f.detail || t(`studio.start.why.${f.why}`));
     startNote.textContent = f && f.step !== 'tab'
-      ? t('studio.start.stepFailed', { step: f.step === 'model' ? t('studio.start.step.theModel') : f.step === 'mode' ? t('studio.start.step.mode') : t('studio.start.step.prompt'), why: f.detail || t(`studio.start.why.${f.why}`) })
+      ? t('studio.start.stepFailed', { step: stepLabel, why })
       : t('studio.start.failed');
     starting = true;
     draw();
