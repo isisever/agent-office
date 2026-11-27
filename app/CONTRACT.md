@@ -2948,7 +2948,7 @@ agentOffice.prefs.set({ experience })   // anything but the two values is ignore
 agentOffice.studio.sessions()  // 'studio:sessions' → { experience, user: { name, email, account }, projects: StudioProject[] } | null
 ProjectStatus += { isGui: boolean; tabs: { …; isGui: boolean }[] }   // runs as a GUI chat (v3.108); stopped: would start as one
 agentOffice.studio.open(projectId, ref)   // 'studio:open', ref { n } | { sessionId } → { ok, projectId, n } | { ok: false, error: 'invalid' | 'gone' }
-type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permission' | 'done' | null,
+type StudioProject = { id, name, dir, engine, account: string, active: boolean, attention: 'permission' | 'done' | null,   // account: the label only
   running: { ptyId, n, title, isRunning: boolean, isAsleep: boolean }[],   // the main tab (n 1) first, then tabs by number; no shell tabs
   recent: { sessionId, title, at }[] }                                     // newest first, at most 10 per project
 ```
@@ -2976,13 +2976,43 @@ type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permi
   - The renderer follows what main runs (status `isGui`; a stopped tab: the mode it would start in, like `guiInfo`):
     a GUI tab shows its chat in either experience (it has no terminal), and in Studio a tab still in a terminal shows
     it with the Chat button to move it (`src/chat-view.mjs` `chatShownFor`, `chatButtonFor`).
-- **Sidebar**, top to bottom: + New session (⌘N: a new tab in the project's folder, `tabs:add` 'same'), search (⌘K:
-  filters the lists by title and project), pinned HQ (the HQ session), Reports and Routines (HQ's board in the main
-  region), a project picker with its Running and Recent sessions, paired machines (read-only, from `link:get`), and the
-  account at the bottom (name or e-mail, Settings, back to the Office). The list refreshes every 10 s and on every
-  project/tab change.
+- **Sidebar**, top to bottom: + New session (⌘N: a new tab in the current project's folder, `tabs:add` 'same'), search
+  (filters the groups by session title and project name), pinned HQ (the HQ session), Reports and Routines (HQ's board
+  in the main region), Commands (the ⌘K palette), then **every project** as a collapsible group (`src/studio-view.mjs`
+  `studioGroups`: projects by name; a group's Running sessions by tab number, main tab first, then its Recent ones,
+  newest first; with a search a project whose name matches keeps all its sessions, otherwise only matching sessions
+  stay and a project with none is left out; while searching every group is open). A group's head: caret (collapsed
+  groups are kept in the window's localStorage `ao.studio.closedProjects`), the name (selects the project), its
+  attention dot, a badge with the **Claude account** the project runs on, and + (a new session there). Clicking a
+  session focuses it (`studio:open`); the active project's head and the active session are highlighted. The **current
+  project** (`currentProjectId`) is the active one, else (HQ is shown) the one last picked in the sidebar, else the
+  first by name: ⌘N and ⌘1…9 act on it and only its sessions show ⌘1…9. Then paired machines (read-only, from
+  `link:get`), and the footer: the current project's account (the active project's name and e-mail from main's
+  `user`, plus the account label; a picked project that is not active shows its label), Settings, back to the Office.
+  The list refreshes every 10 s and on every project/tab change.
+- **Account per project**: `studio:sessions` gives each project `account`, the label of the account `A.accountOf`
+  maps it to (the Office's account name: "Default" for the system account, else the person's label), trimmed, at most
+  80 characters. Never a token, an e-mail or a config folder (`STU.listSessions` `accountOf`).
+- **⌘K command palette** (`renderer/studio.js`, Studio only): a search box over the Office's actions, then every
+  running and recent session (`project · title`) and every project, to jump to. Filtering (`filterPalette`): every
+  word must be in the label or the command's keywords (both localised); a label starting with the query first, then
+  one with a word starting with it, then the rest, ties in list order; at most 60 rows. ↑/↓, Enter, Escape, click.
+  Each command calls the Office's own handler (`app.js` `studioCommands`), never a copy:
+  Team and desks (the sidebar's TEAM panel; Settings when team mode is off), New worktree session (`addTab` 'worktree'),
+  New tab… (main's "+" menu: same folder, worktree, a desk, a shell in any folder), Close this session's tab
+  (`closeTab`, only for an extra tab), Accounts (the ACCOUNTS panel: log in, add, refresh, rename, remove), Change this
+  project's account and Project settings (the project's ⚙ popup), MCP servers (the MCP panel), Skills (the Settings
+  popup's Skills section on its own), Voice settings (its rows from the Settings popup), Pair a device (the DEVICES
+  panel), Send a task (HQ's board: a task to any project or a paired machine's project), Add project, Open project
+  folder, Remove project from the list, Edit projects (the Office's PROJECTS list), Settings, Go to the Office.
+  Commands that need a project act on the current project and are left out when there is none.
+- **Office panels in Studio**: `body.studio` hides `#sidebar`, so a sidebar panel (TEAM, PROJECTS, ACCOUNTS, MCP,
+  DEVICES) is shown on its own as a floating card over a dimmed backdrop (`studio.showPanel(selector)`: `body.studio-panel`,
+  the panel's top-level element gets `studio-shown`, every other one stays hidden). It is the Office's own element with
+  its handlers. A click on the backdrop or Escape (when no popup is open) closes it; leaving Studio closes it.
+  Popups (project settings, skills, voice, member editor) are the sidebar's own modals, which already sit over Studio.
 - **Keys** (`src/studio-keys.mjs` `studioKey`, registered before the Office's keys): in Studio only, ⌘N, ⌘K and ⌘1…9
-  (the n-th running session of the shown project; Ctrl+Shift+… on Linux and Windows). In the Office only the toggle is
+  (⌘K opens the command palette; ⌘1…9 the n-th running session of the current project; Ctrl+Shift+… on Linux and Windows). In the Office only the toggle is
   taken; ⌘1…9 still picks a project there.
 - **IPC**: `studio:sessions` and `studio:open` answer only the app's own window (`e.sender === win.webContents`, like
   `voice:*`). `studio:open` takes a project id string that exists and either an integer `n` (the main tab or an existing
@@ -2999,7 +3029,8 @@ type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permi
   change and every app restart starts the clocks again.
 - **Remote**: a paired machine is only listed. A remote target stays send-as-task plus a read-only view (HQ, v3.46);
   Studio adds no remote sessions.
-- **Tests**: `app/test/studio.test.cjs` (experience values and its persistence wiring, the recent list, the 24 h rule,
+- **Tests**: `app/test/studio-view.test.mjs` (the groups' order and search, the account label through the groups and
+  `listSessions`, the current project, the palette filter) and `app/test/studio.test.cjs` (experience values and its persistence wiring, the recent list, the 24 h rule,
   session listing and order, the account name, the keys, `guiEligible` with `studio`, `closable`, `sweepStep`,
   `prefsPatch` and `idleMoveTarget` (entering Studio moves idle tabs once, leaving moves nothing back, busy tabs are
   never restarted), `chatShownFor` and `chatButtonFor`, the IPC's sender and argument
