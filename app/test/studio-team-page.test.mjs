@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { TEAM_TABS, roleCard, filterRoles, prefillMember, hireForm, memberPacks, memberCards, departmentCounts, renameForms } from '../src/studio-team-page.mjs'
+import { TEAM_TABS, roleCard, filterRoles, prefillMember, hireForm, memberPacks, memberCards, departmentCounts, renameForms, renameBoxValue } from '../src/studio-team-page.mjs'
 
 const ROLES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'roles')
 const presets = readdirSync(ROLES).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(ROLES, f), 'utf8')))
@@ -105,4 +105,11 @@ test('departmentCounts and renameForms', () => {
   assert.deepEqual(renameForms(staff, 'Engineering', 'Engineering'), { forms: [] })
   assert.deepEqual(renameForms(staff, 'Engineering', '  '), { error: 'empty' })
   assert.deepEqual(renameForms(staff, '', 'X'), { error: 'none' })
+})
+
+test('renameBoxValue: the draft survives redraws, else the label', () => {
+  assert.equal(renameBoxValue(null, 'R&D'), 'R&D')
+  assert.equal(renameBoxValue(undefined, 'R&D'), 'R&D')
+  assert.equal(renameBoxValue('Research', 'R&D'), 'Research')
+  assert.equal(renameBoxValue('', 'R&D'), '')   // a box the person emptied stays empty
 })

@@ -132,6 +132,15 @@ export function departmentCounts(staff) {
 }
 
 /**
+ * The rename box's text: the person's draft while there is one (kept across the page's live redraws and a failed
+ * save), else the department's label.
+ * @param {string | null | undefined} draft @param {string} label
+ */
+export function renameBoxValue(draft, label) {
+  return typeof draft === 'string' ? draft : String(label || '');
+}
+
+/**
  * Renaming a department: the staff:save forms of its members with the new label (each saved through main, which
  * checks it as any edit). An empty name is refused here; the same name changes nothing.
  * @param {any[]} staff @param {string} from @param {string} to
