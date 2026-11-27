@@ -69,7 +69,8 @@ const KA = require('./src/keep-awake.js');
 const VC = require('./src/voice-core.js');   // v3.119 voice input
 const { createVoice } = require('./src/voice.js');
 const PTY = require('./src/pty-attach.js');
-const BM = require('./src/board-model.js');   // v3.131 the board: orders and conversations
+const BM = require('./src/board-model.js');
+const OT = require('./src/order-templates.js');   // v3.134 order templates   // v3.131 the board: orders and conversations
 const STU = require('./src/studio.js');   // v3.120 Studio experience
 const WN = require('./src/whats-new.js');   // v3.123 What's new after an update
 const ATT = require('./src/attached.js');   // v3.121 the files a person attached in a chat composer
@@ -6698,6 +6699,41 @@ ipcMain.handle('board:done', (e, id) => {
   if (!r.ok) return { ok: false, error: 'gone' };
   saveBoardStore(r.store);
   return { ok: true, ...boardView() };
+});
+// --- v3.134 Order templates (src/order-templates.js): kept in state.json (saved atomically), at most 50. Using one only
+// fills HQ's composer in the renderer; nothing here sends a prompt or mints an order.
+const templatesView = () => OT.normalizeList(state.orderTemplates);
+const templatesSet = (list) => { commit({ ...state, orderTemplates: list }); send('templates:changed', templatesView()); };
+const newTemplateId = () => `tp${crypto.randomBytes(4).toString('hex')}`;
+// templates:list() → Template[] | null
+ipcMain.handle('templates:list', (e) => (fromWin(e) ? templatesView() : null));
+// templates:save({ id?, name, text, type, targets? }) → { ok: true, id, list } | { ok: false, reason: 'invalid' | 'unknown' | 'too-many' }
+ipcMain.handle('templates:save', (e, raw) => {
+  if (!fromWin(e)) return { ok: false, reason: 'invalid' };
+  const r = OT.save(state.orderTemplates, raw, { newId: newTemplateId });
+  if (!r.ok) return r;
+  templatesSet(r.list);
+  return { ok: true, id: r.id, list: templatesView() };
+});
+// templates:remove(id) → { ok: true, list } | { ok: false, reason: 'invalid' | 'unknown' }
+ipcMain.handle('templates:remove', (e, id) => {
+  if (!fromWin(e) || typeof id !== 'string' || !OT.ID_RE.test(id)) return { ok: false, reason: 'invalid' };
+  const r = OT.remove(state.orderTemplates, id);
+  if (!r.ok) return r;
+  templatesSet(r.list);
+  return { ok: true, list: templatesView() };
+});
+// templates:fromOrder('o:<request id>') → { ok: true, draft: { name, text, type, targets } } | { ok: false, reason }:
+// an order card's original text, type and target projects, for "Save as template" (the renderer then saves it)
+ipcMain.handle('templates:fromOrder', (e, id) => {
+  if (!fromWin(e) || !BM.validCardId(id) || !String(id).startsWith('o:')) return { ok: false, reason: 'invalid' };
+  const req = loadHqBoard().requests.find((r) => r.id === String(id).slice(2));
+  const card = boardView().cards.find((c) => c.id === id);
+  if (!req || !card) return { ok: false, reason: 'gone' };
+  const text = String(req.prompt || card.title || '').trim();
+  if (!text) return { ok: false, reason: 'invalid' };
+  const targets = OT.normalizeTargets([...new Set((card.tasks || []).map((x) => x.project).filter(Boolean))]);
+  return { ok: true, draft: { name: String(card.title || text).slice(0, OT.NAME_MAX), text, type: card.type, targets } };
 });
 // board:report({ from?, to? } ms, groupBy 'project' | 'type' | 'member') → Report | { error: 'invalid' } | null
 ipcMain.handle('board:report', (e, range, groupBy) => {

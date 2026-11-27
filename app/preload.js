@@ -261,6 +261,14 @@ contextBridge.exposeInMainWorld('agentOffice', {
     resume: (id) => ipcRenderer.invoke('hq:resume', id),   // v3.92 Continue on a blocked stage
     onBoard: listen('hq:board'),
   },
+  // v3.134 order templates: list, save, remove; fromOrder gives an order card's text, type and targets (fills nothing)
+  templates: {
+    list: () => ipcRenderer.invoke('templates:list'),
+    save: (tpl) => ipcRenderer.invoke('templates:save', tpl),
+    remove: (id) => ipcRenderer.invoke('templates:remove', id),
+    fromOrder: (cardId) => ipcRenderer.invoke('templates:fromOrder', cardId),
+    onChange: listen('templates:changed'),
+  },
   // v3.131 the board: order and chat cards, types, Done, reports
   board: {
     cards: () => ipcRenderer.invoke('board:cards'),
