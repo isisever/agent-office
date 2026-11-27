@@ -134,4 +134,6 @@ test('board: a fan-out order card carries every target project and assigned memb
   assert.deepEqual([...card.projects].sort(), ['api', 'web']);
   assert.deepEqual([...card.members].sort(), ['Bob', 'Cem']);
   assert.equal(card.progress.total, 3);
+  assert.deepEqual(card.tasks.map((x) => `${x.project}@${x.member}`).sort(), ['api@Cem', 'web@Bob', 'web@Cem']);   // one target chip each, with its member
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'board-view.js'), 'utf8'), /x\.member \? ` @\$\{x\.member\}`/);
 });
