@@ -57,8 +57,13 @@ function overCapRoute({ consent, heldOff = false }) {
   return consent === 'none' ? 'typed' : 'queue';
 }
 /** May the order queue release now? Not in a phone turn and not while an HQ routine turn is live (its releases would
- *  only become held cards again, every tick). */
-const pumpMay = ({ phone = false, routineLive = false } = {}) => !phone && !routineLive;
+ *  only become held cards again, every tick). `openRoutine`: the request of an open HQ routine run; it holds the queue
+ *  only while its id is still live in the minter (the person's typed prompt ends that, as in HQ.holdsOffId). Checked
+ *  again before every release, since a release awaits. */
+const pumpMay = ({ phone = false, openRoutine = '', minter = null } = {}) => !phone && !(Boolean(openRoutine) && Boolean(minter?.isLiveRoutine?.(openRoutine)));
+/** A dispatch that would become a held card: an item released from the order queue stays queued instead (it is still
+ *  in the sealed queue; a held card for it would let it run twice). → 'stay' | 'hold' */
+const heldAction = ({ fromQueue = null } = {}) => (fromQueue ? 'stay' : 'hold');
 /** The sealed digest of a waiting stage: its stage.json digest bound to the board fields the release trusts (the
  *  request and whether HQ sent it on its own), so an edited board.json row does not match. */
 function stageSeal(digest, { request = '', byInitiative = false } = {}) {
@@ -181,4 +186,4 @@ function orderKey(file, safeStorage) {
   } catch { return once(); }
 }
 
-module.exports = { ORDER_MS, ORDER_QUEUE_MAX, AUTO_CONTINUE_MAX, AUTO_REASONS, orderOpen, seal, unseal, releaseOrder, aheadOf, nextRelease, queueRefusal, mayAutoContinue, createOrderStore, orderKey, overCapRoute, pumpMay, stageSeal, genOk, keychainOk };
+module.exports = { ORDER_MS, ORDER_QUEUE_MAX, AUTO_CONTINUE_MAX, AUTO_REASONS, orderOpen, seal, unseal, releaseOrder, aheadOf, nextRelease, queueRefusal, mayAutoContinue, createOrderStore, orderKey, overCapRoute, pumpMay, heldAction, stageSeal, genOk, keychainOk };

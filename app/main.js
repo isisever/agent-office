@@ -2292,10 +2292,12 @@ async function hqOrderPump() {
     for (const t of loadHqBoard().tasks) if (t.orderQueued === true && t.status === 'queued' && t.reason === 'order-queue' && q.ahead(t.id) < 0) hqStatus(t.id, 'expired', 'order-queue-lost');
     for (const x of q.queue()) if (!q.isOpen(x.request)) { q.remove(x.id); hqStatus(x.id, 'rejected', 'order-closed'); }
     // a phone turn: queued items wait for the person's next typed turn; a live routine turn: they would only become held cards
-    if (!HO.pumpMay({ phone: hqMinter.isPhone(), routineLive: Boolean(openHqRoutineRequest()) })) return;
+    const may = () => HO.pumpMay({ phone: hqMinter.isPhone(), openRoutine: openHqRoutineRequest(), minter: hqMinter });
+    if (!may()) return;
     const tried = new Set();
     for (let i = 0; i < 8; i++) {
-      const item = HO.nextRelease(q.queue(), (x) => !tried.has(x.id) && !HQ.capReason(loadHqBoard(), x.request, q.queuedIds()));
+      if (i > 0 && !may()) break;   // a release awaits: a phone or routine turn may have started meanwhile
+      const item = HO.nextRelease(q.queue(), (x) => !tried.has(x.id) && !HQ.capReason(loadHqBoard(), x.request, q.queuedIds(), { order: hqOrderOpen(x.request) }));
       if (!item) break;
       tried.add(item.id);
       /** @type {any} */ const r = await hqDispatch(item.args, { fromQueue: item, waitingId: item.id, excludeId: item.id });
@@ -2516,7 +2518,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const ask = state.hq?.askBeforeDispatch === true;   // v3.103 the consent dialog is off unless the person turned this on
   const request = approved ? String(args.request || HQ.ADHOC) : HQ.resolveRequest(hqMinter, typeof args.request === 'string' ? args.request : '', { ask });
   const board = capBoard();   // an approved held task does not count against itself
-  const cap = HQ.capReason(board, request, hqOrders().queuedIds());
+  const cap = HQ.capReason(board, request, hqOrders().queuedIds(), { order: !ask && hqOrderOpen(request) });
   // v3.130 an open order: the excess waits in the order queue (a released item over the caps again stays where it is)
   if (cap && fromQueue) return { id: fromQueue.id, status: 'queued', reason: 'order-queue', request };
   if (cap && !approved && !ask && hqOrderOpen(request)) {
@@ -2560,7 +2562,11 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   // v3.130 a queued item of the person's own typed turn keeps that turn's answer (the sealed store kept it)
   const consent = approved || (fromQueue?.typed === true && !ask && hqOrderOpen(request)) ? 'none' : HQ.consentFor({ ask, remote, request, minter: hqMinter, routineNoAsk: noAsk });
   // while an HQ routine turn's id is live, a dispatch without that routine's id is held too (never the typed path or a modal)
-  if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
+  if (consent === 'held' || HQ.holdsOffId({ approved, request, minter: hqMinter, openRoutine: openHqRoutineRequest() })) {
+    // v3.130 an item released from the order queue stays there (never a held card while it is still queued: it would run twice)
+    if (fromQueue && HO.heldAction({ fromQueue }) === 'stay') return { id: fromQueue.id, status: 'queued', reason: 'order-queue', request };
+    return holdDispatch(args, request, rrun);   // v3.47 a routine never opens a modal
+  }
   // v3.103 a dispatch in a later turn of a request the person typed (consent 'follow') needs no dialog and is not
   // asked about: it is bound by HQ.followRefusal (the 2 h window, at most MAX_INITIATIVE such tasks per request, the
   // caps) and never goes into a project that runs with Skip permissions (v3.91; a paired machine's flag comes from
@@ -2576,7 +2582,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   const askPerson = async () => {
     if (!(await confirmHqDispatch(args, remote))) return { status: 'rejected', reason: 'declined' };
     // two dispatches can wait on dialogs at once: re-check the caps on the fresh board after the answer
-    const late = HQ.capReason(loadHqBoard(), request, hqOrders().queuedIds());   // never an approved held task: approved skips the dialog
+    const late = HQ.capReason(loadHqBoard(), request, hqOrders().queuedIds(), { order: !ask && hqOrderOpen(request) });   // never an approved held task: approved skips the dialog
     return late ? { status: 'rejected', reason: late } : null;
   };
   let byInitiative = sentByInitiative;

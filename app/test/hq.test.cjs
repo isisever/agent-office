@@ -260,7 +260,7 @@ test('caps: 8 per request, 12 open, depth 1', () => {
   assert.equal(HQ.depthRefused(b, 'other'), false);
   assert.equal(HQ.depthRefused(b, 'hq'), false);
   assert.match(fnBody('officeDispatch'), /HQ\.depthRefused\(loadHqBoard\(\), tab\)\) return \{ status: 'rejected', reason: 'depth' \}/);
-  assert.match(fnBody('hqDispatch'), /HQ\.capReason\(board, request, hqOrders\(\)\.queuedIds\(\)\)/);
+  assert.match(fnBody('hqDispatch'), /HQ\.capReason\(board, request, hqOrders\(\)\.queuedIds\(\), \{ order: !ask && hqOrderOpen\(request\) \}\)/);
 });
 
 test('remote rows: keyed <pub>:<id>, restricted actions; offline peers from the cache (names and ids only)', () => {
@@ -360,7 +360,7 @@ test('a foreign request id resolves to the current id and consentFor sees it liv
 test('caps are re-checked after the consent dialog resolves', () => {
   const body = fnBody('hqDispatch');
   const a = body.indexOf('confirmHqDispatch(args, remote)');
-  const b = body.indexOf('HQ.capReason(loadHqBoard(), request, hqOrders().queuedIds())', a);
+  const b = body.indexOf('HQ.capReason(loadHqBoard(), request, hqOrders().queuedIds(), { order: !ask && hqOrderOpen(request) })', a);
   assert.ok(a > 0 && b > a, 'fresh capReason after the dialog');
   // behavior: the board that filled while the dialog was open now refuses
   let board = HQ.emptyBoard();
@@ -1711,8 +1711,36 @@ test('v3.130 review: over the caps, only the typed turn queues as typed; a routi
   // the pump waits during a phone turn and during a live routine turn
   assert.equal(HO.pumpMay({}), true);
   assert.equal(HO.pumpMay({ phone: true }), false);
-  assert.equal(HO.pumpMay({ routineLive: true }), false);
-  assert.match(fnBody('hqOrderPump'), /HO\.pumpMay\(\{ phone: hqMinter\.isPhone\(\), routineLive: Boolean\(openHqRoutineRequest\(\)\) \}\)/);
+  const m = HQ.createMinter();
+  const rid = m.mint({ origin: 'routine', run: 'run1' });
+  assert.equal(HO.pumpMay({ openRoutine: rid, minter: m }), false);
+  m.mint();   // the person's typed prompt ends the routine's live id: the queue drains again
+  assert.equal(HO.pumpMay({ openRoutine: rid, minter: m }), true);
+  const pump = fnBody('hqOrderPump');
+  assert.match(pump, /HO\.pumpMay\(\{ phone: hqMinter\.isPhone\(\), openRoutine: openHqRoutineRequest\(\), minter: hqMinter \}\)/);
+  assert.ok(pump.indexOf('if (i > 0 && !may()) break;') > pump.indexOf('for (let i = 0;'), 'checked again on every pass');
+});
+
+test('v3.130 re-review: an item released from the queue never becomes a held card (it would run twice)', () => {
+  assert.equal(HO.heldAction({ fromQueue: { id: 'q1' } }), 'stay');
+  assert.equal(HO.heldAction({ fromQueue: null }), 'hold');
+  assert.equal(HO.heldAction(), 'hold');
+  const body = fnBody('hqDispatch');
+  const a = body.indexOf("fromQueue && HO.heldAction({ fromQueue }) === 'stay'");
+  assert.ok(a > 0 && a < body.indexOf('return holdDispatch(args, request, rrun);'));
+});
+
+test('v3.130 re-review: an open order counts only its open tasks against the request cap', () => {
+  const done = Array.from({ length: HQ.MAX_PER_REQUEST }, (_, i) => ({ id: `d${i}`, request: 'r1', status: 'reported' }));
+  const board = { tasks: done, requests: [{ id: 'r1', removed: 3 }] };
+  assert.equal(HQ.capReason(board, 'r1'), 'request-cap');                     // outside an order: every task ever
+  assert.equal(HQ.capReason(board, 'r1', null, { order: true }), null);      // an order: its queue drains as tasks end
+  const open = Array.from({ length: HQ.MAX_PER_REQUEST }, (_, i) => ({ id: `o${i}`, request: 'r1', status: 'running' }));
+  assert.equal(HQ.capReason({ tasks: open, requests: [] }, 'r1', null, { order: true }), 'request-cap');
+  const many = Array.from({ length: HQ.MAX_OPEN }, (_, i) => ({ id: `m${i}`, request: `x${i}`, status: 'running' }));
+  assert.equal(HQ.capReason({ tasks: many, requests: [] }, 'r1', null, { order: true }), 'open-cap');
+  assert.equal(HQ.capReason({ tasks: done, requests: [] }, HQ.ADHOC, null, { order: true }), null);
+  assert.match(fnBody('hqOrderPump'), /\{ order: hqOrderOpen\(x\.request\) \}/);
 });
 
 test('v3.130 review: the phone flag survives a restart in the sealed store', () => {
