@@ -127,7 +127,9 @@ test('member tools (v3.84): known server ids kept; a desk gets them on top of it
   const state = { accounts: [{ id: 'default' }], staff: [{ ...ayse, accountId: undefined, tools: ['srv1'] }], projects: [{ id: 'p1', dir: '/w/p1', accountId: 'default', tabs: [{ n: 2, staffId: 's-a1b2c3' }] }] };
   assert.deepEqual(P.resolvePty(state, 'p1:2').project.staffTools, ['srv1']);
   assert.equal(P.resolvePty(state, 'p1').project.staffTools, undefined);
-  assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8'), /MS\.sessionServers\(P\.engineOf\(project\), MS\.withTools\(appServers\(\), project\.id, project\.staffTools\)/);
+  assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8'), /MS\.withTools\(appServers\(\), project\.id, project\.staffTools\)/);
+  // v3.128 a desk gets them through LEAN.deskAppServers (src/mcp-lean.js)
+  assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'main.js'), 'utf8'), /MS\.sessionServers\(P\.engineOf\(project\), desk \? LEAN\.deskAppServers\(withTools, project\.staffTools\) : withTools/);
 });
 
 // ---------- desks (step 3) and HQ (step 4) ----------

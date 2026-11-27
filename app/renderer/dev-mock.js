@@ -167,7 +167,7 @@ let modeSetting = normalizeMode(q.get('mode'));
 let resumeSetting = true;
 let resumeWorkSetting = true;
 let managerSetting = true;
-let shareMcpSetting = true;
+let shareMcpSetting = false;
 let reloadMcpSetting = true;
 let fallbackSetting = true;
 let sleepSetting = 30;
@@ -314,6 +314,11 @@ window.agentOffice = {
     setSkipPermissions: async (id, value) => { // v3.72
       const p = /** @type {any} */ (projects.find((x) => x.id === id));
       if (p) { if (value === true) p.skipPermissions = true; else delete p.skipPermissions; changed(); }
+      return { restarted: [] };
+    },
+    setShareMcp: async (id, value) => { // v3.128
+      const p = projects.find((x) => x.id === id);
+      if (p) { if (value === true) p.shareMcp = true; else delete p.shareMcp; changed(); }
       return { restarted: [] };
     },
     setAutoApprove: async (id, value) => { // v3.71

@@ -383,7 +383,7 @@ test('main.js: mail wiring — desks of members with accounts only, guard settin
   assert.match(fn, /P\.engineOf\(project\) !== 'claude'/);
   assert.match(MAIN, /const mailMcp = project\.hq \? null : mailServerFor\(id, project, tab\)/);
   assert.match(MAIN, /const guarded = mailMcp \? MG\.guardSettings\(settings, /);
-  assert.match(MAIN, /\.\.\.\(mailMcp \? \['--strict-mcp-config'\] : \[\]\)/);
+  assert.match(MAIN, /\.\.\.\(mailMcp \|\| prepared\.strict \? \['--strict-mcp-config'\] : \[\]\)/);   // v3.128 desks are strict too
   assert.match(MAIN, /env\.ENABLE_CLAUDEAI_MCP_SERVERS = 'false'/);
   assert.match(MAIN, /delete env\.AGENT_OFFICE_AUTO_APPROVE;\s+\/\/ and Agent Office never answers/);
   // the only SMTP / Graph send is in the person's mail:send handler

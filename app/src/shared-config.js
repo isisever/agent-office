@@ -44,6 +44,7 @@
 // Never shared: logins (.credentials.json, keychain, oauthAccount and primaryApiKey in .claude.json), the account's
 // own synced skills and plugins, history, projects and transcripts, policy and remote settings, settings.json.
 // (A project's own transcripts and state follow it when its account changes: project-data.js, contract v3.16.)
+const LEAN = require('./mcp-lean');
 const fs = require('fs');
 const path = require('path');
 
@@ -587,7 +588,7 @@ const mcpFingerprint = (plan) =>
  * name reaches the session already (the account's user and local servers, the project's .mcp.json, Default's shared
  * ones, other projects', `extra`; .mcp.json ones only when approved, SC.isApproved): what Claude Code's own files define wins. → also appShadowed (only when some): the names left out.
  */
-function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, platform = process.platform, extra = null, app = null }) {
+function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, platform = process.platform, extra = null, app = null, desk = false, ownDir = null }) {
   const configDir = account?.configDir;
   const claudeDir = path.join(home, '.claude');
   const isDefault = !configDir || samePath(configDir, claudeDir);
@@ -597,13 +598,17 @@ function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, 
     syncLinks(configDir, on ? linkPlan(listClaudeDir(claudeDir), claudeDir) : [], { platform });
     if (on) pluginDirs = sharedPluginDirs({ claudeDir, configDir, stageRoot, platform });
   }
-  const { servers: planned, mcpNames, accountNames, own } = mcpPlan({ account, home, cwd, office });
-  const servers = { ...planned, ...(extra || {}) };
-  const taken = new Set([...Object.keys(servers), ...keysOf(own.user), ...keysOf(own.local), ...keysOf(own.project).filter((n) => isApproved(own.approvals, n))]);
-  const appShadowed = [];
-  for (const [name, server] of Object.entries(isObj(app) ? app : {})) {
-    if (taken.has(name)) appShadowed.push(name); else { servers[name] = server; taken.add(name); }
-  }
+  // v3.128 a desk (desk: true) gets no shared set: its office share is off and Default's servers are left out
+  const { servers: planned, mcpNames, accountNames, own } = mcpPlan({ account, home, cwd, office: desk ? { ...(office || {}), share: false } : office });
+  // v3.128 (src/mcp-lean.js): a boss drops shared entries that duplicate a server it has; a desk's file holds the
+  // project's own servers (local and approved .mcp.json of the project folder, ownDir) and runs strict
+  const dir = ownDir || cwd;
+  const ownServers = desk
+    ? (dir ? resolveServers(readProjectServers({ home, dir, configDir: isDefault ? null : configDir, share: on }), dir) : {})
+    : { ...own.user, ...own.local, ...Object.fromEntries(Object.entries(own.project).filter(([n]) => isApproved(own.approvals, n))) };
+  const lean = LEAN.sessionMcp({ kind: desk ? 'desk' : 'boss', shared: planned, own: ownServers, app: isObj(app) ? app : {}, extra: extra || {} });
+  const servers = lean.servers;
+  const appShadowed = lean.shadowed;
   let mcpConfig = null;
   try {
     if (Object.keys(servers).length) {
@@ -614,7 +619,8 @@ function prepareShared({ account, home, cwd, stageRoot, mcpFile, office = null, 
       mcpConfig = mcpFile;
     } else fs.rmSync(mcpFile, { force: true });
   } catch {}
-  return { pluginDirs, mcpConfig, mcpNames, ...(Object.keys(accountNames).length ? { accountNames } : {}), ...(appShadowed.length ? { appShadowed } : {}) };
+  return { pluginDirs, mcpConfig, mcpNames, ...(Object.keys(accountNames).length ? { accountNames } : {}), ...(appShadowed.length ? { appShadowed } : {}),
+    ...(lean.dropped.length ? { mcpDeduped: lean.dropped } : {}), ...(lean.strict ? { strict: true } : {}) };
 }
 
 // ---- the per-tab MCP files hold tokens: each lives only while its tab's claude runs

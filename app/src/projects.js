@@ -58,6 +58,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...(p.appMade === true ? { appMade: true } : {}),   // v3.83 fix: a personal workspace whose folder the app itself created (only that one is trusted)
       ...groupField,   // v3.86 the PROJECTS list's group (src/project-groups.mjs draws it)
       ...withAutoApprove(p.autoApprove),
+      ...(p.shareMcp === true ? { shareMcp: true } : {}),   // v3.128 the project's opt-in to the office MCP share
       ...withSkipPermissions(p.skipPermissions),
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
       ...withBackup(p.backupAccount, known),
@@ -541,6 +542,18 @@ function setProjectAutoApprove(state, id, value) {
   }) };
 }
 
+/** v3.128 Project.shareMcp: true = this project's sessions get the office MCP share (src/mcp-lean.js). Absent = off. */
+function setProjectShareMcp(state, id, value) {
+  const p = findProject(state, id);
+  const v = value === true;
+  if (!p || (p.shareMcp === true) === v) return state;
+  return { ...state, projects: state.projects.map((x) => {
+    if (x.id !== id) return x;
+    const { shareMcp: _, ...rest } = x;
+    return v ? { ...rest, shareMcp: true } : rest;
+  }) };
+}
+
 /** Whether the project's permission prompts are answered for the person: Claude Code projects only. */
 const autoApproveOf = (project) => project?.autoApprove === true && engineOf(project) === 'claude';
 
@@ -703,7 +716,7 @@ module.exports = {
   setProjectSavings, savingsOf,
   ENGINES, setProjectEngine, engineOf,
   setProjectFiles, projectFilesOf,
-  setProjectAutoApprove, autoApproveOf,
+  setProjectAutoApprove, autoApproveOf, setProjectShareMcp,
   SKIP_PERMISSIONS_FLAG, setProjectSkipPermissions, skipPermissionsOf, skipPermissionsArgs,
   setProjectBackup, backupOf, fallbackTo, returnHome,
   setProjectDelegates, delegatesOf,
