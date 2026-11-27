@@ -4,8 +4,10 @@
 // (src/pty-attach.js holds and releases them), `kill` stops it, `write` and `resize` do nothing (no terminal).
 // No Electron; the spawn function is passed in (tested with a fake in test/gui-session.test.cjs).
 const GS = require('./gui-session.js');
+const ML = require('./model-list.js');
 
 const STDERR_MAX = 64 * 1024;
+const INIT_ID = 'ao-initialize';   // v3.120 Studio UX: the request id of the initialize sent at start
 const SETTING_WAIT = 10000;   // ms to wait for claude's answer to a setting request
 
 /**
@@ -14,7 +16,7 @@ const SETTING_WAIT = 10000;   // ms to wait for claude's answer to a setting req
  * @param {{ onAsk?: (ask: any, input: any) => boolean, killGroup?: (pid: number, signal: string) => void }} [hooks]
  *   onAsk: true when main answered the request itself; killGroup: process.kill (a test passes a fake)
  */
-function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.kill } = {}) {
+function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup = process.kill } = {}) {
   // its own process group (as a pty's session is): a stop reaches claude's shells and MCP servers too, not only claude
   const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
   const lines = GS.createLines();
@@ -33,7 +35,7 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
   let stderr = '';
   const settings = { model: '', mode: '' };   // v3.121 what Studio's pickers set in this run
   /** @type {{ model: string, usage: null | { input_tokens: number, cache_read_input_tokens: number, cache_creation_input_tokens: number } }} */
-  const info = { model: '', usage: null };   // v3.120 Studio UX: the running model and the last answer's usage
+  const info = { model: '', usage: null, models: /** @type {import('./model-list.js').ModelOption[]} */ ([]) };   // v3.120 Studio UX: the running model and the last answer's usage
   /** @type {Map<string, { key: string, value: string, done: (r: string) => void, timer: any }>} */
   const pending = new Map();   // v3.121 setting requests waiting for claude's control_response
 
@@ -42,6 +44,7 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
     try { child.stdin.write(s); return true; } catch { return false; }
   };
   child.stdin?.on?.('error', () => {});   // EPIPE after claude ended: the exit handler reports it
+  put(ML.initLine(INIT_ID));   // v3.120 Studio UX: the SDK's first request; its answer lists the account's models
 
   child.stdout?.on?.('data', (chunk) => {
     for (const msg of lines.push(chunk)) {
@@ -64,6 +67,14 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
         asks.set(ask.id, { ask, input });
       } else if (msg.type === 'control_cancel_request' && typeof msg.request_id === 'string') {
         asks.delete(msg.request_id);   // claude withdrew it (the turn was stopped)
+      }
+      // v3.120 Studio UX: claude's answer to our initialize: the models this account can use (the picker's list)
+      if (msg.type === 'control_response' && msg.response?.request_id === INIT_ID) {
+        if (msg.response.subtype === 'success') {
+          info.models = ML.parseModels(msg.response.response);
+          if (info.models.length && onModels) { try { onModels(info.models); } catch (e) { console.error('gui models:', e.message); } }
+        }
+        continue;
       }
       if (msg.type === 'control_response' && pending.has(String(msg.response?.request_id))) {
         const id = String(msg.response.request_id);
@@ -129,7 +140,7 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
      */
     setting(key, value) {
       const id = `setting-${++seq}`;
-      const out = GS.settingLine(id, key, value);
+      const out = GS.settingLine(id, key, value, ML.modelValues(info.models));
       if (!out) return Promise.resolve('bad');
       if (pending.size) return Promise.resolve('busy');
       return new Promise((done) => {
@@ -141,6 +152,8 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
     },
     settings: () => ({ ...settings }),
     info: () => ({ model: info.model, usage: info.usage ? { ...info.usage } : null }),
+    /** v3.120 Studio UX: the models claude reported for this session ([] until it answers, or when it lists none) */
+    models: () => info.models.slice(),
     /** Answers an open card; 'ok', 'gone' (no such request any more) or 'bad-answer'. */
     answer(askId, answer) {
       const open = asks.get(String(askId));
