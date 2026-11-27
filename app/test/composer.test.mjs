@@ -67,8 +67,8 @@ test('v3.121 pickerState: a skip-permissions session shows bypassPermissions and
   assert.equal(pickerState({ ...idle, modeLock: 'other' }).modeEnabled, true, 'an unknown lock is ignored');
   assert.equal(pickerState({ live: { busy: true }, asks: [], modeLock: 'bypass' }).mode, 'bypassPermissions', 'shown while busy too');
   const R = fs.readFileSync(new URL('../renderer/chat.js', import.meta.url), 'utf8');
-  assert.match(R, /modeSel\.disabled = !st\.modeEnabled;/);
-  assert.match(R, /h\('option', \{ value: 'bypassPermissions', disabled: true, hidden: true \}/, 'listed only to show it, never to pick it');
+  assert.match(R, /setProp\(modeSel, 'disabled', !st\.modeEnabled\);/);
+  assert.match(R, /\{ value: 'bypassPermissions', label: t\('chat\.pick\.mode\.bypassPermissions'\), disabled: true, hidden: true \}/, 'listed only to show it, never to pick it');
 });
 
 test('v3.121 addChips: drop order kept, same path once, folders stay one chip', () => {
@@ -135,4 +135,39 @@ test('v3.120 managerOffNote: auto mode while the project Auto-approve is off, ne
   assert.equal(managerOffNote({ ...gui, autoApprove: undefined }, { mode: 'auto' }), false, 'unknown is not off');
   // the picker itself is untouched: the mode stays auto
   assert.equal(pickerState(gui, { mode: 'auto' }).mode, 'auto');
+});
+
+test('optionsKey: same options give the same key; a changed label, title or flag changes it', () => {
+  const a = [{ value: '', label: 'Default (Opus 5.5)' }, { value: 'sonnet', label: 'Sonnet', title: 'fast' }];
+  assert.equal(C.optionsKey(a), C.optionsKey(a.map((o) => ({ ...o }))));
+  assert.notEqual(C.optionsKey(a), C.optionsKey([{ value: '', label: 'Model as started' }, a[1]]));
+  assert.notEqual(C.optionsKey(a), C.optionsKey([a[0], { ...a[1], title: 'slow' }]));
+  assert.notEqual(C.optionsKey(a), C.optionsKey([a[0], { ...a[1], disabled: true }]));
+  assert.notEqual(C.optionsKey(a), C.optionsKey([a[0]]));
+  assert.equal(C.optionsKey(undefined), '');
+});
+
+test('selectPlan: an open (focused) picker is never rebuilt nor given a value; force overrides', () => {
+  const base = { shownKey: 'a', key: 'a', focused: false, value: 'opus', want: 'opus' };
+  assert.deepEqual(C.selectPlan(base), { rebuild: false, setValue: false });              // a poll with nothing new
+  assert.deepEqual(C.selectPlan({ ...base, key: 'b' }), { rebuild: true, setValue: true }); // the list changed
+  assert.deepEqual(C.selectPlan({ ...base, want: 'sonnet' }), { rebuild: false, setValue: true });
+  assert.deepEqual(C.selectPlan({ ...base, shownKey: undefined }), { rebuild: true, setValue: true });   // first draw
+  assert.deepEqual(C.selectPlan({ ...base, focused: true, key: 'b', want: 'sonnet' }), { rebuild: false, setValue: false });
+  assert.deepEqual(C.selectPlan({ ...base, focused: true, want: 'sonnet', force: true }), { rebuild: false, setValue: true });
+});
+
+test('the composer and start-screen pickers are drawn through syncSelect, never rebuilt directly by a poll', () => {
+  const chat = fs.readFileSync(new URL('../renderer/chat.js', import.meta.url), 'utf8');
+  const studio = fs.readFileSync(new URL('../renderer/studio.js', import.meta.url), 'utf8');
+  for (const sel of ['modelSel', 'modeSel']) {
+    assert.match(chat, new RegExp(`syncSelect\\(${sel},`));
+    assert.doesNotMatch(chat, new RegExp(`${sel}\\.(replaceChildren|innerHTML)|${sel}\\.options\\[`));
+  }
+  for (const sel of ['startProject', 'startWho', 'startModel', 'startMode']) {
+    assert.match(studio, new RegExp(`syncSelect\\(${sel},`));
+    assert.doesNotMatch(studio, new RegExp(`${sel}\\.(replaceChildren|innerHTML)`));
+  }
+  const sync = fs.readFileSync(new URL('../renderer/select-sync.js', import.meta.url), 'utf8');
+  assert.match(sync, /document\.activeElement === sel/);
 });

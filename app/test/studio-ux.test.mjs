@@ -142,3 +142,14 @@ test('v3.120 start screen: a mode from the account\'s list (Auto included), neve
   assert.deepEqual(startPlan({ mode: 'auto' }, undefined, { gui: true, modeLock: '' }).settings, [['mode', 'auto']], 'fallback has auto');
   assert.deepEqual(startPlan({ mode: 'auto' }, undefined, { ...caps, modeLock: 'desk' }).settings, [], 'a desk keeps its mode');
 });
+
+test('defaultModelName: the default option names the resolved model, else the running one while on the default', async () => {
+  const { defaultModelName } = await import('../src/studio-ux.mjs');
+  const models = [{ value: '', label: 'Default (recommended)', resolved: 'claude-opus-5-5' }, { value: 'sonnet', label: 'Sonnet', resolved: 'claude-sonnet-5-5' }];
+  assert.equal(defaultModelName(models), 'Opus 5.5');
+  assert.equal(defaultModelName(models, 'claude-sonnet-5-5', 'sonnet'), 'Opus 5.5');
+  assert.equal(defaultModelName([{ value: '', label: '', resolved: '' }], 'claude-opus-5-5'), 'Opus 5.5');
+  assert.equal(defaultModelName([{ value: '', label: '', resolved: '' }], 'claude-sonnet-5-5', 'sonnet'), '');
+  assert.equal(defaultModelName(undefined), '');
+  assert.equal(defaultModelName(null, ''), '');
+});
