@@ -3638,3 +3638,40 @@ orders: { <request id>: { type?, doneAt? } }, taskSids: [session uuids] }`. Load
 Caps: 200 open chat cards (oldest activity dropped first), 500 closed chat cards (newest kept), 1000 order entries,
 1000 task sessions (`taskSids`, newest kept; they survive a restart so a task session never turns into a chat card).
 Order cards themselves come from board.json and follow its caps.
+
+## Fan-out orders and role assignment (v3.132)
+
+Amends v3.130 ("Orders from HQ") and v3.83/v3.84 (staff). Pure rules in `src/hq-fanout.js`; wiring in `main.js`
+(`hqFanOut`); the tool schema in `src/office-mcp.js`.
+
+- **Fan-out.** HQ's `office_dispatch` accepts `targets: [{ project, machine?, member? | desk? | role?, title? }]`
+  (1 to `FANOUT_MAX` = 8) instead of a single target, with one shared `task`, `type`, `title` and `request`.
+  `FO.fanOutRefusal` refuses before anything runs: `bad-targets` (not a non-empty array), `too-many-targets` (> 8,
+  with `max`), `fanout-mixed` (also `project`/`machine`/`staff`/`member`/`role`/`desk`/`after`/`then`: a fan-out
+  never has stages), `bad-target` (not an object, no `project`, an unknown key, a non-string value, or more than one
+  of `member`/`desk`/`staff`/`role`). `member` and `desk` both name a staff member (its desk) and become `staff`;
+  the app's internal `desk` is never set from a target.
+- **Same path, no shortcut.** `FO.expandFanOut` gives one single-dispatch argument object per target in the
+  request's order, and `hqFanOut` passes each to `hqDispatch` unchanged: consent (`consentFor`, the dialog per
+  target with `askBeforeDispatch`, the follow-up rules), the caps and the order queue (`capReason`, `hqOrderEnqueue`),
+  routine holds, redaction (`HQ.redact`) and the sealed store all apply to every target as to a single dispatch.
+  The targets run one after another, so each cap check sees the rows of the ones before it (8 open per order,
+  `MAX_OPEN` 12); `hqDispatch` itself sends a call that still carries `targets` back to `hqFanOut`. Desks still open
+  concurrently: `hqDispatch` never starts a desk (v3.126), the queue starts each with its task, and `openDesk` runs
+  per desk under the keyed lock. The first target's `request` is passed to the later ones.
+- **Result.** `{ status: 'fanout', request, results: [{ n, project, machine?, role?, member?, id?, status, reason?, ... }] }`,
+  one per target in order (`n` from 1); a refused target does not stop the others.
+- **Role assignment.** A target with `role` (a preset id such as `qa` or `software-developer`, a preset name in any
+  language, or a member's own role name; case ignored) gets a member from `FO.pickMember({ staff, project, role, load,
+  warm, defs })`: members with that role who may work on the project (`ST.mayWork`, a personal workspace only its
+  owner), the fewest open HQ tasks first (`FO.memberLoad`: board rows by `staffId` not in `HQ.TERMINAL`; idle = 0),
+  a tie to a member whose desk in that project runs (`deskStates` busy/idle), then the team's order. No fit:
+  `{ status: 'rejected', reason: 'no-member-for-role', roles }` with the role names available on that project. A
+  role target on a paired machine is refused `staff-local-only`, without a team `no-team`, an unknown local project
+  `unknown-project`. The picked member then goes through the normal staff checks in `hqDispatch`.
+- **HQ brief.** `plugin/hooks/hq.ts` adds one line: fan out with `targets[]`, assign by `role`.
+- **Board.** A fan-out order is one order card: `projects[]`/`members[]` list every target's project and member, and
+  each target chip (`tasks[]`) shows `project @member` (renderer `board-view.js`).
+- Tests: `test/hq-fanout.test.cjs` (refusals, expansion order, pickMember, memberLoad, caps and consent per target,
+  main wiring, the order card). **Not verified live** in a running app.
+

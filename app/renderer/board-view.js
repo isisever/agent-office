@@ -96,7 +96,7 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
     el('div', { class: 'bv-meta' }, ...projectsOf(c).map((p) => el('span', { class: 'bv-chip bv-proj' }, p)),
       ...membersOf(c).map((m) => el('span', { class: 'bv-chip bv-member' }, `@${m}`))),
     isOrder && (c.tasks || []).length > 1 ? el('div', { class: 'bv-targets' }, ...c.tasks.map((/** @type {any} */ x) => el('span', { class: `bv-chip bv-target bv-c-${x.column}`, title: `${x.title || x.id} · ${x.status}` },
-      `${x.project}${x.machine && x.machine !== 'self' ? ` · ${x.machine}` : ''}`))) : null,
+      `${x.project}${x.member ? ` @${x.member}` : ''}${x.machine && x.machine !== 'self' ? ` · ${x.machine}` : ''}`))) : null,   // v3.132 a fan-out target shows its assigned member
     el('div', { class: 'bv-foot' }, el('span', {}, fmtDuration(age)), cost ? el('span', {}, cost) : null,
       c.column === 'review' ? el('button', { class: 'bv-done', title: t('board.doneTip'), onclick: async (/** @type {Event} */ e) => {
         e.stopPropagation();
