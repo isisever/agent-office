@@ -200,6 +200,11 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onBrief: listen('tokens:brief'),                    // the same, about once a minute
   },
   // v3.28: this user's other Agent Offices (src/link-host.js); every call returns the LinkView
+  // v3.120 Studio experience: its sidebar's sessions (running and recent per project) and opening one
+  studio: {
+    sessions: () => ipcRenderer.invoke('studio:sessions'),                        // { experience, user: { name, email, account }, projects: StudioProject[] } | null
+    open: (projectId, ref) => ipcRenderer.invoke('studio:open', projectId, ref),   // ref { n } | { sessionId } → { ok, projectId, n } | { ok: false, error }
+  },
   link: {
     get: () => ipcRenderer.invoke('link:get'),
     invite: (o) => ipcRenderer.invoke('link:invite', o),            // v3.106 o: { reset: true } after the reset confirm

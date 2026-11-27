@@ -66,6 +66,7 @@ const KA = require('./src/keep-awake.js');
 const VC = require('./src/voice-core.js');   // v3.119 voice input
 const { createVoice } = require('./src/voice.js');
 const PTY = require('./src/pty-attach.js');
+const STU = require('./src/studio.js');   // v3.120 Studio experience
 // dev only: a throwaway profile (two instances side by side for the device link, v3.28); never in the packaged app
 if (!app.isPackaged && process.env.AGENT_OFFICE_USER_DATA) {
   app.setPath('userData', path.resolve(process.env.AGENT_OFFICE_USER_DATA));
@@ -137,6 +138,11 @@ function saveState() {
   try { SF.writeAtomic(statePath(), JSON.stringify(P.stateFile(loadState(), state), null, 2)); } catch {}
 }
 
+// v3.120 Studio's recent sessions as loaded from state.json: only when there are any (unset is not written)
+function studioRecentOf(raw, base) {
+  const list = STU.normalizeRecent(raw.studioRecent, base.projects.map((p) => p.id));
+  return list.length ? { studioRecent: list } : {};
+}
 const send = (ch, ...args) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(ch, ...args); };
 const snapshot = () => ({
   projects: P.forRenderer(state.projects),
@@ -1230,7 +1236,7 @@ function keepTermTabs() {
 const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
 /** Does this tab start as a GUI chat? */
 function guiTab(id, r) {
-  return GS.guiEligible({ chatView: state.chatView === true, terminal: termTabs.has(id) || cmdTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
+  return GS.guiEligible({ chatView: state.chatView === true, studio: state.experience === 'studio', terminal: termTabs.has(id) || cmdTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
 }
 /** A GUI tab's permission request: true when the app answers it (Auto-approve, v3.71 rules); else it waits for the person. */
 function guiAsk(id, ask, input, { autoApprove, mailGuard }) {
@@ -5980,7 +5986,7 @@ function buildMenu() {
 // office3d = the office drawn in 3D (contract v3.81); off unless set, and unset is not written
 // teamMode = the TEAM panel (contract v3.83); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, experience: STU.normalizeExperience(state.experience), termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
 // --- voice input (contract v3.119): audio stays in memory in src/voice.js and never leaves the machine
 /** @type {ReturnType<typeof createVoice> | null} */
 let voice = null;
@@ -6016,6 +6022,7 @@ ipcMain.handle('voice:start', async (e) => {
 });
 ipcMain.on('voice:chunk', (e, id, data) => { if (fromWin(e) && typeof id === 'string') voice?.chunk(id, data); });
 ipcMain.on('voice:cancel', (e, id) => { if (fromWin(e) && typeof id === 'string') voice?.cancel(id); });
+
 ipcMain.handle('voice:stop', (e, id) => (fromWin(e) && typeof id === 'string' ? voiceApi().finish(id) : { ok: false, error: 'unknown' }));
 ipcMain.handle('voice:downloadModel', async (e, id) => {
   if (!fromWin(e) || !Object.hasOwn(VC.MODELS, id)) return { ok: false, error: 'model' };
@@ -6023,6 +6030,78 @@ ipcMain.handle('voice:downloadModel', async (e, id) => {
 });
 
 ipcMain.handle('prefs:get', () => prefs());
+
+// --- v3.120 Studio experience (src/studio.js): its sidebar's session list, opening a session, the 24 h rule.
+// Every studio:* call is accepted only from the app's own window, like voice:*.
+const studioSince = new Map();   // pty id → when it was first seen asleep (the 24 h rule; starts again after a restart)
+const studioIds = () => state.projects.map((p) => p.id);
+const studioRecent = () => STU.normalizeRecent(state.studioRecent, studioIds());
+let studioNameCache = { file: '', mtimeMs: -1, name: '' };
+/** The display name of the Claude account a project runs on (its .claude.json, re-read only when it changes), or ''. */
+function studioUser(p) {
+  const a = p ? A.accountOf(state, p) : state.accounts.find((x) => x.id === A.DEFAULT_ID);
+  if (!a) return { name: '', email: '', account: '' };
+  const email = auths.get(a.id)?.email || '';
+  let name = '';
+  try {
+    const file = a.id === A.DEFAULT_ID ? path.join(app.getPath('home'), '.claude.json') : path.join(a.configDir, '.claude.json');
+    const { mtimeMs } = fs.statSync(file);
+    if (studioNameCache.file !== file || studioNameCache.mtimeMs !== mtimeMs) studioNameCache = { file, mtimeMs, name: STU.accountDisplayName(readJson(file)) };
+    name = studioNameCache.name;
+  } catch { /* no .claude.json: no name */ }
+  return { name, email, account: accountName(a) };
+}
+ipcMain.handle('studio:sessions', (e) => {
+  if (!fromWin(e)) return null;
+  const projects = state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: p.name, dir: p.dir, engine: P.engineOf(p), tabs: P.tabsOf(p) }));
+  return {
+    experience: STU.normalizeExperience(state.experience),
+    user: studioUser(P.findProject(state, state.activeId)),
+    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [] }),
+  };
+});
+// ref: { n } a running session (the main tab is 1), { sessionId } a recent one, which opens again as a new tab of its
+// project and continues that conversation. → { ok, projectId, n } | { ok: false, error: 'invalid' | 'gone' }
+ipcMain.handle('studio:open', (e, projectId, ref) => {
+  if (!fromWin(e) || typeof projectId !== 'string' || !ref || typeof ref !== 'object') return { ok: false, error: 'invalid' };
+  const p = P.findProject(state, projectId);
+  if (!p) return { ok: false, error: 'gone' };
+  if (ref.n !== undefined) {
+    if (!Number.isInteger(ref.n)) return { ok: false, error: 'invalid' };
+    if (ref.n !== P.MAIN_TAB && !P.tabsOf(p).some((t) => t.n === ref.n)) return { ok: false, error: 'gone' };
+    return { ok: true, projectId: p.id, n: ref.n };
+  }
+  const sid = STU.validSessionId(ref.sessionId);
+  if (!sid || !studioRecent().some((r) => r.projectId === p.id && r.sessionId === sid)) return { ok: false, error: 'invalid' };
+  const n = P.nextTabNumber(p);
+  commit({ ...P.addTab(state, p.id, { n }), studioRecent: STU.dropRecent(studioRecent(), p.id, sid) });
+  startPty(P.tabPtyId(p.id, n), { sessionId: sid });
+  return { ok: true, projectId: p.id, n };
+});
+/** The session a sleeping tab continues when it wakes, or ''. */
+const studioSid = (id, r) => STU.validSessionId(asleep.get(id)?.sessionId) || STU.validSessionId(r?.tab?.sessionId) || STU.validSessionId(lastSid.get(id));
+/** Only an extra Claude Code tab with a session closes (never a main tab, HQ, a desk, a worktree or a shell). */
+function studioClosable(id) {
+  const r = P.resolvePty(state, id);
+  return Boolean(r?.tab && !r.project.hq && P.engineOf(r.project) === 'claude' && !r.tab.shell && !r.tab.staffId && !r.tab.worktree && studioSid(id, r));
+}
+// The 24 h rule: in Studio, a session asleep for more than 24 h closes and is kept under Recent (it opens again from there).
+function studioSweep() {
+  if (!state) return;
+  const now = Date.now();
+  STU.trackAsleep(studioSince, asleep.keys(), now);
+  if (STU.normalizeExperience(state.experience) !== 'studio') return;
+  for (const id of STU.dueToClose(studioSince, now, studioClosable)) {
+    const r = P.resolvePty(state, id);
+    if (!r?.tab) continue;
+    const entry = { projectId: r.project.id, sessionId: studioSid(id, r), title: STU.tabTitle(r.project, r.tab, state.staff), dir: r.tab.dir || r.project.dir, at: now };
+    state = { ...state, studioRecent: STU.addRecent(studioRecent(), entry, studioIds()) };
+    studioSince.delete(id);
+    dropTab(r.project, r.tab.n);   // commits (saves and broadcasts) with the entry above
+  }
+}
+setInterval(studioSweep, 5 * 60 * 1000).unref?.();
+
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
   if (p && typeof p.resumeWork === 'boolean' && p.resumeWork !== prefs().resumeWork) commit({ ...state, resumeWork: p.resumeWork });
@@ -6031,6 +6110,8 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
   if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) { commit({ ...state, chatView: p.chatView }); guiSwitchIdle(); }   // v3.80 chat view (the renderer switches); v3.108 idle tabs move to / from the GUI chat
+  // v3.120 the experience (Office / Studio): Studio shows Claude Code tabs as a chat, so idle tabs move like above
+  if (p && STU.EXPERIENCES.includes(p.experience) && p.experience !== prefs().experience) { commit({ ...state, experience: p.experience }); guiSwitchIdle(); }
   if (p && typeof p.office3d === 'boolean' && p.office3d !== prefs().office3d) commit({ ...state, office3d: p.office3d });   // v3.81 3D office (the renderer switches)
   if (p && typeof p.teamMode === 'boolean' && p.teamMode !== prefs().teamMode) commit({ ...state, teamMode: p.teamMode });   // v3.83 the TEAM panel
   for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (p && typeof p[k] === 'boolean' && p[k] !== prefs()[k]) commit({ ...state, [k]: p[k] });
@@ -6110,7 +6191,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(raw.experience === 'studio' ? { experience: 'studio' } : {}), ...studioRecentOf(raw, base), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
   state = { ...state, voice: VC.normalizeSettings(raw.voice) };   // v3.119 voice input settings
   for (const id of GS.cleanTermTabs(raw.termTabs, state.projects.flatMap((p) => P.ptyIdsOf(p)))) termTabs.add(id);   // v3.110
   // v3.83 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
