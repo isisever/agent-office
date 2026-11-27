@@ -4,6 +4,7 @@
 // (voice-worklet.js) to 16 kHz PCM16 chunks for main (agentOffice.voice); the transcript goes into the text field that
 // had focus, never into a terminal's pty, and is sent only when "Send after speaking" is on.
 import { t, onLang } from './i18n.js';
+import { icon } from './studio-icons.js';
 import { matchShortcut, spliceText } from '../src/voice-input.mjs';
 
 const api = () => window.agentOffice?.voice || null;
@@ -171,7 +172,7 @@ export function micButton(input, send) {
       start(input, false);
     },
     onpointerup: () => { if (downAt && Date.now() - downAt > 350) stop(); downAt = 0; },
-  }, '🎙');
+  }, h('span', { class: 'chat-glyph' }, '🎙'), icon('mic', 18));   // the glyph in the Office, the stroke icon in Studio
   b.hidden = !settings.enabled;
   buttons.add(b);
   return b;
