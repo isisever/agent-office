@@ -135,6 +135,9 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
    *  count and the 2 h window) until it is closed or ORDER_MS passed. */
   /** @type {Map<string, { at: number, closed: boolean }>} */
   const orders = new Map();
+  /** v3.130 phone fix: the current HQ turn came from a phone controller (ctl-hq, v3.121). It stays flagged until the
+   *  person's next typed prompt mints an id; while flagged no order lends its typed authority (isOrder is false). */
+  let phone = false;
   const fresh = (e) => Boolean(e) && now() - e.at <= e.ttl;
   const endRoutines = () => { for (const e of all.values()) if (e.origin === 'routine') e.live = false; };
   return {
@@ -146,14 +149,18 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
       all.set(id, e);
       if (all.size > 50) all.delete(all.keys().next().value);
       if (origin === 'typed') {
+        phone = false;
         typed.set(id, e.at); if (typed.size > 50) typed.delete(typed.keys().next().value);
         orders.set(id, { at: e.at, closed: false }); if (orders.size > 50) orders.delete(orders.keys().next().value);
       }
       return id;
     },
     /** v3.130 is this an open order (a typed id, not closed, younger than ORDER_MS)? */
-    isOrder(id) { const o = isStr(id) ? orders.get(id) : null; return Boolean(o) && !o.closed && now() - o.at >= 0 && now() - o.at < ORDER_MS; },
+    isOrder(id) { const o = isStr(id) ? orders.get(id) : null; return !phone && Boolean(o) && !o.closed && now() - o.at >= 0 && now() - o.at < ORDER_MS; },
     /** v3.130 the order is closed (office_summary, the person): later turns are follow-ups under today's limits */
+    /** v3.130 a phone turn starts: the typed id is cleared (as clear()) and no order's authority is usable */
+    markPhone() { phone = true; current = null; endRoutines(); },
+    isPhone() { return phone; },
     closeOrder(id) { const o = isStr(id) ? orders.get(id) : null; if (o) o.closed = true; },
     /** v3.130 an open order read back from the sealed store after a restart (its typed time kept) */
     restoreOrder(id, at) {

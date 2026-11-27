@@ -2245,7 +2245,7 @@ function hqMintTyped() { const id = hqMinter.mint(); hqOrders().add(id); return 
 const hqOrderOpen = (request) => typeof request === 'string' && Boolean(request) && hqOrders().isOpen(request) && hqMinter.isOrder(request);
 /** One OS notice per order and kind ('start', 'needs', 'end'). */
 function hqOrderNotice(request, kind) {
-  if (kind !== 'end' && !hqOrderOpen(request)) return;
+  if (kind !== 'end' && !(typeof request === 'string' && request && hqOrders().isOpen(request))) return;
   if (hqOrders().noticeOnce(request, kind)) notify(T(`main.hqOrder_${kind}`), '', null);
 }
 /** v3.130 a task of an open order over the caps or a full project queue waits in the order queue (FIFO, priority
@@ -2283,7 +2283,8 @@ async function hqOrderPump() {
   try {
     const q = hqOrders();
     for (const t of loadHqBoard().tasks) if (t.orderQueued === true && !HQ.TERMINAL.has(t.status) && q.ahead(t.id) < 0) hqStatus(t.id, 'expired', 'order-queue-lost');
-    for (const x of q.queue()) if (!hqOrderOpen(x.request)) { q.remove(x.id); hqStatus(x.id, 'rejected', 'order-closed'); }
+    for (const x of q.queue()) if (!q.isOpen(x.request)) { q.remove(x.id); hqStatus(x.id, 'rejected', 'order-closed'); }
+    if (hqMinter.isPhone()) return;   // a phone turn: queued items wait for the person's next typed turn
     const tried = new Set();
     for (let i = 0; i < 8; i++) {
       const item = HO.nextRelease(q.queue(), (x) => !tried.has(x.id) && !HQ.capReason(loadHqBoard(), x.request));
@@ -2414,7 +2415,7 @@ function hqSummary(args) {
 }
 /** v3.130 an order ends (office_summary, the person): its queued tasks are dropped, later turns follow today's rules. */
 function hqOrderClose(request) {
-  const open = hqOrderOpen(request);
+  const open = hqOrders().isOpen(request);
   for (const id of hqOrders().close(request)) hqStatus(id, 'rejected', 'order-closed');
   hqMinter.closeOrder(request);
   if (open) hqOrderNotice(request, 'end');
@@ -3485,8 +3486,9 @@ function startLink() {
     // NOT the person's typed turn: no request id is minted (and the person's live one is cleared), so HQ cannot dispatch to
     // paired machines on it without the normal card. Face-ID-signed approvals are planned (P2).
     ctlHq: (text) => LC.ctlTurn({ enabled: Boolean(hqSettings().enabled && P.hqProject(state)), busy: hqBusyNow(), approval: attention.get(HQ.HQ_ID) === 'permission',
-      type: () => { hqLastKey = Date.now(); hqMinter.clear(); return typePrompt(HQ.HQ_ID, text); },
-      start: () => { hqMinter.clear(); hqWanted = true; startPty(HQ.HQ_ID, { resume: true, prompt: text, forcePrompt: true }); hqRestarter.tick(true); } }),
+      // v3.130 a phone turn never uses a typed order's authority (hqMinter.markPhone, until the person types in HQ)
+      type: () => { hqLastKey = Date.now(); hqMinter.markPhone(); return typePrompt(HQ.HQ_ID, text); },
+      start: () => { hqMinter.markPhone(); hqWanted = true; startPty(HQ.HQ_ID, { resume: true, prompt: text, forcePrompt: true }); hqRestarter.tick(true); } }),
     ctlReports: ctlReportsList,   // v3.121 the newest HQ reports for a phone controller
     stoppedHere: (id) => stoppedHere.get(String(id)) || 0,   // v3.99 the person's own stop: no remote revive for 10 minutes
     handoff: handoffDeps(),

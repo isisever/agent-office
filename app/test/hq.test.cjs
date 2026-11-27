@@ -1759,3 +1759,31 @@ test('v3.130 auto-continue: once per open order, only for a retryable block, nev
   assert.equal(s.noticeOnce('r1', 'start'), false);   // one notice per order and kind
   assert.equal(s.noticeOnce('r1', 'end'), true);
 });
+
+test('v3.130 phone turns never use a typed order\'s authority, until the person types again', () => {
+  let t = 7_000_000;
+  const m = HQ.createMinter({ now: () => t });
+  const id = m.mint();
+  m.clear();                                   // a report: the order lends its authority to HQ's later turns
+  t += 3 * 3600 * 1000;
+  assert.equal(HQ.consentFor({ request: id, minter: m, now: t }), 'follow');
+  m.markPhone();                               // a phone turn names the open order's id explicitly
+  assert.equal(m.isPhone(), true);
+  assert.equal(m.isOrder(id), false);
+  assert.equal(m.current(), null);
+  assert.equal(HQ.consentFor({ request: id, minter: m, now: t }), 'app');      // past 2 h: the untyped rules → the dialog
+  assert.equal(HQ.resolveRequest(m, id, { now: t }), HQ.ADHOC);
+  const board = { tasks: [], requests: [{ id, at: t, prompt: '', tasks: [], done: false, initiative: 40 }] };
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [{ projectId: 'p', staffId: '', skip: false }], now: t }), 'request-expired');
+  // inside 2 h a phone turn gets today's follow-up rules (the count), never the order's
+  const id2 = m.mint(); m.clear(); m.markPhone();
+  const b2 = { tasks: [], requests: [{ id: id2, at: t, prompt: '', tasks: [], done: false, initiative: 4 }] };
+  assert.equal(HQ.followRefusal({ request: id2, minter: m, board: b2, targets: [{ projectId: 'p', staffId: '', skip: false }], now: t }), 'follow-up-cap');
+  m.clear();                                   // a report does not end the phone turn's flag
+  assert.equal(m.isOrder(id2), false);
+  m.mint({ origin: 'routine', run: 'x' });     // nor does a routine's id
+  assert.equal(m.isPhone(), true);
+  m.mint();                                    // the person types in HQ: orders lend their authority again
+  assert.equal(m.isPhone(), false);
+  assert.equal(m.isOrder(id), true);
+});
