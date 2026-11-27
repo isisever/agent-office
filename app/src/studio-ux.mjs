@@ -56,13 +56,14 @@ export function relativeTime(at, now, lang = 'en', nowLabel = '') {
  * settings to apply through chat:setting right after the GUI chat is up (tabs start with the project's own model and
  * mode; only values that differ from '' and are offered are kept).
  * @param {{ worktree?: boolean, model?: string, mode?: string } | null | undefined} choice
+ * @param {string[]} [models] the model values offered (v3.120 the account's reported list; START_MODELS by default)
  * @returns {{ tabMode: 'same' | 'worktree', settings: [ 'model' | 'mode', string ][] }}
  */
-export function startPlan(choice) {
+export function startPlan(choice, models = START_MODELS) {
   const c = choice && typeof choice === 'object' ? choice : {};
   /** @type {[ 'model' | 'mode', string ][]} */
   const settings = [];
-  if (typeof c.model === 'string' && c.model && START_MODELS.includes(c.model)) settings.push(['model', c.model]);
+  if (typeof c.model === 'string' && c.model && models.includes(c.model)) settings.push(['model', c.model]);
   if (typeof c.mode === 'string' && c.mode && START_MODES.includes(c.mode)) settings.push(['mode', c.mode]);
   return { tabMode: c.worktree === true ? 'worktree' : 'same', settings };
 }

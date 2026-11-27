@@ -89,6 +89,7 @@
       "changeAccountTitle": "Hesabı proje ayarlarından değiştir",
       "worktree": "Yeni worktree",
       "modelDefault": "Projenin varsayılan modeli",
+      "modelsLoading": "Bu hesabın modelleri yükleniyor…",
       "modeDefault": "Projenin varsayılan modu",
       "placeholder": "Ne üzerinde çalışalım?",
       "send": "Oturumu başlat"

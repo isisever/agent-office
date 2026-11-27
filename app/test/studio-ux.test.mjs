@@ -66,3 +66,9 @@ test('firstName', () => {
   assert.equal(firstName(''), '');
   assert.equal(firstName(undefined), '');
 });
+
+test('startPlan takes a model only from the offered list (the account\'s reported models)', () => {
+  assert.deepEqual(startPlan({ model: 'fable' }).settings, [], 'not in the fixed list');
+  assert.deepEqual(startPlan({ model: 'fable' }, ['', 'fable']).settings, [['model', 'fable']]);
+  assert.deepEqual(startPlan({ model: 'opus' }, ['', 'fable']).settings, []);
+});

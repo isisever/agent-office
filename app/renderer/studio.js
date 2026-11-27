@@ -125,7 +125,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startSend.disabled = true;
     startNote.textContent = t('studio.start.starting');
     let ok = false;
-    try { ok = await hooks.startSession(id, startPlan({ worktree: startWorktree.checked, model: startModel.value, mode: startMode.value }), text); } catch (e) { console.error(e); }
+    try { ok = await hooks.startSession(id, startPlan({ worktree: startWorktree.checked, model: startModel.value, mode: startMode.value }, [...startModel.options].filter((o) => !o.disabled).map((o) => o.value)), text); } catch (e) { console.error(e); }
     startBusy = false;
     startSend.disabled = false;
     if (ok) { startText.value = ''; startNote.textContent = ''; starting = false; picked = id; refresh(); } else startNote.textContent = t('studio.start.failed');
@@ -255,9 +255,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startAccount.replaceChildren(el('span', { class: 'st-badge', title: t('studio.account') }, proj?.account || '—'),
       el('button', { type: 'button', class: 'st-link', title: t('studio.start.changeAccountTitle'), onclick: () => proj && hooks.projectSettings(proj.id) }, t('studio.start.changeAccount')));
     startWtLabel.textContent = t('studio.start.worktree');
-    const mv = startModel.value;
-    startModel.replaceChildren(...START_MODELS.map((m) => el('option', { value: m }, m ? t(`chat.pick.model.${m}`) : t('studio.start.modelDefault'))));
-    startModel.value = mv;
+    drawStartModels(proj?.id || '');
     startModel.title = t('chat.pick.modelTitle');
     const dv = startMode.value;
     startMode.replaceChildren(...START_MODES.map((m) => el('option', { value: m }, m ? t(`chat.pick.mode.${m}`) : t('studio.start.modeDefault'))));
@@ -267,6 +265,33 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startSend.title = `${t('studio.start.send')} (Enter)`;
     startSend.setAttribute('aria-label', t('studio.start.send'));
     startForm.hidden = !view.projects.length;
+  }
+  /**
+   * v3.120 Studio UX: the start screen's models are the selected project's account's (main's per-account cache, filled
+   * by a session or a short probe). Until the probe answers: only the default option and a loading line.
+   */
+  /** @type {Map<string, { models: any[], loading: boolean, at: number }>} */
+  const startLists = new Map();
+  let startModelsAsked = '';
+  let startModelsTimer = /** @type {any} */ (null);
+  function drawStartModels(/** @type {string} */ projectId) {
+    const got = startLists.get(projectId);
+    const list = got?.models?.length ? got.models : START_MODELS.slice(0, 1).map((value) => ({ value, label: '', description: '' }));
+    const loading = !got || got.loading;
+    const mv = startModel.value;
+    startModel.replaceChildren(...list.map((/** @type {any} */ m) => el('option', { value: m.value, title: m.description || '' }, m.value ? (m.label || t(`chat.pick.model.${m.value}`)) : t('studio.start.modelDefault'))),
+      ...(loading ? [el('option', { value: '', disabled: true }, t('studio.start.modelsLoading'))] : []));
+    startModel.value = list.some((/** @type {any} */ m) => m.value === mv) ? mv : '';
+    startModel.classList.toggle('loading', loading);
+    // a loaded list is asked again after a minute (a session of that account may have refreshed it)
+    if (!projectId || (got && !got.loading && Date.now() - got.at < 60000) || startModelsAsked === projectId) return;
+    startModelsAsked = projectId;
+    api.chat.startModels(projectId).then((/** @type {any} */ r) => {
+      startModelsAsked = '';
+      startLists.set(projectId, { models: Array.isArray(r?.models) ? r.models : [], loading: Boolean(r?.loading), at: Date.now() });
+      if (startProject.value === projectId) drawStartModels(projectId);
+      if (r?.loading) { clearTimeout(startModelsTimer); startModelsTimer = setTimeout(() => { if (startProject.value === projectId && !start.hidden) drawStartModels(projectId); }, 1500); }
+    }, () => { startModelsAsked = ''; startLists.set(projectId, { models: [], loading: false, at: Date.now() }); });
   }
   function drawHeader() {
     const pty = hooks.activePty();

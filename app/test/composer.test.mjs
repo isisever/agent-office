@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatSize, fileKind, chipInfo, baseName, withMentions, splitMentions, pickerState, mention } from '../src/composer.mjs';
+import { formatSize, fileKind, chipInfo, baseName, withMentions, splitMentions, pickerState, modelChoices, mention } from '../src/composer.mjs';
 import * as C from '../src/composer.mjs';
 import fs from 'node:fs';
 
@@ -91,4 +91,13 @@ test('v3.121 dropText: the count while dragging', () => {
     const L = JSON.parse(fs.readFileSync(new URL(`../locales/${lang}.json`, import.meta.url), 'utf8'));
     assert.ok(L.chat.drop.any && L.chat.drop.one && L.chat.drop.many.includes('{count}') && L.chat.fileOpen && L.chat.fileClear && L.chat.fileGone && L.chat.fileShown, lang);
   }
+});
+
+test('modelChoices: the session reported models, else the fixed aliases; pickerState keeps a reported model', () => {
+  assert.deepEqual(modelChoices(null).map((m) => m.value), ['', 'opus', 'sonnet', 'haiku']);
+  assert.deepEqual(modelChoices({ models: [] }).map((m) => m.value), ['', 'opus', 'sonnet', 'haiku']);
+  const gui = { live: { busy: false }, asks: [], models: [{ value: '', label: 'Default (recommended)', description: 'd' }, { value: 'fable', label: 'Fable 5.2' }, null] };
+  assert.deepEqual(modelChoices(gui), [{ value: '', label: 'Default (recommended)', description: 'd' }, { value: 'fable', label: 'Fable 5.2', description: '' }]);
+  assert.equal(pickerState(gui, { model: 'fable' }).model, 'fable');
+  assert.equal(pickerState(gui, { model: 'haiku' }).model, '', 'not reported for this account');
 });

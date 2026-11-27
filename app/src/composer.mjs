@@ -109,13 +109,25 @@ export function splitMentions(text) {
 }
 
 /**
+ * v3.120 Studio UX: the model picker's options for a tab: the models its session reported (gui.models, from claude's
+ * initialize answer; main falls back to the short aliases) → [{ value, label, description }]; label '' means the
+ * app names it (chat.pick.model.*). A terminal tab or an older main: MODEL_OPTIONS.
+ * @param {any} gui @returns {{ value: string, label: string, description: string }[]}
+ */
+export function modelChoices(gui) {
+  const list = Array.isArray(gui?.models) ? gui.models.filter((/** @type {any} */ m) => m && typeof m.value === 'string') : [];
+  if (list.length) return list.map((/** @type {any} */ m) => ({ value: m.value, label: typeof m.label === 'string' ? m.label : '', description: typeof m.description === 'string' ? m.description : '' }));
+  return MODEL_OPTIONS.map((value) => ({ value, label: '', description: '' }));
+}
+
+/**
  * The pickers' state for a tab. gui: the chat's GUI info (null: a terminal tab), settings: what this chat last set.
  * → { enabled, model, mode, why, lock, modeEnabled } — why: '' | 'terminal' (a terminal tab: /model there) | 'busy' (a
  * turn runs: wait). lock (gui.modeLock): 'bypass' (started with skip permissions: the mode shows bypassPermissions and
  * cannot change) | 'desk' (a desk's own permission rules: the mode cannot change) | ''. The model picker is never locked.
  */
 export function pickerState(gui, settings = {}) {
-  const model = MODEL_OPTIONS.includes(settings?.model) ? settings.model : '';
+  const model = modelChoices(gui).some((m) => m.value === settings?.model) ? settings.model : '';
   const lock = gui && ['bypass', 'desk'].includes(gui.modeLock) ? gui.modeLock : '';
   const set = MODE_OPTIONS.includes(settings?.mode) ? settings.mode : 'default';
   const mode = lock === 'bypass' ? 'bypassPermissions' : set;

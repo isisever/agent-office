@@ -3072,7 +3072,9 @@ StudioProject.running[] += { label: string,   // the tab's own label (staff memb
   title: string,                              // the session's name ('' → the renderer shows "New session")
   branch: string, at: number,                 // the transcript's git branch and last change (ms, 0 unknown)
   busy: boolean, waiting: boolean }           // a turn runs (GUI chat) / an approval or a question is open
-chat:read gui += { info: { model: string, usage: null | { input_tokens, cache_read_input_tokens, cache_creation_input_tokens } }, contextCap: number }
+chat:read gui += { info: { model: string, usage: null | { input_tokens, cache_read_input_tokens, cache_creation_input_tokens } }, contextCap: number,
+                  models: [{ value, label, description, resolved }] }
+chat.startModels(projectId) → studio:models → { models: [{ value, label, description, resolved }], loading: boolean }
 ```
 
 1. **Header**: in Studio the title bar's Office items (≡, ⚙, AGENT OFFICE, the project, the counts) are hidden by CSS and
@@ -3094,6 +3096,23 @@ chat:read gui += { info: { model: string, usage: null | { input_tokens, cache_re
    Escape (with a session behind it) or picking a session leaves it.
 4. **Model label**: the model picker's first option names the model the session runs (`modelName` of the `system`
    `init` message's `model`, then each top-level answer's `message.model`), e.g. "Opus 5.5"; "Model as started" until known.
+   **Model list** (src/model-list.js): the picker lists the models the session's account can use, not a fixed list.
+   A GUI chat sends the stream-json `initialize` control request (request_id `ao-initialize`) as its first line, with no
+   prompt; claude's answer has `models: [{ value, resolvedModel, displayName, description, supportsEffort, … }]`
+   (Claude Code 2.1.x; `value` 'default' = the account's default, e.g. "Default (recommended)", then aliases such as
+   opus / sonnet / haiku / fable and full ids). `parseModels` turns it into options (`default` → '', first; bad, repeated
+   or control-character values skipped; at most 60) and `chat:read` gives them as `gui.models`; the '' option is
+   still labelled with the running model. A session that reports nothing (an error reply, an older claude) falls back
+   to '', opus, sonnet, haiku (`FALLBACK`). `chat:setting` 'model' answers 'bad' for a value not in the session's
+   list (`allowedModel`), and gui-proc's `settingLine` takes only those values. The start screen, where no session
+   runs, uses a per-account cache in userData `model-cache.json` (key: the account's config dir, '' = Default; never in
+   ~/.claude; at most 100 accounts, oldest dropped): every session's report merges into it (`mergeCache`: an empty list
+   never wipes one, a different list replaces it). An account with no cache is probed in the background: a short-lived
+   claude with that account's `CLAUDE_CONFIG_DIR` and the GUI flags, in an empty temp folder, sent only `initialize`
+   and killed as soon as it answers (or after 20 s; a probe that gives nothing is retried after 5 minutes; none on
+   Windows, where the fallback shows until a session reports). Until the probe answers the start picker shows only the
+   project default and a disabled "Loading this account's models…" line, asking again every 1.5 s; a loaded list is
+   asked again after a minute. `startPlan(choice, models)` keeps a model only from the offered list.
 5. **Message actions** (Studio only): Copy on every message (as before), a copy button in each code block's corner,
    Edit on the person's messages (puts the text back in the input to send again; the conversation is not rewound),
    "Jump to latest" while the list is scrolled more than 120 px up, and animated dots on the live line while a turn runs.

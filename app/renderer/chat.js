@@ -11,7 +11,7 @@ import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } fr
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
-import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, MODEL_OPTIONS, MODE_OPTIONS } from '../src/composer.mjs';
+import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, modelChoices, MODE_OPTIONS } from '../src/composer.mjs';
 import { icon } from './studio-icons.js';
 import { modelName, contextUsage, shortTokens } from '../src/studio-ux.mjs';
 
@@ -862,13 +862,22 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     return body;
   }
   function drawPickOptions() {
-    modelSel.replaceChildren(...MODEL_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.model.${m || 'start'}`))));
+    drawModelOptions(true);
     // bypassPermissions is never offered: it only shows the mode of a session started with skip permissions
     modeSel.replaceChildren(...MODE_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.mode.${m}`))),
       h('option', { value: 'bypassPermissions', disabled: true, hidden: true }, t('chat.pick.mode.bypassPermissions')));
     drawPicks();
   }
+  /** v3.120 Studio UX: the model options are the models the session reported (modelChoices); redrawn when they change. */
+  function drawModelOptions(force = false) {
+    const list = modelChoices(gui);
+    const sig = list.map((m) => `${m.value}\u0001${m.label}`).join('\u0002');
+    if (!force && modelSel.dataset.sig === sig) return;
+    modelSel.dataset.sig = sig;
+    modelSel.replaceChildren(...list.map((m) => h('option', { value: m.value, title: m.description }, m.label || t(`chat.pick.model.${m.value || 'start'}`))));
+  }
   function drawPicks() {
+    drawModelOptions();
     const st = pickerState(gui, gui?.settings || picks);
     if (modelSel.value !== st.model) modelSel.value = st.model;
     if (modeSel.value !== st.mode) modeSel.value = st.mode;

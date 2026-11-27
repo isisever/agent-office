@@ -89,6 +89,7 @@
       "changeAccountTitle": "Change the account in project settings",
       "worktree": "New worktree",
       "modelDefault": "Project default model",
+      "modelsLoading": "Loading this account's models…",
       "modeDefault": "Project default mode",
       "placeholder": "What should we work on?",
       "send": "Start session"
