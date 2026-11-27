@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { encodeText, toSvg, formatBits, versionBits, numDataCodewords, alignmentPositions } from '../src/qrcodegen/qrcodegen.mjs'
 
-const PAIR_URL = 'agentoffice://pair?v=1&c=apple-banana-cherry-delta-echo&n=' + encodeURIComponent('Savaş’ın MacBook Pro')
+const PAIR_URL = 'agentoffice://pair?v=1&c=apple-banana-cherry-delta-echo&n=' + encodeURIComponent('Örnek’in MacBook Pro')
   + '&k=' + 'ab'.repeat(32) + '&caps=ctl'
 
 /** The 15 format bits read back from the first copy (around the top-left finder), bit 14 first. */
