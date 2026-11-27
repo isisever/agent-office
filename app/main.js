@@ -6071,13 +6071,19 @@ function studioUser(p) {
   } catch { /* no .claude.json: no name */ }
   return { name, email, account: accountName(a) };
 }
+/** The label of the Claude account a project runs on (the Office's account name), never a token or folder. */
+function studioAccountLabel(sp) {
+  const p = P.findProject(state, sp.id);
+  const a = p ? A.accountOf(state, p) : null;
+  return a ? accountName(a) || '' : '';
+}
 ipcMain.handle('studio:sessions', (e) => {
   if (!fromWin(e)) return null;
   const projects = state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: p.name, dir: p.dir, engine: P.engineOf(p), tabs: P.tabsOf(p) }));
   return {
     experience: STU.normalizeExperience(state.experience),
     user: studioUser(P.findProject(state, state.activeId)),
-    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [] }),
+    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel }),
   };
 });
 // ref: { n } a running session (the main tab is 1), { sessionId } a recent one, which opens again as a new tab of its

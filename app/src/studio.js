@@ -175,7 +175,9 @@ function tabTitle(project, tab, staff) {
  * running ones that will start again when shown.
  * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[] }} o
  */
-function listSessions({ projects, status, recent, activeId = null, staff = [] }) {
+// accountOf(project) → the label of the Claude account the project runs on (A.accountOf, the Office's account name);
+// only the label is listed, never a token or a config folder.
+function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '' }) {
   const byId = new Map((status || []).map((s) => [s.id, s]));
   const rec = Array.isArray(recent) ? recent : [];
   return (projects || []).map((p) => {
@@ -191,7 +193,9 @@ function listSessions({ projects, status, recent, activeId = null, staff = [] })
     ];
     const recentHere = rec.filter((r) => r.projectId === p.id).sort((a, b) => b.at - a.at).slice(0, RECENT_PER_PROJECT)
       .map((r) => ({ sessionId: r.sessionId, title: r.title || baseName(r.dir) || p.name, at: r.at }));
-    return { id: p.id, name: p.name, dir: p.dir, engine: p.engine || 'claude', active: p.id === activeId, attention: st.attention || null, running, recent: recentHere };
+    const label = accountOf(p);
+    const account = typeof label === 'string' ? label.trim().slice(0, 80) : '';
+    return { id: p.id, name: p.name, dir: p.dir, engine: p.engine || 'claude', account, active: p.id === activeId, attention: st.attention || null, running, recent: recentHere };
   });
 }
 
