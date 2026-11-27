@@ -1311,7 +1311,10 @@
     "newGroupHint": "Yeni grup: adını projenin ayarlarında (⚙) yazın",
     "removeFromGroup": "“{group}” grubundan çıkar",
     "helpMenu": "Yardım",
-    "whatsNew": "Neler Yeni"
+    "whatsNew": "Neler Yeni",
+    "budgetWarn": "{project}: token bütçesinin %{pct}'i kullanıldı",
+    "budgetOver": "{project}: token bütçesi doldu",
+    "budgetBody": "Bu projeye HQ görevleri ve rutinler, bütçeyi artırana ya da bugün için yok sayana kadar bekler. Kendi yazdıklarınız hiç engellenmez."
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",

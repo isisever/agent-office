@@ -1330,7 +1330,10 @@
     "newGroupHint": "A new group: name it in the project's settings (⚙)",
     "removeFromGroup": "Take out of “{group}”",
     "helpMenu": "Help",
-    "whatsNew": "What's New"
+    "whatsNew": "What's New",
+    "budgetWarn": "{project}: {pct}% of its token budget used",
+    "budgetOver": "{project}: token budget reached",
+    "budgetBody": "HQ tasks and routines into this project wait until you raise the budget or ignore it for today. Your own typing is never blocked."
   },
   "auth": {
     "unreadable": "could not read the login status",
