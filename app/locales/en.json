@@ -973,6 +973,7 @@
       "modeTitle": "Permission mode for the next turns",
       "model": {
         "start": "Model as started",
+        "default": "Default ({name})",
         "opus": "Opus",
         "sonnet": "Sonnet",
         "haiku": "Haiku"

@@ -11,7 +11,8 @@ import { mountSettingsPage } from './studio-settings.js';
 import { mountTeamPage } from './studio-team.js';
 import { teamGroups, whoOptions, whoPlan } from '../src/studio-team.mjs';
 import { hasText } from './i18n.js';
-import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText } from '../src/studio-ux.mjs';
+import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText, defaultModelName } from '../src/studio-ux.mjs';
+import { syncSelect, setProp } from './select-sync.js';
 
 const REFRESH_MS = 5000;   // v3.120 Studio UX: the rows' live state (working, waiting) and the header follow within 5 s
 const THEME_KEY = 'ao.studio.theme';   // Studio's own light / dark choice ('system' | 'light' | 'dark', this window only)
@@ -355,9 +356,10 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     start.hidden = !(starting || !hooks.hasSession());
     if (start.hidden) return;
     const keep = startProject.value || cur?.id || '';
-    startProject.replaceChildren(...view.projects.map((/** @type {any} */ p) => el('option', { value: p.id }, p.name)));
-    startProject.value = view.projects.some((/** @type {any} */ p) => p.id === (cur?.id || keep)) ? (cur?.id || keep) : (view.projects[0]?.id || '');
-    startProject.title = t('studio.project');
+    // the start pickers are redrawn on every refresh: syncSelect leaves an open (focused) one alone, or it would close
+    syncSelect(startProject, view.projects.map((/** @type {any} */ p) => ({ value: p.id, label: p.name })),
+      view.projects.some((/** @type {any} */ p) => p.id === (cur?.id || keep)) ? (cur?.id || keep) : (view.projects[0]?.id || ''));
+    setProp(startProject, 'title', t('studio.project'));
     const proj = view.projects.find((/** @type {any} */ p) => p.id === startProject.value);
     startAccount.replaceChildren(el('span', { class: 'st-badge', title: t('studio.account') }, proj?.account || '—'),
       el('button', { type: 'button', class: 'st-link', title: t('studio.start.changeAccountTitle'), onclick: () => proj && hooks.projectSettings(proj.id) }, t('studio.start.changeAccount')));
@@ -368,28 +370,27 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const keepWho = startWho.value;
     // a picked member who is no longer valid stays picked (sending refuses with a note), never silently Me
     const staleName = keepWho && keepWho !== 'me' && !whoList.some((o) => o.value === keepWho) ? (startWho.selectedOptions[0]?.textContent || keepWho) : '';
-    startWho.replaceChildren(...whoList.map((o) => el('option', { value: o.value }, o.value === 'me' ? t('studio.team.me') : o.name)),
-      ...(staleName ? [el('option', { value: keepWho }, staleName)] : []));
-    startWho.value = staleName || whoList.some((o) => o.value === keepWho) ? keepWho : 'me';
-    startWho.hidden = whoList.length < 2 && !staleName;
-    startWho.title = t('studio.team.who');
+    syncSelect(startWho, [...whoList.map((o) => ({ value: o.value, label: o.value === 'me' ? t('studio.team.me') : o.name })),
+      ...(staleName ? [{ value: keepWho, label: staleName }] : [])],
+    staleName || whoList.some((o) => o.value === keepWho) ? keepWho : 'me');
+    setProp(startWho, 'hidden', whoList.length < 2 && !staleName);
+    setProp(startWho, 'title', t('studio.team.who'));
     drawStartModels(proj?.id || '');
-    startModel.title = t('chat.pick.modelTitle');
+    setProp(startModel, 'title', t('chat.pick.modelTitle'));
     // v3.120 what a new tab of this project can apply (main's studio:models caps): a terminal tab offers neither
     // picker, a skip-permissions project or a desk shows its mode as held and cannot be given another one
     const can = startPickers(startLists.get(proj?.id || '')?.caps || null);
-    startModel.hidden = !can.model;
+    setProp(startModel, 'hidden', !can.model);
     const dv = can.mode ? startMode.value : '';
     const caps = startLists.get(proj?.id || '')?.caps || null;
     const modeText = (/** @type {string} */ m) => (hasText(`chat.pick.mode.${m}`) ? t(`chat.pick.mode.${m}`) : m);
     const modeLabel = (/** @type {string} */ m) => (m ? modeText(m) : can.shownMode ? modeText(can.shownMode) : t('studio.start.modeDefault'));
     // v3.120 the account's reported modes (studio:models caps.modes), else START_MODES; Auto also turns on the project's Auto-approve
     const modes = Array.isArray(caps?.modes) && caps.modes.length ? ['', ...caps.modes.filter((/** @type {string} */ m) => m !== 'bypassPermissions')] : START_MODES;
-    startMode.replaceChildren(...(can.mode ? modes : ['']).map((m) => el('option', { value: m }, modeLabel(m))));
-    startMode.value = dv;
-    startMode.disabled = !can.mode;
-    startMode.hidden = !can.model && !can.lock;
-    startMode.title = `${t('chat.pick.modeTitle')}${can.lock ? ` · ${t(`chat.pick.why.${can.lock}`)}` : caps?.autoApprove ? ` · ${t('chat.pick.managerNoteTitle')}` : ''}`;
+    syncSelect(startMode, (can.mode ? modes : ['']).map((m) => ({ value: m, label: modeLabel(m) })), dv);
+    setProp(startMode, 'disabled', !can.mode);
+    setProp(startMode, 'hidden', !can.model && !can.lock);
+    setProp(startMode, 'title', `${t('chat.pick.modeTitle')}${can.lock ? ` · ${t(`chat.pick.why.${can.lock}`)}` : caps?.autoApprove ? ` · ${t('chat.pick.managerNoteTitle')}` : ''}`);
     startText.placeholder = t('studio.start.placeholder');
     startSend.title = `${t('studio.start.send')} (Enter)`;
     startSend.setAttribute('aria-label', t('studio.start.send'));
@@ -408,9 +409,12 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const list = got?.models?.length ? got.models : START_MODELS.slice(0, 1).map((value) => ({ value, label: '', description: '' }));
     const loading = !got || got.loading;
     const mv = startModel.value;
-    startModel.replaceChildren(...list.map((/** @type {any} */ m) => el('option', { value: m.value, title: m.description || '' }, m.value ? (m.label || t(`chat.pick.model.${m.value}`)) : t('studio.start.modelDefault'))),
-      ...(loading ? [el('option', { value: '', disabled: true }, t('studio.start.modelsLoading'))] : []));
-    startModel.value = list.some((/** @type {any} */ m) => m.value === mv) ? mv : '';
+    // the default option names the model it stands for when the account's list says ("Default (Opus 5.5)")
+    const name = defaultModelName(list);
+    const first = name ? t('chat.pick.model.default', { name }) : t('studio.start.modelDefault');
+    syncSelect(startModel, [...list.map((/** @type {any} */ m) => ({ value: m.value, title: m.description || '', label: m.value ? (m.label || t(`chat.pick.model.${m.value}`)) : first })),
+      ...(loading ? [{ value: '', label: t('studio.start.modelsLoading'), disabled: true }] : [])],
+    list.some((/** @type {any} */ m) => m.value === mv) ? mv : '');
     startModel.classList.toggle('loading', loading);
     // a loaded list is asked again after a minute (a session of that account may have refreshed it)
     if (!projectId || (got && !got.loading && Date.now() - got.at < 60000) || startModelsAsked === projectId) return;

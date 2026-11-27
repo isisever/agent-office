@@ -155,3 +155,27 @@ export function pickerState(gui, settings = {}) {
   if (gui.live?.busy || (gui.asks || []).length) return { enabled: false, model, mode, why: 'busy', lock, modeEnabled: false, managerNote };
   return { enabled: true, model, mode, why: '', lock, modeEnabled: !lock, managerNote };
 }
+
+/**
+ * A native <select>'s options as one string: their values, labels, titles and flags. Two lists with the same key draw
+ * the same picker, so it is not rebuilt.
+ * @param {{ value: string, label: string, title?: string, disabled?: boolean, hidden?: boolean }[]} options
+ */
+export function optionsKey(options) {
+  return (Array.isArray(options) ? options : [])
+    .map((o) => [o.value, o.label, o.title || '', o.disabled ? 1 : 0, o.hidden ? 1 : 0].join('\u0001')).join('\u0002');
+}
+
+/**
+ * Whether a redraw may touch a native <select>. Replacing or re-labelling its options, or setting its value, closes
+ * an open dropdown (Chromium on macOS re-shows the native menu on any change), so nothing is touched while the picker
+ * is focused (open, or just used) unless force says the person's own choice just ended. The options are rebuilt only
+ * when their key changed; the value is set only when it differs (or after a rebuild).
+ * @param {{ shownKey: string | null | undefined, key: string, focused: boolean, value: string, want: string, force?: boolean }} s
+ * @returns {{ rebuild: boolean, setValue: boolean }}
+ */
+export function selectPlan({ shownKey, key, focused, value, want, force = false }) {
+  if (focused && !force) return { rebuild: false, setValue: false };
+  const rebuild = shownKey !== key;
+  return { rebuild, setValue: rebuild || value !== want };
+}

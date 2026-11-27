@@ -180,3 +180,14 @@ export function shortTokens(n) {
 export function firstName(name) {
   return oneLine(name).split(' ')[0] || '';
 }
+
+/**
+ * The model the picker's default ('') option stands for, as people read it ("Opus 5.5"): the account default's
+ * resolved model from claude's initialize list (value 'default' → '' with resolved 'claude-opus-5-5'), else, while
+ * the session runs on that default, the model it reports. '' when unknown.
+ * @param {any} models gui.models or the start screen's list @param {string} [running] gui.info.model @param {string} [picked] the chat's model setting
+ */
+export function defaultModelName(models, running = '', picked = '') {
+  const def = Array.isArray(models) ? models.find((/** @type {any} */ m) => m && m.value === '') : null;
+  return modelName(def?.resolved) || (picked ? '' : modelName(running));
+}

@@ -963,6 +963,7 @@
       "modeTitle": "Sonraki turlar için izin modu",
       "model": {
         "start": "Başlangıçtaki model",
+        "default": "Varsayılan ({name})",
         "opus": "Opus",
         "sonnet": "Sonnet",
         "haiku": "Haiku"

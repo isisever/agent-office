@@ -13,7 +13,8 @@ import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
 import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, managerOffNote, modelChoices, modeChoices } from '../src/composer.mjs';
 import { icon } from './studio-icons.js';
-import { modelName, contextUsage, shortTokens } from '../src/studio-ux.mjs';
+import { contextUsage, shortTokens, defaultModelName } from '../src/studio-ux.mjs';
+import { syncSelect, setProp } from './select-sync.js';
 
 const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
@@ -204,7 +205,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   let cursor = null;
   let sid;   // undefined until the first read
   const tools = new Map();   // tool call id → its line (marked done/failed by its result)
-  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number }, settings?: { model: string, mode: string }, info?: { model: string, usage: any }, contextCap?: number }} */
+  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number }, settings?: { model: string, mode: string }, info?: { model: string, usage: any }, contextCap?: number, models?: { value: string, label: string, description: string, resolved?: string }[] }} */
   let gui = null;   // v3.108 a GUI chat tab's open requests and live line (null: a terminal tab)
   const ASK_REDRAW = '\u0000';   // askShown that matches no request: the next setGui draws the card again
   let askShown = '';   // the open request's id, as drawn
@@ -874,43 +875,32 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     return body;
   }
   function drawPickOptions() {
-    drawModelOptions(true);
-    drawModeOptions(true);
     drawPicks();
   }
   /** v3.120 the account's reported modes (modeChoices); bypassPermissions is never offered: it only shows the mode of a
    * session started with skip permissions. A mode with no text of its own shows its name. */
-  function drawModeOptions(force = false) {
-    const list = modeChoices(gui);
-    const sig = list.join(',');
-    if (!force && modeSel.dataset.sig === sig) return;
-    modeSel.dataset.sig = sig;
+  function modeOptions() {
     const label = (/** @type {string} */ m) => (hasText(`chat.pick.mode.${m}`) ? t(`chat.pick.mode.${m}`) : m);
-    modeSel.replaceChildren(...list.map((m) => h('option', { value: m }, label(m))),
-      h('option', { value: 'bypassPermissions', disabled: true, hidden: true }, t('chat.pick.mode.bypassPermissions')));
+    return [...modeChoices(gui).map((m) => ({ value: m, label: label(m) })),
+      { value: 'bypassPermissions', label: t('chat.pick.mode.bypassPermissions'), disabled: true, hidden: true }];
   }
-  /** v3.120 Studio UX: the model options are the models the session reported (modelChoices); redrawn when they change. */
-  function drawModelOptions(force = false) {
-    const list = modelChoices(gui);
-    const sig = list.map((m) => `${m.value}\u0001${m.label}`).join('\u0002');
-    if (!force && modelSel.dataset.sig === sig) return;
-    modelSel.dataset.sig = sig;
-    modelSel.replaceChildren(...list.map((m) => h('option', { value: m.value, title: m.description }, m.label || t(`chat.pick.model.${m.value || 'start'}`))));
+  /** v3.120 Studio UX: the model options are the models the session reported (modelChoices). The '' option names the
+   * model the default stands for ("Default (Opus 5.5)"), else "Model as started". */
+  function modelOptions(/** @type {string} */ picked) {
+    const name = defaultModelName(gui?.models, gui?.info?.model, picked);
+    const first = name ? t('chat.pick.model.default', { name }) : t('chat.pick.model.start');
+    return modelChoices(gui).map((m) => ({ value: m.value, title: m.description, label: m.value ? (m.label || t(`chat.pick.model.${m.value}`)) : first }));
   }
-  function drawPicks() {
-    drawModelOptions();
-    drawModeOptions();
+  /** Redrawn on every poll: a picker is only touched when its options or value changed and never while it is open
+   * (focused), or the native dropdown closes under the person (syncSelect). force: after the person's own choice. */
+  function drawPicks(force = false) {
     const st = pickerState(gui, gui?.settings || picks);
-    if (modelSel.value !== st.model) modelSel.value = st.model;
-    if (modeSel.value !== st.mode) modeSel.value = st.mode;
-    modelSel.disabled = !st.enabled;
-    modeSel.disabled = !st.modeEnabled;   // also a skip-permissions or desk session's mode (st.lock)
+    syncSelect(modelSel, modelOptions(st.model), st.model, { force });
+    syncSelect(modeSel, modeOptions(), st.mode, { force });
+    setProp(modelSel, 'disabled', !st.enabled);
+    setProp(modeSel, 'disabled', !st.modeEnabled);   // also a skip-permissions or desk session's mode (st.lock)
     const why = st.why ? ` · ${t(`chat.pick.why.${st.why}`)}` : '';
-    modelSel.title = `${t('chat.pick.modelTitle')}${why}`;
-    // v3.120 Studio UX: the '' option names the model the session really runs (system init, then each answer)
-    const running = modelName(gui?.info?.model);
-    const first = modelSel.options[0];
-    if (first) first.textContent = running || t('chat.pick.model.start');
+    setProp(modelSel, 'title', `${t('chat.pick.modelTitle')}${why}`);
     const ctx = contextUsage(gui?.info?.usage, gui?.info?.model, gui?.contextCap);
     ctxRing.hidden = !ctx;
     if (ctx) {
@@ -924,7 +914,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       ctxRing.title = t('chat.context', { used: shortTokens(ctx.used), limit: shortTokens(ctx.limit), pct: ctx.pct });
       ctxRing.setAttribute('aria-label', ctxRing.title);
     }
-    modeSel.title = `${t('chat.pick.modeTitle')}${st.lock ? ` · ${t(`chat.pick.why.${st.lock}`)}` : why}`;
+    setProp(modeSel, 'title', `${t('chat.pick.modeTitle')}${st.lock ? ` · ${t(`chat.pick.why.${st.lock}`)}` : why}`);
     // v3.120 Auto-approve turned off in the Office while this chat runs in auto: say so, never change the mode
     const off = managerOffNote(gui, gui?.settings || picks);
     modeNote.hidden = !st.managerNote && !off;
@@ -941,7 +931,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       const detail = typeof r === 'string' && r.startsWith('error:') ? ` (${r.slice(6)})` : '';
       note(`${t(`chat.pick.failed.${['busy', 'not-running'].includes(r) ? r : 'other'}`)}${detail}`);
     }
-    drawPicks();
+    drawPicks(true);
   }
 
   function replyTo(text) {
