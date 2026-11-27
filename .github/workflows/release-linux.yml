@@ -34,6 +34,9 @@ jobs:
       - name: Install app dependencies (builds node-pty for Electron)
         working-directory: app
         run: npm install --no-audit --no-fund
+      - name: Fetch whisper-server (pinned official asset, sha256 checked; voice input v3.119)
+        working-directory: app
+        run: node scripts/fetch-whisper.mjs --os linux --arch x64
       - name: Build AppImage and deb
         working-directory: app
         run: npm run dist:linux

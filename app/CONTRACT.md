@@ -2904,7 +2904,10 @@ type VoiceSettings = { enabled: boolean, language: 'auto' | 'tr' | 'en', model: 
   `b5907` (commit `5eaee0c`). macOS arm64 / x64: the tag is cloned, its commit checked, and `whisper-server` built
   static with Metal (embedded shaders), only system frameworks linked. Windows x64 and Linux x64: the official release
   asset, sha256 checked. electron-builder copies `vendor/whisper/${os}-${arch}` to Resources/whisper
-  (`extraResources`); a build without it has no voice (`no-binary`).
+  (`extraResources`, `${arch}`: each arch's app gets only its own binary); a build without it has no voice
+  (`no-binary`). `npm run dist:release` builds both macOS binaries in `predist:release` (x64 cross-built on Apple
+  silicon, Metal on); a folder whose `.whisper-version` stamp names the pinned tag and commit is skipped (the stamp
+  is not packaged). The Linux and Windows release workflows fetch their asset before packaging.
 - **Permissions**: the window's permission handler allows `media` only for audio and only for the app's own page
   (`mediaDecision`); other permissions keep Electron's default. macOS: `askForMediaAccess('microphone')` before the
   first recording, `com.apple.security.device.audio-input` in the entitlements and `NSMicrophoneUsageDescription`

@@ -18,7 +18,7 @@
     "predist:win": "node scripts/sync-core.mjs",
     "dist:win": "electron-builder --win --config scripts/win-builder-config.cjs --publish never && node -e \"for (const p of ['release/win-unpacked', 'release/builder-debug.yml']) require('fs').rmSync(p, { recursive: true, force: true })\"",
     "icon": "node scripts/make-icon.mjs",
-    "predist:release": "node scripts/sync-core.mjs",
+    "predist:release": "node scripts/sync-core.mjs && node scripts/fetch-whisper.mjs --os mac --arch arm64,x64",
     "dist:release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-agent-office} electron-builder --mac -c.mac.identity=\"${CSC_NAME:-Savas Isisever (GLTH2M74NT)}\" && rm -rf release/mac release/mac-arm64 release/mac-universal release/builder-debug.yml"
   },
   "author": "Savas Isisever",
@@ -193,7 +193,8 @@
         "from": "vendor/whisper/${os}-${arch}",
         "to": "whisper",
         "filter": [
-          "**/*"
+          "**/*",
+          "!.whisper-version"
         ]
       }
     ],

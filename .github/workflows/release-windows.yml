@@ -50,6 +50,9 @@ jobs:
       - name: Install app dependencies
         working-directory: app
         run: npm install --no-audit --no-fund
+      - name: Fetch whisper-server (pinned official asset, sha256 checked; voice input v3.119)
+        working-directory: app
+        run: node scripts/fetch-whisper.mjs --os win --arch x64
       # Code signing is opt-in and secret-driven (win-builder-config.cjs): CI's own build has no secrets, so the
       # installer stays unsigned exactly as before; with CSC_LINK / CSC_KEY_PASSWORD (a .pfx) or the Azure Trusted
       # Signing secrets set in this repo's settings, the same step signs it. This workflow never runs on

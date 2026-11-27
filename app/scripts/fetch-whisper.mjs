@@ -3,7 +3,10 @@
 // app/vendor/whisper/<os>-<arch>/, where electron-builder's extraResources picks it up (Resources/whisper in the app).
 //
 //   node app/scripts/fetch-whisper.mjs                 # this machine's platform and arch
-//   node app/scripts/fetch-whisper.mjs --os mac --arch x64
+//   node app/scripts/fetch-whisper.mjs --os mac --arch arm64,x64   # several arches (the macOS release)
+//
+// A folder that already holds the pinned build (its STAMP file says tag and commit) is left alone, so a release
+// build only does work when the pin changed or the binary is missing.
 //
 // Everything is pinned:
 // - Windows x64 and Linux x64: the official release asset of tag WHISPER_TAG, checked against its sha256.
@@ -21,6 +24,8 @@ import { fileURLToPath } from 'node:url';
 export const WHISPER_TAG = 'b5907';
 export const WHISPER_COMMIT = '5eaee0cc9024eb9e9a99469199920c8b7f5cb9ec';
 const REPO = 'https://github.com/ggml-org/whisper.cpp';
+const STAMP = '.whisper-version';
+export const stampText = () => `${WHISPER_TAG} ${WHISPER_COMMIT}\n`;
 /** Official prebuilt assets of WHISPER_TAG (sha256 from the GitHub release's asset digests). */
 export const ASSETS = {
   'win-x64': { name: `whisper-bin-x64.zip`, sha256: 'ecca07b277d943e9b9f4712856a144b857271a6b333104e511e1988e80db582b' },
@@ -106,15 +111,28 @@ function buildMac(arch, dest) {
   }
 }
 
-async function main() {
-  const o = argOf('os', osName(process.platform));
-  const arch = argOf('arch', process.arch);
+/** Is `dest` already the pinned build: its stamp matches and the server is there? */
+export function isCurrent(dest, o) {
+  try {
+    return fs.readFileSync(path.join(dest, STAMP), 'utf8') === stampText()
+      && fs.existsSync(path.join(dest, o === 'win' ? 'whisper-server.exe' : 'whisper-server'));
+  } catch { return false; }
+}
+
+async function one(o, arch) {
   const key = `${o}-${arch}`;
   const dest = path.join(appDir, 'vendor', 'whisper', key);
+  if (isCurrent(dest, o)) { console.log(`whisper-server ${key}: ${WHISPER_TAG} already in place`); return; }
   if (o === 'mac') buildMac(arch, dest);
   else if (ASSETS[key]) await fetchAsset(key, dest);
   else throw new Error(`no whisper-server source for ${key} (supported: mac-arm64, mac-x64, ${Object.keys(ASSETS).join(', ')})`);
+  fs.writeFileSync(path.join(dest, STAMP), stampText());
   for (const f of fs.readdirSync(dest)) console.log(`${path.join(dest, f)}  ${fs.statSync(path.join(dest, f)).size} bytes`);
+}
+
+async function main() {
+  const o = argOf('os', osName(process.platform));
+  for (const arch of argOf('arch', process.arch).split(',').filter(Boolean)) await one(o, arch);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
