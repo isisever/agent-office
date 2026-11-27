@@ -651,10 +651,11 @@ body.dragging #terminal, body.dragging #office, body.dragging .chat-host, body.d
 .chat-agent-title { font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-agent-state { font-size: 11px; white-space: nowrap; }
 .chat-in-agent > .chat-list, .chat-in-agent > .chat-empty, .chat-in-agent > .chat-live, .chat-in-agent > .chat-form,
-.chat-in-agent > .chat-reply, .chat-in-agent > .chat-images-bar { display: none; }
+.chat-in-agent > .chat-reply, .chat-in-agent > .chat-images-bar, .chat-in-agent > .chat-composer { display: none; }
 /* v3.118 /resume in the chat: the project's sessions in place of the conversation */
 .chat-in-picker > .chat-list, .chat-in-picker > .chat-empty, .chat-in-picker > .chat-live, .chat-in-picker > .chat-form,
-.chat-in-picker > .chat-reply, .chat-in-picker > .chat-images-bar, .chat-in-picker > .chat-agent-view:not(.chat-picker) { display: none; }
+.chat-in-picker > .chat-reply, .chat-in-picker > .chat-images-bar, .chat-in-picker > .chat-agent-view:not(.chat-picker),
+.chat-in-picker > .chat-composer { display: none; }
 .chat-pick-search { flex: 0 0 auto; }
 .chat-pick-row { display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer; font: inherit; padding: 6px 10px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .chat-pick-row:hover, .chat-pick-row.on { border-color: var(--line-strong); background: var(--hover); }
@@ -1737,5 +1738,5 @@ body.studio.studio-panel #sidebar > :not(.studio-shown) { display: none !importa
 /* v3.121 the chat's composer wrappers (renderer/chat.js): Studio draws them as one box (studio.css); in the Office they
    are transparent and the controls keep their one-line order: attach, mic, input, Stop, Send, Terminal */
 .chat-composer, .chat-row { display: contents; }
-.chat-row > .chat-attach { order: -1; }
+.chat-row > .chat-attach, .chat-row > .voice-mic { order: -1; }
 .chat-studio-only, .chat-chips, .chat-form .st-icon { display: none; }
