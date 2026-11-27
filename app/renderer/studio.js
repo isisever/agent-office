@@ -6,6 +6,7 @@
 // Every text from main (project, session, device and account names) is put in with textContent.
 
 import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
+import { icon } from './studio-icons.js';
 
 const REFRESH_MS = 10000;
 const CLOSED_KEY = 'ao.studio.closedProjects';   // the project groups the person collapsed (this window only)
@@ -51,14 +52,17 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const saveClosed = () => { try { localStorage.setItem(CLOSED_KEY, JSON.stringify([...closed])); } catch { /* storage off */ } };
 
   const search = /** @type {HTMLInputElement} */ (el('input', { type: 'search', class: 'st-search', oninput: () => { query = search.value.trim(); draw(); } }));
-  const newBtn = el('button', { class: 'st-new', onclick: () => newSession() });
+  const newLabel = el('span', { class: 'st-title' });
+  const newBtn = el('button', { class: 'st-new st-row', onclick: () => newSession() }, el('span', { class: 'st-new-icon' }, icon('plus', 14)), newLabel);
   const pins = el('div', { class: 'st-pins' });
   const lists = el('div', { class: 'st-lists' });
   const machines = el('div', { class: 'st-machines' });
   const account = el('div', { class: 'st-account' });
-  const bar = el('aside', { id: 'studio-sidebar', hidden: true }, newBtn, search, pins, lists, machines, account);
+  const searchBox = el('label', { class: 'st-searchbox' }, icon('search', 14), search);
+  const bar = el('aside', { id: 'studio-sidebar', hidden: true }, newBtn, searchBox, pins, lists, machines, account);
   const greeting = el('p', { class: 'st-greeting' });
-  const startNew = el('button', { class: 'st-new', onclick: () => newSession() });
+  const startLabel = el('span', {});
+  const startNew = el('button', { class: 'st-new st-start-new', onclick: () => newSession() }, icon('plus', 14), startLabel);
   const start = el('div', { id: 'studio-start', hidden: true }, greeting, startNew);
   document.getElementById('body')?.prepend(bar);
   document.getElementById('terminal')?.append(start);
@@ -95,11 +99,11 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const shut = !query && closed.has(g.id);
     const toggle = () => { if (closed.has(g.id)) closed.delete(g.id); else closed.add(g.id); saveClosed(); draw(); };
     const head = el('div', { class: `st-group-head${g.active ? ' active' : ''}${g.current ? ' current' : ''}`, title: g.name },
-      el('button', { class: 'st-caret', 'aria-expanded': String(!shut), title: g.name, onclick: toggle }, shut ? '▸' : '▾'),
+      el('button', { class: 'st-caret', 'aria-expanded': String(!shut), title: g.name, onclick: toggle }, icon('chevron', 12)),
       el('span', { class: 'st-title st-project', onclick: () => { picked = g.id; hooks.selectProject(g.id); refresh(); } }, g.name),
       g.attention ? el('span', { class: `sb-attn ${g.attention}` }, '●') : null,
       g.account ? el('span', { class: 'st-badge', title: `${t('studio.account')}: ${g.account}` }, g.account) : null,
-      el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => { picked = g.id; hooks.newSession(g.id); } }, '+'));
+      el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => { picked = g.id; hooks.newSession(g.id); } }, icon('plus', 14)));
     const kids = shut ? [] : [
       ...g.running.map((/** @type {any} */ s, /** @type {number} */ i) => sessionRow(g, s, i)),
       ...(g.recent.length ? [el('div', { class: 'st-sub' }, t('studio.recent')), ...g.recent.map((/** @type {any} */ r) => recentRow(g, r))] : []),
@@ -109,33 +113,35 @@ export function mountStudio({ api, t, modLabel, hooks }) {
 
   function draw() {
     if (!on) return;
-    newBtn.textContent = `+ ${t('studio.newSession')}`;
+    newLabel.textContent = t('studio.newSession');
     newBtn.title = `${modLabel}N`;
-    startNew.textContent = `+ ${t('studio.newSession')}`;
+    startLabel.textContent = t('studio.newSession');
     search.placeholder = t('studio.search');
     pins.replaceChildren(
-      el('div', { class: 'st-row st-pin', onclick: () => hooks.selectHq() }, t('studio.hq')),
-      el('div', { class: 'st-row st-pin', onclick: () => hooks.openBoard() }, t('studio.reports')),
-      el('div', { class: 'st-row st-pin', onclick: () => hooks.openBoard() }, t('studio.routines')),
-      el('div', { class: 'st-row st-pin', title: `${modLabel}K`, onclick: () => openPalette() }, `${t('studio.commands')} (${modLabel}K)`));
+      el('div', { class: 'st-row st-pin', onclick: () => hooks.selectHq() }, icon('home'), el('span', { class: 'st-title' }, t('studio.hq'))),
+      el('div', { class: 'st-row st-pin', onclick: () => hooks.openBoard() }, icon('report'), el('span', { class: 'st-title' }, t('studio.reports'))),
+      el('div', { class: 'st-row st-pin', onclick: () => hooks.openBoard() }, icon('clock'), el('span', { class: 'st-title' }, t('studio.routines'))),
+      el('div', { class: 'st-row st-pin', title: `${modLabel}K`, onclick: () => openPalette() }, icon('command'), el('span', { class: 'st-title' }, t('studio.commands')), el('span', { class: 'st-key' }, `${modLabel}K`)));
     const groups = studioGroups(view.projects, { query, currentId: currentId() });
     lists.replaceChildren(el('div', { class: 'st-head' }, t('studio.projects')),
       ...(groups.length ? groups.map(groupEl) : [el('div', { class: 'st-none' }, t('studio.none'))]));
     // paired machines: read-only (a remote target is send-as-task plus a read-only view, from HQ's board)
     machines.replaceChildren(...(devices.length ? [el('div', { class: 'st-head' }, t('studio.machines')),
       ...devices.map((d) => el('div', { class: 'st-row st-device', title: d.online ? t('studio.online') : t('studio.offline') },
-        el('span', { class: `sb-dot${d.online ? ' live' : ''}` }), el('span', { class: 'st-title' }, d.name)))] : []));
+        icon('device'), el('span', { class: 'st-title' }, d.name), el('span', { class: `sb-dot${d.online ? ' live' : ''}` })))] : []));
     // the footer: the current project's Claude account (main's user is the active project's; a picked project's label)
     const u = view.user || {};
     const cur = current();
     const label = cur?.account || u.account || '';
     const sameAsActive = !cur || cur.active;
+    const who = (sameAsActive && (u.name || u.email)) || label;
     account.replaceChildren(
+      el('span', { class: 'st-avatar', 'aria-hidden': 'true' }, (who.trim()[0] || '?').toLocaleUpperCase()),
       el('div', { class: 'st-user', title: `${t('studio.account')}: ${label}` },
         el('span', { class: 'st-title' }, (sameAsActive && (u.name || u.email)) || label),
         el('span', { class: 'st-email' }, [sameAsActive && u.name ? u.email : '', label].filter(Boolean).join(' · '))),
-      el('button', { class: 'sb-gear', title: t('studio.settings'), onclick: () => hooks.openSettings() }, '⚙'),
-      el('button', { class: 'st-switch', title: `${t('studio.toOffice')} (${modLabel === '⌘' ? '⌘⇧E' : 'Ctrl+Shift+E'})`, onclick: () => hooks.toggle() }, t('studio.toOffice')));
+      el('button', { class: 'sb-gear', title: t('studio.settings'), 'aria-label': t('studio.settings'), onclick: () => hooks.openSettings() }, icon('gear')),
+      el('button', { class: 'st-switch', title: `${t('studio.toOffice')} (${modLabel === '⌘' ? '⌘⇧E' : 'Ctrl+Shift+E'})`, 'aria-label': t('studio.toOffice'), onclick: () => hooks.toggle() }, icon('office')));
     greeting.textContent = u.name ? t('studio.greetingName', { name: u.name }) : t('studio.greeting');
     start.hidden = hooks.hasSession();
   }
