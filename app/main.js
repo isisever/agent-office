@@ -5554,7 +5554,7 @@ function saveChatImages(images) {
 /** null for a terminal tab; else { asks, live, gui: true } (the tab may be stopped: then nothing is open). */
 function guiInfo(id) {
   const t = terms.get(id);
-  if (t?.gui) return { asks: t.asks(), live: t.live() };
+  if (t?.gui) return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' } };
   const r = P.resolvePty(state, id);
   if (!r || terms.has(id) || !guiTab(id, r)) return null;
   const ended = guiEnded.get(id);
@@ -5568,6 +5568,14 @@ ipcMain.handle('chat:answer', (_e, id, askId, answer) => {
   const r = t.answer(String(askId || ''), answer && typeof answer === 'object' ? answer : {});
   if (r === 'ok') { const a = activity.get(id); if (a) a.at = Date.now(); setImmediate(() => { if (lastOffice) updateAttention(); }); }
   return r;
+});
+// v3.121 Studio's model / permission pickers: a running GUI chat switches for its next turns, never mid-turn and never
+// by a restart → 'ok' | 'not-running' (no GUI chat runs) | 'busy' (a turn or an open request) | 'bad' | 'gone'
+ipcMain.handle('chat:setting', (_e, id, key, value) => {
+  const t = terms.get(String(id));
+  if (!t?.gui || typeof t.setting !== 'function') return 'not-running';
+  if (t.live().busy || t.asks().length) return 'busy';
+  return t.setting(String(key), String(value ?? ''));
 });
 ipcMain.handle('chat:interrupt', (_e, id) => {
   const t = terms.get(String(id));

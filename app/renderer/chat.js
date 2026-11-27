@@ -11,6 +11,8 @@ import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } fr
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
+import { chipInfo, withMentions, splitMentions, pickerState, MODEL_OPTIONS, MODE_OPTIONS } from '../src/composer.mjs';
+import { icon } from './studio-icons.js';
 
 const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
@@ -86,11 +88,14 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   const bannerBtn = h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() });
   const banner = h('div', { class: 'chat-banner' }, bannerText, bannerBtn);
   const input = h('textarea', { class: 'chat-input', rows: '1' });
-  const send = h('button', { class: 'chat-send', onclick: () => submit() });
+  const sendLabel = h('span', { class: 'chat-label' });
+  const send = h('button', { class: 'chat-send', onclick: () => submit() }, sendLabel, icon('arrowUp', 18));
   const term = h('button', { class: 'chat-term', onclick: () => onTerminal() });
   // v3.113 attach: the native file picker (images into the image bar in a GUI tab, every other file as @path)
-  const attach = h('button', { class: 'chat-attach', type: 'button', onclick: () => { if (attach.disabled) return; attach.disabled = true; attachFiles().catch((e) => console.error(e)).finally(() => { attach.disabled = false; }); } }, '📎');
-  const stop = h('button', { class: 'chat-stop', onclick: () => interrupt() });
+  const attach = h('button', { class: 'chat-attach', type: 'button', onclick: () => { if (attach.disabled) return; attach.disabled = true; attachFiles().catch((e) => console.error(e)).finally(() => { attach.disabled = false; }); } },
+    h('span', { class: 'chat-glyph' }, '📎'), icon('paperclip', 18));
+  const stopLabel = h('span', { class: 'chat-label' });
+  const stop = h('button', { class: 'chat-stop', onclick: () => interrupt() }, stopLabel, icon('stop', 14));
   stop.hidden = true;
   // v3.108 a GUI tab whose claude ended by itself: why (exit code, the end of its stderr) and Start again
   const endText = h('div', { class: 'chat-end-title' });
@@ -124,8 +129,27 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   live.hidden = true;
   // v3.119 the mic: hold to talk (or click, click again); the text goes into the input
   const mic = source ? null : micButton(input, () => submit());
-  const form = h('div', { class: 'chat-form' }, slash, atList, attach, mic, input, stop, send, term);
+  // v3.121 Studio's composer: one box (.chat-composer) with the attachments above the input and a row of controls under
+  // it. In the Office the box and the row are display: contents and the controls keep their one-line order (style.css);
+  // the file chips, the pickers and the overflow menu are Studio's only (studio.css).
+  /** @type {{ path: string, size?: number, type?: string }[]} */
+  const fileChips = [];
+  let picks = { model: '', mode: '' };   // what this chat's pickers last set (main's gui.settings wins when it has them)
+  const chipBar = h('div', { class: 'chat-chips' });
+  chipBar.hidden = true;
+  const modelSel = h('select', { class: 'chat-pick chat-pick-model', onchange: () => setting('model', modelSel.value) });
+  const modeSel = h('select', { class: 'chat-pick chat-pick-mode', onchange: () => setting('mode', modeSel.value) });
+  const pickers = h('span', { class: 'chat-picks chat-studio-only' }, modelSel, modeSel);
+  const moreTerm = h('button', { class: 'chat-more-item', type: 'button', role: 'menuitem', onclick: () => { moreMenu.hidden = true; onTerminal(); } }, icon('terminal'), h('span', {}));
+  const moreMenu = h('div', { class: 'chat-more-menu', role: 'menu' }, moreTerm);
+  moreMenu.hidden = true;
+  const more = h('button', { class: 'chat-more', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => { e.stopPropagation(); moreMenu.hidden = !moreMenu.hidden; } }, icon('more', 18));
+  document.addEventListener('click', () => { moreMenu.hidden = true; });
+  const row = h('div', { class: 'chat-row' }, attach, mic, h('span', { class: 'chat-row-gap chat-studio-only' }), pickers,
+    h('span', { class: 'chat-more-wrap chat-studio-only' }, more, moreMenu), stop, send);
+  const form = h('div', { class: 'chat-form' }, slash, atList, input, row, term);
   form.hidden = Boolean(source);
+  const composer = h('div', { class: 'chat-composer' }, imgBar, chipBar, form);
   // v3.115 sub-agents: the running ones above the input (as the terminal lists them); one opens its own conversation
   // in place of the chat (read-only; ← Back returns). A paired device's chat has none (source).
   const agentBar = h('div', { class: 'chat-agents' });
@@ -149,7 +173,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   picker.hidden = true;
   agentView.tabIndex = -1;
   agentView.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeAgent(); } });
-  el.append(banner, list, empty, agentView, picker, live, card, endBox, agentBar, replyBar, imgBar, form, why);
+  el.append(banner, list, empty, agentView, picker, live, card, endBox, agentBar, replyBar, composer, why);
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -165,7 +189,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   let cursor = null;
   let sid;   // undefined until the first read
   const tools = new Map();   // tool call id → its line (marked done/failed by its result)
-  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number } }} */
+  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number }, settings?: { model: string, mode: string } }} */
   let gui = null;   // v3.108 a GUI chat tab's open requests and live line (null: a terminal tab)
   const ASK_REDRAW = '\u0000';   // askShown that matches no request: the next setGui draws the card again
   let askShown = '';   // the open request's id, as drawn
@@ -173,12 +197,17 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
 
   function texts() {
     input.placeholder = t('chat.placeholder');
-    send.textContent = t('chat.send');
+    sendLabel.textContent = t('chat.send');
+    send.title = t('chat.send');
+    moreTerm.lastElementChild.textContent = t('chat.terminal');
+    more.title = t('chat.more');
+    more.setAttribute('aria-label', t('chat.more'));
+    drawPickOptions();
     term.textContent = t('chat.terminal');
     term.title = t(gui ? 'chat.gui.terminalTitle' : 'chat.terminalTitle');
     attach.title = t('chat.attach');
     attach.setAttribute('aria-label', t('chat.attach'));
-    stop.textContent = t('chat.gui.stop');
+    stopLabel.textContent = t('chat.gui.stop');
     endBtn.textContent = t('chat.gui.restart');
     endShown = '';
     stop.title = t('chat.gui.stopTitle');
@@ -199,8 +228,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   // messages sent from here, shown at once until the transcript has them (then the transcript's copy replaces them)
   /** @type {HTMLElement[]} */
   const pending = [];
-  function echo(text) {
-    const n = h('div', { class: 'chat-msg user pending' }, mdBody(text));
+  function echo(text, imgs = []) {
+    const n = h('div', { class: 'chat-msg user pending' }, userBody(text, imgs));
     pending.push(n);
     list.append(n);
     empty.hidden = true;
@@ -239,7 +268,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       return null;
     }
     if (it.kind === 'user') {
-      const body = mdBody(it.text);
+      const body = userBody(it.text);
       if (it.images) body.append(h('div', { class: 'chat-images dim' }, t('chat.images', { count: it.images })));
       return message('user', it.text, body, ro);
     }
@@ -271,13 +300,16 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
     const frag = document.createDocumentFragment();
     for (const it of items) {
-      if ((it.kind === 'user' || it.kind === 'command') && pending.length) pending.shift()?.remove();
+      // v3.121 the echo's image thumbnails move to the transcript's copy (the transcript only knows how many)
+      let carry = null;
+      if ((it.kind === 'user' || it.kind === 'command') && pending.length) { const old = pending.shift(); carry = old?.querySelector('.chat-sent-images') || null; old?.remove(); }
       let n = null;
       // one item that cannot be rendered must not drop the rest of the batch: it is shown as plain text
       try { n = item(it); } catch (e) {
         console.error(e);
         try { n = typeof it?.text === 'string' ? message(it.kind === 'user' ? 'user' : 'assistant', it.text, textBody(it.text)) : null; } catch (e2) { console.error(e2); }
       }
+      if (n && carry && it.kind === 'user') { const count = n.querySelector('.chat-images'); if (count) count.replaceWith(carry); else n.firstElementChild?.append(carry); }
       if (n) frag.append(n);
     }
     if (pending.length) list.insertBefore(frag, pending[0]); else list.append(frag);
@@ -522,6 +554,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   function setGui(g) {
     const was = Boolean(gui);
     gui = g ? { ...g, asks: (g.asks || []).filter((a) => !answered.has(a.id)) } : null;
+    drawPicks();
     if (gui && !was) { menu = null; menuShown = ''; texts(); }
     if (!gui) { if (was) { askShown = ''; card.hidden = true; card.replaceChildren(); stop.hidden = true; endBox.hidden = true; texts(); } return; }
     drawEnd(gui.ended || null);
@@ -707,15 +740,78 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       blobs.push({ blob: new Blob([im.data], { type: im.type }), path: im.path });
     }
     if (blobs.length) addImages(blobs.map((b) => b.blob), (f) => { const b = blobs.find((x) => x.blob === f); if (b) insertPaths([b.path]); });
-    if (paths.length) insertPaths(paths);
+    if (paths.length) attachPaths(paths);
     else input.focus();
   }
   if (!source) {
-    el.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
+    const dragOn = (/** @type {boolean} */ on) => el.classList.toggle('chat-drag', on);   // v3.121 Studio highlights the drop target
+    el.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; dragOn(true); });
+    el.addEventListener('dragleave', (e) => { if (!(e.relatedTarget instanceof Node) || !el.contains(e.relatedTarget)) dragOn(false); });
     el.addEventListener('drop', (e) => {
       e.preventDefault(); e.stopPropagation();
-      insertPaths([...(e.dataTransfer?.files || [])].map((f) => { try { return api.pathForFile?.(f) || ''; } catch { return ''; } }).filter(Boolean));
+      dragOn(false);
+      const files = [...(e.dataTransfer?.files || [])];
+      const pathOf = (/** @type {File} */ f) => { try { return api.pathForFile?.(f) || ''; } catch { return ''; } };
+      if (!studioOn()) { insertPaths(files.map(pathOf).filter(Boolean)); return; }
+      // Studio: images go with the message as images (a GUI chat), every other file as a chip (sent as @path)
+      const imgs = gui ? files.filter((f) => IMAGE_TYPES.includes(f.type)) : [];
+      if (imgs.length) addImages(imgs, (f) => { const p = pathOf(f); if (p) addFiles([{ path: p, size: f.size, type: f.type }]); });
+      addFiles(files.filter((f) => !imgs.includes(f)).map((f) => ({ path: pathOf(f), size: f.size, type: f.type })).filter((f) => f.path));
     });
+  }
+
+  // ---- v3.121 Studio's composer: file chips, sent media, the model / permission pickers
+  const studioOn = () => document.body.classList.contains('studio');
+  /** A file chip: kind icon, name, size (or extension); ✕ when it can be removed. */
+  function fileChip(/** @type {{ path: string, size?: number, type?: string }} */ f, /** @type {(() => void) | null} */ onRemove = null) {
+    const c = chipInfo(f);
+    return h('span', { class: `chat-file-chip kind-${c.kind}`, title: f.path },
+      h('span', { class: 'chat-file-icon' }, icon('file', 16)),
+      h('span', { class: 'chat-file-text' }, h('span', { class: 'chat-file-name' }, c.name), c.meta ? h('span', { class: 'chat-file-meta' }, c.meta) : null),
+      onRemove ? h('button', { class: 'chat-image-x', type: 'button', title: t('chat.fileRemove'), 'aria-label': t('chat.fileRemove'), onclick: onRemove }, '✕') : null);
+  }
+  function drawChips() {
+    chipBar.replaceChildren(...fileChips.map((f, i) => fileChip(f, () => { fileChips.splice(i, 1); drawChips(); input.focus(); })));
+    chipBar.hidden = !fileChips.length;
+  }
+  function addFiles(/** @type {{ path: string, size?: number, type?: string }[]} */ list) {
+    for (const f of list) if (f.path && !fileChips.some((c) => c.path === f.path)) fileChips.push(f);
+    drawChips();
+    input.focus();
+  }
+  /** Files from the picker or the clipboard: chips in Studio, @path in the input in the Office. */
+  function attachPaths(/** @type {string[]} */ paths) {
+    if (studioOn() && !source) addFiles(paths.map((p) => ({ path: p })));
+    else insertPaths(paths);
+  }
+  /** A person's message: its text, then (Studio) the images sent with it and the files it mentions as chips. */
+  function userBody(/** @type {string} */ text, /** @type {{ type: string, data: string }[]} */ imgs = []) {
+    const split = studioOn() ? splitMentions(text) : { text, files: [] };
+    const body = mdBody(split.text);
+    if (imgs.length) body.append(h('div', { class: 'chat-sent-images' }, ...imgs.map((im) => h('img', { src: `data:${im.type};base64,${im.data}`, alt: t('chat.imageAlt') }))));
+    if (split.files.length) body.append(h('div', { class: 'chat-sent-files' }, ...split.files.map((p) => fileChip({ path: p }))));
+    return body;
+  }
+  function drawPickOptions() {
+    modelSel.replaceChildren(...MODEL_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.model.${m || 'start'}`))));
+    modeSel.replaceChildren(...MODE_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.mode.${m}`))));
+    drawPicks();
+  }
+  function drawPicks() {
+    const st = pickerState(gui, gui?.settings || picks);
+    if (modelSel.value !== st.model) modelSel.value = st.model;
+    if (modeSel.value !== st.mode) modeSel.value = st.mode;
+    modelSel.disabled = modeSel.disabled = !st.enabled;
+    const why = st.why ? ` · ${t(`chat.pick.why.${st.why}`)}` : '';
+    modelSel.title = `${t('chat.pick.modelTitle')}${why}`;
+    modeSel.title = `${t('chat.pick.modeTitle')}${why}`;
+  }
+  async function setting(/** @type {'model' | 'mode'} */ key, /** @type {string} */ value) {
+    let r = 'error';
+    try { r = api.chat.setting ? await api.chat.setting(ptyId, key, value) : 'not-running'; } catch (e) { console.error(e); }
+    if (r === 'ok') { picks = { ...picks, [key]: value }; if (gui) gui.settings = { model: '', mode: '', ...(gui.settings || {}), [key]: value }; note(''); }
+    else note(t(`chat.pick.failed.${['busy', 'not-running'].includes(r) ? r : 'other'}`));
+    drawPicks();
   }
 
   function replyTo(text) {
@@ -785,7 +881,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     if (source || document.activeElement !== input) return false;
     let clip = null;
     try { clip = await api.clipboard.read(); } catch (e) { console.error(e); return false; }
-    if (Array.isArray(clip?.files) && clip.files.length) { insertPaths(clip.files.filter((p) => typeof p === 'string' && p)); return true; }
+    if (Array.isArray(clip?.files) && clip.files.length) { attachPaths(clip.files.filter((p) => typeof p === 'string' && p)); return true; }
     // text with an image (spreadsheet cells, rich text): the normal paste keeps the text and adds the image
     if (!clip?.hasImage || (typeof clip.text === 'string' && clip.text.trim())) return false;
     try {
@@ -802,13 +898,14 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   async function submit() {
     if (imageReads.length) await Promise.all(imageReads.slice());   // an image pasted a moment ago goes with this message
     const text = input.value;
-    if (!text.trim() && !images.length) return;
+    const files = fileChips.map((f) => f.path);
+    if (!text.trim() && !images.length && !files.length) return;
     if (menu && !gui) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
     // a slash command is sent as typed (a quote in front would stop it being a command)
-    const out = replying && !/^\s*\//.test(text) ? withReply(replying, text) : text;
+    const out = withMentions(replying && !/^\s*\//.test(text) ? withReply(replying, text) : text, files);
     // v3.117 a command with a screen of its own (/resume, /model, /mcp, …) runs in the tab's terminal; the chat comes back
     // when that screen is closed (app.js watches it)
-    const cmd = text.trim().match(/^\/([\w:.-]+)/)?.[1];
+    const cmd = files.length ? undefined : text.trim().match(/^\/([\w:.-]+)/)?.[1];
     if (cmd === 'resume' && gui && !images.length && api.chat.sessions) { openResume(text.trim().slice(7).trim()); return; }   // v3.118
     if (cmd && !images.length) await loadCommands();
     if (cmd && !images.length && commands?.some((c) => c.name === cmd && c.ui)) { await runCommand(text.trim()); return; }
@@ -816,8 +913,10 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     const sent = images.slice();
     try { r = await api.chat.send(ptyId, out, sent); } catch (e) { console.error(e); r = 'error'; }
     if (r === 'ok') {
-      echo(sent.length ? `${out}${out.trim() ? '\n\n' : ''}${t('chat.images', { count: sent.length })}` : out);
+      if (studioOn()) echo(out, sent);
+      else echo(sent.length ? `${out}${out.trim() ? '\n\n' : ''}${t('chat.images', { count: sent.length })}` : out);
       images.length = 0; drawImages();
+      fileChips.length = 0; drawChips();
       input.value = '';
       replyTo('');
       fitInput();

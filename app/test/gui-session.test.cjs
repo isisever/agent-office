@@ -341,3 +341,14 @@ test('v3.116 switchWhy names what a refused switch waits for; typesInput ignores
   for (const d of ['\x1b[I', '\x1b[O', '\x1b[?1;2c', '\x1b[<0;10;5M', '\x1b[A', '', '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\', '\x1bP>|xterm.js(5.5.0)\x1b\\']) assert.equal(GS.typesInput(d), false, JSON.stringify(d));
   for (const d of ['a', '\r', 'hello\r', '\x1b[200~text\x1b[201~', '\x03']) assert.equal(GS.typesInput(d), true, JSON.stringify(d));
 });
+
+test('settingLine: set_model / set_permission_mode control requests, only known values', () => {
+  const GS2 = require('../src/gui-session.js');
+  const p = (s) => JSON.parse(s);
+  assert.deepEqual(p(GS2.settingLine('s1', 'model', 'opus')), { type: 'control_request', request_id: 's1', request: { subtype: 'set_model', model: 'opus' } });
+  assert.deepEqual(p(GS2.settingLine('s2', 'model', '')), { type: 'control_request', request_id: 's2', request: { subtype: 'set_model' } });
+  assert.deepEqual(p(GS2.settingLine('s3', 'mode', 'plan')), { type: 'control_request', request_id: 's3', request: { subtype: 'set_permission_mode', mode: 'plan' } });
+  assert.equal(GS2.settingLine('s4', 'mode', 'bypassPermissions'), null);
+  assert.equal(GS2.settingLine('s5', 'model', 'gpt-4'), null);
+  assert.equal(GS2.settingLine('s6', 'effort', 'high'), null);
+});

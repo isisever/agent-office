@@ -804,6 +804,32 @@
     "reveal": "Klasörde göster",
     "imageAlt": "Yapıştırılan görsel",
     "imageRemove": "Bu görseli kaldır",
+    "more": "Diğer",
+    "fileRemove": "Bu dosyayı çıkar",
+    "pick": {
+      "modelTitle": "Sonraki turlar için model",
+      "modeTitle": "Sonraki turlar için izin modu",
+      "model": {
+        "start": "Başlangıçtaki model",
+        "opus": "Opus",
+        "sonnet": "Sonnet",
+        "haiku": "Haiku"
+      },
+      "mode": {
+        "default": "İzin sor",
+        "acceptEdits": "Düzenlemeleri kabul et",
+        "plan": "Plan modu"
+      },
+      "why": {
+        "terminal": "yalnızca çalışan bir GUI sohbetinde (terminalde /model kullanın)",
+        "busy": "tur bitene kadar bekleyin"
+      },
+      "failed": {
+        "busy": "Bir tur çalışıyor: bitince değiştirin.",
+        "not-running": "Bu oturum sohbet olarak çalışmıyor.",
+        "other": "Değiştirilemedi."
+      }
+    },
     "revealMac": "Finder'da göster",
     "revealOutside": "Bu dosya proje klasörünün içinde değil (ya da silinmiş): burada gösterilemez.",
     "revealGone": "Bu dosya artık yok: yerine klasörü gösterildi.",

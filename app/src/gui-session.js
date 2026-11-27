@@ -85,6 +85,20 @@ const userLine = (text, images = []) => line({ type: 'user', message: { role: 'u
   ? [...(String(text).trim() ? [{ type: 'text', text: String(text) }] : []), ...images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.type, data: i.data } }))]
   : String(text) } });
 /** Stop the running turn (Esc in the terminal). */
+/** v3.121 Studio's pickers: the models and permission modes a running GUI chat may switch to ('' model: the start's). */
+const SET_MODELS = ['', 'opus', 'sonnet', 'haiku'];
+const SET_MODES = ['default', 'acceptEdits', 'plan'];
+/**
+ * A control request that changes the running session's model or permission mode (the SDK protocol's set_model /
+ * set_permission_mode); null for any other key or value. No restart: the next turn uses it.
+ */
+function settingLine(requestId, key, value) {
+  if (key === 'model' && SET_MODELS.includes(value)) {
+    return line({ type: 'control_request', request_id: String(requestId), request: value ? { subtype: 'set_model', model: value } : { subtype: 'set_model' } });
+  }
+  if (key === 'mode' && SET_MODES.includes(value)) return line({ type: 'control_request', request_id: String(requestId), request: { subtype: 'set_permission_mode', mode: value } });
+  return null;
+}
 const interruptLine = (requestId) => line({ type: 'control_request', request_id: String(requestId), request: { subtype: 'interrupt' } });
 const allowLine = (requestId, input) => line({ type: 'control_response', response: { subtype: 'success', request_id: String(requestId), response: { behavior: 'allow', updatedInput: input && typeof input === 'object' ? input : {} } } });
 const denyLine = (requestId, message) => line({ type: 'control_response', response: { subtype: 'success', request_id: String(requestId), response: { behavior: 'deny', message: String(message || 'The person declined this.') } } });
@@ -222,4 +236,4 @@ function endNote(stderr) {
   return lines.join('\n').slice(-END_NOTE_MAX);
 }
 
-module.exports = { isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+module.exports = { settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };

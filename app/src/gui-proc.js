@@ -30,6 +30,7 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
   let ended = false;
   let seq = 0;
   let stderr = '';
+  const settings = { model: '', mode: '' };   // v3.121 what Studio's pickers set in this run
 
   const put = (s) => {
     if (ended || !child.stdin || child.stdin.destroyed) return false;
@@ -98,6 +99,15 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
       return ok;
     },
     interrupt: () => put(GS.interruptLine(`interrupt-${++seq}`)),
+    /** v3.121 the model or permission mode for the next turns ('ok' | 'bad' | 'gone'); never during a turn (main checks). */
+    setting(key, value) {
+      const out = GS.settingLine(`setting-${++seq}`, key, value);
+      if (!out) return 'bad';
+      if (!put(out)) return 'gone';
+      settings[key === 'model' ? 'model' : 'mode'] = value;
+      return 'ok';
+    },
+    settings: () => ({ ...settings }),
     /** Answers an open card; 'ok', 'gone' (no such request any more) or 'bad-answer'. */
     answer(askId, answer) {
       const open = asks.get(String(askId));
