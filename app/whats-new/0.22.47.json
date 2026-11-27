@@ -31,6 +31,18 @@
         "en": "The board's Reports tab counts the work closed this week, last week, in 30 days or in your own range, by project, type or member, with the average time, tokens and cost.",
         "tr": "Panonun Raporlar sekmesi bu hafta, geçen hafta, son 30 günde ya da seçtiğiniz aralıkta kapanan işleri projeye, türe ya da üyeye göre sayıyor; ortalama süre, token ve maliyetle birlikte."
       }
+    },
+    {
+      "id": "order-templates",
+      "experience": "both",
+      "title": {
+        "en": "Order templates for HQ",
+        "tr": "HQ için emir şablonları"
+      },
+      "body": {
+        "en": "Save an order you send often as a template, from HQ's composer or an order card's menu. Pick it from Templates next to HQ's composer (or Run template… in ⌘K): it fills the composer with its type and targets, you edit it and press Send yourself. Rename or delete templates in Settings → HQ & routines.",
+        "tr": "Sık gönderdiğiniz bir emri HQ yazma kutusundan ya da bir emir kartının menüsünden şablon olarak kaydedin. HQ yazma kutusunun yanındaki Şablonlar'dan (veya ⌘K'de Şablon çalıştır…) seçin: yazma kutusunu türü ve hedefleriyle doldurur, düzenleyip Gönder'e kendiniz basarsınız. Şablonları Ayarlar → HQ ve rutinler'de yeniden adlandırın ya da silin."
+      }
     }
   ]
 }

@@ -3638,3 +3638,30 @@ orders: { <request id>: { type?, doneAt? } }, taskSids: [session uuids] }`. Load
 Caps: 200 open chat cards (oldest activity dropped first), 500 closed chat cards (newest kept), 1000 order entries,
 1000 task sessions (`taskSids`, newest kept; they survive a restart so a task session never turns into a chat card).
 Order cards themselves come from board.json and follow its caps.
+
+## Order templates (v3.134)
+
+Stored HQ order texts the person reuses. A template is only a draft: it never sends, never mints an order id and never
+carries authority. Pure rules in `src/order-templates.js` (store) and `src/template-fill.mjs` (composer text);
+the window parts in `renderer/templates-ui.js`; wiring in `main.js`.
+
+- **Template.** `{ id, name, text, type, targets? }`: `id` `tp` + 8 hex (minted by main), `name` 1..80 (one line),
+  `text` 1..4000 (longer is refused, not cut), `type` `bugfix` | `hotfix` | `feature`, `targets` up to 10 short names
+  (≤ 80 each, unique). Control characters other than tab and newline are dropped, so no terminal escape is ever pasted.
+- **Store.** `state.orderTemplates` in `state.json` (saved atomically like the rest of the state), at most
+  `MAX_TEMPLATES` (50); a hand-edited list is read through `normalizeList` (invalid rows and duplicate ids dropped).
+- **IPC** (each checks the sender is the app window, `fromWin`, and validates its arguments):
+  `templates:list` → `Template[]`; `templates:save({ id?, name, text, type, targets? })` → `{ ok, id, list }` or
+  `{ ok: false, reason: 'invalid' | 'unknown' | 'too-many' }` (an `id` must be a known one; none = new);
+  `templates:remove(id)` → `{ ok, list }` or `{ ok: false, reason: 'invalid' | 'unknown' }`;
+  `templates:fromOrder('o:<request id>')` → `{ ok, draft }` (the order's original prompt from board.json, the card's
+  type and its tasks' projects as targets) for the card's "Save as template". Changes are pushed as `templates:changed`.
+- **Use.** Picking a template puts `fillText(tpl)` into HQ's composer: `"<type>: <text>"`, then `Targets: a, b` when it
+  has targets (a text that already starts with a type prefix gets the template's type instead). In the chat view it
+  replaces the input's text; in the terminal it is a bracketed paste into claude's input (no Enter). The person edits
+  it and sends it: that send is an ordinary typed HQ prompt (v3.130), so it is an order with typed authority because
+  the person sent it, never because of the template. Nothing auto-sends.
+- **Where.** HQ's chat composer: a **Templates** menu (every template, then **Save as template** for the input's text;
+  `fromText` reads a type prefix and a `Targets:` line back out). Studio ⌘K: **Run template…** lists the templates
+  in the palette. The board: an order card's **⋯** menu has **Save as template**. Rename and delete (and, in the
+  Office, Use): Studio Settings → HQ & routines → Order templates, and the Office's HQ panel (the gear under HQ).
