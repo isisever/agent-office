@@ -1,0 +1,36 @@
+{
+  "version": "0.22.47",
+  "items": [
+    {
+      "id": "board-cards",
+      "experience": "both",
+      "title": {
+        "en": "One board for orders and conversations",
+        "tr": "Emirler ve sohbetler için tek pano"
+      },
+      "body": {
+        "en": "HQ's board now shows your orders and your project conversations as cards in To do, Working, Needs you, Review and Done. Each card has a type (bugfix, hotfix or feature) that sets its priority; click the type to change it. Filter by project, type or member, or search.",
+        "tr": "HQ panosu artık emirlerinizi ve proje sohbetlerinizi Yapılacak, Çalışıyor, Seni bekliyor, İncele ve Bitti sütunlarında kart olarak gösteriyor. Her kartın önceliğini belirleyen bir türü var (hata, acil ya da özellik); değiştirmek için türe tıklayın. Projeye, türe ya da üyeye göre süzün veya arayın."
+      },
+      "try": {
+        "label": {
+          "en": "Open the board",
+          "tr": "Panoyu aç"
+        },
+        "action": "open-board"
+      }
+    },
+    {
+      "id": "board-reports",
+      "experience": "both",
+      "title": {
+        "en": "Reports: what each project closed",
+        "tr": "Raporlar: her projenin kapattıkları"
+      },
+      "body": {
+        "en": "The board's Reports tab counts the work closed this week, last week, in 30 days or in your own range, by project, type or member, with the average time, tokens and cost.",
+        "tr": "Panonun Raporlar sekmesi bu hafta, geçen hafta, son 30 günde ya da seçtiğiniz aralıkta kapanan işleri projeye, türe ya da üyeye göre sayıyor; ortalama süre, token ve maliyetle birlikte."
+      }
+    }
+  ]
+}
