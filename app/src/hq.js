@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const { REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK } = require('./link-core.js');
+const { ORDER_MS } = require('./hq-order.js');
 
 const HQ_ID = 'hq';
 const MAX_PER_REQUEST = 8;          // tasks one request may create
@@ -130,6 +131,10 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
    *  own typed turn. Main memory only (never board.json, which a session can edit); gone with the app, as are follow-ups. */
   /** @type {Map<string, Set<string>>} */
   const targets = new Map();
+  /** v3.130 orders: typed id → { at, closed }. An open order keeps its typed authority (follow-ups without the
+   *  count and the 2 h window) until it is closed or ORDER_MS passed. */
+  /** @type {Map<string, { at: number, closed: boolean }>} */
+  const orders = new Map();
   const fresh = (e) => Boolean(e) && now() - e.at <= e.ttl;
   const endRoutines = () => { for (const e of all.values()) if (e.origin === 'routine') e.live = false; };
   return {
@@ -140,8 +145,20 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
       if (origin !== 'routine') current = { id, at: e.at };   // a routine mint never replaces the typed one
       all.set(id, e);
       if (all.size > 50) all.delete(all.keys().next().value);
-      if (origin === 'typed') { typed.set(id, e.at); if (typed.size > 50) typed.delete(typed.keys().next().value); }
+      if (origin === 'typed') {
+        typed.set(id, e.at); if (typed.size > 50) typed.delete(typed.keys().next().value);
+        orders.set(id, { at: e.at, closed: false }); if (orders.size > 50) orders.delete(orders.keys().next().value);
+      }
       return id;
+    },
+    /** v3.130 is this an open order (a typed id, not closed, younger than ORDER_MS)? */
+    isOrder(id) { const o = isStr(id) ? orders.get(id) : null; return Boolean(o) && !o.closed && now() - o.at >= 0 && now() - o.at < ORDER_MS; },
+    /** v3.130 the order is closed (office_summary, the person): later turns are follow-ups under today's limits */
+    closeOrder(id) { const o = isStr(id) ? orders.get(id) : null; if (o) o.closed = true; },
+    /** v3.130 an open order read back from the sealed store after a restart (its typed time kept) */
+    restoreOrder(id, at) {
+      if (!isStr(id) || !Number.isFinite(at) || orders.has(id)) return;
+      typed.set(id, at); orders.set(id, { at, closed: false });
     },
     current() { return current && now() - current.at <= MINT_MS ? current.id : null; },
     clear() { current = null; endRoutines(); },
@@ -170,7 +187,8 @@ function createMinter({ now = Date.now, rand = () => Math.random().toString(36).
 /** The request a dispatch belongs to: an id the minter issued, else the current one, else the capped 'adhoc' bucket. */
 // v3.91 an id the person typed stays usable for INITIATIVE_MS (past its 30 min TTL); v3.103 unless the person wants
 // to be asked (`ask`: the `askBeforeDispatch` setting), where it ends with its TTL as before
-const typedWithin = (minter, id, now) => { const at = minter?.typedAt?.(id) || 0; return at > 0 && now - at < INITIATIVE_MS; };
+// v3.130 an open order keeps it until it is closed or ORDER_MS passed
+const typedWithin = (minter, id, now) => { const at = minter?.typedAt?.(id) || 0; return at > 0 && (now - at < INITIATIVE_MS || Boolean(minter?.isOrder?.(id))); };
 const resolveRequest = (minter, id, { ask = false, now = Date.now() } = {}) => (minter.issued(id) || (!ask && typedWithin(minter, id, now)) ? id : minter.current() || ADHOC);
 /** v3.47 a dispatch without the routine's id is held only while an HQ routine turn's id is still live (never the
  *  person's own typed requests after that turn ended). */
@@ -219,6 +237,8 @@ function followRefusal({ request, minter, board, targets, counted = false, now =
   if (targets.some((t) => !t || (t.remote === true && !(typeof t.machine === 'string' && t.machine && t.machine !== 'self')))) return 'unknown-machine';
   if (targets.some((t) => t.skip === true)) return 'skip-permissions';
   if (targets.some((t) => t.auto === true && t.seen !== true)) return 'new-unattended-target';
+  // v3.130 an open order: no follow-up count and no cap refusal here (the excess waits in the order queue)
+  if (minter?.isOrder?.(request)) return null;
   const b = { tasks: Array.isArray(board?.tasks) ? board.tasks : [], requests: Array.isArray(board?.requests) ? board.requests : [] };
   if (openTasks(b).length + n > MAX_OPEN) return 'open-cap';
   if (b.tasks.filter((t) => t.request === request).length + removedOf(b, request) + n > MAX_PER_REQUEST) return 'request-cap';
@@ -263,6 +283,7 @@ const openTasks = (board) => board.tasks.filter(OPEN);
 const removedOf = (board, request) => (request && request !== ADHOC ? Math.max(0, Number((board.requests || []).find((r) => r.id === request)?.removed) || 0) : 0);
 /** Caps before a dispatch: 8 per request, 12 open. → reason or null. */
 function capReason(board, request) {
+  board = { ...board, tasks: board.tasks.filter((t) => t.orderQueued !== true) };   // v3.130 an order's queued rows wait outside the caps
   if (openTasks(board).length >= MAX_OPEN) return 'open-cap';
   // the adhoc bucket counts its open tasks only (it never ends); a real request counts every task it ever got, removed rows too
   if (request && board.tasks.filter((t) => t.request === request && (request !== ADHOC || OPEN(t))).length + removedOf(board, request) >= MAX_PER_REQUEST) return 'request-cap';
