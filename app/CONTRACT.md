@@ -3037,3 +3037,21 @@ type StudioProject = { id, name, dir, engine, account: string, active: boolean, 
   `prefsPatch` and `idleMoveTarget` (entering Studio moves idle tabs once, leaving moves nothing back, busy tabs are
   never restarted), `chatShownFor` and `chatButtonFor`, the IPC's sender and argument
   checks by source text).
+- **Composer (v3.121)**: one rounded box: the input, then a row with attach, mic (a round ghost icon button like attach),
+  the model and permission pickers, the overflow menu (Terminal) and send. `src/composer.mjs` holds the pure logic.
+  - **Chips**: files dropped, pasted (Finder copy) or picked (multi-select; folders too on macOS) become chips in the
+    order given, the same path once (`addChips`); a folder is one chip (`dir`, sent as `@path`, never expanded). In a GUI
+    chat dropped/picked images go with the message as images (click: a larger preview). While dragging the composer
+    shows the count (`dropText`: "Drop 3 files"). A chip: click opens it in its default app, right click has Open, Show in
+    Finder and Remove; ✕ removes one, Remove all shows with two or more. Chips are cleared only after a send that worked.
+    Sent messages show the same chips (from the trailing `@path` line, `splitMentions`), with Open and Show in Finder.
+  - `agentOffice.chat.openFile(path, how)` → `chat:openFile` (own window only): `how` 'open' | 'reveal' → 'ok' |
+    'shown' | 'gone'. Any existing absolute path; whatever could run code when opened (app bundles, executables,
+    scripts and installers by extension, `FM.openTarget`) is only shown in Finder ('shown').
+  - **Pickers**: `agentOffice.chat.setting(id, 'model' | 'mode', value)` → `chat:setting` sends claude a `set_model` /
+    `set_permission_mode` control request (models '' | opus | sonnet | haiku; modes default | acceptEdits | plan) and
+    waits for its `control_response` (10 s): 'ok' (recorded), 'error:<claude's message>' (nothing changed; the picker
+    goes back and the note shows the message), 'busy' (a turn, an open request or another setting waits: refused),
+    'not-running' | 'bad' | 'gone'. Never a restart. Checked live with Claude Code 2.1.332.
+  - **Idle at start**: a GUI chat is busy only from a sent message or a `message_start` until `result`; a whole user or
+    assistant message outside a turn no longer marks it busy (`nextLive`), so a fresh or resumed chat is not "Working…".
