@@ -13,10 +13,9 @@ export function drawMembers(v) {
   const s = state.members || (state.members = { picking: '', error: {} });
   const staff = Array.isArray(td.staff) ? td.staff : [];
   const stateText = (/** @type {string} */ x) => (x === 'needs' ? t('studio.teamPage.stateNeeds') : x === 'working' ? t('studio.teamPage.stateWorking') : x === 'asleep' ? t('studio.teamPage.stateAsleep') : t('studio.teamPage.stateIdle'));
+  // adding a member: the page header's "+ Add team member" (the member form) or the Roles gallery's Hire
   const head = el('div', { class: 'st-team-toolbar' },
-    el('span', { class: 'st-team-count' }, t('studio.teamPage.count', { n: staff.length })),
-    el('span', { class: 'st-start-gap' }),
-    el('button', { class: 'st-set-btn primary', type: 'button', onclick: () => v.go('roles') }, t('studio.teamPage.addMember')));
+    el('span', { class: 'st-team-count' }, t('studio.teamPage.count', { n: staff.length })));
   if (!staff.length) {
     return [el('div', { class: 'st-team-empty' },
       el('span', { class: 'st-team-empty-icon', 'aria-hidden': 'true' }, icon('team', 28)),

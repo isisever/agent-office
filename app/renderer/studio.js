@@ -130,7 +130,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       remove: (id) => hooks.removeMember(id),
       reload: () => hooks.reloadTeam(),
       editMember: (m) => hooks.sidebar()?.editMember?.(m),
-      openWizard: () => hooks.sidebar()?.openRoleWizard?.(),   // only the gallery's Custom role card
+      openWizard: () => hooks.sidebar()?.openRoleWizard?.(),
       openDesk: (projectId, staffId) => { teamPage.close(); hooks.openDesk(projectId, staffId); },
       tools: () => hooks.teamTools(),
     },
@@ -477,7 +477,10 @@ export function mountStudio({ api, t, modLabel, hooks }) {
           ...(open ? (m.desks.length ? m.desks.map((d) => el('button', { class: 'st-row st-desk', type: 'button', title: stateText(d.state), onclick: () => hooks.openDesk(d.projectId, m.id) },
             el('span', { class: `st-member-state ${d.state}` }), el('span', { class: 'st-title' }, d.name))) : [el('div', { class: 'st-none st-desk' }, t('studio.team.noDesks'))]) : [])];
         })]),
-      el('button', { class: 'st-row st-team-add', type: 'button', onclick: () => openTeam('roles') }, icon('plus', 14), el('span', { class: 'st-title' }, t('studio.team.add'))));   // v3.124 the preset gallery
+      // v3.124 the Office TEAM panel's two buttons, with its labels: the member form for a new member (as a side sheet)
+      // and the role wizard
+      el('button', { class: 'st-row st-team-add', type: 'button', onclick: () => hooks.sidebar()?.editMember?.(null) }, el('span', { class: 'st-title' }, t('staff.add'))),
+      el('button', { class: 'st-row st-team-add st-team-wizard', type: 'button', onclick: () => hooks.sidebar()?.openRoleWizard?.() }, el('span', { class: 'st-title' }, t('staff.wizard.open'))));
   }
 
   // ---- the account menu (footer): Studio's theme, Settings, accounts, back to the Office ----

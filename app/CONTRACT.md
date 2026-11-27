@@ -3346,12 +3346,14 @@ TEAM panel is unchanged.
   description, packs, suggested tools and the brief read only in a folded `<details>`. "Add to team" (Hire):
   `prefillMember` (the role by id, its department label, its packs on, the app-added MCP servers it suggests ticked,
   as the member popup does); the person fills name, department, account and projects; `hireForm` → `staff:save`
-  (no id: an add); on success the Members tab. "Custom role" opens the Office's role wizard (`sidebar.addMember()`,
+  (no id: an add); on success the Members tab. "Custom role" opens the Office's role wizard (`sidebar.openRoleWizard()`,
   its popup; restyling it as a Studio chat sheet is left for later).
-  Every Studio "Add member" entry (the sidebar Team section's "+ Add member", the Members tab's "Add member" and
-  "Browse roles") opens the Roles tab with its search focused; "Custom role" is the gallery's last card and the only
-  Studio entry to the wizard (`sidebar.openRoleWizard()`, which replaces v3.122's `sidebar.addMember()`). The Office's
-  TEAM panel keeps its own "+ Add team member" and wizard buttons.
+- **Adding a member**: Studio offers the Office TEAM panel's two buttons with its labels: "+ Add team member"
+  (`staff.add`: `sidebar.editMember(null)`, the Office's member form with its preset list, as a side sheet) and
+  "Role wizard" (`staff.wizard.open`: `sidebar.openRoleWizard()`, which replaces v3.122's `sidebar.addMember()`), in
+  the Team page header on every tab (team mode on) and under the sidebar's Team section (replacing its "+ Add member",
+  `studio.team.add`, which opened the wizard). The Roles gallery stays the browse-and-hire path; its last card,
+  "Custom role", also opens the wizard; the Roles tab opens with its search focused. The Office's TEAM panel is unchanged.
 - **Departments** (`drawDepartments`, `departmentCounts`, `renameForms`): each department with its member count;
   Rename (≤ 30, as main) saves each member of it with the new label through `staff:save`; members main refused are
   named with its reason. An empty name is refused; the same name (or a function's label unchanged) changes nothing.

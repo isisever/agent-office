@@ -773,3 +773,5 @@ body.studio #studio-team .st-team-dept-row + .st-team-dept-row { border-top: 1px
 body.studio #studio-team .st-team-dept-name { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 body.studio #studio-team .st-team-dept-row.editing .st-team-input { flex: 1; min-width: 0; }
 body.studio #studio-team .st-team-depts + .st-team-error { max-width: 640px; margin-top: 10px; }
+body.studio #studio-team .st-team-head-btns { display: flex; gap: 8px; margin-bottom: 12px; }
+body.studio #studio-sidebar .st-team-wizard .st-title { color: var(--st-muted); }

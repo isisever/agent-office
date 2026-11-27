@@ -45,6 +45,10 @@ export function mountTeamPage({ el, t, host, hooks }) {
   const backBtn = el('button', { class: 'st-set-back', type: 'button', onclick: () => close() }, icon('back', 16));
   const title = el('h1', { class: 'st-set-title' });
   const tabsEl = el('div', { class: 'st-team-tabs', role: 'tablist' });
+  // the Office TEAM panel's two buttons, with its labels, on every tab: the member form (a side sheet) and the wizard
+  const addBtn = el('button', { class: 'st-set-btn primary st-team-add-member', type: 'button', onclick: () => hooks.editMember(null) });
+  const wizardBtn = el('button', { class: 'st-set-btn st-team-wizard', type: 'button', onclick: () => hooks.openWizard() });
+  const headBtns = el('div', { class: 'st-team-head-btns' }, wizardBtn, addBtn);
   const content = el('div', { class: 'st-team-content' });
   const sheetTitle = el('h2', { class: 'st-sheet-title' });
   const sheetBody = el('div', { class: 'st-sheet-body' });
@@ -53,7 +57,7 @@ export function mountTeamPage({ el, t, host, hooks }) {
     sheetBody);
   const sheetBack = el('div', { class: 'st-sheet-back', hidden: true, onmousedown: () => sheet.close() });
   const page = el('div', { id: 'studio-team', hidden: true, role: 'region' },
-    el('div', { class: 'st-set-top' }, backBtn, title, tabsEl), content, sheetBack, sheetEl);
+    el('div', { class: 'st-set-top' }, backBtn, title, headBtns, tabsEl), content, sheetBack, sheetEl);
   host.append(page);
 
   const sheet = {
@@ -97,6 +101,9 @@ export function mountTeamPage({ el, t, host, hooks }) {
     title.textContent = t('studio.teamPage.title');
     const on = Boolean(td?.teamMode);
     tabsEl.hidden = !on;
+    headBtns.hidden = !on;
+    addBtn.textContent = t('staff.add');
+    wizardBtn.textContent = t('staff.wizard.open');
     if (!on) { sheet.close(); content.replaceChildren(offState()); return; }
     const label = { members: t('studio.teamPage.tabMembers'), roles: t('studio.teamPage.tabRoles'), departments: t('studio.teamPage.tabDepartments') };
     tabsEl.replaceChildren(...TEAM_TABS.map((id) => el('button', {
