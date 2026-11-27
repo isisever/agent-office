@@ -2944,8 +2944,9 @@ panel, the tab strip) stays the default; Studio puts a session sidebar and the a
 
 ```ts
 agentOffice.prefs.get()  // + experience: 'office' | 'studio'   (state.json `experience`; written once set, 'office' when unset or unknown)
-agentOffice.prefs.set({ experience })   // anything but the two values is ignored; a change moves idle tabs like the chat view (v3.108)
+agentOffice.prefs.set({ experience })   // anything but the two values is ignored; a change never restarts or moves a running tab
 agentOffice.studio.sessions()  // 'studio:sessions' → { experience, user: { name, email, account }, projects: StudioProject[] } | null
+ProjectStatus += { isGui: boolean; tabs: { …; isGui: boolean }[] }   // its claude runs as a GUI chat (v3.108) right now
 agentOffice.studio.open(projectId, ref)   // 'studio:open', ref { n } | { sessionId } → { ok, projectId, n } | { ok: false, error: 'invalid' | 'gone' }
 type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permission' | 'done' | null,
   running: { ptyId, n, title, isRunning: boolean, isAsleep: boolean }[],   // the main tab (n 1) first, then tabs by number; no shell tabs
@@ -2962,9 +2963,14 @@ type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permi
   `.claude.json`, re-read only when it changes), none when there is no name. Studio always uses the Claude look; light
   or dark follows the system (the person's look and mode stay saved for the Office). Switching back only removes the
   class: panes, tabs and sessions are never closed by a switch.
-- **Chat**: `guiEligible` takes `studio`: in Studio a Claude Code tab runs as a GUI chat as with the chat view on (not
-  HQ, a shell, another engine, a tab switched to its terminal). On Windows GUI chat stays off, so Studio shows those
-  sessions' terminals in the main region.
+- **Chat**: `guiEligible` takes `studio`, and it decides only how a tab **starts**: a Claude Code tab started while in
+  Studio runs as a GUI chat as with the chat view on (not HQ, a shell, another engine, a tab switched to its terminal).
+  Switching the experience never restarts or moves a running process: `prefs:set` only saves it (`STU.prefsPatch`), and
+  the idle move of the chat view (v3.108, `guiSwitchIdle`) leaves the experience out (`STU.idleMoveTarget`: a tab Studio
+  started as a chat keeps that mode until its next start; the others follow the chat view alone). The renderer follows
+  what main actually started (status `isGui`): Studio shows the chat of a tab running as a GUI chat (or one the person
+  switched to its terminal from the chat, with the Chat button to go back), and the terminal of a tab running in a
+  terminal (started in the Office, or on Windows, where GUI chat stays off) in the main region.
 - **Sidebar**, top to bottom: + New session (⌘N: a new tab in the project's folder, `tabs:add` 'same'), search (⌘K:
   filters the lists by title and project), pinned HQ (the HQ session), Reports and Routines (HQ's board in the main
   region), a project picker with its Running and Recent sessions, paired machines (read-only, from `link:get`), and the
@@ -2980,11 +2986,15 @@ type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permi
   leaves Recent. Anything else is `invalid`; a project or tab no longer there is `gone`.
 - **The 24 h rule**: in Studio, a session asleep for more than 24 hours closes by itself and is listed under Recent
   (state.json `studioRecent`: `{ projectId, sessionId, title, dir, at }`, newest first, at most 50, projects that still
-  exist, written only when not empty). Only an extra Claude Code tab with a session to continue closes, never a
-  project's main tab, HQ, a desk, a worktree tab or a shell. Main checks every 5 minutes; the time asleep counts from
-  the first check that saw it asleep and starts again after an app restart.
+  exist, written only when not empty). Only an extra Claude Code tab with a session to continue closes, in the
+  project's own folder (no `dir` of its own, or the project's; a Recent session always opens again there), with no
+  handoff lock and no dispatched task waiting for its report (`STU.closable`); never a project's main tab, HQ, a desk,
+  a worktree tab or a shell. Main checks every 5 minutes (`STU.sweepStep`); the time asleep counts from the first check
+  in Studio that saw it asleep. Only time in Studio counts: outside Studio nothing is tracked, and every experience
+  change and every app restart starts the clocks again.
 - **Remote**: a paired machine is only listed. A remote target stays send-as-task plus a read-only view (HQ, v3.46);
   Studio adds no remote sessions.
 - **Tests**: `app/test/studio.test.cjs` (experience values and its persistence wiring, the recent list, the 24 h rule,
-  session listing and order, the account name, the keys, `guiEligible` with `studio`, the IPC's sender and argument
+  session listing and order, the account name, the keys, `guiEligible` with `studio`, `closable`, `sweepStep`,
+  `prefsPatch` and `idleMoveTarget` (an experience change restarts or moves nothing), the IPC's sender and argument
   checks by source text).
