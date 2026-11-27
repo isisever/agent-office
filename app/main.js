@@ -4520,7 +4520,13 @@ async function syncDeskRules(p, tab, m) {
  * Opens (and starts) a member's desk in a project: the existing one, or a new tab (a worktree of its own when the
  * project allows parallel work). → { ok, id } | { ok: false, error: 'unknown' | 'staff-not-allowed' | 'engine' | 'git' }
  */
-async function openDesk(projectId, staffId, { start = true } = {}) {
+// v3.126 desks open concurrently (several HQ dispatches at once); one desk, and one repository's `git worktree add`,
+// at a time (ST.createKeyedLock): two dispatches to the same member never make two tabs or race on its worktree
+const deskLock = ST.createKeyedLock();
+function openDesk(projectId, staffId, o = {}) {
+  return deskLock(`desk\0${projectId}\0${staffId}`, () => openDeskNow(projectId, staffId, o));
+}
+async function openDeskNow(projectId, staffId, { start = true } = {}) {
   const p = P.findProject(state, projectId);
   const m = memberById(staffId);
   if (!p || !m || p.hq) return { ok: false, error: 'unknown' };
@@ -4541,12 +4547,15 @@ async function openDesk(projectId, staffId, { start = true } = {}) {
     const repo = await gitTop(p.dir);
     if (!repo) return { ok: false, error: 'git' };
     const wt = ST.deskWorktree(app.getPath('userData'), p.id, m.id);
-    if (!fs.existsSync(wt.root)) {
+    const made = await deskLock(`repo\0${repo}`, async () => {
+      if (fs.existsSync(wt.root)) return true;
       try { fs.mkdirSync(path.dirname(wt.root), { recursive: true }); } catch {}
       const has = (await git(['-C', repo, 'rev-parse', '--verify', '--quiet', `refs/heads/${wt.branch}`])).ok;
       const g = await git(['-C', repo, 'worktree', 'add', ...(has ? [wt.root, wt.branch] : ['-b', wt.branch, wt.root])]);
-      if (!g.ok) { console.error('desk worktree:', g.stderr); return { ok: false, error: 'git' }; }
-    }
+      if (!g.ok) console.error('desk worktree:', g.stderr);
+      return g.ok;
+    });
+    if (!made) return { ok: false, error: 'git' };
     let real = p.dir;
     try { real = fs.realpathSync(p.dir); } catch {}
     Object.assign(tab, { dir: P.worktreeDir(repo, wt.root, real), worktree: { root: wt.root, repo, branch: wt.branch } });

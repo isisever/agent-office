@@ -369,6 +369,22 @@ function deskWaitsFor(project, deskPty, ptyIds, busyOf) {
   return ptyIds.find((id) => id !== deskPty && busyOf(id)) || '';
 }
 
+/**
+ * v3.126 a keyed lock: lock(key, fn) runs fn after every earlier run with the same key has ended (resolved or not) and
+ * returns its promise; runs with different keys go concurrently. Used so several HQ dispatches open their desks at the
+ * same time while two never race on the same desk or the same repository's worktrees.
+ */
+function createKeyedLock() {
+  const tails = new Map();
+  return (key, fn) => {
+    const run = (tails.get(key) || Promise.resolve()).then(() => fn());
+    const tail = run.then(() => {}, () => {});
+    tails.set(key, tail);
+    tail.then(() => { if (tails.get(key) === tail) tails.delete(key); });
+    return run;
+  };
+}
+
 /** The role file a desk's session reads (AGENT_OFFICE_ROLE, plugin hooks/staff.ts). Never a token or a path outside. */
 function deskRoleFile(member, defs, project, staff) {
   const r = memberRole(member, defs);
@@ -410,5 +426,5 @@ function findMember(staff, key) {
 module.exports = {
   personalDraft, personalTarget, setPersonalDraft, takePersonalDraft, routePersonalSetting, applyPersonalDraft, NOT_ALLOWED_HINT,
   STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, deskRestartNeeded, removeMember,
-  dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, appMadeWorktree, deskWaits, deskWaitsFor, deskRoleFile, machineStaff, findMember,
+  dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, appMadeWorktree, deskWaits, deskWaitsFor, createKeyedLock, deskRoleFile, machineStaff, findMember,
 };
