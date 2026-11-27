@@ -47,6 +47,7 @@
       "renderer/**/*",
       "src/**/*",
       "locales/*.json",
+      "whats-new/*.json",
       "package.json",
       "!**/*.map",
       "!node_modules/node-pty/{src,scripts,deps,third_party,typings}/**",

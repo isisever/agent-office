@@ -1,6 +1,7 @@
 // One-command release: node scripts/release.mjs <version> --notes <notes.md> [--dry-run]
 // Steps (README "Releasing"):
-//   1. checks: main branch, clean working tree, CI (test.yml) green for HEAD, no tag yet
+//   1. checks: main branch, clean working tree, CI (test.yml) green for HEAD, no tag yet, a valid
+//      app/whats-new/<version>.json (scripts/check-whats-new.mjs)
 //   2. write the version: app/package.json, app/package-lock.json (root + packages[""]), plugin/.claude-plugin/plugin.json → "Version X" commit
 //   3. cd app && npm run dist:release (signed + notarized dmg/zip)
 //   4. notarization check: each dmg is mounted, spctl -a -vv on its .app must say "Notarized Developer ID"
@@ -79,6 +80,9 @@ try {
 check(ci?.conclusion === 'success', `CI passed for HEAD ${head.slice(0, 7)} (${ci ? `${ci.status}/${ci.conclusion || '-'} ${ci.url}` : 'no run found'})`)
 check(!read('git', ['tag', '--list', tag]), `tag ${tag} does not exist yet`)
 check(existsSync(notes), `release notes ${notesArg}`)
+// the in-app What's new (contract v3.123): every release ships its quickstart, in English and Turkish
+const whatsNew = spawnSync(process.execPath, [join(ROOT, 'scripts', 'check-whats-new.mjs'), version], { cwd: ROOT, encoding: 'utf8' })
+check(whatsNew.status === 0, whatsNew.status === 0 ? whatsNew.stdout.trim().replace(/^ok: /, '') : `What's new: ${(whatsNew.stderr || whatsNew.stdout || String(whatsNew.error)).trim()}`)
 const current = JSON.parse(readFileSync(join(APP, 'package.json'), 'utf8')).version
 check(current !== version, `version changes (${current} → ${version})`)
 

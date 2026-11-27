@@ -1760,6 +1760,56 @@ body.studio.studio-panel #sidebar > :not(.studio-shown) { display: none !importa
 .chat-row > .chat-attach, .chat-row > .voice-mic { order: -1; }
 .chat-studio-only, .chat-chips, .chat-form .st-icon { display: none; }
 
+/* ---- v3.123 What's new (renderer/whats-new.js): the Office's modal look; studio.css restyles it in Studio ---- */
+.wn-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--overlay);
+}
+.wn-card {
+  box-sizing: border-box;
+  width: min(440px, 92vw);
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 16px 12px;
+  background: var(--status-bg); color: var(--status-text);
+  border: var(--line-w) solid var(--line);
+  font-size: 12px;
+  outline: none;
+}
+.wn-eyebrow { color: var(--accent-text); font-weight: bold; letter-spacing: 1px; font-size: 11px; }
+.wn-title { margin: 2px 0 0; font-size: 15px; }
+.wn-body { margin: 0; line-height: 1.5; opacity: .9; min-height: 54px; }
+.wn-foot {
+  display: flex; align-items: center; gap: 8px; padding-top: 10px; margin-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--tint) 40%, transparent);
+}
+.wn-dots { display: flex; gap: 4px; }
+.wn-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .25; }
+.wn-dot.on { opacity: .9; background: var(--accent-text); }
+.wn-gap { flex: 1; }
+.wn-btn {
+  font: inherit; color: inherit; cursor: pointer;
+  padding: 4px 10px; background: transparent;
+  border: var(--line-w) solid var(--line);
+}
+.wn-btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.wn-btn.wn-skip { border-color: transparent; opacity: .7; }
+.wn-btn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+.wn-spot {
+  position: fixed; z-index: 70; pointer-events: none; box-sizing: border-box;
+  border: 2px solid var(--accent-text); border-radius: 6px;
+  animation: wn-pulse 1.1s ease-out 3;
+}
+.wn-tip {
+  position: fixed; z-index: 70; max-width: 260px; padding: 6px 10px; pointer-events: none;
+  background: var(--status-bg); color: var(--status-text); border: var(--line-w) solid var(--line); font-size: 12px;
+}
+@keyframes wn-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-text) 55%, transparent); }
+  100% { box-shadow: 0 0 0 12px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .wn-spot { animation: none; } }
+
 /* v3.122 keep the computer awake (keep-awake-button.js), next to the Studio switch: a cup, filled in the accent when on */
 #keep-awake {
   display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 6px; margin-left: 6px; border: 0; border-radius: 6px;

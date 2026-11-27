@@ -38,6 +38,7 @@ function el(tag, props = {}, ...kids) {
  *     selectProject: (projectId: string) => void, selectHq: () => void, openBoard: () => void,
  *     openOfficeSettings: () => void, sidebar: () => any, showPanel: (selector: string) => boolean,
  *     appInfo: () => { version: string | null, ready: string | null }, installUpdate: () => void, toggle: () => void,
+ *     openWhatsNew?: () => void,
  *     openDesk: (projectId: string, staffId: string) => Promise<string | null>, startDesk: (projectId: string, staffId: string, text: string) => Promise<{ ok: boolean, failed?: { step: string, why: string, detail: string } }>, activePty: () => string | null, hasSession: () => boolean,
  *     startSession: (projectId: string, plan: { tabMode: 'same' | 'worktree', settings: [string, string][], reuseN?: number }, text: string) => Promise<{ ok: boolean, n: number, failed?: { step: string, why: string, detail: string } }>,
  *     projectSettings: (projectId: string) => void, showAccounts: () => void, isMac: boolean,
@@ -112,7 +113,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const settingsPage = mountSettingsPage({
     el, t, host: /** @type {HTMLElement} */ (document.getElementById('terminal') || document.body),
     studioTheme: () => studioTheme(), setStudioTheme: (v) => setStudioTheme(v),
-    hooks: { sidebar: hooks.sidebar, showPanel: hooks.showPanel, selectHq: hooks.selectHq, openBoard: hooks.openBoard, appInfo: hooks.appInfo, installUpdate: hooks.installUpdate, openTeam: () => { teamEl.scrollIntoView?.({ block: 'start' }); } },
+    hooks: { sidebar: hooks.sidebar, showPanel: hooks.showPanel, selectHq: hooks.selectHq, openBoard: hooks.openBoard, appInfo: hooks.appInfo, installUpdate: hooks.installUpdate, openWhatsNew: hooks.openWhatsNew, openTeam: () => { teamEl.scrollIntoView?.({ block: 'start' }); } },
   });
   function openSettings(/** @type {string} */ section = '') {
     if (!on) { hooks.openOfficeSettings(); return; }

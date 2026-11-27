@@ -3276,3 +3276,45 @@ chat:read gui += { modes: string[], autoApprove: boolean }   // the account's pi
   start plan) or `{ kind: 'desk', projectId, staffId }`: the Office's `openDesk(projectId, staffId)`, then the prompt
   is sent to that desk's session (retried while its chat starts); on failure the prompt stays in the box.
 - Tests: `test/studio-team.test.mjs` (initials, state, grouping, Who? options and plan).
+
+## What's new (v3.123)
+
+After an update the app shows the new features as a short
+step-through quickstart, once.
+
+- **Manifests**: `app/whats-new/<version>.json`, packaged with the app (`build.files` has `whats-new/*.json`; read from
+  `path.join(__dirname, 'whats-new')`, inside app.asar when packaged). `{ version?, items: Item[] }`, where
+  `Item = { id, title: {en, tr}, body: {en, tr}, experience?: 'office' | 'studio' | 'both', target?: string,
+  try?: { label: {en, tr}, action } }`. `id` is kebab-case and unique in the file; `version`, when present, matches the
+  file name; unknown keys (e.g. `_note`) are ignored. `action` is one of `open-studio`, `open-office`, `open-settings`
+  (`open-settings:<section>`, section `experience` | `keep-awake` | `language` | `about`: in the Office the popup row
+  with `data-settings-section="<section>"`, in Studio the v3.122 Settings page at that row's section),
+  `open-studio-settings` (Studio's Settings page, switching to Studio), `spotlight` (nothing but the item's
+  `target`, which it requires), `open-palette`, `open-start-screen` (a new
+  Studio session's start screen, its Who? picker spotlighted), `open-devices`, `open-team`, `focus-composer`
+  (`src/whats-new.js` ACTIONS, SETTINGS_SECTIONS; `validateManifest` lists the problems). A missing or invalid file is
+  never shown.
+- **When** (`src/whats-new.js` `decide`, at start before the first save): `state.lastSeenVersion` (state.json) against
+  `app.getVersion()`. Newer: every manifest after lastSeenVersion up to the running version, newest first; then
+  lastSeenVersion = the running version. Fresh install (no state.json): nothing shown, lastSeenVersion set silently
+  (the first-run folder picker is the onboarding). A state.json without lastSeenVersion (an update from before v3.123):
+  every manifest up to the running version, newest first (the first one is 0.22.44, so 0.22.44 → 0.22.45 shows both). Same or older version: nothing, lastSeenVersion unchanged. Dev runs
+  (`!app.isPackaged`): nothing shown and nothing stored, unless `AGENT_OFFICE_WHATS_NEW=1`, which shows the pending
+  manifests or, when none are pending, the newest one up to the running version (still not stored).
+- **IPC** (preload `whatsNew`): `whatsNew:pending` → `[{ version, items }]` this start shows, given once (then `[]`);
+  `whatsNew:all` → every valid manifest up to the running version, newest first; `whatsNew:open` (main → renderer) from
+  Help → What's New.
+- **Card** (`renderer/whats-new.js`, helpers in `src/whats-new-ui.mjs`): after prefs load (so the experience is known),
+  one item at a time with "What's new in <version>", the title, the body, page dots, Skip all, Back, "Try it" (when the
+  item has `try`) and Next / Done; Esc closes, ←/→ step. Items for the other experience are left out (all are shown
+  when that would leave none); texts in the UI language, English otherwise. The Office's modal look (`style.css .wn-*`),
+  Studio's tokens in Studio (`studio.css body.studio .wn-*`). "Try it" closes the card, runs the action
+  (`app.js whatsNewActions`: setExperience, the Settings popup, Studio's palette, the Devices panel — in Studio
+  via `studio.showPanel` —, Team: Studio's sidebar Team section or Settings → Team, the Office's Team panel, and the composer) and spotlights `target`, or the action's own element
+  (`#experience-switch`, the Settings row, the panel), for 4.5 s with the item's title as a tooltip; a click ends it.
+- **Ways back**: Help → What's New, Studio's ⌘K "What's new" (`studio.cmd.whatsNew`), Settings → About (the Office popup's
+  last row and Studio's Settings page About section: the version and a What's new button).
+- **Release**: `scripts/check-whats-new.mjs <version> [--dir <folder>]` exits 0 (valid), 1 (missing / invalid, the
+  problems listed) or 2 (usage); `scripts/release.mjs` step 1 runs it and stops (a dry run warns).
+- **Tests**: `app/test/whats-new.test.cjs` "v3.123 …" (version order, `decide`, actions, validation, the shipped
+  manifests, packaging, the card's helpers, the release check); `app/test/locales.test.mjs` covers the new strings.

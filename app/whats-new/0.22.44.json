@@ -1,0 +1,84 @@
+{
+  "version": "0.22.44",
+  "items": [
+    {
+      "id": "studio",
+      "experience": "both",
+      "title": { "en": "Meet Studio", "tr": "Studio ile tanışın" },
+      "body": {
+        "en": "Studio is a second, chat-first way to work. Every Claude Code session is a conversation, projects and accounts sit in the sidebar, and ⌘K finds any Office feature. The Office stays the default.",
+        "tr": "Studio, sohbet öncelikli ikinci bir çalışma biçimi. Her Claude Code oturumu bir sohbet olarak açılır, projeler ve hesaplar kenar çubuğunda durur, ⌘K ile Ofis'in her özelliğine ulaşırsınız. Varsayılan yine Ofis."
+      },
+      "try": { "label": { "en": "Open Studio", "tr": "Studio'yu aç" }, "action": "open-studio" },
+      "target": "#experience-switch"
+    },
+    {
+      "id": "studio-switch",
+      "experience": "both",
+      "title": { "en": "Switch at any time", "tr": "İstediğiniz an geçiş yapın" },
+      "body": {
+        "en": "Use the switch at the top right of the window, ⌘⇧E (Ctrl+Shift+E) or Settings → Experience. Tabs and sessions stay as they are; idle sessions move to the chat, busy ones once they finish.",
+        "tr": "Pencerenin sağ üstündeki düğmeyi, ⌘⇧E (Ctrl+Shift+E) kısayolunu ya da Ayarlar → Deneyim'i kullanın. Sekmeler ve oturumlar olduğu gibi kalır; boştaki oturumlar sohbete hemen, meşgul olanlar işleri bitince geçer."
+      },
+      "try": { "label": { "en": "Show the setting", "tr": "Ayarı göster" }, "action": "open-settings:experience" }
+    },
+    {
+      "id": "account-models",
+      "experience": "studio",
+      "title": { "en": "Models and modes from your account", "tr": "Modeller ve modlar hesabınızdan gelir" },
+      "body": {
+        "en": "The model and permission pickers list what each account can actually use, Auto included. You can change both in a running chat between turns.",
+        "tr": "Model ve izin seçicileri her hesabın gerçekten kullanabildiklerini, Auto dahil, listeler. Çalışan bir sohbette ikisini de turlar arasında değiştirebilirsiniz."
+      }
+    },
+    {
+      "id": "auto-manager",
+      "experience": "both",
+      "title": { "en": "Auto with the manager", "tr": "Auto ve yönetici birlikte" },
+      "body": {
+        "en": "Choosing Auto turns on the project's Auto-approve, so the manager answers the prompts that Auto mode still asks.",
+        "tr": "Auto'yu seçmek projenin Otomatik onayını açar; böylece Auto modunun hâlâ sorduğu soruları yönetici yanıtlar."
+      }
+    },
+    {
+      "id": "start-screen",
+      "experience": "studio",
+      "title": { "en": "A start screen for new sessions", "tr": "Yeni oturumlar için başlangıç ekranı" },
+      "body": {
+        "en": "A new session (⌘N) opens a start screen: choose the project, branch or worktree, model and mode before the first message. The message waits until your choices are applied.",
+        "tr": "Yeni bir oturum (⌘N) bir başlangıç ekranı açar: ilk mesajdan önce projeyi, dalı ya da çalışma ağacını, modeli ve modu seçin. Mesaj, seçimleriniz uygulanana kadar bekler."
+      },
+      "try": { "label": { "en": "Write a message", "tr": "Mesaj yaz" }, "action": "focus-composer" }
+    },
+    {
+      "id": "named-sessions",
+      "experience": "studio",
+      "title": { "en": "Named sessions", "tr": "Adlandırılmış oturumlar" },
+      "body": {
+        "en": "Sessions show their title, last activity and whether they are working or waiting for you. Rename one from its header without restarting it.",
+        "tr": "Oturumlar başlıklarını, son etkinliklerini ve çalışıyor mu yoksa sizi mi bekliyor olduklarını gösterir. Bir oturumu yeniden başlatmadan başlığından yeniden adlandırabilirsiniz."
+      }
+    },
+    {
+      "id": "paste-files",
+      "experience": "both",
+      "title": { "en": "Paste several files at once", "tr": "Birden çok dosyayı tek seferde yapıştırın" },
+      "body": {
+        "en": "Copy files or folders in Finder and paste them all at once. In Studio they show as chips you can open, show in Finder or remove.",
+        "tr": "Finder'da dosya ya da klasörleri kopyalayıp hepsini birden yapıştırın. Studio'da açabileceğiniz, Finder'da gösterebileceğiniz ya da kaldırabileceğiniz çipler olarak görünürler."
+      },
+      "try": { "label": { "en": "Go to the composer", "tr": "Mesaj kutusuna git" }, "action": "focus-composer" }
+    },
+    {
+      "id": "phone-pairing",
+      "experience": "both",
+      "title": { "en": "Phone pairing (preview)", "tr": "Telefon eşleştirme (önizleme)" },
+      "body": {
+        "en": "Devices → Phones → + Add phone shows a QR code for the upcoming Agent Office Remote iPhone app. A paired phone can follow your projects, reports and HQ, but never dispatches work without the usual approval card.",
+        "tr": "Cihazlar → Telefonlar → + Telefon ekle, yakında çıkacak Agent Office Remote iPhone uygulaması için bir QR kodu gösterir. Eşleşen telefon projelerinizi, raporlarınızı ve HQ'yu izleyebilir; ama olağan onay kartı olmadan asla iş göndermez."
+      },
+      "try": { "label": { "en": "Open Devices", "tr": "Cihazları aç" }, "action": "open-devices" },
+      "target": "#sb-devices"
+    }
+  ]
+}

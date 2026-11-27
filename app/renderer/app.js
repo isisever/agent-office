@@ -6,7 +6,7 @@ import { shownOrder } from '../src/project-groups.mjs';
 import { mountHq } from './hq-board.js';
 import { mountLogin } from './login.js';
 import { mountDevices, mergeRemote } from './devices.js';
-import { setLang, onLang, t } from './i18n.js';
+import { setLang, onLang, t, getLang } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
 import { mountStudio } from './studio.js';
 import { mountKeepAwake } from './keep-awake-button.js';
@@ -19,6 +19,7 @@ import { normalizeLook, normalizeMode, effectiveMode, chromeFor, terminalTheme }
 import { tildePath, windowTitle } from '../src/layout.mjs';
 import { promptReady } from '../src/tui-menu.mjs';
 import { initVoice } from './voice.js';
+import { mountWhatsNew, splitAction } from './whats-new.js';
 
 // Fake window.agentOffice to see the layout in a plain browser (outside Electron).
 if (!window.agentOffice) await import('./dev-mock.js');
@@ -896,6 +897,8 @@ async function removeAccount(a) {
 // ---- Sidebar ----
 sidebar = mountSidebar($('sidebar'), {
   select: selectProject,
+  openWhatsNew: () => openWhatsNew(),   // v3.123 Settings → About
+  appVersion: () => appVersion,
   showPanel: (sel) => Boolean(studio?.showPanel(sel)),   // v3.122 an Office panel on its own over Studio
   addProject,
   setBotColor,
@@ -1137,7 +1140,7 @@ if (api.mail) {
   api.mail.onAccounts?.((v) => { sidebar?.setMailAccounts(v); loadStaff(); });
   api.mail.onOutbox?.((v) => sidebar?.setMailOutbox(v));
 }
-api.prefs?.get().then((p) => {
+const prefsReady = api.prefs?.get().then((p) => {
   sidebar.setResume(p?.resume);
   sidebar.setResumeWork(p?.resumeWork);
   sidebar.setManager(p?.manager);
@@ -1409,6 +1412,7 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   sidebar: () => sidebar,
   showPanel: (sel) => Boolean(studio?.showPanel(sel)),
   appInfo: () => ({ version: appVersion, ready: updateVersion }),
+  openWhatsNew: () => openWhatsNew(),   // v3.123 Studio Settings → About
   openDesk: (projectId, staffId) => { leaveBoard(); return openDesk(projectId, staffId); },
   // v3.122 the start screen's Who?: the Office's desk-start path, then the prompt in exactly that desk's session
   // (never the active one): a bounded retry while its chat starts, 'ok' required, any other answer is a failure
@@ -1458,6 +1462,72 @@ function studioCommands(projectId) {
     ...cmd('projects', panel('#sb-panel-projects')),
     ...cmd('settings', () => studio?.openSettings()),
     ...cmd('office', () => setExperience('office')),
+    ...cmd('whatsNew', () => openWhatsNew()),   // v3.123
   ];
 }
 studio?.setOn(studioOn);
+
+// ---- v3.123 What's new (renderer/whats-new.js): once after an update, and from Help → What's new, ⌘K and
+// Settings → About. "Try it" runs one of these fixed actions (src/whats-new.js ACTIONS); each returns the selector to
+// spotlight when the item names none.
+/** An Office sidebar panel opened (in Studio: shown on its own over Studio); its selector, or '' when it is not there. */
+function whatsNewPanel(/** @type {string} */ sel) {
+  if (studioOn) return studio?.showPanel(sel) ? sel : '';
+  const panel = /** @type {HTMLElement | null} */ (document.querySelector(sel));
+  if (!panel || panel.hidden) return '';
+  if (panel.tagName === 'DETAILS') /** @type {HTMLDetailsElement} */ (panel).open = true;
+  return sel;
+}
+/** open-settings:<section> in Studio: [its Settings page section, the row there] (src/settings-model.mjs SETTINGS) */
+/** @type {Record<string, [string, string]>} */
+const WHATS_NEW_STUDIO_ROWS = {
+  experience: ['general', '.st-set-row[data-key="experience"]'],
+  language: ['general', '.st-set-row[data-key="lang"]'],
+  'keep-awake': ['sessions', '.st-set-row[data-key="keepAwake"]'],
+  about: ['about', '.st-set-version'],
+};
+/** @type {Record<string, (arg: string) => string>} */
+const whatsNewActions = {
+  spotlight: () => '',   // only the item's target
+  'open-studio': () => { setExperience('studio'); return '#experience-switch'; },
+  'open-office': () => { setExperience('office'); return '#experience-switch'; },
+  // in Studio its Settings page (v3.122) at the section holding that row; in the Office the popup
+  'open-settings': (arg) => {
+    if (studioOn && studio) {
+      const at = WHATS_NEW_STUDIO_ROWS[arg] || ['general', ''];
+      studio.openSettings(at[0]);
+      return at[1] ? `#studio-settings ${at[1]}` : '#studio-settings';
+    }
+    sidebar?.openSettings();
+    return arg ? `[data-settings-section="${arg}"]` : '';
+  },
+  'open-studio-settings': () => { if (experience !== 'studio') setExperience('studio'); studio?.openSettings(); return '#studio-settings .st-set-nav'; },
+  'open-start-screen': () => { if (experience !== 'studio') setExperience('studio'); studio?.newSession(); return '.st-start-who'; },
+  'open-palette': () => { if (experience !== 'studio') setExperience('studio'); window.setTimeout(() => studio?.openPalette(), 60); return ''; },
+  'open-devices': () => whatsNewPanel('#sb-devices'),
+  // in Studio the sidebar's Team section (team mode on), else Settings → Team; in the Office the Team panel or the popup
+  'open-team': () => {
+    if (studioOn) {
+      const team = /** @type {HTMLElement | null} */ (document.querySelector('#studio-sidebar .st-team'));
+      if (team && team.getBoundingClientRect().height) { team.scrollIntoView?.({ block: 'nearest' }); return '#studio-sidebar .st-team'; }
+      studio?.openSettings('team');
+      return '#studio-settings .st-set-row[data-key="team"]';
+    }
+    return whatsNewPanel('#sb-panel-team') || (sidebar?.openSettings(), '');
+  },
+  'focus-composer': () => { if (!studio?.focusStart()) focusActive(); return ''; },
+};
+const whatsNew = mountWhatsNew({
+  t,
+  lang: getLang,
+  experience: () => (experience === 'studio' ? 'studio' : 'office'),
+  run: (action) => { const { id, arg } = splitAction(action); return whatsNewActions[id]?.(arg) || ''; },
+});
+function openWhatsNew() {
+  api.whatsNew?.all().then((entries) => whatsNew.show(entries)).catch((e) => console.error(e));
+}
+api.whatsNew?.onOpen(() => openWhatsNew());
+// after the experience is known, so the card has its look and its items
+Promise.resolve(prefsReady).catch(() => {}).then(() => window.setTimeout(() => {
+  api.whatsNew?.pending().then((entries) => { if (Array.isArray(entries) && entries.length) whatsNew.show(entries); }).catch((e) => console.error(e));
+}, 600));
