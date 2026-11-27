@@ -1853,6 +1853,28 @@ test('v3.130 sealed store: digest verify, tamper and unknown key fall back, rest
   assert.equal(b.isOpen('r1'), false);   // the ceiling
 });
 
+test('v3.131 order queue: an item keeps its type; release by priority, then aged type rank, then FIFO', () => {
+  const BM = require('../src/board-model.js');
+  const t0 = 1_000_000_000;
+  let now = t0;
+  const s = HO.createOrderStore({ file: '', key: null, now: () => now });
+  s.add('r1', t0);
+  const args = { project: 'p', task: 'x' };
+  s.enqueue({ id: 'f', request: 'r1', args, type: 'feature' });
+  now += 1000; s.enqueue({ id: 'h', request: 'r1', args, type: 'hotfix' });
+  now += 1000; s.enqueue({ id: 'b', request: 'r1', args, type: 'bugfix' });
+  now += 1000; s.enqueue({ id: 'p', request: 'r1', args, type: 'feature', priority: 1 });
+  assert.equal(s.queue().find((x) => x.id === 'h').type, 'hotfix');
+  const rank = (at) => (x) => BM.agedRank(x.type, x.at, at);
+  assert.deepEqual(HO.releaseOrder(s.queue(), rank(now)).map((x) => x.id), ['p', 'b', 'h', 'f']);   // explicit priority stays first
+  assert.equal(s.ahead('f', rank(now)), 3);
+  assert.equal(HO.nextRelease(s.queue(), (x) => x.id !== 'p', rank(now)).id, 'b');
+  // aging: after 2 x AGE_MS the feature ranks like a bugfix and, being older, goes first
+  assert.deepEqual(HO.releaseOrder(s.queue(), rank(t0 + 2 * BM.AGE_MS + 5000)).map((x) => x.id), ['p', 'f', 'h', 'b']);
+  // one type for the whole order (main: releaseType reads the owner's type of the order first): FIFO
+  assert.deepEqual(HO.releaseOrder(s.queue(), () => 0).map((x) => x.id), ['p', 'f', 'h', 'b']);
+});
+
 test('v3.130 order queue: release order (priority, then FIFO), n ahead, ceiling 50, close drops it', () => {
   const s = HO.createOrderStore({ file: '', key: null });
   s.add('r1', Date.now());

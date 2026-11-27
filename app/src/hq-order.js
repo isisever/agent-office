@@ -34,12 +34,16 @@ function unseal(key, raw) {
   try { const d = JSON.parse(raw.body); return isObj(d) ? d : null; } catch { return null; }
 }
 
-/** Queue release order: higher priority first, then first in, first out. */
-const releaseOrder = (queue) => [...(Array.isArray(queue) ? queue : [])].sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0) || a.seq - b.seq);
+/** Queue release order: higher priority first, then by `rank(item)` (lower first: v3.131 the aged type rank,
+ *  BM.agedRank; none given = equal), then first in, first out. */
+const releaseOrder = (queue, rank = null) => {
+  const r = typeof rank === 'function' ? (/** @type {any} */ x) => { const n = Number(rank(x)); return Number.isFinite(n) ? n : 0; } : () => 0;
+  return [...(Array.isArray(queue) ? queue : [])].sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0) || r(a) - r(b) || a.seq - b.seq);
+};
 /** How many queued items are released before this one. -1 when it is not queued. */
-function aheadOf(queue, id) { const i = releaseOrder(queue).findIndex((x) => x.id === id); return i; }
+function aheadOf(queue, id, rank = null) { const i = releaseOrder(queue, rank).findIndex((x) => x.id === id); return i; }
 /** The next item to release: the first in release order that `canRun(item)` allows, else null. */
-function nextRelease(queue, canRun) { for (const x of releaseOrder(queue)) if (canRun(x)) return x; return null; }
+function nextRelease(queue, canRun, rank = null) { for (const x of releaseOrder(queue, rank)) if (canRun(x)) return x; return null; }
 /** Room in an order's queue? → null or 'order-queue-full'. */
 const queueRefusal = (queue, request) => ((Array.isArray(queue) ? queue : []).filter((x) => x.request === request).length >= ORDER_QUEUE_MAX ? 'order-queue-full' : null);
 
@@ -149,19 +153,19 @@ function createOrderStore({ file, key, gen = null, now = Date.now }) {
     phone() { return d.phone === true; },
     setPhone(on) { if (d.phone === (on === true)) return; d.phone = on === true; save(); },
     /** → { ok, item } | { ok: false, reason } */
-    enqueue({ id, request, args, priority = 0, typed = false, seq = undefined }) {
+    enqueue({ id, request, args, priority = 0, typed = false, seq = undefined, type = '' }) {
       if (!isStr(id) || !isStr(request) || !isObj(args)) return { ok: false, reason: 'bad-request' };
       const have = d.queue.find((x) => x.id === id);
       if (have) return { ok: true, item: have };
       const why = queueRefusal(d.queue, request);
       if (why) return { ok: false, reason: why };
-      const item = { id, request, args, priority: Number(priority) || 0, typed: typed === true, seq: Number.isFinite(seq) ? Number(seq) : ++d.seq, at: now() };
+      const item = { id, request, args, priority: Number(priority) || 0, typed: typed === true, type: isStr(type) ? type : '', seq: Number.isFinite(seq) ? Number(seq) : ++d.seq, at: now() };
       d.queue.push(item);
       save();
       return { ok: true, item };
     },
     remove(id) { const n = d.queue.length; d.queue = d.queue.filter((x) => x.id !== id); if (d.queue.length !== n) save(); },
-    ahead(id) { return aheadOf(d.queue, id); },
+    ahead(id, rank = null) { return aheadOf(d.queue, id, rank); },
   };
 }
 

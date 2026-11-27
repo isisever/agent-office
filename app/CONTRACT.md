@@ -3521,7 +3521,9 @@ authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; w
   back) reads as empty (`HO.genOk`). The store also keeps the phone flag.
 - **Restart.** A waiting stage of an open order whose `stage.json` matches its sealed digest is released after an app
   restart without the dialog. The sealed value is `HO.stageSeal(CH.stageDigest(rec), { request, byInitiative })`, so
-  an edited board row (its request or `byInitiative`) does not match either. Tampered, unknown or not an open order:
+  an edited board row (its request or `byInitiative`) does not match either. Since v3.131 `type` is one of
+  `CH.STAGE_FIELDS`, so the digest (and with it the seal) also binds the stage's type: an edited type in `stage.json`
+  reads as tampered. Tampered, unknown or not an open order:
   the v3.103 dialog. A stage known in memory uses the `byInitiative` it was accepted with, never the board's.
 - **Order queue.** For an open order (and `askBeforeDispatch` off), a dispatch refused by `open-cap`/`request-cap`
   or by the project queue (`queue-full`, link-host `QUEUE_MAX` 5) is queued instead: a board row with status
@@ -3547,7 +3549,10 @@ authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; w
   both back. The restored pair matches its own generation, so an older state (an earlier open order, stage seal or
   queue) is accepted. Keeping the last generation outside userData (for example in the macOS Keychain) is not done:
   `safeStorage` only encrypts data and stores nothing itself, so it would need a new native keychain dependency. A
-  process that can do this already runs as the person and can type into HQ, so this gives it no authority it lacks. `hqTick` releases them (higher `priority` first, then FIFO) as `capReason` allows; one that meets a full
+  process that can do this already runs as the person and can type into HQ, so this gives it no authority it lacks. `hqTick` releases them (higher `priority` first, then by type priority with aging as in "Board: orders and
+  conversations" below, then FIFO) as `capReason` allows. A queued item keeps its `type` in the sealed queue (the
+  explicit `type` or a `bugfix:`/`hotfix:`/`feature:` prefix, else the classified one); its release rank is
+  `BM.agedRank(releaseType(request, type), at, now)`, so the owner's type of the order applies; one that meets a full
   project queue again keeps its place. At most `ORDER_QUEUE_MAX` (50) per order (`order-queue-full`). A queued item
   of the person's typed turn keeps that turn's consent; one queued in a later turn passes the follow-up rules at
   release. Closing the order drops its queue (`order-closed`); Cancel on the card removes it. Staged chains
@@ -3564,3 +3569,72 @@ authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; w
 - **Unchanged boundaries.** The dialog for `adhoc`, foreign or expired ids and phone turns; routine held cards and
   `holdsOffId`; the depth rule; target projects' own permission prompts and the mail guard; pairing confirmation;
   redaction; receiver-side checks on paired devices.
+
+## Board: orders and conversations (v3.131)
+
+The board (src/board-model.js, pure; main.js keeps the store) shows two kinds of card in one list:
+
+- **Order cards** (`id: 'o:<request id>'`, `kind: 'order'`): one per HQ request of board.json. Its tasks give the
+  column and `progress: { done, total }`; `tasks: [{ id, title, project, machine, status, column, member? }]`,
+  `projects`, `members`, `routine?`.
+- **Chat cards** (`id: 'c:<session uuid>'`, `kind: 'chat'`): one per project session the person talks in (Office or
+  Studio, terminal or chat tab), created on the first person prompt. `sessionId`, `projectId`, `ptyId`, `studio`.
+  A session that carried a dispatched task (HQ, a project boss or a paired device) is already an order or a remote
+  task and never gets a chat card.
+- Both carry `title` (≤ 80), `type`, `typeBy` (`auto` | `hq` | `person`), `column`, `at`, `closedAt`, `closedBy?`
+  (chats: `auto` | `person`), `durationMs`, `project`, `member`, `tokens`, `usd` (chats: from the session's status-line
+  usage file; orders: 0 for now).
+
+**Columns:** `todo`, `working`, `needs-you`, `review`, `done`. An order's tasks map through `columnOf`: queued/waiting →
+todo; delivered/running → working; needs-approval, awaiting-consent, blocked, failed, expired, lost and a rejection other
+than cancelled/declined → needs-you; partial → review; reported → done. The request is needs-you if any task is, else
+working if any task runs (or some ended and some wait), review when every task ended but HQ has not closed it with a
+summary, else done. A chat is needs-you while it waits for the person, working while busy, else review.
+
+**Type priority (the owner's order): 1. bugfix, 2. hotfix, 3. feature.** Cards sort by type, then oldest first. The
+same rule (`byPriority`) orders held pacer sends (`hqPacer.submit(key, send, type)`, third argument) and stages
+released together by hq-chain, and (v3.130) items in an open order's queue (see "Orders from HQ", Order queue:
+after any explicit `priority`, before FIFO). It never lets a send skip the rate limit or a consent check; it only reorders what
+already waits. **Aging:** in release order (not card sorting) a waiting item is promoted one rank for every
+`AGE_MS` (10 min) it has waited (`agedRank`), ties go oldest first, so a stream of bugfix or hotfix sends can never
+starve a feature: a held feature send or waiting feature stage ranks like a bugfix after at most 20 min and then goes
+before every newer one (it still waits for the rate limit). **Release type follows the order:** held sends and waiting
+stages read their type when they are released (`submit`'s third argument may be a function, `settle(board, now,
+waitMs, typeFn)`): main's `releaseType` gives the type the person set on the order (`board:setType`), else the item's
+own type. Nothing stored or sealed is rewritten, so stage digests stay valid. `type` is one of the sealed stage fields
+(`STAGE_FIELDS`): a stage whose stored type changes after it was accepted is refused `stage-changed`.
+
+**Classifier** (`classify`, English and Turkish): an explicit `bugfix:` / `hotfix:` / `feature:` prefix (optionally in
+brackets) wins; then hotfix words (urgent, hotfix, prod, production, asap, critical, acil, kritik, canlıda); then bugfix
+words (bug, fix, broken, crash, error, regression, hata, bozuk, çalışmıyor, düzelt); else feature. An order's type is
+the `type` argument of office_dispatch (HQ, `typeBy: 'hq'`), else a prefix in its texts, else the keywords of the request
+prompt and task titles. **The type is raised, never lowered:** a later task of the same request with an explicit
+`type` or a `bugfix:` / `hotfix:` / `feature:` prefix raises the order's stored type to the highest priority seen
+(keywords alone do not; an explicit `type` sets `typeBy: 'hq'`). The person's type (board-cards.json) is final: the card
+shows it whatever the stored type becomes. A chat's type follows its title while `typeBy` is `auto`. **The person can override any card's
+type** (`board:setType`, `typeBy: 'person'`); the classifier never changes it again.
+
+**Chat-card lifecycle:** created on the first person prompt (or when the session is already busy); moves with the tab
+state every 15 s (hqTick); an open card whose tab is gone (its `ptyId` is not a live tab: closed, or the app quit) moves
+to Review and starts its Review clock (`detachGone`), so it never stays working or needs-you; when its session gets a
+dispatched task later, its chat card is dropped (`markTaskSession`: it is part of the order now); a chat title is
+passed through `HQ.redact` before it is cut to 80 characters and stored; a card in Review for **24 h** (`REVIEW_CLOSE_MS`) closes by itself (`closedBy: 'auto'`);
+the person can close it (`board:done`, `closedBy: 'person'`); a closed card opens again when its session works or
+waits again (one card per conversation). An order closes when HQ reports it done, or when the person marks it done.
+
+**IPC** (main window only; anything else gets `null` or `{ ok: false, error: 'invalid' }`):
+
+- `board:cards()` → `{ columns: [{ id, cards: [card ids] }], cards: [Card], types }`; main also pushes `board:cards`
+  with the same view when the store changes.
+- `board:setType(id, 'bugfix' | 'hotfix' | 'feature')` → `{ ok: true, ...view }` | `{ ok: false, error: 'invalid' | 'gone' }`.
+- `board:done(id)` → `{ ok: true, ...view }` | `{ ok: false, error: 'invalid' | 'gone' }`.
+- `board:report({ from?, to? } ms, groupBy 'project' | 'type' | 'member')` → `{ groupBy, from, to, rows: [{ key,
+  count, durationMs, tokens, usd, orders, chats }], total }` over the cards closed in the range | `{ error: 'invalid' }`.
+
+Card ids are validated (`c:` + a session uuid, `o:` + `[A-Za-z0-9_-]{1,64}`) and must name a card the board shows now.
+
+**Storage:** `<userData>/hq/board-cards.json`, written atomically (file mode 0600, `SF.writeAtomic`) in a 0700 folder: `{ v: 1, chats: [...],
+orders: { <request id>: { type?, doneAt? } }, taskSids: [session uuids] }`. Loading drops anything unknown or broken.
+Caps: 200 open chat cards (oldest activity dropped first), 500 closed chat cards (newest kept), 1000 order entries,
+1000 task sessions (`taskSids`, newest kept; they survive a restart so a task session never turns into a chat card).
+Order cards themselves come from board.json and follow its caps.

@@ -32,12 +32,14 @@ const TOOLS = [
         project: { type: 'string', description: 'Project name (or id) on that machine. Leave it out, with staff, for a task outside any project (HQ only).' },
         task: { type: 'string', description: 'What to do, self-contained (at most 8 KB).' },
         title: { type: 'string', description: 'Short title for the board (at most 80 characters).' },
+        // v3.131 the order's type on the board; priority bugfix > hotfix > feature
+        type: { type: 'string', enum: ['bugfix', 'hotfix', 'feature'], description: 'HQ: the kind of work, for the board and the release order (bugfix first, then hotfix, then feature). Left out: the app classifies the text.' },
         request: { type: 'string', description: 'HQ only: the request id from office_board (groups the tasks of one request).' },
         // v3.79 staged requests (HQ only; the app refuses them from a project boss)
         after: { type: 'string', description: 'HQ only: id of a task of the same request this one waits for. It starts by itself, with that report appended, once that task has fully reported; it is blocked when that task ends otherwise.' },
         then: {
           type: 'array', maxItems: 7, description: 'HQ only: later stages, in order, each starting by itself once the one before it fully reported (its report appended). The person approves the whole chain when you dispatch it.',
-          items: { type: 'object', properties: { machine: { type: 'string' }, project: { type: 'string' }, staff: { type: 'string' }, task: { type: 'string' }, title: { type: 'string' } }, required: ['task'], additionalProperties: false },
+          items: { type: 'object', properties: { machine: { type: 'string' }, project: { type: 'string' }, staff: { type: 'string' }, task: { type: 'string' }, title: { type: 'string' }, type: { type: 'string', enum: ['bugfix', 'hotfix', 'feature'] } }, required: ['task'], additionalProperties: false },
         },
         staff: { type: 'string', description: 'HQ, team mode, this machine only: a staff member\'s name from office_machines. The task goes to that member\'s own desk (session) in the project, which must be one of its projects (else staff-not-allowed: the person can assign the project in the member\'s settings); without a project, to the member\'s personal workspace (a folder of its own for work that belongs to no project: designs, documents, research, mail). A member can work on several projects at once; one project folder has one desk at work at a time, so the task may wait. A team job with several steps goes as stages of one request (`then`), in the turn the person typed it, so the person approves the chain once.' },
       },

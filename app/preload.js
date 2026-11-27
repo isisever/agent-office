@@ -261,6 +261,14 @@ contextBridge.exposeInMainWorld('agentOffice', {
     resume: (id) => ipcRenderer.invoke('hq:resume', id),   // v3.92 Continue on a blocked stage
     onBoard: listen('hq:board'),
   },
+  // v3.131 the board: order and chat cards, types, Done, reports
+  board: {
+    cards: () => ipcRenderer.invoke('board:cards'),
+    setType: (id, type) => ipcRenderer.invoke('board:setType', id, type),
+    done: (id) => ipcRenderer.invoke('board:done', id),
+    report: (range, groupBy) => ipcRenderer.invoke('board:report', range, groupBy),
+    onCards: listen('board:cards'),
+  },
   // v3.47 Routines: definitions only from this UI (no MCP tool, no peer); held approvals answered here
   routines: {
     get: () => ipcRenderer.invoke('routines:get'),
