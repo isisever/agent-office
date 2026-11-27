@@ -1114,6 +1114,10 @@ label.sb-langrow { cursor: pointer; }
 .sb-pair { margin: 6px 0; }
 .sb-pair-code { font-family: ui-monospace, var(--font-mono); font-size: 15px; letter-spacing: .5px; padding: 6px; border: 1px dashed var(--line); text-align: center; user-select: all; word-break: break-word; }
 .sb-note.warn { color: var(--danger); }
+/* ios-ctl Phones: the pairing QR (always dark on white, whatever the theme, so a camera reads it) */
+.sb-qr { margin: 0 auto 6px; width: 100%; max-width: 184px; }
+.sb-qr svg { display: block; width: 100%; height: auto; }
+.sb-phone .sb-phone-forget { font-size: 11px; margin-left: auto; }
 .sb-note.cmd-rejected { color: var(--danger); }
 .sb-note.cmd-delivered { color: var(--online); }
 

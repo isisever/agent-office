@@ -1370,7 +1370,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false';   // no claude.ai connector (a Gmail one could send behind the outbox)
     delete env.AGENT_OFFICE_AUTO_APPROVE;        // and Agent Office never answers its permission dialogs
   }
-  if (officeMcp && (linkHost?.link()?.devices.length || 0) > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
+  if (officeMcp && LC.offices(linkHost?.link()?.devices || []).length > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
   if (sl?.userCommand) env.AGENT_OFFICE_STATUSLINE = sl.userCommand;
   delete env[D.DELEGATE_ENV];
   delete env.AGENT_OFFICE_DELEGATE_BIN;
@@ -1969,7 +1969,7 @@ function officeDispatch(tab, args, { ttl = 0, revive = false, hold = false } = {
     }, { ttl, revive });
     rec = { machine: selfName(), project: officeName(p.name), pub: 'self', into };   // into: the tab it goes to (task watch)
   } else {
-    const dv = byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
+    const dv = byName(LC.offices(l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
     if (!dv) return { status: 'rejected', reason: 'unknown-machine' };
     // v3.48 HQ only (hold): an offline device's task waits in the outbox; its project comes from the peer cache
     if (!l.conns.has(dv.id) && !hold) return { status: 'rejected', reason: 'offline' };   // nothing is queued here
@@ -2010,7 +2010,7 @@ async function officeProject(tab, args) {
     if (p.id === tab && (op === 'sleep' || op === 'stop')) return { ok: false, reason: 'self' };   // the boss's own tab
     return projectOp(/** @type {any} */ (op), p.id);
   }
-  const dv = byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
+  const dv = byName(LC.offices(l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
   if (!dv || !linkHost) return { ok: false, reason: 'unknown-machine' };
   const cat = l.peerCatalog.get(dv.id) || [];
   const snap = l.remotes.get(dv.id)?.snap?.projects || [];
@@ -2209,7 +2209,7 @@ function updatePeerCache() {
   if (changed || Object.keys(next).length) try { SF.writeAtomic(peerCacheFile(), JSON.stringify(next)); } catch {}
 }
 const hqSettings = () => HQ.normalizeHq(state.hq);
-const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, paired: Boolean(linkHost?.link()?.devices?.length), remotes: HQ.remoteRows(peerCache(), liveRemotes()), waits: hqWaits() });   // v3.99 paired: the Board shows the paired-machines checkbox
+const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, paired: LC.offices(linkHost?.link()?.devices || []).length > 0, remotes: HQ.remoteRows(peerCache(), liveRemotes()), waits: hqWaits() });   // v3.99 paired: the Board shows the paired-machines checkbox
 /** v3.46 amendment: why each queued local task waits → { [taskId]: { state, project, pos, len, expiresAt } }.
  *  v3.93: a local entry also names its `tab` and, when busy, `blockedBy` ('permission' | 'draft'); HQ.waitFields turns
  *  the same entry into what HQ's tools return, so the Board and HQ never disagree. */
@@ -2350,7 +2350,7 @@ function hqTargetAuto(p, staffId) {
  *  Empty parts when the machine or the project is not known (then nothing matches a consented row). */
 function hqRemoteTarget(key, machine, project) {
   const l = linkHost?.link();
-  const dv = key ? (l?.devices || []).find((x) => x.pub === key.pub) : byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
+  const dv = key ? LC.offices(l?.devices || []).find((x) => x.pub === key.pub) : byName(LC.offices(l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
   const pub = dv && l ? (key ? key.pub : dv.id) : '';
   if (!pub) return { machine: '', projectId: '', remote: true, skip: false };
   const known = l.remotes.get(pub)?.snap?.projects || (l.conns.has(pub) ? [] : peerCache()[pub]?.projects || []);
@@ -2496,7 +2496,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     return { ...r, ...wait, ...(request ? { request } : {}) };
   }
   const l = linkHost?.link();
-  const dv = key ? (l?.devices || []).find((x) => x.pub === key.pub) : byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
+  const dv = key ? LC.offices(l?.devices || []).find((x) => x.pub === key.pub) : byName(LC.offices(l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), machine);
   const pub = dv ? (key ? key.pub : dv.id) : '';
   if (!pub || !l) return { status: 'rejected', reason: 'unknown-machine' };
   // v3.48 an offline device: its last-known projects (peer cache); the task waits in the outbox (consent was given now)
@@ -2592,7 +2592,7 @@ async function hqDispatchStages(args, request, rrun) {
       }
       Object.assign(s, { pub: 'self', machineName: selfName(), projectName: p.name, projectId: p.id });
     } else {
-      const dv = s.key ? (l?.devices || []).find((x) => x.pub === s.key.pub) : byName((l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), s.machine.trim());
+      const dv = s.key ? LC.offices(l?.devices || []).find((x) => x.pub === s.key.pub) : byName(LC.offices(l?.devices || []).map((x) => ({ id: x.pub, name: x.name })), s.machine.trim());
       if (!dv) return no('unknown-machine', { stage: s.n });
       if (s.staff) return no('staff-local-only', { stage: s.n });   // v3.83 paired devices know no staff
       Object.assign(s, { pub: s.key ? s.key.pub : dv.id, machineName: dv.name, projectName: s.project, projectId: s.key ? s.key.id : hqRemoteTarget(null, s.machine.trim(), s.project).projectId });   // v3.99 its id there, when known: the row's target identity
@@ -2787,6 +2787,7 @@ function hqTick() {
   hqWaitsPush();
   const l = linkHost?.link();
   if (l) {
+    l.setCtlHq?.(LC.ctlHqStatus(hqBusyNow(), attention.get(HQ.HQ_ID)));   // v3.121 phone controllers see HQ's state
     hqMirrorRemote();
     updatePeerCache();
   }
@@ -2884,7 +2885,7 @@ const openRunOf = (rid) => rt().runs.some((r) => r.routine === rid && ROUT.OPEN_
 /** Why a routine cannot run now (shown on its row), or '' */
 function routineProblem(r) {
   if (r.target.kind === 'hq') return hqSettings().enabled ? '' : 'hq-off';
-  if (r.target.kind === 'remote') return ROUT.remoteProblem(r.target, { paired: (linkHost?.link()?.devices || []).map((d) => d.pub), cache: peerCache() });
+  if (r.target.kind === 'remote') return ROUT.remoteProblem(r.target, { paired: LC.offices(linkHost?.link()?.devices || []).map((d) => d.pub), cache: peerCache() });
   if (r.target.kind === 'staff') return !teamOn() ? 'no-team' : memberById(r.target.staffId) ? '' : 'staff-gone';   // v3.83 amendment
   const p = P.findProject(state, r.target.projectId);
   if (!p) return 'target-gone';
@@ -2944,7 +2945,7 @@ function holdDispatch(args, request, rrun) {
   const heldId = `h${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
   const key = HQ.parseRemoteKey(args.project);
   // v3.49 a remote target (key, or a machine name from HQ): the card names the device and its project
-  const devs = linkHost?.link()?.devices || [];
+  const devs = LC.offices(linkHost?.link()?.devices || []);   // v3.121 never a phone controller
   const dv = key ? devs.find((x) => x.pub === key.pub) : isHere(String(args.machine || '').trim()) ? null : byName(devs.map((x) => ({ id: x.pub, name: x.name })), args.machine);
   const pub = key ? key.pub : dv ? dv.id : '';
   const known = pub ? linkHost?.link()?.remotes.get(pub)?.snap?.projects || peerCache()[pub]?.projects || [] : [];
@@ -3290,6 +3291,15 @@ function startLink() {
     onReport: onOfficeReport,
     manage: projectOp,   // v3.33 proj-op from a device allowed to manage
     sessionOf: linkSessionOf,   // v3.100 the transcript a device allowed to read sessions gets (main tab only)
+    hqSessionOf: linkHqSessionOf,   // v3.121 a phone controller reads HQ's transcript
+    // v3.121 a phone controller's HQ turn, typed like the person's own (false = HQ is busy right now)
+    // v3.121 a phone controller's HQ turn. Only with HQ on; refused while HQ is busy or an approval prompt is open. It is
+    // NOT the person's typed turn: no request id is minted (and the person's live one is cleared), so HQ cannot dispatch to
+    // paired machines on it without the normal card. Face-ID-signed approvals are planned (P2).
+    ctlHq: (text) => LC.ctlTurn({ enabled: Boolean(hqSettings().enabled && P.hqProject(state)), busy: hqBusyNow(), approval: attention.get(HQ.HQ_ID) === 'permission',
+      type: () => { hqLastKey = Date.now(); hqMinter.clear(); return typePrompt(HQ.HQ_ID, text); },
+      start: () => { hqMinter.clear(); hqWanted = true; startPty(HQ.HQ_ID, { resume: true, prompt: text, forcePrompt: true }); hqRestarter.tick(true); } }),
+    ctlReports: ctlReportsList,   // v3.121 the newest HQ reports for a phone controller
     stoppedHere: (id) => stoppedHere.get(String(id)) || 0,   // v3.99 the person's own stop: no remote revive for 10 minutes
     handoff: handoffDeps(),
     loginRelay: {
@@ -5346,6 +5356,27 @@ ipcMain.handle('chat:commands', (_e, id) => {
   slashCache.set(id, { at: Date.now(), list });
   return list;
 });
+/** v3.121 ROUT.hqBusy for now, or 'cold' when HQ is not running. */
+function hqBusyNow() {
+  const now = Date.now();
+  return terms.has(HQ.HQ_ID) ? ROUT.hqBusy({ state: tabStateOf(HQ.HQ_ID), lastKeyAt: hqLastKey, now, onScreen: hqOnScreen(), inboxWaiting: inboxWaiting(bossSid(HQ.HQ_ID)) }) : 'cold';
+}
+/** v3.121 The newest HQ reports for a phone controller (board tasks with a report, newest first). */
+function ctlReportsList(limit) {
+  const tasks = (loadHqBoard().tasks || []).filter((t) => t.report && t.finishedAt).sort((a, b) => b.finishedAt - a.finishedAt).slice(0, limit);
+  const text = (id) => { const f = HQ.taskFile(hqDir(), String(id), 'report.md'); try { return f ? fs.readFileSync(f, 'utf8').slice(0, 4000) : ''; } catch { return ''; } };
+  return tasks.map((t) => ({ id: String(t.id).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 64) || 'x', at: t.finishedAt, project: t.project || '', title: t.title || '', summary: text(t.id) }));
+}
+/** v3.121 HQ's transcript (its main tab), for a phone controller. */
+function linkHqSessionOf() {
+  const r = P.resolvePty(state, HQ.HQ_ID);
+  if (!r || r.tab) return { reason: 'unknown-project' };
+  const { configDir } = A.accountOf(state, r.project);
+  const sid = chatSession(HQ.HQ_ID, r, configDir);
+  if (!sid) return { reason: 'no-session' };
+  const f = TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file;
+  return f ? { file: f } : { reason: 'no-session' };
+}
 /**
  * v3.100 the transcript a paired device may read (src/link-host.js, "Allow reading sessions from this device"): a
  * project's MAIN tab only → { file } | { reason }. Never HQ's session, a staff desk, an extra tab or a personal workspace.

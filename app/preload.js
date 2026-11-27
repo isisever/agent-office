@@ -205,6 +205,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     invite: (o) => ipcRenderer.invoke('link:invite', o),            // v3.106 o: { reset: true } after the reset confirm
     join: (code, o) => ipcRenderer.invoke('link:join', code, o),    // { ok, error?, view, resetDone?, recovered? }
     reset: (o) => ipcRenderer.invoke('link:reset', o),              // v3.106 o: { retryOnly? } → { ok, recovered?, reason?, code?, folder?, view }
+    invitePhone: () => ipcRenderer.invoke('link:invitePhone'),      // ios-ctl: a phone's pairing code (view.pairing.kind 'controller', shown as a QR)
     cancel: () => ipcRenderer.invoke('link:cancel'),
     setName: (name) => ipcRenderer.invoke('link:setName', name),
     rename: (id, name) => ipcRenderer.invoke('link:rename', id, name),

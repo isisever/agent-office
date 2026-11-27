@@ -32,7 +32,7 @@ const browser = {
 }
 
 export default [
-  { ignores: ['**/node_modules/**', 'app/release/**', 'plugin/.claude-plugin/types/**', 'plugin/types/**', 'skill-packs/*/**'] },
+  { ignores: ['**/node_modules/**', 'app/release/**', 'plugin/.claude-plugin/types/**', 'plugin/types/**', 'skill-packs/*/**', 'ios/build/**', 'ios/core/addons/*/build*/**'] },
   js.configs.recommended,
   {
     linterOptions: { reportUnusedDisableDirectives: 'error' },
@@ -47,6 +47,15 @@ export default [
   {
     files: ['app/main.js', 'app/preload.js', 'app/src/**/*.js', 'app/test/**/*.cjs', 'app/scripts/**/*.cjs'],
     languageOptions: { sourceType: 'commonjs', globals: { ...node, ...commonjs } },
+  },
+  // v3.121 the iPhone worklet core (Bare: CommonJS with Bare/Node-like globals) and its Node dev tools (ES modules)
+  {
+    files: ['ios/core/**/*.js'],
+    languageOptions: { sourceType: 'commonjs', globals: { ...node, ...commonjs, BareKit: 'readonly' } },
+  },
+  {
+    files: ['ios/core/**/*.mjs'],
+    languageOptions: { sourceType: 'module', globals: node },
   },
   // UI: ES modules in the browser
   {

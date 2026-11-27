@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
 const C = require('./link-core.js');
+const W = require('./link-wire.js');
 
 const OWED_MS = 4 * 3600 * 1000 + 30 * 60 * 1000;
 // v3.48 dispatcher task records: an offline device's task waits in the outbox this long (then 'expired')
@@ -102,6 +103,9 @@ class Link extends EventEmitter {
     this.queryLimiter = new C.RateLimiter({ burst: 16, everyMs: 2000, now: this.now });
     this.log = o.log || ((...a) => console.warn('[link]', ...a));
     this.destroyed = false;
+    this.ctlConns = new Map();   // v3.121 phone controllers: pub → { conn, sentJson, statuses }
+    this.ctlHq = 'idle';         // the HQ status the controller view shows (setCtlHq)
+    this.ctlSeq = 0;
   }
 
   // --- swarm
@@ -147,10 +151,11 @@ class Link extends EventEmitter {
   // --- pairing
 
   /** Shows a one-time code (this device invites). Resolves at once; 'paired' fires when the other side joins. */
-  async invite() {
+  async invite({ kind = null } = {}) {
     await this.cancelPairing();
     const code = C.makeCode();
-    const d = this.startPairing('inviter', code);
+    // v3.121 kind 'controller': a phone pairing (QR); the device it adds is a controller, never a remote office
+    const d = this.startPairing('inviter', code, undefined, undefined, kind === 'controller' ? 'controller' : null);
     await d.flushed().catch(() => {});   // announced on the DHT before the code is shown
     return { code, expiresAt: this.pairing?.expiresAt || 0 };
   }
@@ -160,7 +165,7 @@ class Link extends EventEmitter {
     if (!code) return Promise.reject(new Error('bad-code'));
     return this.cancelPairing().then(() => new Promise((resolve, reject) => this.startPairing('joiner', code, resolve, reject)));
   }
-  startPairing(role, code, resolve, reject) {
+  startPairing(role, code, resolve, reject, kind = null) {
     const { topic, key } = C.pairSecrets(code);
     const expiresAt = this.now() + C.PAIR_TTL_MS;
     const timer = setTimeout(() => this.cancelPairing(new Error('expired')), C.PAIR_TTL_MS);
@@ -168,7 +173,7 @@ class Link extends EventEmitter {
     // the joiner looks the topic up again every few seconds: the inviter may announce after its first lookup
     const retry = role === 'joiner' ? setInterval(() => discovery.refresh().catch(() => {}), 3000) : null;
     retry?.unref?.();
-    this.pairing = { role, code, key, topic, expiresAt, timer, retry, resolve, reject };
+    this.pairing = { role, code, key, topic, expiresAt, timer, retry, resolve, reject, kind };
     const discovery = this.ensureSwarm().join(topic, { server: role === 'inviter', client: role === 'joiner' });
     this.emit('change');
     return discovery;
@@ -192,11 +197,12 @@ class Link extends EventEmitter {
     // v3.101 the person at each machine confirms the pairing (first the joiner's, then the inviter's): time for both
     const t = setTimeout(fail, C.PAIR_CONFIRM_MS);
     t.unref?.();
-    const hello = () => this.write(conn, { t: 'pair-hello', name: this.name, proof: C.pairProof(p.key, p.role, this.pub, remote) });
+    const hello = () => this.write(conn, { t: 'pair-hello', name: this.name, proof: C.pairProof(p.key, p.role, this.pub, remote), ...(p.kind ? { kind: p.kind } : {}) });
     const ask = (name) => (this.confirmPair ? Promise.resolve().then(() => this.confirmPair?.(name)).catch(() => false) : Promise.resolve(false));   // fail closed: nobody to ask = no
     // the inviter names itself at once; the joiner proves the code (its pair-hello) only after its person said yes
     if (p.role === 'inviter') hello();
     let device = null;
+    let invalid = 0;   // a paired phone's first session runs on this reader: the same 20-invalid limit as ctlSession
     let confirmed = false;   // the person at this machine said yes on this connection
     const finish = () => {
       done = true;
@@ -210,9 +216,10 @@ class Link extends EventEmitter {
       this.session(conn, device, 'paired');
     };
     this.reader(conn, (raw) => {
-      if (device) return this.handle(conn, device, raw);    // the same stream carries the session once paired
+      if (device) return device.kind === 'controller' ? this.handleCtl(conn, device, raw, () => { if (++invalid > 20) conn.destroy(); }) : this.handle(conn, device, raw);    // the same stream carries the session once paired
       const m = C.validatePair(raw);
       if (!m || this.pairing !== p) return fail();
+      if ((m.kind || null) !== (p.kind || null)) return fail();   // v3.121 a phone never joins a desktop code, nor a desktop a phone code
       if (m.t === 'pair-hello') {
         const theirs = p.role === 'inviter' ? 'joiner' : 'inviter';
         if (!C.proofOk(p.key, theirs, remote, this.pub, m.proof)) return fail();
@@ -226,21 +233,21 @@ class Link extends EventEmitter {
           confirmed = true;
           if (p.role !== 'inviter') return hello();            // the joiner now waits for pair-ok
           const secret = crypto.randomBytes(32).toString('hex');
-          device = this.addDevice(remote, m.name, secret);
-          this.write(conn, { t: 'pair-ok', name: this.name, secret, proof: C.pairProof(p.key, 'ok', this.pub, remote) });
+          device = this.addDevice(remote, m.name, secret, p.kind);
+          this.write(conn, { t: 'pair-ok', name: this.name, secret, proof: C.pairProof(p.key, 'ok', this.pub, remote), ...(p.kind ? { kind: p.kind } : {}) });
           finish();
         });
       } else if (m.t === 'pair-ok' && p.role === 'joiner' && confirmed) {
         if (!C.proofOk(p.key, 'ok', remote, this.pub, m.proof)) return fail();
-        device = this.addDevice(remote, m.name, m.secret);
+        device = this.addDevice(remote, m.name, m.secret, p.kind);
         finish();
       } else return fail();
     });
     conn.on('close', () => clearTimeout(t));
   }
 
-  addDevice(pub, name, secret) {
-    const device = { pub, name: C.deviceName(name), addedAt: this.now(), own: true, allowHandoff: false, allowAccounts: false };   // v3.101 pairing IS "this is my own computer"; handoffs and sign-in keep their own opt-ins (OFF)
+  addDevice(pub, name, secret, kind = null) {
+    const device = kind === 'controller' ? { pub, name: C.deviceName(name), addedAt: this.now(), own: false, allowHandoff: false, allowAccounts: false, kind: 'controller', ctl: true } : { pub, name: C.deviceName(name), addedAt: this.now(), own: true, allowHandoff: false, allowAccounts: false };   // v3.101 pairing IS "this is my own computer"; handoffs and sign-in keep their own opt-ins (OFF)
     this.devices = [...this.devices.filter((d) => d.pub !== pub), device];
     this.secrets[pub] = secret;
     this.swarm?.join(C.pairTopic(secret), { server: true, client: true });
@@ -252,6 +259,7 @@ class Link extends EventEmitter {
   // --- trusted sessions
 
   session(conn, device, _why) {
+    if (device.kind === 'controller') return this.ctlSession(conn, device, _why);   // v3.121
     const old = this.conns.get(device.pub);
     if (old && old !== conn) old.destroy();
     this.conns.set(device.pub, conn);
@@ -636,6 +644,10 @@ class Link extends EventEmitter {
   // finds the transcript and feeds sessPush) → frames at most SESS_FRAMES_PER_SEC → endSess. Nothing here reads a file.
 
   sessOf(pub) { return [...this.sessOut.values()].filter((s) => s.pub === pub); }
+  /** v3.121 may this subscription still be fed? An own office: any project; a paired phone: the HQ session only. */
+  maySess(s) {
+    return C.maySessions(this.devices, this.secrets, s.pub) || (s.project === 'hq' && C.isController(this.devices, this.secrets, s.pub));
+  }
   /** A device asks to read one of our projects' sessions: only while it is paired and not paused (v3.101). */
   receiveSessOpen(conn, d, m) {
     if (!this.peerHas(d.pub, 'sess')) return;   // it never said it understands the answer
@@ -659,7 +671,7 @@ class Link extends EventEmitter {
   sessPush(key, items, { reset = false } = {}) {
     const s = this.sessOut.get(key);
     if (!s) return false;
-    if (!C.maySessions(this.devices, this.secrets, s.pub)) { this.endSess(key, 'not-allowed', 'revoked'); return false; }
+    if (!this.maySess(s)) { this.endSess(key, 'not-allowed', 'revoked'); return false; }
     const frames = C.sessFrames(s.id, s.seq, items, reset);
     if (reset) s.queue.length = 0;
     s.seq += frames.length;
@@ -671,7 +683,7 @@ class Link extends EventEmitter {
   pumpSess(s) {
     if (s.cool || !s.queue.length || this.sessOut.get(s.key) !== s) return;
     // the permission is read again before every frame: turning it off or removing the device stops the stream at once
-    if (!C.maySessions(this.devices, this.secrets, s.pub)) return void this.endSess(s.key, 'not-allowed', 'revoked');
+    if (!this.maySess(s)) return void this.endSess(s.key, 'not-allowed', 'revoked');
     if (s.conn.destroyed) return void this.endSess(s.key, null, 'offline');
     this.write(s.conn, s.queue.shift());
     s.cool = setTimeout(() => { s.cool = null; this.pumpSess(s); }, this.sessGapMs);
@@ -767,8 +779,10 @@ class Link extends EventEmitter {
     const s = C.sanitizeCommand(text);
     const snap = this.remotes.get(pub)?.snap;
     const rec = { id: crypto.randomBytes(8).toString('hex'), pub, project, projectName: C.cleanLine(snap?.projects.find((p) => p.id === project)?.name || projectName || project, 60), firstLine: C.cleanLine(String(text).split('\n')[0], 80), status: 'sent', at: this.now() };
+    const office = C.trusted(this.devices, this.secrets, pub) && !C.isController(this.devices, this.secrets, pub);
     if (!s.ok) Object.assign(rec, { status: 'rejected', reason: s.reason });
-    else if (!conn && report && hold && C.trusted(this.devices, this.secrets, pub)) Object.assign(rec, { status: 'held', reason: 'offline', held: true });
+    else if (C.isController(this.devices, this.secrets, pub)) Object.assign(rec, { status: 'rejected', reason: 'not-allowed' });   // v3.121 a phone is never an office
+    else if (!conn && report && hold && office) Object.assign(rec, { status: 'held', reason: 'offline', held: true });
     else if (!conn) Object.assign(rec, { status: 'rejected', reason: report ? 'offline' : 'not-running' });
     else if (report && !this.peerHas(pub, 'report')) Object.assign(rec, { status: 'rejected', reason: 'no-report' });
     if (report) {
@@ -1015,6 +1029,116 @@ class Link extends EventEmitter {
     }
   }
 
+  // --- v3.121 phone controllers (cap 'ctl'): read the controller view, type HQ turns, read reports and the HQ
+  // session. Nothing else: every other message from a controller is dropped, and isController is checked each time.
+
+  ctlSession(conn, device, why) {
+    if (!C.isController(this.devices, this.secrets, device.pub)) return void conn.destroy();   // before any hello or view
+    const old = this.ctlConns.get(device.pub);
+    if (old && old.conn !== conn) old.conn.destroy();
+    const c = { conn, sentJson: '', statuses: new Map() };
+    this.ctlConns.set(device.pub, c);
+    let invalid = 0;
+    if (why !== 'paired') this.reader(conn, (raw) => this.handleCtl(conn, device, raw, () => { if (++invalid > 20) conn.destroy(); }));
+    const beat = setInterval(() => this.write(conn, { t: 'ping' }), this.heartbeatMs);
+    beat.unref?.();
+    const silence = setTimeout(() => conn.destroy(), this.heartbeatMs * C.HEARTBEAT_MISSES);
+    silence.unref?.();
+    conn.on('data', () => silence.refresh());
+    conn.on('close', () => {
+      clearInterval(beat);
+      clearTimeout(silence);
+      for (const s of [...this.sessOut.values()]) if (s.conn === conn) this.endSess(s.key, null, 'offline');
+      if (this.ctlConns.get(device.pub) === c) { this.ctlConns.delete(device.pub); this.peers.delete(device.pub); }
+      this.emit('change');
+    });
+    this.write(conn, { t: 'hello', v: C.PROTOCOL, name: this.name, ...(this.appVersion ? { app: this.appVersion } : {}), caps: W.CTL_CAPS });
+    this.flushCtl();
+    this.emit('change');
+  }
+  handleCtl(conn, device, raw, onInvalid = () => {}) {
+    if (!C.isController(this.devices, this.secrets, device.pub)) return conn.destroy();   // forgotten or unsealed: at once
+    const d = this.devices.find((x) => x.pub === device.pub) || device;
+    if (raw?.t === 'ping') return;
+    if (raw?.t === 'hello') {   // only the caps a phone may have count: 'ctl' and 'sess' (it then gets sess-end)
+      const caps = Array.isArray(raw.caps) ? raw.caps.filter((c) => W.CTL_CAPS.includes(c)) : [];
+      this.peers.set(d.pub, { v: Number(raw.v) || 0, app: '', caps });
+      return;
+    }
+    if (raw?.t === 'sess-open' || raw?.t === 'sess-keep' || raw?.t === 'sess-close') {
+      const m = C.validateMessage(raw);
+      if (!m) return onInvalid();
+      if (m.t === 'sess-open') return this.ctlSessOpen(conn, d, m);
+      const s = this.sessOut.get(`${d.pub}/${m.id}`);
+      if (!s) return;
+      if (m.t === 'sess-keep') s.keptAt = this.now(); else this.endSess(s.key, null, 'closed');
+      return;
+    }
+    const m = W.validateCtl(raw);
+    if (!m) return onInvalid();
+    if (m.t === 'ctl-hq') {
+      const send = (status, reason) => { if (!conn.destroyed) this.write(conn, { t: 'ctl-hq-status', id: m.id, status, ...(reason ? { reason } : {}) }); };
+      if (!this.limiter.take(d.pub)) return send('rejected', 'rate-limited');
+      const s = C.sanitizeCommand(m.text);
+      if (!s.ok) return send('rejected', s.reason);
+      if (!this.listenerCount('ctl-hq')) return send('rejected', 'no-hq');
+      this.emit('ctl-hq', { device: d, id: m.id, text: s.text, reply: send });
+    } else if (m.t === 'ctl-reports' && !m.reports) {
+      const reply = (reports) => { const line = W.validateCtl({ t: 'ctl-reports', id: m.id, reports: (reports || []).slice(0, m.limit) }); if (line && !conn.destroyed) this.write(conn, line); };
+      if (!this.queryLimiter.take(d.pub)) return reply([]);
+      if (!this.listenerCount('ctl-reports')) return reply([]);
+      this.emit('ctl-reports', { device: d, id: m.id, limit: m.limit, reply });
+    } else onInvalid();   // ctl-view, ctl-event, ctl-hq-status and answers only go to the phone
+  }
+  /** A controller reads the HQ session only (project 'hq'), with the same limits as a device reading a session. */
+  ctlSessOpen(conn, d, m) {
+    const end = (reason) => { if (!conn.destroyed) this.write(conn, { t: 'sess-end', id: m.id, reason }); };
+    if (m.project !== 'hq') return end('not-allowed');
+    const now = this.now();
+    const opens = (this.sessOpens.get(d.pub) || []).filter((at) => now - at < 60000);
+    this.sessOpens.set(d.pub, opens);
+    if (opens.length >= C.SESS_OPENS_PER_MIN) return end('rate-limited');
+    opens.push(now);
+    const key = `${d.pub}/${m.id}`;
+    if (this.sessOut.has(key)) return;
+    if (this.sessOf(d.pub).length >= C.SESS_PER_DEVICE) return end('limit');
+    this.sessOut.set(key, { key, pub: d.pub, device: d.name, id: m.id, project: 'hq', conn, seq: 0, keptAt: now, queue: [], cool: null });
+    this.emit('sess-open', { key, device: d, id: m.id, project: 'hq', controller: true, refuse: (reason) => this.endSess(key, reason, 'refused') });
+    this.emit('change');
+  }
+  /** The host tells the HQ's status ('working' | 'idle' | 'approval'); controllers get it with the view. */
+  setCtlHq(status) {
+    if (!W.CTL_STATUS.includes(status) || status === this.ctlHq) return;
+    this.ctlHq = status;
+    for (const c of this.ctlConns.values()) this.write(c.conn, { t: 'ctl-event', seq: ++this.ctlSeq, event: { project: 'hq', status, at: this.now() } });
+    this.flushCtl();
+  }
+  ctlView() {
+    const snap = this.snap || { projects: [], workers: [], delivered: 0 };
+    const sessions = new Map();
+    for (const w of snap.workers || []) if (!w.doneAt) sessions.set(w.project, (sessions.get(w.project) || 0) + 1);
+    return W.cleanCtlView({ name: this.name, delivered: snap.delivered || 0, hq: { status: this.ctlHq },
+      projects: (snap.projects || []).map((p) => ({ id: p.id, name: p.name, engine: p.engine, status: p.status, working: p.working, sessions: sessions.get(p.id) || 0, attention: p.attention, ...(p.tool ? { tool: p.tool } : {}) })) });
+  }
+  /** Sends the controller view to every phone whose copy is stale, and one ctl-event per project whose status changed. */
+  flushCtl() {
+    if (!this.ctlConns.size) return;
+    const view = this.ctlView();
+    if (!view) return;
+    const json = JSON.stringify(view);
+    for (const c of this.ctlConns.values()) {
+      for (const p of view.projects) {
+        const was = c.statuses.get(p.id);
+        if (was && was !== p.status) this.write(c.conn, { t: 'ctl-event', seq: ++this.ctlSeq, event: { project: p.id, status: p.status, at: this.now(), ...(p.attention ? { attention: p.attention } : {}) } });
+        c.statuses.set(p.id, p.status);
+      }
+      if (c.sentJson === json) continue;
+      c.sentJson = json;
+      this.write(c.conn, { t: 'ctl-view', seq: ++this.ctlSeq, view });
+    }
+  }
+
+
   // --- the published snapshot: at most once a second, only when it changed
 
   publish(snap) {
@@ -1028,6 +1152,7 @@ class Link extends EventEmitter {
       this.pubTimer = null;
       this.lastPub = this.now();
       for (const [pub, conn] of this.conns) this.flushTo(pub, conn);
+      this.flushCtl();
     }, wait);
     this.pubTimer.unref?.();
   }
@@ -1233,6 +1358,8 @@ class Link extends EventEmitter {
     this.dropSessIn(pub, 'removed');
     this.conns.get(pub)?.destroy();
     this.conns.delete(pub);
+    this.ctlConns.get(pub)?.conn.destroy();
+    this.ctlConns.delete(pub);
     this.remotes.delete(pub);
     this.forgetPeer(pub);
     this.dropLogins(pub);
@@ -1251,8 +1378,10 @@ class Link extends EventEmitter {
   view() {
     return {
       name: this.name, id: this.pub.slice(0, 8),
-      pairing: this.pairing ? { role: this.pairing.role, code: this.pairing.role === 'inviter' ? this.pairing.code : null, expiresAt: this.pairing.expiresAt } : null,
-      devices: this.devices.map((d) => {
+      pairing: this.pairing ? { role: this.pairing.role, code: this.pairing.role === 'inviter' ? this.pairing.code : null, expiresAt: this.pairing.expiresAt, ...(this.pairing.kind ? { kind: this.pairing.kind, pub: this.pub } : {}) } : null,
+      // v3.121 paired phones: never among the devices (remote offices, office_machines, HQ targets)
+      phones: this.devices.filter((d) => d.kind === 'controller').map((d) => ({ id: d.pub, name: d.name, addedAt: d.addedAt, online: this.ctlConns.has(d.pub), sealed: d.ctl === true })),
+      devices: C.offices(this.devices).map((d) => {
         const peer = this.peers.get(d.pub);
         return { id: d.pub, name: d.name, addedAt: d.addedAt, own: d.own === true, allowHandoff: d.allowHandoff, allowAccounts: d.allowAccounts, online: this.conns.has(d.pub),
           trustsUs: this.peerTrusts.has(d.pub) ? this.peerTrusts.get(d.pub) : null,   // v3.97 null = unknown (offline, or an older Agent Office there)

@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "name": "scrypt-ll",
+  "version": "0.0.1",
+  "description": "scrypt ROMix (Salsa20/8) in portable C, as a Bare addon for the Agent Office Remote worklet",
+  "addon": true,
+  "main": "index.js",
+  "files": ["index.js", "binding.c", "romix.c", "romix.h", "CMakeLists.txt", "prebuilds"],
+  "devDependencies": {
+    "bare-make": "2.1.2",
+    "cmake-bare": "1.19.1"
+  }
+}
