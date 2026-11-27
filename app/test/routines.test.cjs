@@ -407,15 +407,16 @@ function remoteHarness({ online = true, ask = true } = {}) {
     ...names.map((n) => { const i = MAIN_SRC.search(new RegExp(`^(async )?function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return MAIN_SRC.slice(i, MAIN_SRC.indexOf('\n}\n', i) + 2); }),
   ].join('\n');
   const env = {
-    HQ, ROUT, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto'), T: t,
+    HQ, ROUT, BM: require('../src/board-model.js'), LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto'), T: t,
     state: { projects: [], routines: [], hq: { enabled: true, ...(ask ? { askBeforeDispatch: true } : {}) } }, file: { runs: [], held: {}, sched: {} }, board: HQ.emptyBoard(), dispatches: new Map(),
     notes: [], sent: [], dialogs: 0, added: [], rows: [], records: new Map(), online, n: 0,
   };
   const link = { devices: [{ pub: PUB, name: 'Mac2' }], get conns() { return new Set(env.online ? [PUB] : []); },
     remotes: new Map([[PUB, { snap: { projects: [{ id: 'web', name: 'Web' }] } }]]), outgoing: [] };
   const prelude = `
-    const { HQ, ROUT, LC, SF, P, fs, path, crypto, T } = env; let state = env.state;
+    const { HQ, ROUT, BM, LC, SF, P, fs, path, crypto, T } = env; let state = env.state;
     const hqMinter = HQ.createMinter(); const hqPacer = HQ.createPacer();
+    const releaseType = (r, own) => BM.typeOf(own) || 'feature';   // main's lookup of the person's order type (no store here)
     let win = { isFocused: () => true, isDestroyed: () => false }; const isLoaded = true; const appQuitting = false;
     env.setWin = (w) => { win = w; };
     const addRun = (a) => env.added.push(a); const rtFileName = () => path.join(${JSON.stringify(dir)}, 'routines.json'); const powerMonitor = { on() {} };

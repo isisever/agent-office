@@ -9,6 +9,7 @@
 // session never reported) and a report written after the person typed into that session themselves (personPrompted,
 // v3.89 amendment: it may answer the person, not the task); nothing is ever sent without the consent given when it
 // was created.
+const BM = require('./board-model.js');   // v3.131 release order
 const ADHOC = 'adhoc';
 const WAITING = 'waiting';
 const BLOCKED = 'blocked';
@@ -20,9 +21,9 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** The stages of one office_dispatch call: [first, ...then], each { project, machine, title, task }; malformed `then` entries are dropped. */
 function stagesOf(args) {
-  const one = (o) => ({ project: String(o?.project || ''), machine: String(o?.machine || ''), title: String(o?.title || ''), task: typeof o?.task === 'string' ? o.task : '', ...(typeof o?.staff === 'string' && o.staff.trim() ? { staff: o.staff.trim() } : {}) });   // v3.83 a stage may name a staff member
+  const one = (o) => ({ project: String(o?.project || ''), machine: String(o?.machine || ''), title: String(o?.title || ''), task: typeof o?.task === 'string' ? o.task : '', ...(typeof o?.staff === 'string' && o.staff.trim() ? { staff: o.staff.trim() } : {}), ...(BM.typeOf(o?.type) ? { type: BM.typeOf(o.type) } : {}) });   // v3.131 a stage's type   // v3.83 a stage may name a staff member
   const then = (Array.isArray(args?.then) ? args.then : []).filter((o) => o && typeof o === 'object' && (o.project || (typeof o.staff === 'string' && o.staff.trim())) && typeof o.task === 'string' && o.task);   // v3.83 amendment: a member's stage may have no project (their personal workspace)
-  return { first: one(args), then: then.map(one), tooMany: then.length > THEN_MAX };
+  return { first: one(args), then: then.map((o) => one({ type: args?.type, ...o })), tooMany: then.length > THEN_MAX };
 }
 
 /** Walks the `after` links from `id`; true when they come back to a task already seen (a cycle). */
@@ -65,7 +66,7 @@ function stageState(pre) {
  * The waiting stages that can move now → { release: [{ id, after }], block: [{ id, status, reason }] }.
  * A missing previous stage or one that ended without a full report blocks; past WAIT_MS a stage expires.
  */
-function settle(board, now = Date.now(), waitMs = WAIT_MS) {
+function settle(board, now = Date.now(), waitMs = WAIT_MS, typeFn = (/** @type {any} */ t) => t?.type) {
   const release = [];
   const block = [];
   for (const t of board.tasks) {
@@ -78,7 +79,11 @@ function settle(board, now = Date.now(), waitMs = WAIT_MS) {
     else if (st === 'block') block.push({ id: t.id, status: BLOCKED, reason: !pre ? 'after-lost' : pre.status === 'rejected' && pre.resumed === true ? 'after-blocked' : pre.closedByHq ? 'after-closed-by-hq' : pre.status === 'reported' && pre.personPrompted ? 'after-person-prompted' : `after-${pre.status}` });
     else if (now - t.at > waitMs) block.push({ id: t.id, status: 'expired', reason: 'after-timeout' });
   }
-  return { release, block };
+  // v3.131 stages released together go by type priority (bugfix, hotfix, feature), then the oldest first, with the same
+  // aging as held sends (one rank per BM.AGE_MS waited). `typeFn(task)` gives a stage's current type (main: the person's
+  // type of its order when set), so nothing sealed has to change when the person retypes an order.
+  const at = new Map(board.tasks.map((t) => [t.id, t]));
+  return { release: BM.byPriority(release, (x) => typeFn(at.get(x.id)), (x) => at.get(x.id)?.at, now), block };
 }
 
 /**
@@ -191,7 +196,7 @@ function stageProject(st, projects) {
  * personal fields, title and text). The app keeps it in main memory when the stage is accepted and compares it at
  * release: stage.json is a file a session can edit, so a changed record is refused (`stage-changed`).
  */
-const STAGE_FIELDS = ['remote', 'machine', 'key', 'project', 'projectId', 'staff', 'personalStaff', 'title', 'task', 'noDialog'];
+const STAGE_FIELDS = ['remote', 'machine', 'key', 'project', 'projectId', 'staff', 'personalStaff', 'title', 'task', 'noDialog', 'type'];
 function stageDigest(st) {
   const o = st && typeof st === 'object' ? st : {};
   return require('crypto').createHash('sha256').update(JSON.stringify(STAGE_FIELDS.map((k) => [k, o[k] === undefined ? null : o[k]]))).digest('hex');

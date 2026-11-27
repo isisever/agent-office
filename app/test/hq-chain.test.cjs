@@ -129,8 +129,9 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
   const env = { board: HQ.emptyBoard(), sent: [], dialogs: [], remoteDialogs: 0, rows: [], notices: [], n: 0, allow, dir,
     state: { projects: [{ id: 'pa', name: 'office', dir: '/w/office' }, { id: 'pb', name: 'erp', dir: '/w/erp' }], hq: { enabled: true, ...(ask ? { askBeforeDispatch: true } : {}) }, routines: [] }, link };
   const prelude = `
-    const { HQ, CH, LC, SF, P, ROUT, fs, path, crypto } = env.mods; const state = env.state; const OM = { TASK_MAX: 8192 };
+    const { HQ, CH, LC, SF, P, ROUT, BM, fs, path, crypto } = env.mods; const state = env.state; const OM = { TASK_MAX: 8192 };
     const hqMinter = HQ.createMinter(); env.minter = hqMinter; const hqPacer = HQ.createPacer();
+    const releaseType = (r, own) => BM.typeOf(own) || 'feature';   // main's lookup of the person's order type (no store here)
     const win = { isFocused: () => true, isDestroyed: () => false }; const T = (k, v) => k + (v ? JSON.stringify(v) : '');
     const dialog = { showMessageBox: async (_w, o) => { env.dialogs.push(o); return { response: env.response ?? (env.allow ? 0 : 1) }; } };
     ${realConfirm ? '' : 'const confirmHqDispatch = async () => { env.remoteDialogs++; return env.allow; };'}   // the stub counts single-dispatch dialogs in env.remoteDialogs
@@ -151,7 +152,7 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
       const own = { id: 'own-' + m.id, name: personalFolderName(m), dir: '/w/own', staffOwner: m.id, ...ST.personalDraft(m.personal) }; state.projects.push(own); return own; };
     const officeDispatch = (tab, args, o) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task, ...(args.machine ? { machine: args.machine, revive: o?.revive === true } : {}) }); return { id, status: 'queued' }; };
   `;
-  env.mods = { ST: require('../src/staff.js'), ROUT: require('../src/routines.js'), HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
+  env.mods = { BM: require('../src/board-model.js'), ST: require('../src/staff.js'), ROUT: require('../src/routines.js'), HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
   const api = new Function('env', `${prelude}\n${src}\nreturn { hqDispatch, hqChainSweep, hqStatus, hqStages };`)(env);
   return { env, api };
 }

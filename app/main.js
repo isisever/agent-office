@@ -68,6 +68,7 @@ const KA = require('./src/keep-awake.js');
 const VC = require('./src/voice-core.js');   // v3.119 voice input
 const { createVoice } = require('./src/voice.js');
 const PTY = require('./src/pty-attach.js');
+const BM = require('./src/board-model.js');   // v3.131 the board: orders and conversations
 const STU = require('./src/studio.js');   // v3.120 Studio experience
 const WN = require('./src/whats-new.js');   // v3.123 What's new after an update
 const ATT = require('./src/attached.js');   // v3.121 the files a person attached in a chat composer
@@ -2527,7 +2528,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
       return;
     }
     if (!r.id || r.status === 'rejected') return;
-    saveHqBoard(HQ.addTask(loadHqBoard(), { id: r.id, request, title: args.title, task, status: r.status, reason: r.reason, prompt: rrun ? rrun.name : '', ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), ...(byInitiative ? { byInitiative: true } : {}), ...(consented && !byInitiative ? { consented: true } : {}), ...extra }));   // v3.99 a paired machine's row is stamped too
+    saveHqBoard(HQ.addTask(loadHqBoard(), { id: r.id, request, title: args.title, task, type: args.type, status: r.status, reason: r.reason, prompt: rrun ? rrun.name : '', ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), ...(byInitiative ? { byInitiative: true } : {}), ...(consented && !byInitiative ? { consented: true } : {}), ...extra }));   // v3.99 a paired machine's row is stamped too
     const f = HQ.taskFile(hqDir(), r.id, 'brief.md');
     if (f) try { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); SF.writeAtomic(f, `# ${LC.cleanLine(args.title || '', 80)}\n\nProject: ${extra.project} (${extra.machineName})\n\n${task}\n`); } catch {}
   };
@@ -2583,7 +2584,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   // a held (paced) task gets a 'queued' row now, so the caps count it and the person sees it; sent → its real id
   const heldId = waitingId || `h${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;   // v3.79 a released stage keeps its row
   let held = false;
-  const sent = hqPacer.submit(pub, () => {
+  const sent = hqPacer.submit(pub, () => {   // v3.131 held sends wait in type priority (third argument)
     /** @type {any} */ const r = officeDispatch(HQ.HQ_ID, { machine: pub, project: pid, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // v3.48 4 h wait there (cap task-status); v3.99 revive
     tagRoutineRec(r.id, rrun);
     told(r);
@@ -2593,7 +2594,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     if (rrun?.tasks?.includes(heldId)) { rrun.tasks = rrun.tasks.map((x) => (x === heldId ? r.id : x)); saveRt(); }
     saveHqBoard(HQ.renameTask(loadHqBoard(), heldId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : {}) }));
     try { const a = HQ.taskFile(hqDir(), heldId, '.'); const b = HQ.taskFile(hqDir(), r.id, '.'); if (a && b) fs.renameSync(path.dirname(a), path.dirname(b)); } catch {}
-  });
+  }, ((own) => () => releaseType(request, own))(BM.typeOf(args.type) || BM.classify(`${args.title || ''} ${task}`).type));   // read at each flush: the person's type of the order applies
   if (!sent) {
     held = true;
     row({ id: heldId, status: 'queued', reason: 'paced' }, extra);
@@ -2701,7 +2702,7 @@ async function hqDispatchStages(args, request, rrun) {
         Object.assign(s, { project: own.id, projectId: own.id, projectName: own.name });
         delete s.personalFor;
       }
-      /** @type {any} */ const r = await hqDispatch({ machine: s.machine, project: s.project, title: s.title, request, task: s.task, ...(s.staff ? { staff: s.staff } : {}) }, { approved: true, sentByInitiative: s.byInitiative === true, consentGiven: s.consented === true, noDialog: s.noDialog === true });   // consent was just given (or not needed)
+      /** @type {any} */ const r = await hqDispatch({ machine: s.machine, project: s.project, title: s.title, request, task: s.task, ...(s.type ? { type: s.type } : {}), ...(s.staff ? { staff: s.staff } : {}) }, { approved: true, sentByInitiative: s.byInitiative === true, consentGiven: s.consented === true, noDialog: s.noDialog === true });   // consent was just given (or not needed)
       if (!r.id || r.status === 'rejected') return { ...r, request };   // nothing after it is created
       mark(s);
       ids.push(r.id); prev = r.id; continue;
@@ -2717,13 +2718,13 @@ async function hqDispatchStages(args, request, rrun) {
 /** A waiting stage: its board row, brief and frozen text (stage.json). → its id. */
 function hqWaitRow(s, request, after) {
   const id = `w${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
-  saveHqBoard(HQ.addTask(loadHqBoard(), { id, request, title: s.title, task: s.task, status: CH.WAITING, after, pub: s.pub, machineName: s.machineName, project: s.projectName, ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff, ...(s.staffId ? { staffId: s.staffId } : {}) } : {}), ...(s.byInitiative ? { byInitiative: true } : s.consented ? { consented: true } : {}) }));
+  saveHqBoard(HQ.addTask(loadHqBoard(), { id, request, title: s.title, task: s.task, type: s.type, status: CH.WAITING, after, pub: s.pub, machineName: s.machineName, project: s.projectName, ...(s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff, ...(s.staffId ? { staffId: s.staffId } : {}) } : {}), ...(s.byInitiative ? { byInitiative: true } : s.consented ? { consented: true } : {}) }));
   if (s.byInitiative) notifyInitiative(s.title, s.staff ? `${s.staff} @ ${s.projectName}` : s.projectName);   // v3.91 no dialog was shown
   const f = HQ.taskFile(hqDir(), id, 'brief.md');
   if (f) try {
     fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
     SF.writeAtomic(f, `# ${LC.cleanLine(s.title || '', 80)}\n\nProject: ${s.projectName} (${s.machineName})\nAfter: #${after}\n\n${s.task}\n`);
-    const rec = { machine: s.machine, project: s.project, title: s.title, task: s.task, remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}), ...(s.personalFor ? { personalStaff: s.personalFor.id } : {}), ...(s.remote && s.noDialog ? { noDialog: true } : {}) };
+    const rec = { machine: s.machine, project: s.project, title: s.title, task: s.task, ...(s.type ? { type: s.type } : {}), remote: s.remote, key: s.key || null, ...(!s.remote && s.projectId ? { projectId: s.projectId } : {}), ...(s.staff ? { staff: s.staff } : {}), ...(s.personalFor ? { personalStaff: s.personalFor.id } : {}), ...(s.remote && s.noDialog ? { noDialog: true } : {}) };
     SF.writeAtomic(HQ.taskFile(hqDir(), id, 'stage.json'), JSON.stringify(rec));
     hqStages.set(id, { digest: CH.stageDigest(JSON.parse(JSON.stringify(rec))), asked: s.asked === true });   // compared at release
   } catch (e) { console.error('hq stage:', e.message); }
@@ -2806,14 +2807,14 @@ async function hqReleaseStage({ id, after, resumed = false }) {
     if (follow) { const why = followWhy(); if (why) { hqStatus(id, 'rejected', why); hqChainSweep(); return; } }
   }
   // approved: consent was given at creation; excludeId: the row does not count against itself (as an approved held card)
-  /** @type {any} */ const r = await hqDispatch({ machine: st.machine, project, title: st.title, request: t.request, task: text, ...(st.staff ? { staff: st.staff } : {}) }, { approved: true, excludeId: id, waitingId: id, noDialog: st.remote === true && st.noDialog === true });
+  /** @type {any} */ const r = await hqDispatch({ machine: st.machine, project, title: st.title, request: t.request, task: text, ...(BM.typeOf(st.type) || t.type ? { type: BM.typeOf(st.type) || t.type } : {}), ...(st.staff ? { staff: st.staff } : {}) }, { approved: true, excludeId: id, waitingId: id, noDialog: st.remote === true && st.noDialog === true });
   const cur = loadHqBoard().tasks.find((x) => x.id === id);
   if (r?.status === 'rejected' && cur && !HQ.TERMINAL.has(cur.status)) hqStatus(id, 'rejected', r.reason || 'failed');
 }
 /** Waiting stages whose previous stage ended: released, blocked (HQ gets a fixed row) or expired; repeats while a block cascades. */
 function hqChainSweep() {
   for (let i = 0; i < 20; i++) {
-    const { release, block } = CH.settle(loadHqBoard());
+    const { release, block } = CH.settle(loadHqBoard(), Date.now(), CH.WAIT_MS, (t) => releaseType(t?.request, t?.type));
     if (!release.length && !block.length) return;
     if (block.length) {
       let b = loadHqBoard();
@@ -2842,6 +2843,7 @@ function hqTick() {
   hqPacer.flush();
   hqChainSweep();   // v3.79 stages whose previous stage ended: released (≤ 5 s after its report), blocked or expired
   hqWaitsPush();
+  try { boardCardsTick(); } catch (e) { console.error('board cards:', e.message); }   // v3.131 chat cards follow the tabs
   const l = linkHost?.link();
   if (l) {
     l.setCtlHq?.(LC.ctlHqStatus(hqBusyNow(), attention.get(HQ.HQ_ID)));   // v3.121 phone controllers see HQ's state
@@ -3012,9 +3014,9 @@ function holdDispatch(args, request, rrun) {
   const project = p ? p.name : rp ? officeName(rp.name) : LC.cleanLine(String(args.project || args.staffName || ''), 64);
   const machineName = pub ? officeName(dv?.name || peerCache()[pub]?.name || '') : selfName();
   const task = HQ.redact(typeof args.task === 'string' ? args.task : '');
-  saveHqBoard(HQ.addTask(loadHqBoard(), { id: heldId, request, title: args.title, task, status: 'awaiting-consent', reason: 'awaiting-consent', prompt: rrun?.name || '',
+  saveHqBoard(HQ.addTask(loadHqBoard(), { id: heldId, request, title: args.title, task, type: args.type, status: 'awaiting-consent', reason: 'awaiting-consent', prompt: rrun?.name || '',
     ...(rrun ? { routine: rrun.routine, run: rrun.id } : {}), pub: pub || 'self', machineName, project, ...(p ? { projectId: p.id } : rp ? { projectId: rp.id } : {}) }));
-  rt().held[heldId] = { at: Date.now(), run: rrun?.id || '', args: { project: String(args.project || ''), machine: String(args.machine || ''), title: String(args.title || ''), task, request, ...(args.staff ? { staff: String(args.staff) } : {}) } };   // staff kept: the approved task goes to the member's desk
+  rt().held[heldId] = { at: Date.now(), run: rrun?.id || '', args: { project: String(args.project || ''), machine: String(args.machine || ''), title: String(args.title || ''), task, request, ...(BM.typeOf(args.type) ? { type: BM.typeOf(args.type) } : {}), ...(args.staff ? { staff: String(args.staff) } : {}) } };   // staff kept: the approved task goes to the member's desk
   if (rrun) { rrun.held = [...(rrun.held || []), heldId]; if (rrun.kind !== 'hq') rrun.status = 'awaiting-consent'; }
   saveRt();
   notify(pub ? T('main.routineNeedsApprovalRemote', { name: rrun?.name || '', project, machine: machineName }) : T('main.routineNeedsApproval', { name: rrun?.name || '', project }), LC.cleanLine(task, 160), null);
@@ -6426,7 +6428,7 @@ function studioTabInfo(ptyId) {
   const { configDir } = A.accountOf(state, r.project);
   const sid = tt.gui ? validSid(tt.sessionId()) : validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), tt.pid))?.sessionId);
   const live = tt.gui ? { busy: tt.live().busy === true, waiting: tt.asks().length > 0 } : { busy: false, waiting: attention.get(ptyId) === 'permission' };
-  if (!sid) return { title: '', prompt: '', branch: '', at: 0, ...live };
+  if (!sid) return { title: '', prompt: '', branch: '', at: 0, sessionId: '', ...live };
   for (const dir of TIO.historyDirsOf(r.dir, configDir, app.getPath('home'))) {
     const file = path.join(dir, `${sid}.jsonl`);
     let st;
@@ -6440,9 +6442,9 @@ function studioTabInfo(ptyId) {
       studioInfoCache.set(file, hit);
     }
     if (studioInfoCache.size > 200) studioInfoCache.delete(studioInfoCache.keys().next().value);
-    return { ...hit.info, at: Math.round(st.mtimeMs), ...live };
+    return { ...hit.info, at: Math.round(st.mtimeMs), sessionId: sid, ...live };   // v3.131 sessionId: the board's chat card
   }
-  return { title: '', prompt: '', branch: '', at: 0, ...live };
+  return { title: '', prompt: '', branch: '', at: 0, sessionId: '', ...live };
 }
 // ref: { n } a running session (the main tab is 1), { sessionId } a recent one, which opens again as a new tab of its
 // project and continues that conversation. → { ok, projectId, n } | { ok: false, error: 'invalid' | 'gone' }
@@ -6484,6 +6486,80 @@ function studioSweep() {
   }
 }
 setInterval(studioSweep, 5 * 60 * 1000).unref?.();
+
+// ---------- v3.131 the board: orders and conversations (contract "Board: orders and conversations") ----------
+// HQ requests are order cards (board.json); a project session the person talks in (Office or Studio, terminal or chat
+// tab) is ONE chat card, kept in <userData>/hq/board-cards.json (atomic, capped) with the person's types and Done marks.
+const boardCardsFile = () => path.join(hqDir(), 'board-cards.json');
+/** Release order (held sends, waiting stages): the type the person set on the order wins, else the item's own type.
+ *  Looked up at release time, so a retyped order needs no change to anything sealed. */
+const releaseType = (/** @type {any} */ request, /** @type {any} */ own) => (typeof request === 'string' && request && BM.typeOf(loadBoardStore().orders[request]?.type)) || BM.typeOf(own) || 'feature';
+/** @type {any} */ let boardStore = null;
+const loadBoardStore = () => (boardStore ||= BM.loadStore(readJson(boardCardsFile())));
+function saveBoardStore(s) {
+  if (s === boardStore) return false;
+  boardStore = s;
+  try { fs.mkdirSync(hqDir(), { recursive: true, mode: 0o700 }); SF.writeAtomic(boardCardsFile(), JSON.stringify(s)); } catch (e) { console.error('board cards:', e.message); }
+  return true;
+}
+// sessions that carried a dispatched task (HQ, a project boss or a paired device) are already on the board as an order
+// or a remote task, never a chat card of their own; the store keeps them (taskSids, capped) across restarts
+let boardTickAt = 0;
+/** Every 15 s (from hqTick): each project tab's session creates or moves its chat card; Review cards close after 24 h. */
+function boardCardsTick(now = Date.now()) {
+  if (!state || !P.hqProject(state) || now - boardTickAt < 15000) return;
+  boardTickAt = now;
+  let s = loadBoardStore();
+  for (const [pid, tt] of terms) {
+    if (pid === HQ.HQ_ID) continue;
+    const r = P.resolvePty(state, pid);
+    if (!r || r.project.hq) continue;
+    const info = studioTabInfo(pid);
+    const sid = STU.validSessionId(info?.sessionId);
+    if (!info || !sid) continue;
+    if (guiTaskOpen(pid)) s = BM.markTaskSession(s, sid);
+    if (BM.isTaskSession(s, sid)) continue;
+    const busy = info.busy === true || (!tt.gui && tabWorkRunning(pid));
+    const tok = BM.tokensFromStatus(readJson(path.join(usageRoot(), A.accountOf(state, r.project).id, `${usageKey(pid)}.json`)), sid);
+    const member = r.project.staffOwner ? (memberById(r.project.staffOwner)?.name || '') : '';
+    s = BM.touchSession(s, { sessionId: sid, projectId: r.project.id, ptyId: pid, project: r.project.name, member, title: info.title, prompt: info.prompt,
+      busy, waiting: info.waiting === true, ...(tok || {}), studio: STU.normalizeExperience(state.experience) === 'studio' }, now, { redact: HQ.redact });
+  }
+  s = BM.detachGone(s, new Set(terms.keys()), now);   // a card whose tab is gone (closed, app quit) goes to Review
+  if (saveBoardStore(BM.autoClose(s, now))) send('board:cards', boardView());
+}
+const boardView = () => ({ ...BM.boardCards(loadHqBoard(), loadBoardStore()), types: BM.TYPES });
+/** A card id the board shows now (an order of board.json or a stored chat). */
+const boardCardKnown = (id) => (id.startsWith('o:') ? loadHqBoard().requests.some((r) => r.id === id.slice(2)) : loadBoardStore().chats.some((c) => c.id === id));
+// board:cards() → { columns: [{ id, cards: [card ids] }], cards: [Card], types } | null
+ipcMain.handle('board:cards', (e) => (fromWin(e) ? boardView() : null));
+// board:setType(id, 'bugfix' | 'hotfix' | 'feature') → { ok: true, ...view } | { ok: false, error: 'invalid' | 'gone' }
+ipcMain.handle('board:setType', (e, id, type) => {
+  if (!fromWin(e) || !BM.validCardId(id) || !BM.typeOf(type)) return { ok: false, error: 'invalid' };
+  if (!boardCardKnown(id)) return { ok: false, error: 'gone' };
+  const r = BM.setType(loadBoardStore(), id, type);
+  if (!r.ok) return { ok: false, error: 'gone' };
+  saveBoardStore(r.store);
+  return { ok: true, ...boardView() };
+});
+// board:done(id) → { ok: true, ...view } | { ok: false, error: 'invalid' | 'gone' }: the person closes a card
+ipcMain.handle('board:done', (e, id) => {
+  if (!fromWin(e) || !BM.validCardId(id)) return { ok: false, error: 'invalid' };
+  if (!boardCardKnown(id)) return { ok: false, error: 'gone' };
+  const r = BM.markDone(loadBoardStore(), id);
+  if (!r.ok) return { ok: false, error: 'gone' };
+  saveBoardStore(r.store);
+  return { ok: true, ...boardView() };
+});
+// board:report({ from?, to? } ms, groupBy 'project' | 'type' | 'member') → Report | { error: 'invalid' } | null
+ipcMain.handle('board:report', (e, range, groupBy) => {
+  if (!fromWin(e)) return null;
+  if (typeof groupBy !== 'string' || !BM.GROUPS.includes(groupBy)) return { error: 'invalid' };
+  const o = range && typeof range === 'object' ? range : {};
+  const from = Number.isFinite(o.from) && o.from > 0 ? o.from : 0;
+  const to = Number.isFinite(o.to) && o.to >= from ? o.to : Date.now();
+  return BM.report(BM.boardCards(loadHqBoard(), loadBoardStore()).cards, { from, to, groupBy });
+});
 
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
