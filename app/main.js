@@ -28,6 +28,9 @@ const ML = require('./src/model-list.js');   // v3.120 Studio UX: the models eac
 const TW = require('./src/task-watch.js');
 const SC = require('./src/shared-config.js');
 const LEAN = require('./src/mcp-lean.js');
+const ECO = require('./src/economy.js');   // v3.133 economy mode
+const BG = require('./src/budget.js');     // v3.133 token budgets
+const BH = require('./src/budget-held.js'); // v3.133 tasks held for a budget, kept across restarts
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
 const ST = require('./src/staff.js');
@@ -70,8 +73,9 @@ const VC = require('./src/voice-core.js');   // v3.119 voice input
 const { createVoice } = require('./src/voice.js');
 const PTY = require('./src/pty-attach.js');
 const BM = require('./src/board-model.js');
-const OT = require('./src/order-track.js');   // v3.135 live order tracking
-const FO = require('./src/hq-fanout.js');   // v3.132 fan-out orders and role assignment   // v3.131 the board: orders and conversations
+const FO = require('./src/hq-fanout.js');   // v3.132 fan-out orders and role assignment
+const OT = require('./src/order-templates.js');   // v3.134 order templates
+const OTK = require('./src/order-track.js');   // v3.135 live order tracking
 const STU = require('./src/studio.js');   // v3.120 Studio experience
 const WN = require('./src/whats-new.js');   // v3.123 What's new after an update
 const ATT = require('./src/attached.js');   // v3.121 the files a person attached in a chat composer
@@ -546,7 +550,7 @@ function mcpInputsKey() {
     configDirs: state.accounts.map((a) => a.configDir),
     dirs: P.projectPlaces(state.projects).map((p) => p.dir),
   });
-  const office = [state.shareMcp === true, state.projects.map((p) => [p.dir, p.accountId, p.shareMcp === true]), state.accounts.map((a) => [a.id, a.shareDefault !== false, a.label])];
+  const office = [state.shareMcp === true, state.economy === true, state.projects.map((p) => [p.dir, p.accountId, p.shareMcp === true, p.economy || '']), state.accounts.map((a) => [a.id, a.shareDefault !== false, a.label])];
   return `${MR.statKey(files, statOrNull)}#${JSON.stringify(office)}`;
 }
 function refreshMcpPrints() {
@@ -1140,9 +1144,53 @@ async function tokenReport(id, { detail = false } = {}) {
 async function tokenBriefs() {
   const out = [];
   for (const p of state.projects) {
-    try { const r = await tokenReport(p.id); if (r) out.push({ id: p.id, ...TU.brief(r) }); } catch (e) { console.error('token usage:', e.message); }
+    try {
+      const r = await tokenReport(p.id);
+      if (!r) continue;
+      // v3.133 the budget meter: the cached sums of today and the last 7 days against Project.budget
+      const usage = { today: { total: r.today.total, usd: r.today.usd }, week: { total: r.week.total, usd: r.week.usd } };
+      const budget = BG.budgetState({ usage, budget: p.budget, now: Date.now() });
+      budgetSeen(p, budget);
+      out.push({ id: p.id, name: p.name, ...TU.brief(r), week: usage.week, economy: ecoOn(p), ...(budget.level !== 'none' ? { budget } : {}) });
+    } catch (e) { console.error('token usage:', e.message); }
   }
   return out;
+}
+// v3.133 budgets: the last state per project (HQ dispatches and routines read it, no rescan), the notices already
+// shown (one per level, period and day), and the tasks held with the reason 'budget' (released on Raise / Ignore today)
+const budgetCache = new Map();
+const budgetNoticed = new Set();
+// The held tasks live in userData/budget-held.json (src/budget-held.js), so the rows queued with the reason 'budget'
+// are released after a restart too: read lazily, written atomically after every change.
+const budgetHeldFile = () => path.join(app.getPath('userData'), 'budget-held.json');
+/** @type {Map<string, any[]> | null} */
+let budgetHeldMap = null;
+const budgetHeld = () => { if (!budgetHeldMap) budgetHeldMap = BH.fromJson(SF.readState(budgetHeldFile()).raw); return budgetHeldMap; };
+function saveBudgetHeld(/** @type {Map<string, any[]>} */ map) {
+  budgetHeldMap = map;
+  try { SF.writeAtomic(budgetHeldFile(), JSON.stringify(BH.toJson(map))); } catch (e) { console.error('budget held:', e.message); }
+}
+function budgetSeen(/** @type {any} */ p, /** @type {any} */ b) {
+  budgetCache.set(p.id, b);
+  // a new day or week (or a budget changed elsewhere) no longer blocks: the tasks held for it go out now
+  if (BH.releasable(budgetHeld(), p.id, b)) budgetRelease(p.id);
+  const key = BG.noticeKey(b, Date.now());
+  if (!key || b.ignored || budgetNoticed.has(`${p.id}|${key}`)) return;
+  budgetNoticed.add(`${p.id}|${key}`);
+  const vars = { project: p.name, pct: Math.round(b.pct * 100) };
+  notify(T(b.level === 'over' ? 'main.budgetOver' : 'main.budgetWarn', vars), T('main.budgetBody', vars), p.id);
+}
+const budgetBlocked = (/** @type {string} */ id) => budgetCache.get(id)?.blocked === true;
+/** Re-dispatch the tasks held for the project's budget once it no longer blocks. */
+function budgetRelease(/** @type {string} */ id) {
+  const { held: rest, taken } = BH.take(budgetHeld(), id);
+  if (taken.length) saveBudgetHeld(rest);
+  budgetCache.delete(id);
+  for (const h of taken) {
+    if (!BH.stillHeld(loadHqBoard(), h.qid)) continue;   // removed or closed by hand meanwhile
+    hqStatus(h.qid, 'rejected', 'budget-released');
+    hqDispatch(h.args).catch((e) => console.error('budget release:', e.message));
+  }
 }
 let tokenBusy = false;
 async function pushTokenBriefs() {
@@ -1169,7 +1217,7 @@ function projectMemoryDir(cwd, configDir) {
 // stages in userData/shared-plugins, the tab's MCP file in userData/mcp/<tab>.json.
 // v3.128 the office share is off unless the person turned it on, globally or for this project (LEAN.officeShareOn)
 const officeInput = (project) => ({
-  share: LEAN.officeShareOn({ global: state.shareMcp, project }),
+  share: LEAN.officeShareOn({ global: state.shareMcp && !ecoOn(project), project }),   // v3.133 economy: no shared set unless the project opted in
   current: project.dir,
   projects: state.projects.map((p) => {
     const a = A.accountOf(state, p);
@@ -1384,8 +1432,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     + '[ -n "$AGENT_OFFICE_BASH_OUTPUT" ] && export BASH_MAX_OUTPUT_LENGTH="$AGENT_OFFICE_BASH_OUTPUT"; '
     + '[ -n "$AGENT_OFFICE_MCP_OUTPUT" ] && export MAX_MCP_OUTPUT_TOKENS="$AGENT_OFFICE_MCP_OUTPUT"; exec claude "$@"';
   let env = A.sessionEnv(A.ptyEnv(process.env, configDir), {
-    manager: P.managerOf(state, project), agentModel: P.agentModelOf(project), contextCap: P.contextCapOf(project),
-    savings: P.savingsOf(project),
+    manager: P.managerOf(state, project), agentModel: P.agentModelOf(project), contextCap: P.contextCapOf(ecoProject(project)),
+    savings: P.savingsOf(ecoProject(project)),   // v3.133 economy fills the cap and Savings the project left at the default
     autoApprove: !project.hq && P.autoApproveOf(project), // v3.71: never the HQ session
   });
   delete env.AGENT_OFFICE_STATUSLINE;
@@ -1652,7 +1700,7 @@ function startCommandCode(id, { project, tab, dir: cwd }, { resume = false, prom
   removeMcpFile(id); // no MCP or office directory file of an earlier Claude Code start stays behind for this tab
   const { cols, rows } = sizes.get(id) || lastSize;
   const isResume = resume && (!tab || Boolean(tab.worktree)) && hasCmdHistory(cwd);
-  const saving = A.SAVINGS[P.savingsOf(project)] || null;
+  const saving = A.SAVINGS[P.savingsOf(ecoProject(project))] || null;   // v3.133 economy
   const modPath = CS.cmdModPath(__dirname);
   const spoolDir = CS.spoolDirOf(app.getPath('userData'), id);
   let withMod = !cmdNoMod.has(id) && isFile(modPath);
@@ -2349,7 +2397,7 @@ function updatePeerCache() {
 }
 const hqSettings = () => HQ.normalizeHq(state.hq);
 /** v3.135 the open orders as strip items for HQ's live progress (app-side rows, never a prompt to HQ). */
-const hqOrderStrip = () => { try { return OT.orderStrip(boardView().cards, hqWaits()); } catch { return []; } };
+const hqOrderStrip = () => { try { return OTK.orderStrip(boardView().cards, hqWaits()); } catch { return []; } };
 const hqView = () => ({ board: loadHqBoard(), settings: hqSettings(), running: terms.has(HQ.HQ_ID), stopped: hqRestarter.stopped, paired: LC.offices(linkHost?.link()?.devices || []).length > 0, remotes: HQ.remoteRows(peerCache(), liveRemotes()), orders: hqOrderStrip(), waits: hqWaits() });   // v3.99 paired: the Board shows the paired-machines checkbox
 /** v3.46 amendment: why each queued local task waits → { [taskId]: { state, project, pos, len, expiresAt } }.
  *  v3.93: a local entry also names its `tab` and, when busy, `blockedBy` ('permission' | 'draft'); HQ.waitFields turns
@@ -2590,6 +2638,16 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   // v3.79 staged: a call with `after` or `then` takes its own path (one consent for its local stages, waiting rows)
   if (!approved && ((typeof args.after === 'string' && args.after) || (Array.isArray(args.then) && args.then.length))) return hqDispatchStages(args, request, rrun);
   const target = key ? null : byName(state.projects, args.project);
+  // v3.133 a project at 100% of its budget: HQ's tasks and routines wait with the reason 'budget' (never started)
+  if (target && budgetBlocked(target.id)) {
+    const qid = `b${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
+    const b = loadHqBoard();
+    saveHqBoard(HQ.addTask(b, { id: qid, request, title: String(args.title || ''), task: HQ.redact(String(args.task || '')), status: 'queued', reason: 'budget', pub: 'self', machineName: selfName(), project: target.name }));
+    const { held, dropped } = BH.add(budgetHeld(), target.id, { qid, args });
+    saveBudgetHeld(held);
+    for (const d of dropped) if (d.qid) hqStatus(d.qid, 'rejected', 'budget-cap');
+    return { id: qid, status: 'queued', reason: 'budget', request };
+  }
   // v3.83 team: a task for a staff member goes to the member's desk in that project. Before consent only the checks
   // run (nothing is created): the member is known and may work there; the dialog names the member and the target.
   if (args.staff) {
@@ -3716,6 +3774,10 @@ function resumeUnfinished() {
 
 // --- sleeping idle background tabs (see src/sleep.js)
 const sleepMinutes = () => Z.normalizeSleep(state.sleepMinutes);
+// v3.133 economy: the global switch, a project's override, and the project as its sessions see it (economy values for
+// every setting it left at the default; an explicit project value always wins)
+const ecoOn = (/** @type {any} */ project) => ECO.economyOn(state.economy === true, project);
+const ecoProject = (/** @type {any} */ project) => ECO.applyEconomy(project, ecoOn(project));
 const scheduleSeen = new Map(); // transcript path → { key: "size|mtime", has }
 function hasSchedule(file) {
   let st;
@@ -3741,7 +3803,8 @@ function sleepIdle() {
     if (t.gui && (t.asks().length > 0 || t.live().busy)) continue;   // v3.108 an open card or a live turn is work
     const { configDir } = A.accountOf(state, r.project);
     const a = activity.get(id) || { at: now, draft: false };
-    const base = { now, idleMs: minutes * 60000, lastActivityAt: a.at, hasDraft: a.draft, isActive: r.project.id === state.activeId };
+    const base = { now, idleMs: ECO.sleepMinutesFor(minutes, ecoOn(r.project)) * 60000,   // v3.133 economy sleeps 60 min or longer
+      lastActivityAt: a.at, hasDraft: a.draft, isActive: r.project.id === state.activeId };
     // cheap checks first: files are read only for a tab that is otherwise ready to sleep
     if (Z.sleepBlocker({ ...base, claude: { sessionId: '-', status: 'idle' }, office: {} })) continue;
     if (isObserved(r.project)) {
@@ -5023,6 +5086,32 @@ function personalSetting(id, set) {
 }
 // v3.128 "Use my shared MCP servers" for one project: true gives its tabs the office share even with the global
 // setting off. claude reads its MCP config at its start: next start, idle Claude Code tabs at once.
+// v3.133 economy override ('inherit' | 'on' | 'off') and token budget per project; idle Claude Code tabs restart
+ipcMain.handle('projects:setEconomy', (_e, id, value) => {
+  if (!ECO.OVERRIDES.includes(value)) return { restarted: [] };
+  const next = P.setProjectEconomy(state, id, value);
+  if (next === state) return { restarted: [] };
+  commit(next);
+  const p = P.findProject(state, id);
+  pushTokenBriefs();
+  return { restarted: p && P.engineOf(p) === 'claude' ? restartIdle(p) : [] };
+});
+ipcMain.handle('projects:setBudget', (_e, id, value) => {
+  const next = P.setProjectBudget(state, id, value);
+  if (next !== state) { commit(next); budgetRelease(id); pushTokenBriefs(); }
+  return { ok: Boolean(P.findProject(state, id)), budget: P.findProject(state, id)?.budget || null };
+});
+/** "Raise" (every limit x1.5, past what is used) or "Ignore today" from the budget-reached banner. */
+ipcMain.handle('budget:act', (_e, id, action) => {
+  const p = P.findProject(state, id);
+  if (!p || !p.budget || (action !== 'raise' && action !== 'ignore')) return { ok: false };
+  const now = Date.now();
+  const v = action === 'raise' ? BG.raiseBudget(p.budget, budgetCache.get(id)) : BG.ignoreToday(p.budget, now);
+  commit(P.setProjectBudget(state, id, v));
+  budgetRelease(id);
+  pushTokenBriefs();
+  return { ok: true, budget: P.findProject(state, id)?.budget || null };
+});
 ipcMain.handle('projects:setShareMcp', (_e, target, value) => {
   const { next, id } = personalSetting(target, (s, pid) => P.setProjectShareMcp(s, pid, value === true));
   if (next === state) return { restarted: [] };
@@ -6516,7 +6605,7 @@ function buildMenu() {
 // office3d = the office drawn in 3D (contract v3.81); off unless set, and unset is not written
 // teamMode = the TEAM panel (contract v3.83); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp === true, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, experience: STU.normalizeExperience(state.experience), termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp === true, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), economy: state.economy === true, keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, experience: STU.normalizeExperience(state.experience), termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
 // --- voice input (contract v3.119): audio stays in memory in src/voice.js and never leaves the machine
 /** @type {ReturnType<typeof createVoice> | null} */
 let voice = null;
@@ -6745,6 +6834,41 @@ ipcMain.handle('board:done', (e, id) => {
   saveBoardStore(r.store);
   return { ok: true, ...boardView() };
 });
+// --- v3.134 Order templates (src/order-templates.js): kept in state.json (saved atomically), at most 50. Using one only
+// fills HQ's composer in the renderer; nothing here sends a prompt or mints an order.
+const templatesView = () => OT.normalizeList(state.orderTemplates);
+const templatesSet = (list) => { commit({ ...state, orderTemplates: list }); send('templates:changed', templatesView()); };
+const newTemplateId = () => `tp${crypto.randomBytes(4).toString('hex')}`;
+// templates:list() → Template[] | null
+ipcMain.handle('templates:list', (e) => (fromWin(e) ? templatesView() : null));
+// templates:save({ id?, name, text, type, targets? }) → { ok: true, id, list } | { ok: false, reason: 'invalid' | 'unknown' | 'too-many' }
+ipcMain.handle('templates:save', (e, raw) => {
+  if (!fromWin(e)) return { ok: false, reason: 'invalid' };
+  const r = OT.save(state.orderTemplates, raw, { newId: newTemplateId });
+  if (!r.ok) return r;
+  templatesSet(r.list);
+  return { ok: true, id: r.id, list: templatesView() };
+});
+// templates:remove(id) → { ok: true, list } | { ok: false, reason: 'invalid' | 'unknown' }
+ipcMain.handle('templates:remove', (e, id) => {
+  if (!fromWin(e) || typeof id !== 'string' || !OT.ID_RE.test(id)) return { ok: false, reason: 'invalid' };
+  const r = OT.remove(state.orderTemplates, id);
+  if (!r.ok) return r;
+  templatesSet(r.list);
+  return { ok: true, list: templatesView() };
+});
+// templates:fromOrder('o:<request id>') → { ok: true, draft: { name, text, type, targets } } | { ok: false, reason }:
+// an order card's original text, type and target projects, for "Save as template" (the renderer then saves it)
+ipcMain.handle('templates:fromOrder', (e, id) => {
+  if (!fromWin(e) || !BM.validCardId(id) || !String(id).startsWith('o:')) return { ok: false, reason: 'invalid' };
+  const req = loadHqBoard().requests.find((r) => r.id === String(id).slice(2));
+  const card = boardView().cards.find((c) => c.id === id);
+  if (!req || !card) return { ok: false, reason: 'gone' };
+  const text = String(req.prompt || card.title || '').trim();
+  if (!text) return { ok: false, reason: 'invalid' };
+  const targets = OT.normalizeTargets([...new Set((card.tasks || []).map((x) => x.project).filter(Boolean))]);
+  return { ok: true, draft: { name: String(card.title || text).slice(0, OT.NAME_MAX), text, type: card.type, targets } };
+});
 // board:report({ from?, to? } ms, groupBy 'project' | 'type' | 'member') → Report | { error: 'invalid' } | null
 ipcMain.handle('board:report', (e, range, groupBy) => {
   if (!fromWin(e)) return null;
@@ -6759,6 +6883,12 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
   if (p && typeof p.resumeWork === 'boolean' && p.resumeWork !== prefs().resumeWork) commit({ ...state, resumeWork: p.resumeWork });
   if (p && typeof p.manager === 'boolean' && p.manager !== prefs().manager) commit({ ...state, manager: p.manager });
+  if (p && typeof p.economy === 'boolean' && p.economy !== prefs().economy) {   // v3.133 the global economy switch
+    const { economy: _e, ...rest } = state;
+    commit(p.economy ? { ...rest, economy: true } : rest);
+    for (const x of state.projects) if (P.engineOf(x) === 'claude' && ECO.economyValue(x.economy) === 'inherit') restartIdle(x);
+    pushTokenBriefs();
+  }
   if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp, shareMcpChosen: true });   // v3.128 an explicit choice
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
@@ -6848,7 +6978,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: LEAN.shareMcpFromFile(raw), ...(raw.shareMcpChosen === true ? { shareMcpChosen: true } : {}), reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(raw.experience === 'studio' ? { experience: 'studio' } : {}), ...studioRecentOf(raw, base), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: LEAN.shareMcpFromFile(raw), ...(raw.shareMcpChosen === true ? { shareMcpChosen: true } : {}), reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), ...(raw.economy === true ? { economy: true } : {}), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(raw.experience === 'studio' ? { experience: 'studio' } : {}), ...studioRecentOf(raw, base), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
   state = { ...state, voice: VC.normalizeSettings(raw.voice) };   // v3.119 voice input settings
   for (const id of GS.cleanTermTabs(raw.termTabs, state.projects.flatMap((p) => P.ptyIdsOf(p)))) termTabs.add(id);   // v3.110
   // v3.83 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)

@@ -37,6 +37,7 @@ export const SETTINGS = Object.freeze([
   { key: 'resumeWork', section: 'general', type: 'switch', office: 'resumeWork' },
   // Sessions
   { key: 'sleep', section: 'sessions', type: 'choice', office: 'sleep' },
+  { key: 'economy', section: 'sessions', type: 'switch', office: 'economy' },   // v3.133
   { key: 'keepAwake', section: 'sessions', type: 'choice', office: 'keepAwake' },
   { key: 'chatView', section: 'sessions', type: 'switch', office: 'chatView' },
   { key: 'manager', section: 'sessions', type: 'switch', office: 'manager' },
@@ -66,6 +67,7 @@ export const SETTINGS = Object.freeze([
   // HQ & routines
   { key: 'hq', section: 'hq', type: 'custom', studioOnly: true },
   { key: 'routines', section: 'hq', type: 'custom', studioOnly: true },
+  { key: 'templates', section: 'hq', type: 'custom', studioOnly: true },   // v3.134 order templates
   // Office (the Office's look only)
   { key: 'office3d', section: 'office', type: 'switch', office: 'office3d', officeOnly: true },
   { key: 'theme', section: 'office', type: 'choice', office: 'theme', officeOnly: true },
@@ -76,9 +78,9 @@ export const SETTINGS = Object.freeze([
   { key: 'version', section: 'about', type: 'custom', studioOnly: true },
 ]);
 
-/** The Office popup's rows, top to bottom (unchanged since v3.120); 'voice' is the voice block, 'skills' the packs. */
+/** The Office popup's rows, top to bottom (v3.133 economy after sleep); 'voice' is the voice block, 'skills' the packs. */
 export const OFFICE_ORDER = Object.freeze([
-  'resume', 'resumeWork', 'manager', 'team', 'shareMcp', 'reloadMcp', 'fallback', 'sleep', 'keepAwake', 'voice',
+  'resume', 'resumeWork', 'manager', 'team', 'shareMcp', 'reloadMcp', 'fallback', 'sleep', 'economy', 'keepAwake', 'voice',
   'lang', 'look', 'mode', 'office3d', 'experience', 'chatView', 'theme', 'bot', 'skills',
 ]);
 

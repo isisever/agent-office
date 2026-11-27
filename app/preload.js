@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setEngine: (id, value) => ipcRenderer.invoke('projects:setEngine', id, value), // 'agy' | 'commandcode' | null (Claude Code); { restarted: pty ids }, every tab fresh, or { restarted: [], refused } when a tab is working (v3.22, v3.25)
     setProjectFiles: (id, value) => ipcRenderer.invoke('projects:setProjectFiles', id, value), // true | false; { restarted, written, removed, refused } (v3.38)
     setShareMcp: (id, value) => ipcRenderer.invoke('projects:setShareMcp', id, value), // true | false; { restarted } (v3.128)
+    setEconomy: (id, value) => ipcRenderer.invoke('projects:setEconomy', id, value), // 'inherit' | 'on' | 'off'; { restarted } (v3.133)
+    setBudget: (id, value) => ipcRenderer.invoke('projects:setBudget', id, value), // { daily?, weekly?, unit: 'tokens' | 'usd' } | null; { ok, budget } (v3.133)
+    budgetAct: (id, action) => ipcRenderer.invoke('budget:act', id, action), // 'raise' | 'ignore' (today); { ok, budget } (v3.133)
     setAutoApprove: (id, value) => ipcRenderer.invoke('projects:setAutoApprove', id, value), // true | false; { restarted: pty ids } (v3.71)
     setSkipPermissions: (id, value) => ipcRenderer.invoke('projects:setSkipPermissions', id, value), // true | false; { restarted: pty ids } (v3.72)
     openFolder: (id) => ipcRenderer.invoke('projects:openFolder', id),   // opens the project's folder in the file manager → boolean
@@ -260,6 +263,14 @@ contextBridge.exposeInMainWorld('agentOffice', {
     cancel: (id) => ipcRenderer.invoke('hq:cancel', id),
     resume: (id) => ipcRenderer.invoke('hq:resume', id),   // v3.92 Continue on a blocked stage
     onBoard: listen('hq:board'),
+  },
+  // v3.134 order templates: list, save, remove; fromOrder gives an order card's text, type and targets (fills nothing)
+  templates: {
+    list: () => ipcRenderer.invoke('templates:list'),
+    save: (tpl) => ipcRenderer.invoke('templates:save', tpl),
+    remove: (id) => ipcRenderer.invoke('templates:remove', id),
+    fromOrder: (cardId) => ipcRenderer.invoke('templates:fromOrder', cardId),
+    onChange: listen('templates:changed'),
   },
   // v3.131 the board: order and chat cards, types, Done, reports
   board: {

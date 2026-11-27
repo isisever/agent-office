@@ -143,7 +143,7 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
     const loadHqBoard = () => env.board; const saveHqBoard = (b) => { env.board = b; };
     const loadDispatches = () => new Map(); const saveDispatches = () => {};
     const selfName = () => 'Mac1'; const peerCache = () => ({}); const notify = (title) => { env.notices.push(title); }; const routinesOnDone = (d) => d;
-    const holdDispatch = () => ({ status: 'held' }); const projectOp = () => {}; const terms = new Map([['pa', {}], ['pb', {}]]); const skipStarted = new Set(); env.skipStarted = skipStarted; const promptless = new Set(); env.promptless = promptless;
+    const budgetBlocked = () => false; const holdDispatch = () => ({ status: 'held' }); const projectOp = () => {}; const terms = new Map([['pa', {}], ['pb', {}]]); const skipStarted = new Set(); env.skipStarted = skipStarted; const promptless = new Set(); env.promptless = promptless;
     const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
     const linkHost = { link: () => env.link || ({ devices: [], conns: new Set(), remotes: new Map(), outgoing: [] }) };
     const hqWaits = () => env.waits || {};   // v3.93 why a queued task waits (main reads the queue and the tab)

@@ -29,13 +29,14 @@ function el(tag, attrs = {}, ...kids) {
 // engine names on a remote row's status line (brand names, not translated)
 import { mountRemoteView } from './remote-view.js';
 import { micButton } from './voice.js';
+import { templatesManager } from './templates-ui.js';
 import { mountBoardView } from './board-view.js';
 import { progressLine } from '../src/board-view.mjs';
 
 const ENGINE_NAMES = { claude: 'Claude Code', agy: 'Antigravity', commandcode: 'Command Code', opencode: 'OpenCode' };
 
-/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void }, openBoard?: () => void, openChat?: (card: any) => void }} o */
-export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openChat, openBoard }) {
+/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void }, openBoard?: () => void, openChat?: (card: any) => void, fillHq?: ((text: string) => void) | null }} o */
+export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openChat, openBoard, fillHq = null }) {
   if (!api?.hq || !sidebar) return null;
   let view = { board: { tasks: [], requests: [] }, settings: { enabled: true }, running: false, stopped: false, remotes: [] };
   let selected = false;
@@ -57,7 +58,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openCh
   const settings = el('div', { class: 'hq-settings', hidden: true },
     el('label', { title: t('hq.askBeforeDispatchHint') }, consent, ` ${t('hq.askBeforeDispatch')}`),
     ...(api.routines ? [el('label', {}, quietOn, ` ${t('routines.quiet')} `, quietFrom, '–', quietTo), el('label', {}, `${t('routines.dailyCap')} `, dailyCap)] : []),
-    el('button', { class: 'hq-link', onclick: () => api.hq.openFolder() }, t('hq.openFolder')));
+    el('button', { class: 'hq-link', onclick: () => api.hq.openFolder() }, t('hq.openFolder')),
+    ...(api.templates ? [templatesManager({ t, fill: fillHq || undefined })] : []));   // v3.134 order templates
   const row = el('div', { class: 'hq-row', id: 'hq-row', role: 'button', tabindex: '0', title: t('hq.title'), onclick: () => onSelect() },
     dot, el('span', { class: 'hq-name' }, `♛ ${t('hq.name')}`), counts, onOff, gear);
   const rtList = el('div', { class: 'rt-list', id: 'rt-list' });

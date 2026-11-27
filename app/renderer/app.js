@@ -4,12 +4,15 @@ import { mountChat } from './chat.js';
 import { mountSidebar } from './sidebar.js';
 import { shownOrder } from '../src/project-groups.mjs';
 import { mountHq } from './hq-board.js';
+import { paletteRows } from './templates-ui.js';
 import { mountLogin } from './login.js';
 import { mountDevices, mergeRemote } from './devices.js';
 import { setLang, onLang, t, getLang } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
 import { mountStudio } from './studio.js';
 import { mountKeepAwake } from './keep-awake-button.js';
+import { mountEconomy } from './economy-button.js';
+import { mountBudgetBanner } from './budget-banner.js';
 import { startStep, startFailure } from '../src/studio-ux.mjs';
 import { deskTarget, deskSend } from '../src/studio-team.mjs';
 import { studioKey, otherExperience, experienceSwitch } from '../src/studio-keys.mjs';
@@ -755,6 +758,18 @@ async function setSkipPermissions(projectId, value) {
   } catch (e) { console.error(e); }
 }
 
+/** v3.133 economy override ('inherit' | 'on' | 'off') and token budget; main restarts the idle tabs. */
+async function setProjectEconomy(projectId, value) {
+  try {
+    const r = await api.projects.setEconomy?.(projectId, value);
+    for (const id of r?.restarted || []) panes.get(id)?.term.reset({ restarting: true });
+    applyProjects(await api.projects.list());
+  } catch (e) { console.error(e); }
+}
+async function setBudget(projectId, value) {
+  try { await api.projects.setBudget?.(projectId, value); applyProjects(await api.projects.list()); } catch (e) { console.error(e); }
+}
+
 /** Use my shared MCP servers (v3.128): true | false; main restarts the idle tabs. */
 async function setProjectShareMcp(projectId, value) {
   try {
@@ -923,6 +938,8 @@ sidebar = mountSidebar($('sidebar'), {
   setProjectFiles,
   setAutoApprove,
   setProjectShareMcp,
+  setProjectEconomy,
+  setBudget,
   setSkipPermissions,
   setContextCap,
   setSavings,
@@ -979,6 +996,7 @@ sidebar = mountSidebar($('sidebar'), {
   mail: api.mail || null,   // v3.85 the MAIL panel talks to main directly (renderer/mail.js)
   setFallback: (on) => api.prefs?.set({ fallback: on }).then((p) => sidebar.setFallback(p?.fallback)).catch((e) => console.error(e)),
   setSleep: (minutes) => api.prefs?.set({ sleepMinutes: minutes }).then((p) => sidebar.setSleep(p?.sleepMinutes)).catch((e) => console.error(e)),
+  setEconomy: (v) => api.prefs?.set({ economy: v }).then((p) => sidebar.setEconomy(p?.economy)).catch((e) => console.error(e)),
   setKeepAwake: (v) => api.prefs?.set({ keepAwake: v }).then((p) => sidebar.setKeepAwake(p?.keepAwake)).catch((e) => console.error(e)),
   setTheme: setThemeSetting,
   setLook: (v) => setAppearance({ look: v }),
@@ -1164,6 +1182,7 @@ const prefsReady = api.prefs?.get().then((p) => {
   sidebar.setFallback(p?.fallback);
   sidebar.setSleep(p?.sleepMinutes);
   sidebar.setKeepAwake(p?.keepAwake);
+  sidebar.setEconomy(p?.economy);
   sidebar.setEngineRows(p);
   if (typeof p?.theme === 'string') themeSetting = p.theme;
   applyThemeChoice();
@@ -1422,7 +1441,7 @@ async function openBoardChat(card) {
   selectProject(r?.ok ? r.projectId : p.id);
   if (r?.ok) selectTab(r.projectId, r.n);
 }
-hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices, openChat: (card) => { openBoardChat(card); },
+hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices, openChat: (card) => { openBoardChat(card); }, fillHq: (text) => fillHq(text),
   openBoard: () => { if (document.body.classList.contains('studio')) document.body.classList.add('studio-board'); } });   // v3.135 the Orders strip opens a card on the board
 
 // v3.120 Studio: its sidebar and start screen (renderer/studio.js); the main region is the Office's own #terminal
@@ -1464,11 +1483,29 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   isMac,
 } });
 mountKeepAwake({ button: $('keep-awake'), t, control: () => sidebar?.settingControl('keepAwake') || null });
+// v3.133 the leaf next to it: the global economy switch (the same checkbox as Settings), and the budget banner
+mountEconomy({ button: $('economy'), t, control: () => sidebar?.settingControl('economy') || null });
+mountBudgetBanner({ api, t, names: () => new Map((sidebar?.projectList?.() || []).map((/** @type {any} */ p) => [p.id, p.name])) });
 /**
  * v3.120 Studio's ⌘K palette: every Office feature Studio has no button for. Each one calls the Office's own handler
  * or shows the Office's own panel (studio.showPanel: the sidebar panel on its own over Studio), never a copy.
  * @param {string} projectId the project Studio acts on (src/studio-view.mjs currentProjectId)
  */
+/**
+ * v3.134 Fills HQ's composer with a template's text: the chat input, or a bracketed paste into HQ's terminal. It never
+ * sends: the person edits it and sends it, so the send is their own typed order.
+ */
+function fillHq(/** @type {string} */ text) {
+  leaveBoard();
+  selectProject(HQ_ROW.id);
+  window.setTimeout(() => {
+    const id = activePty();
+    const p = id ? panes.get(id) : null;
+    if (!p) return;
+    if (p.chatOn && p.chat?.setDraft) p.chat.setDraft(text);
+    else p.term?.insert?.(text);
+  }, 80);
+}
 function studioCommands(projectId) {
   const p = projects.find((x) => x.id === projectId) || null;
   const act = activeProject();
@@ -1476,7 +1513,8 @@ function studioCommands(projectId) {
   const cmd = (id, run, when = true) => (when ? [{ id, label: t(`studio.cmd.${id}`), keywords: t(`studio.cmdKeys.${id}`), run }] : []);
   const panel = (sel, fallback) => () => { if (!studio?.showPanel(sel)) fallback?.(); };
   return [
-    ...cmd('team', () => studio?.openTeam()),   // v3.124 the Team page (team mode off: its own switch)
+    ...cmd('team', () => studio?.openTeam()),
+    ...cmd('runTemplate', () => { paletteRows(fillHq).then((rows) => studio?.openPalette(rows, t('templates.paletteHint'))).catch((e) => console.error(e)); }),   // v3.134   // v3.124 the Team page (team mode off: its own switch)
     ...cmd('worktree', () => { leaveBoard(); addTab(p.id, 'worktree'); }, Boolean(p)),
     ...cmd('newTab', () => { leaveBoard(); addTab(p.id); }, Boolean(p)),   // main's "+" menu: same folder, worktree, a desk, a shell
     ...cmd('closeTab', () => closeTab(act.id, n), Boolean(act) && act.id !== HQ_ROW.id && n !== MAIN_TAB),
@@ -1530,6 +1568,7 @@ const WHATS_NEW_STUDIO_ROWS = {
   experience: ['general', '.st-set-row[data-key="experience"]'],
   language: ['general', '.st-set-row[data-key="lang"]'],
   'keep-awake': ['sessions', '.st-set-row[data-key="keepAwake"]'],
+  economy: ['sessions', '.st-set-row[data-key="economy"]'],
   about: ['about', '.st-set-version'],
 };
 /** @type {Record<string, (arg: string) => string>} */

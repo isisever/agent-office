@@ -4,6 +4,7 @@
 // Office checkbox and fires its change event, so the Office's handler runs and nothing about a setting is forked.
 // Texts from main (account and project names) go in with textContent.
 
+import { templatesManager } from './templates-ui.js';
 import { SECTIONS, SETTINGS, settingsOf, controlKind, filterSettings, firstMatchSection } from '../src/settings-model.mjs';
 import { icon } from './studio-icons.js';
 
@@ -180,6 +181,7 @@ export function mountSettingsPage({ el, t, host, studioTheme, setStudioTheme, ho
       case 'machines': return head(button(t('studio.set.open'), panel('#machines-panel')));
       case 'hq': return head(button(t('studio.set.open'), () => { close(); hooks.selectHq(); }));
       case 'routines': return head(button(t('studio.set.open'), () => { close(); hooks.openBoard(); }));
+      case 'templates': return el('div', { class: 'st-set-block' }, head(null), templatesManager({ t }));   // v3.134 rename, delete
       case 'version': {
         const info = hooks.appInfo();
         return el('div', { class: 'st-set-block' }, head(el('span', { class: 'st-set-version' }, info.version || '—')),

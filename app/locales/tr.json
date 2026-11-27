@@ -28,7 +28,8 @@
       "command": "Komut",
       "session": "Oturum",
       "recent": "Son",
-      "project": "Proje"
+      "project": "Proje",
+      "template": "Şablon"
     },
     "cmd": {
       "team": "Ekip ve masalar",
@@ -52,7 +53,8 @@
       "whatsNew": "Neler yeni",
       "usage": "Kullanım: bu projenin token ve maliyeti",
       "machines": "Makineler: kaynaklar ve projeler",
-      "mail": "Posta: hesaplar ve giden kutusu"
+      "mail": "Posta: hesaplar ve giden kutusu",
+      "runTemplate": "Şablon çalıştır…"
     },
     "cmdKeys": {
       "team": "ekip personel masa rol sihirbaz team desk",
@@ -76,7 +78,8 @@
       "whatsNew": "neler yeni sürüm notları değişiklikler güncelleme tur özellikler whats new",
       "usage": "kullanım token maliyet harcama bugün hafta ay model ajan usage cost",
       "machines": "makine cihaz bilgisayar uzak işlemci bellek proje giriş machines",
-      "mail": "posta e-posta giden taslak hesap mail"
+      "mail": "posta e-posta giden taslak hesap mail",
+      "runTemplate": "şablon emir hq çalıştır doldur"
     },
     "untitled": "Yeni oturum",
     "now": "şimdi",
@@ -254,7 +257,13 @@
     "stopped": " (Claude kapalı)",
     "asleep": " (uykuda: açınca başlar)",
     "keepAwake": "Uyanık kal",
-    "keepAwakeTitle": "{label}: {state}"
+    "keepAwakeTitle": "{label}: {state}",
+    "economyOnTitle": "Tasarruf modu açık: kendi ayarı olmayan projelerde daha az token. Kapatmak için tıklayın.",
+    "economyOffTitle": "Tasarruf modu kapalı. Daha az token için tıklayın (150K bağlam, Sonnet ajanlar, Tasarruf Sıkı, paylaşılan MCP yok, daha uzun boşta uyku).",
+    "budgetReached": "{project}: token bütçesi doldu ({used} / {limit}, {period}). HQ görevleri ve rutinler bekliyor; kendi yazdıklarınız engellenmez.",
+    "budgetRaise": "Artır",
+    "budgetIgnore": "Bugün yok say",
+    "budgetClose": "×"
   },
   "sidebar": {
     "experience": "Deneyim",
@@ -655,7 +664,28 @@
     "groupTitle": "PROJELER listesinde proje bu grubun altında görünür. Boş bırakırsanız grupsuz kalır.",
     "groupToggle": "Grubu aç / kapat",
     "about": "Agent Office {version}",
-    "whatsNew": "Neler yeni"
+    "whatsNew": "Neler yeni",
+    "economy": "Tasarruf modu",
+    "economyTitle": "Kendi ayarı olmayan her projede daha az token harcar: bağlam sınırı 150K, Sonnet alt ajanlar (yönetici okuma, arama ve rapor ajanları için yine Haiku ister), Tasarruf Sıkı, paylaşılan MCP sunucuları yok ve yeniden başlatmalar önbelleği sürekli yeniden kurmasın diye boşta uyku en az 60 dk. Bir proje için seçtiğiniz değer her zaman geçerlidir. Sonra başlayan oturumlara uygulanır; boştaki sekmeler yeniden başlar.",
+    "economyProject": "Tasarruf modu",
+    "economyInheritOn": "Ayarlardaki gibi (açık)",
+    "economyInheritOff": "Ayarlardaki gibi (kapalı)",
+    "economyOn": "Açık",
+    "economyOff": "Kapalı",
+    "economyValue": "{value} (tasarruf)",
+    "economyCap": "Bağlam {cap} (tasarruf)",
+    "economyAgents": "Sonnet ajanlar (tasarruf)",
+    "economySavings": "Tasarruf Sıkı (tasarruf)",
+    "economyMcp": "Paylaşılan MCP yok (tasarruf)",
+    "economySleep": "Uyku {minutes} dk (tasarruf)",
+    "budget": "Token bütçesi",
+    "budgetDaily": "Günlük",
+    "budgetWeekly": "Haftalık",
+    "budgetTokens": "M token",
+    "budgetEditTitle": "Günlük ve/veya haftalık sınır, milyon token ya da USD olarak (liste fiyatlarıyla tahmini). %80'de bir uyarı gelir; %100'de bu projeye HQ görevleri ve rutinler, siz artırana ya da bugün için yok sayana kadar bekler. Kendi yazdıklarınız hiç engellenmez. Boş = bütçe yok.",
+    "budgetMeter": "Token bütçesi: {period} %{pct} ({used} / {limit})",
+    "budget_daily": "bugün",
+    "budget_weekly": "son 7 gün"
   },
   "panel": {
     "types": {
@@ -1311,7 +1341,10 @@
     "newGroupHint": "Yeni grup: adını projenin ayarlarında (⚙) yazın",
     "removeFromGroup": "“{group}” grubundan çıkar",
     "helpMenu": "Yardım",
-    "whatsNew": "Neler Yeni"
+    "whatsNew": "Neler Yeni",
+    "budgetWarn": "{project}: token bütçesinin %{pct}'i kullanıldı",
+    "budgetOver": "{project}: token bütçesi doldu",
+    "budgetBody": "Bu projeye HQ görevleri ve rutinler, bütçeyi artırana ya da bugün için yok sayana kadar bekler. Kendi yazdıklarınız hiç engellenmez."
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",
@@ -1947,7 +1980,8 @@
       "machines": "Makineler",
       "hq": "Merkez",
       "routines": "Raporlar ve rutinler",
-      "version": "Sürüm"
+      "version": "Sürüm",
+      "templates": "Emir şablonları"
     },
     "desc": {
       "lang": "Tüm uygulamanın dili.",
@@ -1983,7 +2017,9 @@
       "look": "Ofisin görünümü.",
       "mode": "Ofis için açık ya da koyu.",
       "bot": "Ofis robotlarının gövde rengi.",
-      "version": "Çalışan Agent Office sürümü."
+      "version": "Çalışan Agent Office sürümü.",
+      "economy": "Daha az token: 150K bağlam, Sonnet ajanlar, Tasarruf Sıkı, paylaşılan MCP yok, daha uzun boşta uyku. Bir proje bunu değiştirebilir.",
+      "templates": "Kayıtlı HQ emirleri: yeniden adlandırın ya da silin. HQ yazma kutusundan veya ⌘K ile kullanın."
     }
   },
   "board": {
@@ -2050,7 +2086,30 @@
     "headline": "{range}: {bugfix} hata, {hotfix} acil, {feature} özellik kapandı",
     "none": "(yok)",
     "noReport": "Bu aralıkta kapanan bir şey yok.",
-    "pickDates": "Bir başlangıç ve bitiş tarihi seç."
+    "pickDates": "Bir başlangıç ve bitiş tarihi seç.",
+    "more": "Diğer"
+  },
+  "templates": {
+    "button": "Şablonlar",
+    "tip": "Emir şablonları: kayıtlı bir emri HQ yazma kutusuna koyar. Düzenleyip kendiniz gönderirsiniz.",
+    "none": "Henüz şablon yok",
+    "noneManage": "Henüz şablon yok. HQ yazma kutusunda ya da bir emir kartında \"Şablon olarak kaydet\"i kullanın.",
+    "saveAs": "Şablon olarak kaydet",
+    "saved": "\"{name}\" şablon olarak kaydedildi.",
+    "emptyText": "Önce emri yazın, sonra şablon olarak kaydedin.",
+    "title": "Emir şablonları",
+    "use": "Kullan",
+    "rename": "Yeniden adlandır",
+    "delete": "Sil",
+    "saveName": "Kaydet",
+    "name": "Şablon adı",
+    "paletteHint": "Bir şablon seçin: HQ yazma kutusunu doldurur, siz gönderirsiniz",
+    "why": {
+      "invalid": "Bu şablon kaydedilemedi (ad en fazla 80, metin en fazla 4000 karakter).",
+      "unknown": "Bu şablon artık yok.",
+      "too-many": "Zaten 50 şablonunuz var. Önce birini silin.",
+      "gone": "Bu emir artık yok."
+    }
   },
   "orders": {
     "title": "Emirler",

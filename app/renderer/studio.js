@@ -7,6 +7,7 @@
 
 import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
 import { icon } from './studio-icons.js';
+import { meterView, amountText } from '../src/economy-view.mjs';
 import { mountSettingsPage } from './studio-settings.js';
 import { mountTeamPage } from './studio-team.js';
 import { teamGroups, whoOptions, whoPlan } from '../src/studio-team.mjs';
@@ -332,15 +333,26 @@ export function mountStudio({ api, t, modLabel, hooks }) {
           el('span', { class: 'st-title st-project' }, g.name, el('span', { class: 'st-sub-name' }, s.title || '')),
           g.attention && !s.waiting ? el('span', { class: `sb-attn ${g.attention}` }, '●') : null,
           g.account ? el('span', { class: 'st-badge', title: `${t('studio.account')}: ${g.account}` }, g.account) : null,
-          el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => newSession({ projectId: g.id }) }, icon('plus', 14))));
+          el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => newSession({ projectId: g.id }) }, icon('plus', 14))), budgetBar(g.id));
     }
     const kids = shut ? [] : [
       ...g.running.map((/** @type {any} */ s, /** @type {number} */ i) => sessionRow(g, s, i)),
       ...(g.recent.length ? [el('div', { class: 'st-sub' }, t('studio.recent')), ...g.recent.map((/** @type {any} */ r) => recentRow(g, r))] : []),
     ];
-    return el('div', { class: `st-group${g.current ? ' current' : ''}` }, head, ...kids);
+    return el('div', { class: `st-group${g.current ? ' current' : ''}` }, head, budgetBar(g.id), ...kids);
   }
 
+  // v3.133 the project groups' thin budget meter (main's tokens:brief, about once a minute)
+  /** @type {Map<string, any>} */
+  let budgetBriefs = new Map();
+  api.tokens?.onBrief?.((/** @type {any} */ list) => { budgetBriefs = new Map((Array.isArray(list) ? list : []).filter((b) => b && b.id).map((b) => [b.id, b])); draw(); });
+  Promise.resolve(api.tokens?.brief?.()).then((/** @type {any} */ list) => { if (Array.isArray(list)) { budgetBriefs = new Map(list.filter((b) => b && b.id).map((b) => [b.id, b])); draw(); } }).catch(() => {});
+  function budgetBar(/** @type {string} */ id) {
+    const v = meterView(budgetBriefs.get(id));
+    if (!v) return null;
+    return el('div', { class: `st-budget ${v.level}`, title: t('sidebar.budgetMeter', { pct: v.pct, used: amountText(v.used, v.unit), limit: amountText(v.limit, v.unit), period: t(`sidebar.budget_${v.period}`) }) },
+      el('i', { style: `width:${v.width}%` }));
+  }
   function draw() {
     if (!on) return;
     newLabel.textContent = t('studio.newSession');
@@ -586,12 +598,13 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     closePalette();
     try { it.run(); } catch (e) { console.error(e); }
   }
-  function openPalette() {
+  /** ⌘K; `items` (v3.134 "Run template…") replaces the rows with these, `hint` the placeholder. */
+  function openPalette(/** @type {StudioCommand[] | undefined} */ items = undefined, hint = '') {
     if (!on) return;
     hidePanel();
-    palItems = paletteItems();
+    palItems = Array.isArray(items) ? items : paletteItems();
     palInput.value = '';
-    palInput.placeholder = t('studio.paletteHint');
+    palInput.placeholder = hint || t('studio.paletteHint');
     palSel = 0;
     palette.hidden = false;
     drawPalette();

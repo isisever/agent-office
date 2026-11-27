@@ -2,6 +2,8 @@
 // Done), sorted by type (bugfix, hotfix, feature) then age by src/board-model.js, plus a Reports tab. One component
 // for both experiences: the Office's HQ board (renderer/hq-board.js) and Studio's Board / Reports entries show it.
 // Every text from a card is put in with textContent: titles and names are data, never markup.
+import { meterView, amountText } from '../src/economy-view.mjs';
+import { saveFromOrder } from './templates-ui.js';
 import { TYPES, GROUPS, RANGES, projectsOf, membersOf, columnsOf, filterOptions, fmtDuration, fmtCost, fmtTokens, rangeOf, typeCounts, reportRows } from '../src/board-view.mjs';
 
 const POLL_MS = 30000;   // a fallback only: main pushes board:cards whenever the store changes
@@ -78,6 +80,16 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
           draw();
         } }, el('span', { class: `bv-dot bv-${x}` }), typeName(x)))) : null);
   }
+  /** v3.134 an order card's menu: Save as template (the order's original text, type and targets). */
+  function cardMenu(/** @type {any} */ c) {
+    const key = `m:${c.id}`;
+    const open = menuFor === key;
+    return el('span', { class: 'bv-type-wrap bv-more-wrap' },
+      el('button', { class: 'bv-more', title: t('board.more'), 'aria-label': t('board.more'), 'aria-haspopup': 'menu', 'aria-expanded': String(open),
+        onclick: (/** @type {Event} */ e) => { e.stopPropagation(); menuFor = open ? '' : key; draw(); } }, '⋯'),
+      open ? el('div', { class: 'bv-menu', role: 'menu' }, el('button', { class: 'bv-menu-item', role: 'menuitem',
+        onclick: async (/** @type {Event} */ e) => { e.stopPropagation(); menuFor = ''; note = await saveFromOrder(c.id, t); draw(); } }, t('templates.saveAs'))) : null);
+  }
   const sourceOf = (/** @type {any} */ c) => (c.kind === 'chat' ? 'chat' : c.routine ? 'routine' : 'order');
   function card(/** @type {any} */ c) {
     const isOrder = c.kind === 'order';
@@ -92,7 +104,8 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
       title: isOrder ? t('board.orderTip') : t('board.openChat'),
       onclick: click, onkeydown: (/** @type {KeyboardEvent} */ e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); click(); } } },
     el('div', { class: 'bv-card-top' }, typeChip(c), el('span', { class: `bv-source bv-src-${sourceOf(c)}` }, t(`board.source.${sourceOf(c)}`)),
-      isOrder && c.progress?.total ? el('span', { class: 'bv-progress', title: t('board.progressTip') }, `${c.progress.done}/${c.progress.total}`) : null),
+      isOrder && c.progress?.total ? el('span', { class: 'bv-progress', title: t('board.progressTip') }, `${c.progress.done}/${c.progress.total}`) : null,
+      isOrder ? cardMenu(c) : null),
     el('div', { class: 'bv-title' }, c.title || c.request || c.id),
     el('div', { class: 'bv-meta' }, ...projectsOf(c).map((p) => el('span', { class: 'bv-chip bv-proj' }, p)),
       ...membersOf(c).map((m) => el('span', { class: 'bv-chip bv-member' }, `@${m}`))),
@@ -129,8 +142,10 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
     const range = rangeOf(rep.range, Date.now(), { from: rep.from, to: rep.to });
     const seq = ++rep.seq;
     if (!range) { rep.data = null; rep.types = null; drawReport(); return; }
-    const [data, types] = await Promise.all([api.board.report(range, rep.groupBy).catch(() => null),
-      rep.groupBy === 'type' ? null : api.board.report(range, 'type').catch(() => null)]);
+    const [data, types, briefs] = await Promise.all([api.board.report(range, rep.groupBy).catch(() => null),
+      rep.groupBy === 'type' ? null : api.board.report(range, 'type').catch(() => null),
+      Promise.resolve(api.tokens?.brief?.()).catch(() => null)]);   // v3.133 the projects' budget meters
+    reportBriefs = new Map((Array.isArray(briefs) ? briefs : []).filter((b) => b && b.name).map((b) => [b.name, b]));
     if (seq !== rep.seq) return;   // a newer choice is on its way
     rep.data = data && !data.error ? data : null;
     rep.types = rep.groupBy === 'type' ? rep.data : types && !types.error ? types : null;
@@ -150,12 +165,21 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
       rows.length ? el('table', { class: 'bv-report' },
         el('thead', {}, el('tr', {}, ...['key', 'bar', 'count', 'avg', 'tokens', 'cost'].map((k) => el('th', { class: `bv-th-${k}` }, k === 'key' ? t(`board.groupBy.${data.groupBy}`) : k === 'bar' ? '' : t(`board.report.${k}`))))),
         el('tbody', {}, ...rows.map((r) => el('tr', {},
-          el('td', { class: 'bv-key' }, data.groupBy === 'type' ? el('span', { class: `bv-dot bv-${r.key}` }) : null, keyOf(r.key)),
+          el('td', { class: 'bv-key' }, data.groupBy === 'type' ? el('span', { class: `bv-dot bv-${r.key}` }) : null, keyOf(r.key), data.groupBy === 'project' ? budgetCell(r.key) : null),
           el('td', { class: 'bv-barcell' }, el('span', { class: `bv-bar${data.groupBy === 'type' ? ` bv-${r.key}` : ''}`, style: `width:${r.pct}%` })),
           cell(String(r.count), 'bv-num'), cell(fmtDuration(r.avgMs), 'bv-num'), cell(fmtTokens(r.tokens), 'bv-num'), cell(fmtCost(r.usd), 'bv-num')))),
         el('tfoot', {}, el('tr', {}, el('td', {}, t('board.report.total')), el('td', {}),
           cell(String(tot.count || 0), 'bv-num'), cell(fmtDuration(tot.count ? tot.durationMs / tot.count : 0), 'bv-num'), cell(fmtTokens(tot.tokens), 'bv-num'), cell(fmtCost(tot.usd), 'bv-num'))))
         : el('p', { class: 'bv-empty' }, t('board.noReport')));
+  }
+  /** @type {Map<string, any>} */
+  let reportBriefs = new Map();
+  /** v3.133 a project row's budget meter (by project name), or null without a budget. */
+  function budgetCell(/** @type {string} */ name) {
+    const v = meterView(reportBriefs.get(name));
+    if (!v) return null;
+    return el('span', { class: `bv-budget ${v.level}`, title: t('sidebar.budgetMeter', { pct: v.pct, used: amountText(v.used, v.unit), limit: amountText(v.limit, v.unit), period: t(`sidebar.budget_${v.period}`) }) },
+      el('i', { style: `width:${v.width}%` }));
   }
   function draw() {
     for (const b of tabs.children) { const on = b.getAttribute('data-tab') === tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
