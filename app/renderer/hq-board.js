@@ -244,7 +244,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openCh
   function taskEl(x) {
     return el('div', { class: `hq-task${x.read ? '' : ' unread'}`, onclick: () => showReport(x) },
       el('div', { class: 'hq-task-title' }, x.title || x.id),
-      el('div', { class: 'hq-task-meta' }, `${x.staff ? `${x.staff} @ ` : ''}${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.status}${x.reason ? ` (${t(`hq.reason.${x.reason}`) === `hq.reason.${x.reason}` ? x.reason : t(`hq.reason.${x.reason}`)})` : ''}${x.byInitiative ? ` · ${t('hq.byInitiative')}` : ''}${x.personPrompted ? ` · ${t('hq.personPrompted')}` : ''}`),
+      el('div', { class: 'hq-task-meta' }, `${x.staff ? `${x.staff} @ ` : ''}${x.project} · ${x.machine === 'self' ? t('hq.here') : x.machineName || x.machine} · ${x.orderQueued ? t('hq.orderQueued', { n: x.ahead || 0 }) : `${x.status}${x.reason ? ` (${t(`hq.reason.${x.reason}`) === `hq.reason.${x.reason}` ? x.reason : t(`hq.reason.${x.reason}`)})` : ''}`}${x.autoContinued ? ` · ${t('hq.autoContinued')}` : ''}${x.byInitiative ? ` · ${t('hq.byInitiative')}` : ''}${x.personPrompted ? ` · ${t('hq.personPrompted')}` : ''}`),
       waitLine(x),
       stageLine(x),
       x.status === 'awaiting-consent' && api.routines ? el('div', { class: 'rt-actions' },

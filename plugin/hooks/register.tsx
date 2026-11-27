@@ -82,6 +82,7 @@ const STRINGS = {
       `${n} remote tasks finished: ${list}; read them with office_reports.${prompted ? ` The person typed in the session of ${prompted} while it ran, so that report may answer the person rather than the task: check it against the task before relying on it. Stages waiting on it were not started.` : ''}`,
     requestDone: (request: string, n: number) => `Request #${request} finished (${n} tasks); read them with office_board and office_reports, save the summary with office_summary and answer.`,
     stageBlocked: (id: string, reason: string) => `Stage #${id} will not start (${reason}): the stage before it did not fully report. Check office_board and tell the person; do not re-dispatch on your own.`,
+    stageContinued: (id: string, reason: string) => `Stage #${id} was blocked (${reason}) and the app continued it once for this order: it starts now. Check office_board; a second block waits for the person.`,
     stats: {
       heading: (date: string) => `Agent Office · today (${date})`,
       delivered: (count: number, failed: number, time: string) =>
@@ -123,6 +124,7 @@ const STRINGS = {
     reportsReady: (list: string, n: number, prompted: string) =>
       `${n} uzak görev bitti: ${list}; office_reports ile oku.${prompted ? ` ${prompted} sürerken kişi o oturuma kendisi yazdı; o rapor görevin değil kişinin sorusunun yanıtı olabilir: güvenmeden önce görevle karşılaştır. Onu bekleyen aşamalar başlatılmadı.` : ''}`,
     requestDone: (request: string, n: number) => `İstek #${request} bitti (${n} görev); office_board ve office_reports ile oku, özeti office_summary ile kaydet ve yanıtla.`,
+    stageContinued: (id: string, reason: string) => `Aşama #${id} engellendi (${reason}) ve uygulama bu emir için onu bir kez sürdürdü: şimdi başlıyor. office_board'a bak; ikinci engel kişiyi bekler.`,
     stageBlocked: (id: string, reason: string) => `Aşama #${id} başlamayacak (${reason}): ondan önceki aşama tam rapor vermedi. office_board'a bak ve kişiye söyle; kendiliğinden yeniden dağıtma.`,
     stats: {
       heading: (date: string) => `Agent Ofis · bugün (${date})`,
@@ -885,7 +887,7 @@ const isNotice = (task: Notice) => task.kind === 'report-ready' || task.kind ===
 function noticeText(task: Notice, s: Strings) {
   if (task.kind === 'report-ready') return readyText(task, s.reportReady)
   if (task.kind === 'request-done') return doneText(task, s.requestDone)
-  return blockedText(task, s.stageBlocked) // v3.79
+  return blockedText(task, s.stageBlocked, s.stageContinued) // v3.79; v3.130 continued once by the app
 }
 
 /** One prompt for every notice in `rows` (v3.129): finished remote tasks share one line, each other notice keeps its
