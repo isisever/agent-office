@@ -66,7 +66,7 @@ function stageState(pre) {
  * The waiting stages that can move now → { release: [{ id, after }], block: [{ id, status, reason }] }.
  * A missing previous stage or one that ended without a full report blocks; past WAIT_MS a stage expires.
  */
-function settle(board, now = Date.now(), waitMs = WAIT_MS) {
+function settle(board, now = Date.now(), waitMs = WAIT_MS, typeFn = (/** @type {any} */ t) => t?.type) {
   const release = [];
   const block = [];
   for (const t of board.tasks) {
@@ -79,9 +79,11 @@ function settle(board, now = Date.now(), waitMs = WAIT_MS) {
     else if (st === 'block') block.push({ id: t.id, status: BLOCKED, reason: !pre ? 'after-lost' : pre.status === 'rejected' && pre.resumed === true ? 'after-blocked' : pre.closedByHq ? 'after-closed-by-hq' : pre.status === 'reported' && pre.personPrompted ? 'after-person-prompted' : `after-${pre.status}` });
     else if (now - t.at > waitMs) block.push({ id: t.id, status: 'expired', reason: 'after-timeout' });
   }
-  // v3.131 stages released together go by type priority (bugfix, hotfix, feature), then the oldest first
+  // v3.131 stages released together go by type priority (bugfix, hotfix, feature), then the oldest first, with the same
+  // aging as held sends (one rank per BM.AGE_MS waited). `typeFn(task)` gives a stage's current type (main: the person's
+  // type of its order when set), so nothing sealed has to change when the person retypes an order.
   const at = new Map(board.tasks.map((t) => [t.id, t]));
-  return { release: BM.byPriority(release, (x) => at.get(x.id)?.type, (x) => at.get(x.id)?.at), block };
+  return { release: BM.byPriority(release, (x) => typeFn(at.get(x.id)), (x) => at.get(x.id)?.at, now), block };
 }
 
 /**
@@ -194,7 +196,7 @@ function stageProject(st, projects) {
  * personal fields, title and text). The app keeps it in main memory when the stage is accepted and compares it at
  * release: stage.json is a file a session can edit, so a changed record is refused (`stage-changed`).
  */
-const STAGE_FIELDS = ['remote', 'machine', 'key', 'project', 'projectId', 'staff', 'personalStaff', 'title', 'task', 'noDialog'];
+const STAGE_FIELDS = ['remote', 'machine', 'key', 'project', 'projectId', 'staff', 'personalStaff', 'title', 'task', 'noDialog', 'type'];
 function stageDigest(st) {
   const o = st && typeof st === 'object' ? st : {};
   return require('crypto').createHash('sha256').update(JSON.stringify(STAGE_FIELDS.map((k) => [k, o[k] === undefined ? null : o[k]]))).digest('hex');

@@ -131,6 +131,7 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
   const prelude = `
     const { HQ, CH, LC, SF, P, ROUT, BM, fs, path, crypto } = env.mods; const state = env.state; const OM = { TASK_MAX: 8192 };
     const hqMinter = HQ.createMinter(); env.minter = hqMinter; const hqPacer = HQ.createPacer();
+    const releaseType = (r, own) => BM.typeOf(own) || 'feature';   // main's lookup of the person's order type (no store here)
     const win = { isFocused: () => true, isDestroyed: () => false }; const T = (k, v) => k + (v ? JSON.stringify(v) : '');
     const dialog = { showMessageBox: async (_w, o) => { env.dialogs.push(o); return { response: env.response ?? (env.allow ? 0 : 1) }; } };
     ${realConfirm ? '' : 'const confirmHqDispatch = async () => { env.remoteDialogs++; return env.allow; };'}   // the stub counts single-dispatch dialogs in env.remoteDialogs

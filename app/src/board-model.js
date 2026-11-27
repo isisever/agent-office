@@ -14,6 +14,8 @@ const MAX_ORDER_META = 1000;                  // per-order choices kept
 const MAX_TASK_SIDS = 1000;                   // sessions that carried a dispatched or remote task (newest kept)
 const REVIEW_CLOSE_MS = 24 * 60 * 60 * 1000;  // a chat card idle in Review this long closes by itself
 const TITLE_MAX = 80;
+const TITLE_INPUT_MAX = 4000;                 // a chat title's raw text is cut to this before it is redacted
+const AGE_MS = 10 * 60 * 1000;                // release order: a waiting item is promoted one rank per this much waiting
 
 const isObj = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x);
 const isStr = (x) => typeof x === 'string';
@@ -73,8 +75,23 @@ function compareCards(a, b) {
 }
 const sortCards = (cards) => [...cards].sort(compareCards);
 /** Items ({ type, at }) in release order: the same rule, stable for equal keys. */
-const byPriority = (items, typeFn = (x) => x.type, atFn = (x) => x.at) => items.map((x, i) => ({ x, i }))
-  .sort((p, q) => rankOf(typeFn(p.x)) - rankOf(typeFn(q.x)) || num(atFn(p.x)) - num(atFn(q.x)) || p.i - q.i).map((p) => p.x);
+/** The rank an item waiting since `at` has at `now`: one rank higher (lower number) per AGE_MS waited, never below 0.
+ *  Without `now` (card sorting) there is no aging. A feature waits at most 2 × AGE_MS before it ranks like a bugfix. */
+const agedRank = (type, at, now) => {
+  const r = rankOf(type);
+  if (!Number.isFinite(now) || !num(at) || now <= at) return r;
+  return Math.max(0, r - Math.floor((now - at) / AGE_MS));
+};
+/** Release order: by (aged) type rank, then the oldest first, then the given order. `now` turns aging on. */
+const byPriority = (items, typeFn = (x) => x.type, atFn = (x) => x.at, now = NaN) => items.map((x, i) => ({ x, i, r: agedRank(typeFn(x), num(atFn(x)), now) }))
+  .sort((p, q) => p.r - q.r || num(atFn(p.x)) - num(atFn(q.x)) || p.i - q.i).map((p) => p.x);
+/** An explicit type only: the `type` argument, else a `bugfix:` / `hotfix:` / `feature:` prefix in one of the texts; else ''. */
+function explicitType(explicit, ...texts) {
+  const t = typeOf(explicit);
+  if (t) return t;
+  for (const x of texts) { const c = classify(x); if (c.explicit) return c.type; }
+  return '';
+}
 
 /** The card of an HQ request: its tasks give the column and progress; the person's choices (meta) win. */
 function orderCard(request, tasks, meta = {}) {
@@ -170,9 +187,22 @@ function capStore(store) {
 /** True when this session carried a dispatched or remote task (it is an order on the board, never a chat card). */
 const isTaskSession = (store, sid) => Array.isArray(store.taskSids) && store.taskSids.includes(sid);
 /** Remembers a task session (newest last, capped). → the store (same object if already known or invalid). */
+/** A chat card the session already had is dropped: the conversation is now part of the order. */
 function markTaskSession(store, sid) {
   if (!isStr(sid) || !SID_RE.test(sid) || isTaskSession(store, sid)) return store;
-  return capStore({ ...store, taskSids: [...(store.taskSids || []), sid] });
+  return capStore({ ...store, chats: store.chats.filter((c) => c.sessionId !== sid), taskSids: [...(store.taskSids || []), sid] });
+}
+/** Open chat cards whose tab is gone (ptyId not in `live`, e.g. the tab was closed or the app quit) move to Review and
+ *  start their Review clock, so they never stay working or needs-you. → the store (same object if nothing changed). */
+function detachGone(store, live, now = Date.now()) {
+  const has = (id) => (live instanceof Set ? live.has(id) : Array.isArray(live) && live.includes(id));
+  let changed = false;
+  const chats = store.chats.map((c) => {
+    if (c.closedAt || has(c.ptyId) || (c.column === 'review' && c.reviewSince)) return c;
+    changed = true;
+    return { ...c, column: 'review', reviewSince: c.reviewSince || now };
+  });
+  return changed ? { ...store, chats } : store;
 }
 
 /**
@@ -181,11 +211,12 @@ function markTaskSession(store, sid) {
  * A closed card opens again when its session works again (one card per conversation). → the store (same object if
  * nothing changed).
  */
-function touchSession(store, info, now = Date.now()) {
+function touchSession(store, info, now = Date.now(), { redact = (/** @type {string} */ x) => x } = {}) {
   if (!isObj(info) || !isStr(info.sessionId) || !SID_RE.test(info.sessionId)) return store;
   const id = `c:${info.sessionId}`;
   const cur = store.chats.find((c) => c.id === id);
-  const title = line(info.title || info.prompt || '', TITLE_MAX);
+  // a title is redacted (secrets) before it is cut, so a secret is never cut into a fragment the patterns miss
+  const title = line(redact(String(info.title || info.prompt || '').slice(0, TITLE_INPUT_MAX)), TITLE_MAX);
   const column = chatColumn(info);
   if (!cur) {
     if (!line(info.prompt, 1) && !info.busy) return store;   // no person prompt yet
@@ -287,7 +318,7 @@ function tokensFromStatus(obj, sessionId) {
 
 module.exports = {
   TYPES, TYPE_RANK, COLUMNS, GROUPS, MAX_CLOSED, MAX_OPEN, MAX_TASK_SIDS, REVIEW_CLOSE_MS,
-  typeOf, rankOf, classify, orderType, columnOf, chatColumn, compareCards, sortCards, byPriority,
+  typeOf, rankOf, classify, orderType, explicitType, agedRank, detachGone, AGE_MS, columnOf, chatColumn, compareCards, sortCards, byPriority,
   orderCard, chatCard, cardOf, emptyStore, loadStore, capStore, touchSession, autoClose, markDone, setType, validCardId, isTaskSession, markTaskSession,
   boardCards, report, tokensFromStatus,
 };

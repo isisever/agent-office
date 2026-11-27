@@ -329,7 +329,10 @@ function addTask(board, t, now = Date.now()) {
   let requests = board.requests;
   if (task.request) {
     const r = requests.find((x) => x.id === task.request);
-    requests = r ? requests.map((x) => (x === r ? { ...x, tasks: [...x.tasks, task.id], done: false } : x))
+    // v3.131 a later task with an explicit type (argument or prefix) raises the order's type to the highest seen
+    const up = r ? BM.explicitType(t.type, t.title, t.task) : '';
+    const raise = up && BM.rankOf(up) < BM.rankOf(r.type) ? { type: up, ...(BM.typeOf(t.type) ? { typeBy: 'hq' } : {}) } : {};
+    requests = r ? requests.map((x) => (x === r ? { ...x, ...raise, tasks: [...x.tasks, task.id], done: false } : x))
       // v3.131 the order's type: HQ's explicit type, else a prefix or keywords
       : [{ id: task.request, at: now, prompt: line(redact(t.prompt || ''), 150), tasks: [task.id], done: false,
         type: BM.orderType(t.type, t.prompt, t.title, t.task), ...(BM.typeOf(t.type) ? { typeBy: 'hq' } : {}), ...(t.routine ? { routine: line(t.routine, 16), run: line(t.run, 16) } : {}) }, ...requests];
@@ -528,15 +531,24 @@ function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {
   };
   return {
     /** send now when a token is free, else hold (sent by flush in order). → true when sent now. */
-    // v3.131 held sends wait in type priority (bugfix, hotfix, feature), then in order
+    // v3.131 held sends wait in type priority (bugfix, hotfix, feature), then in order. `type` is a type or a function
+    // that returns the current one (read at each flush, so a type the person changes later applies). Aging: a held send
+    // is promoted one rank per BM.AGE_MS it waits, so a feature is never starved by a stream of bugfixes (≤ 2 × AGE_MS).
+    /** @param {string} key @param {() => void} send @param {string | (() => string)} [type] */
     submit(key, send, type = 'feature') {
       if (!held.some((h) => h.key === key) && take(key)) { send(); return true; }
-      const rank = BM.rankOf(type);
-      const at = held.findIndex((h) => h.rank > rank);
-      held.splice(at < 0 ? held.length : at, 0, { key, send, rank });
+      held.push({ key, send, type, at: now() });
       return false;
     },
-    flush() { for (let i = 0; i < held.length;) { const h = held[i]; if (held.slice(0, i).some((x) => x.key === h.key) || !take(h.key)) { i++; continue; } held.splice(i, 1); h.send(); } },
+    flush() {
+      const order = BM.byPriority(held, (h) => (typeof h.type === 'function' ? h.type() : h.type), (h) => h.at, now());
+      const blocked = new Set();
+      for (const h of order) {
+        if (blocked.has(h.key)) continue;
+        if (!take(h.key)) { blocked.add(h.key); continue; }
+        held.splice(held.indexOf(h), 1); h.send();
+      }
+    },
     get size() { return held.length; },
   };
 }

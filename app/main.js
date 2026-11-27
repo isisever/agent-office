@@ -2594,7 +2594,7 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
     if (rrun?.tasks?.includes(heldId)) { rrun.tasks = rrun.tasks.map((x) => (x === heldId ? r.id : x)); saveRt(); }
     saveHqBoard(HQ.renameTask(loadHqBoard(), heldId, r.id, { status: r.status, ...(r.reason ? { reason: r.reason } : {}) }));
     try { const a = HQ.taskFile(hqDir(), heldId, '.'); const b = HQ.taskFile(hqDir(), r.id, '.'); if (a && b) fs.renameSync(path.dirname(a), path.dirname(b)); } catch {}
-  }, BM.typeOf(args.type) || BM.classify(`${args.title || ''} ${task}`).type);
+  }, ((own) => () => releaseType(request, own))(BM.typeOf(args.type) || BM.classify(`${args.title || ''} ${task}`).type));   // read at each flush: the person's type of the order applies
   if (!sent) {
     held = true;
     row({ id: heldId, status: 'queued', reason: 'paced' }, extra);
@@ -2814,7 +2814,7 @@ async function hqReleaseStage({ id, after, resumed = false }) {
 /** Waiting stages whose previous stage ended: released, blocked (HQ gets a fixed row) or expired; repeats while a block cascades. */
 function hqChainSweep() {
   for (let i = 0; i < 20; i++) {
-    const { release, block } = CH.settle(loadHqBoard());
+    const { release, block } = CH.settle(loadHqBoard(), Date.now(), CH.WAIT_MS, (t) => releaseType(t?.request, t?.type));
     if (!release.length && !block.length) return;
     if (block.length) {
       let b = loadHqBoard();
@@ -6491,6 +6491,9 @@ setInterval(studioSweep, 5 * 60 * 1000).unref?.();
 // HQ requests are order cards (board.json); a project session the person talks in (Office or Studio, terminal or chat
 // tab) is ONE chat card, kept in <userData>/hq/board-cards.json (atomic, capped) with the person's types and Done marks.
 const boardCardsFile = () => path.join(hqDir(), 'board-cards.json');
+/** Release order (held sends, waiting stages): the type the person set on the order wins, else the item's own type.
+ *  Looked up at release time, so a retyped order needs no change to anything sealed. */
+const releaseType = (/** @type {any} */ request, /** @type {any} */ own) => (typeof request === 'string' && request && BM.typeOf(loadBoardStore().orders[request]?.type)) || BM.typeOf(own) || 'feature';
 /** @type {any} */ let boardStore = null;
 const loadBoardStore = () => (boardStore ||= BM.loadStore(readJson(boardCardsFile())));
 function saveBoardStore(s) {
@@ -6520,8 +6523,9 @@ function boardCardsTick(now = Date.now()) {
     const tok = BM.tokensFromStatus(readJson(path.join(usageRoot(), A.accountOf(state, r.project).id, `${usageKey(pid)}.json`)), sid);
     const member = r.project.staffOwner ? (memberById(r.project.staffOwner)?.name || '') : '';
     s = BM.touchSession(s, { sessionId: sid, projectId: r.project.id, ptyId: pid, project: r.project.name, member, title: info.title, prompt: info.prompt,
-      busy, waiting: info.waiting === true, ...(tok || {}), studio: STU.normalizeExperience(state.experience) === 'studio' });
+      busy, waiting: info.waiting === true, ...(tok || {}), studio: STU.normalizeExperience(state.experience) === 'studio' }, now, { redact: HQ.redact });
   }
+  s = BM.detachGone(s, new Set(terms.keys()), now);   // a card whose tab is gone (closed, app quit) goes to Review
   if (saveBoardStore(BM.autoClose(s, now))) send('board:cards', boardView());
 }
 const boardView = () => ({ ...BM.boardCards(loadHqBoard(), loadBoardStore()), types: BM.TYPES });

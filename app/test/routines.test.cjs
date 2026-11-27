@@ -416,6 +416,7 @@ function remoteHarness({ online = true, ask = true } = {}) {
   const prelude = `
     const { HQ, ROUT, BM, LC, SF, P, fs, path, crypto, T } = env; let state = env.state;
     const hqMinter = HQ.createMinter(); const hqPacer = HQ.createPacer();
+    const releaseType = (r, own) => BM.typeOf(own) || 'feature';   // main's lookup of the person's order type (no store here)
     let win = { isFocused: () => true, isDestroyed: () => false }; const isLoaded = true; const appQuitting = false;
     env.setWin = (w) => { win = w; };
     const addRun = (a) => env.added.push(a); const rtFileName = () => path.join(${JSON.stringify(dir)}, 'routines.json'); const powerMonitor = { on() {} };

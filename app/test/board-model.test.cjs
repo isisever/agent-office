@@ -230,3 +230,103 @@ test('task sessions: remembered across a reload, deduped, invalid ids ignored, c
   assert.equal(capped.taskSids.length, BM.MAX_TASK_SIDS);
   assert.equal(capped.taskSids[0], many[5]);   // the oldest dropped first
 });
+
+test('aging: a held feature send is not starved by a stream of bugfix sends (runs within 2 × AGE_MS)', () => {
+  let t = 1000;   // a time of 0 means 'unknown' to aging
+  const pacer = HQ.createPacer({ burst: 1, everyMs: 60 * 1000, now: () => t });
+  const sent = [];
+  pacer.submit('k', () => sent.push('first'));
+  pacer.submit('k', () => sent.push('feature'), 'feature');
+  let n = 0;
+  // a new bugfix every minute; one send per minute
+  for (let m = 1; m <= 40 && !sent.includes('feature'); m++) {
+    t = 1000 + m * 60 * 1000;
+    const id = `b${n++}`; pacer.submit('k', () => sent.push(id), 'bugfix');
+    pacer.flush();
+  }
+  assert.ok(sent.includes('feature'));
+  assert.ok(sent.indexOf('feature') <= 2 * BM.AGE_MS / 60000 + 1, `feature sent after ${sent.indexOf('feature')} sends`);
+  assert.equal(BM.agedRank('feature', 1, 1 + BM.AGE_MS), 1);
+  assert.equal(BM.agedRank('feature', 1, 1 + 5 * BM.AGE_MS), 0);
+  assert.equal(BM.agedRank('feature', 1), 2);   // no aging without now (card sorting)
+});
+
+test('aging: an old waiting feature stage is released before a new bugfix stage', () => {
+  const board = { tasks: [
+    { id: 'p', status: 'reported', at: 1 },
+    { id: 'f', status: CH.WAITING, after: 'p', type: 'feature', at: 1 },
+    { id: 'b', status: CH.WAITING, after: 'p', type: 'bugfix', at: 2 * BM.AGE_MS },
+  ], requests: [] };
+  assert.deepEqual(CH.settle(board, 2 * BM.AGE_MS + 5).release.map((x) => x.id), ['f', 'b']);
+  assert.deepEqual(CH.settle(board, 5 * 60 * 1000).release.map((x) => x.id), ['b', 'f']);
+});
+
+test('release type follows the order: settle and the pacer read the current type at release time', () => {
+  const board = { tasks: [
+    { id: 'p', status: 'reported', at: 1 },
+    { id: 'f', status: CH.WAITING, after: 'p', type: 'feature', request: 'r1', at: 2 },
+    { id: 'h', status: CH.WAITING, after: 'p', type: 'hotfix', request: 'r2', at: 3 },
+  ], requests: [] };
+  const person = { r1: 'bugfix' };
+  const typeFn = (/** @type {any} */ x) => person[x.request] || x.type;
+  assert.deepEqual(CH.settle(board, 4, CH.WAIT_MS, typeFn).release.map((x) => x.id), ['f', 'h']);
+  let t = 0;
+  const pacer = HQ.createPacer({ burst: 1, everyMs: 1000, now: () => t });
+  const sent = [];
+  let cur = 'feature';
+  pacer.submit('k', () => sent.push('first'));
+  pacer.submit('k', () => sent.push('order'), () => cur);
+  pacer.submit('k', () => sent.push('hotfix'), 'hotfix');
+  cur = 'bugfix';   // the person retypes the order while its send is held
+  for (let i = 1; i <= 2; i++) { t = i * 1000; pacer.flush(); }
+  assert.deepEqual(sent, ['first', 'order', 'hotfix']);
+});
+
+test('stage digest covers the type', () => {
+  const st = { machine: 'm', project: 'p', title: 't', task: 'x' };
+  assert.notEqual(CH.stageDigest({ ...st, type: 'bugfix' }), CH.stageDigest({ ...st, type: 'feature' }));
+});
+
+test('detachGone: an open chat card whose tab is gone moves to Review and starts its clock', () => {
+  let s = BM.touchSession(BM.emptyStore(), { sessionId: SID, projectId: 'p1', ptyId: 'p1', project: 'ERP', prompt: 'do it', busy: true }, 1000);
+  s = BM.touchSession(s, { sessionId: SID2, projectId: 'p2', ptyId: 'p2', project: 'CRM', prompt: 'ask', waiting: true }, 1000);
+  assert.equal(BM.detachGone(s, new Set(['p1', 'p2']), 2000), s);
+  const d = BM.detachGone(s, new Set(['p1']), 2000);
+  const c2 = d.chats.find((c) => c.sessionId === SID2);
+  assert.equal(c2.column, 'review'); assert.equal(c2.reviewSince, 2000);
+  assert.equal(d.chats.find((c) => c.sessionId === SID).column, 'working');
+  assert.equal(BM.detachGone(d, new Set(['p1']), 3000), d);   // already in Review: unchanged
+  const closed = BM.autoClose(d, 2000 + BM.REVIEW_CLOSE_MS);
+  assert.ok(closed.chats.find((c) => c.sessionId === SID2).closedAt);
+});
+
+test('markTaskSession drops the chat card the session already had', () => {
+  const s = BM.touchSession(BM.emptyStore(), { sessionId: SID, projectId: 'p1', ptyId: 'p1', project: 'ERP', prompt: 'do it', busy: true }, 1000);
+  const m = BM.markTaskSession(s, SID);
+  assert.equal(m.chats.length, 0);
+  assert.ok(BM.isTaskSession(m, SID));
+});
+
+test('chat titles are redacted before they are stored and capped', () => {
+  const secret = `ghp_${'a'.repeat(36)}`;
+  assert.notEqual(HQ.redact(secret), secret);
+  const s = BM.touchSession(BM.emptyStore(), { sessionId: SID, projectId: 'p1', ptyId: 'p1', project: 'ERP', title: `use ${secret} ${'x'.repeat(200)}`, busy: true }, 1000, { redact: HQ.redact });
+  assert.ok(!s.chats[0].title.includes(secret));
+  assert.ok(s.chats[0].title.length <= 80);
+});
+
+test('an order type is raised by a later explicit type or prefix, never lowered', () => {
+  let b = HQ.addTask({ tasks: [], requests: [] }, { id: 'a', request: 'r1', title: 'add a button', status: 'queued', pub: 'self' }, 1);
+  assert.equal(b.requests[0].type, 'feature');
+  b = HQ.addTask(b, { id: 'b', request: 'r1', title: 'the login crashes', status: 'queued', pub: 'self' }, 2);
+  assert.equal(b.requests[0].type, 'feature');   // keywords alone do not raise
+  b = HQ.addTask(b, { id: 'c', request: 'r1', title: 'hotfix: prod down', status: 'queued', pub: 'self' }, 3);
+  assert.equal(b.requests[0].type, 'hotfix');
+  b = HQ.addTask(b, { id: 'd', request: 'r1', title: 'more', type: 'bugfix', status: 'queued', pub: 'self' }, 4);
+  assert.equal(b.requests[0].type, 'bugfix'); assert.equal(b.requests[0].typeBy, 'hq');
+  b = HQ.addTask(b, { id: 'e', request: 'r1', title: 'feature: later', status: 'queued', pub: 'self' }, 5);
+  assert.equal(b.requests[0].type, 'bugfix');
+  // the person's type (board-cards.json) stays final on the card
+  const card = BM.boardCards(b, { ...BM.emptyStore(), orders: { r1: { type: 'feature' } } }).cards.find((c) => c.id === 'o:r1');
+  assert.equal(card.type, 'feature'); assert.equal(card.typeBy, 'person');
+});
