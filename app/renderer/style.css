@@ -1887,6 +1887,30 @@ body.studio.studio-float #machines-panel.studio-shown { display: block !importan
 .bv-barcell { width: 40%; }
 .bv-bar { display: block; height: 8px; min-width: 2px; border-radius: 4px; background: var(--muted); }
 
+/* v3.133 economy leaf (economy-button.js) next to the keep-awake cup; filled in the accent when on */
+#economy { background: none; border: 0; color: inherit; opacity: .7; cursor: pointer; padding: 2px 4px; display: inline-flex; align-items: center; -webkit-app-region: no-drag; }
+#economy[hidden] { display: none; }
+#economy:hover { opacity: 1; }
+#economy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#economy.active { opacity: 1; color: var(--accent); }
+#economy.active .st-icon path:first-child { fill: currentColor; fill-opacity: .35; }
+/* v3.133 budget meter (Office project row, Studio project groups, board report) and the budget-reached banner */
+.sb-budget, .st-budget, .bv-budget { height: 3px; border-radius: 2px; background: color-mix(in srgb, currentColor 15%, transparent); overflow: hidden; margin: 2px 0 0; }
+.sb-budget[hidden], .st-budget[hidden], .bv-budget[hidden] { display: none; }
+.sb-budget > i, .st-budget > i, .bv-budget > i { display: block; height: 100%; background: var(--accent); }
+.sb-budget.warn > i, .st-budget.warn > i, .bv-budget.warn > i { background: #d9a400; }
+.sb-budget.over > i, .st-budget.over > i, .bv-budget.over > i { background: #d64545; }
+.st-budget { margin: 0 10px 2px 26px; }
+.bv-budget { width: 80px; display: inline-block; vertical-align: middle; margin-left: 6px; }
+.sb-eco-note { font-size: 11px; opacity: .75; margin: -2px 0 4px; }
+.sb-eco-note[hidden] { display: none; }
+.sb-budget-edit { display: inline-flex; gap: 4px; }
+.sb-budget-in { width: 70px; }
+.budget-banner { position: fixed; left: 50%; top: 44px; transform: translateX(-50%); z-index: 900; display: flex; flex-direction: column; gap: 4px; max-width: min(640px, calc(100vw - 32px)); }
+.budget-banner[hidden] { display: none; }
+.budget-banner .bb-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; background: #5a1f1f; color: #fff; font-size: 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, .3); }
+.budget-banner .bb-row span { flex: 1; }
+.budget-banner button { background: rgba(255, 255, 255, .15); color: inherit; border: 0; border-radius: 6px; padding: 3px 8px; cursor: pointer; font: inherit; }
 /* v3.134 order templates: the Templates menu next to HQ's composer and the manage list */
 .tpl-wrap { position: relative; display: inline-flex; }
 .tpl-btn { font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border, #444); background: transparent; color: inherit; cursor: pointer; }

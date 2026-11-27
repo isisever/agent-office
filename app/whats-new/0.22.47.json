@@ -33,6 +33,18 @@
       }
     },
     {
+      "id": "economy-budgets",
+      "experience": "both",
+      "title": {
+        "en": "Economy mode and token budgets",
+        "tr": "Tasarruf modu ve token bütçeleri"
+      },
+      "body": {
+        "en": "The leaf next to Awake turns on economy mode: a 150K context, Sonnet agents, Savings Strict, no shared MCP servers and a longer idle sleep, in every project that does not override it. Each project can also get a daily or weekly budget in tokens or USD, with a thin meter in the sidebar and the board's report; at 100% HQ tasks and routines wait until you raise it or ignore it for today. Your own typing is never blocked.",
+        "tr": "Uyanık kal'ın yanındaki yaprak tasarruf modunu açar: kendi ayarı olmayan her projede 150K bağlam, Sonnet ajanlar, Tasarruf Sıkı, paylaşılan MCP sunucusu yok ve daha uzun boşta uyku. Her projeye ayrıca token ya da USD cinsinden günlük veya haftalık bütçe verebilirsiniz; kenar çubuğunda ve panonun raporunda ince bir gösterge çıkar. %100'de HQ görevleri ve rutinler, siz artırana ya da bugün için yok sayana kadar bekler. Kendi yazdıklarınız hiç engellenmez."
+      }
+    },
+    {
       "id": "order-templates",
       "experience": "both",
       "title": {

@@ -3639,6 +3639,67 @@ Caps: 200 open chat cards (oldest activity dropped first), 500 closed chat cards
 1000 task sessions (`taskSids`, newest kept; they survive a restart so a task session never turns into a chat card).
 Order cards themselves come from board.json and follow its caps.
 
+## Economy mode and budgets (v3.133)
+
+Measured burn (token-burn report): long Opus contexts, Opus sub-agents, shared MCP schemas and cache rebuilds after an
+idle sleep. Economy mode bundles the cheaper choices behind one switch; budgets stop runaways. Pure rules in
+`src/economy.js`, `src/budget.js` (main) and `src/economy-view.mjs` (renderer); tests in `test/economy-budget.test.mjs`.
+
+**Economy mode.**
+- `state.economy: true` is the global switch (absent = off; `prefs.economy`, `prefs:set({ economy })`). It is the
+  settings model's `economy` row (section `sessions`, Office popup after `sleep`), so it shows in the Office Settings
+  popup and in Studio Settings → Sessions, and as the title bar's leaf (`renderer/economy-button.js`, `#economy`, next
+  to the keep-awake cup; it drives the same checkbox; tooltip `app.economyOnTitle` / `app.economyOffTitle`).
+- `Project.economy: 'on' | 'off'`, absent = inherit (`projects:setEconomy(id, 'inherit' | 'on' | 'off')` →
+  `{ restarted }`; idle Claude Code tabs restart). `ECO.economyOn(global, project)`.
+- While on, every setting the project left at its default takes the economy value (`ECO.applyEconomy`); an explicit
+  project value always wins:
+  - context cap 150000 (`Project.contextCap` absent);
+  - Savings `strict` (`Project.savings` absent, i.e. Normal; choose Off to opt out);
+  - sub-agent default Sonnet (`CLAUDE_CODE_SUBAGENT_MODEL`). An environment default cannot be split by agent kind, so
+    the haiku/sonnet split stays with the manager brief (v3.127 `MODEL_AUTO`: haiku for read, search and report
+    agents), which passes `model` explicitly; an agent started without one gets Sonnet. This equals the v3.127 Auto;
+    a pinned model still wins;
+  - the office shared MCP set off (`LEAN.officeShareOn({ global: state.shareMcp && !economy })`); a project's own
+    `shareMcp: true` still wins;
+  - idle sleep at least 60 min (`ECO.sleepMinutesFor`): 15/30 become 60, 60 stays, Off (0) stays off. A sleeping tab
+    resumes with a cold cache and rewrites its whole context, and the 1 h cache has expired after 60 min anyway, so a
+    longer sleep is never more expensive; Off never restarts at all.
+- Project settings (Office popup and Studio Settings → Projects) get an "Economy mode" select (as Settings / On / Off)
+  with a note of what it sets now ("Context 150K (economy) · Sonnet agents (economy) · …"); the context cap, Savings
+  and agent model selects label their default option "150K (economy)", "Strict (economy)", "Sonnet (economy)".
+
+**Token budget.**
+- `Project.budget: { daily?: number, weekly?: number, unit: 'tokens' | 'usd', ignoreDay?: 'YYYY-MM-DD' }`
+  (`normalizeBudget`; no positive limit = none). `projects:setBudget(id, budget | null)`; `budget:act(id, 'raise' |
+  'ignore')`: Raise multiplies every limit by 1.5 (again until past what is used) and clears ignoreDay; Ignore today
+  sets ignoreDay to the local day.
+- `budgetState({ usage, budget, now })` → `{ level: 'none' | 'ok' | 'warn' | 'over', pct, period, used, limit, unit,
+  ignored, blocked }`; usage is the token report's `today` (since local midnight) and `week` (last 7 × 24 h) sums
+  (`total` tokens or `usd`); the period nearest its limit decides; warn at 80%, over at 100%; `blocked` = over and not
+  ignored today.
+- Main computes it in `tokenBriefs` (the same cached `UsageScanner` sums, every 60 s and on any change) and caches it
+  per project (`budgetCache`); `TokenBrief` gains `name`, `week: { total, usd }`, `economy` and `budget` (when set).
+- Notices: one OS notice per project, level, period and day (`noticeKey`): `main.budgetWarn` at 80%,
+  `main.budgetOver` at 100%.
+- At 100%: `hqDispatch` into a local project whose cached state is blocked adds a board row `status: 'queued',
+  reason: 'budget'` and returns `{ id, status: 'queued', reason: 'budget', request }`; nothing starts. Routines go
+  through `hqDispatch`, so they wait the same way. On Raise, Ignore today or a budget change the held rows are marked
+  `rejected` / `budget-released` and dispatched again. Remote targets are not gated here. The person's own typing
+  (terminal, chat, Studio) never passes this gate.
+- The held tasks (`{ qid, args, at }` per project) are kept in `userData/budget-held.json` (`src/budget-held.js`,
+  `{ v: 1, held }`, written with `writeAtomic` after every change), so they survive a restart. Caps: 20 per project,
+  100 in all, 64 KB of args per task; a task pushed out by a cap closes its row `rejected` / `budget-cap`. The file is
+  read on first use; every budget state computed for the meter (`tokenBriefs`, at start and every 60 s) that is no
+  longer blocked releases the project's held tasks, which covers a new day or week as well as Raise, Ignore today and
+  a budget change. A held row removed or closed by hand meanwhile (no longer `queued` / `budget`) is not sent again.
+- UI: a thin meter (`.sb-budget`) under the Office project row's cost line, under each Studio sidebar project group
+  (`.st-budget`), and next to the project name in the board's report grouped by project (`.bv-budget`); colours ok /
+  warn / over; tooltip `sidebar.budgetMeter`. The "budget reached" banner (`renderer/budget-banner.js`) lists each
+  blocked project with Raise / Ignore today / ×. The budget is edited in project settings (daily, weekly, M tokens or
+  USD).
+- **Not verified live** in a running app.
+
 ## Fan-out orders and role assignment (v3.132)
 
 Amends v3.130 ("Orders from HQ") and v3.83/v3.84 (staff). Pure rules in `src/hq-fanout.js`; wiring in `main.js`

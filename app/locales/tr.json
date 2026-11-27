@@ -257,7 +257,13 @@
     "stopped": " (Claude kapalı)",
     "asleep": " (uykuda: açınca başlar)",
     "keepAwake": "Uyanık kal",
-    "keepAwakeTitle": "{label}: {state}"
+    "keepAwakeTitle": "{label}: {state}",
+    "economyOnTitle": "Tasarruf modu açık: kendi ayarı olmayan projelerde daha az token. Kapatmak için tıklayın.",
+    "economyOffTitle": "Tasarruf modu kapalı. Daha az token için tıklayın (150K bağlam, Sonnet ajanlar, Tasarruf Sıkı, paylaşılan MCP yok, daha uzun boşta uyku).",
+    "budgetReached": "{project}: token bütçesi doldu ({used} / {limit}, {period}). HQ görevleri ve rutinler bekliyor; kendi yazdıklarınız engellenmez.",
+    "budgetRaise": "Artır",
+    "budgetIgnore": "Bugün yok say",
+    "budgetClose": "×"
   },
   "sidebar": {
     "experience": "Deneyim",
@@ -658,7 +664,28 @@
     "groupTitle": "PROJELER listesinde proje bu grubun altında görünür. Boş bırakırsanız grupsuz kalır.",
     "groupToggle": "Grubu aç / kapat",
     "about": "Agent Office {version}",
-    "whatsNew": "Neler yeni"
+    "whatsNew": "Neler yeni",
+    "economy": "Tasarruf modu",
+    "economyTitle": "Kendi ayarı olmayan her projede daha az token harcar: bağlam sınırı 150K, Sonnet alt ajanlar (yönetici okuma, arama ve rapor ajanları için yine Haiku ister), Tasarruf Sıkı, paylaşılan MCP sunucuları yok ve yeniden başlatmalar önbelleği sürekli yeniden kurmasın diye boşta uyku en az 60 dk. Bir proje için seçtiğiniz değer her zaman geçerlidir. Sonra başlayan oturumlara uygulanır; boştaki sekmeler yeniden başlar.",
+    "economyProject": "Tasarruf modu",
+    "economyInheritOn": "Ayarlardaki gibi (açık)",
+    "economyInheritOff": "Ayarlardaki gibi (kapalı)",
+    "economyOn": "Açık",
+    "economyOff": "Kapalı",
+    "economyValue": "{value} (tasarruf)",
+    "economyCap": "Bağlam {cap} (tasarruf)",
+    "economyAgents": "Sonnet ajanlar (tasarruf)",
+    "economySavings": "Tasarruf Sıkı (tasarruf)",
+    "economyMcp": "Paylaşılan MCP yok (tasarruf)",
+    "economySleep": "Uyku {minutes} dk (tasarruf)",
+    "budget": "Token bütçesi",
+    "budgetDaily": "Günlük",
+    "budgetWeekly": "Haftalık",
+    "budgetTokens": "M token",
+    "budgetEditTitle": "Günlük ve/veya haftalık sınır, milyon token ya da USD olarak (liste fiyatlarıyla tahmini). %80'de bir uyarı gelir; %100'de bu projeye HQ görevleri ve rutinler, siz artırana ya da bugün için yok sayana kadar bekler. Kendi yazdıklarınız hiç engellenmez. Boş = bütçe yok.",
+    "budgetMeter": "Token bütçesi: {period} %{pct} ({used} / {limit})",
+    "budget_daily": "bugün",
+    "budget_weekly": "son 7 gün"
   },
   "panel": {
     "types": {
@@ -1314,7 +1341,10 @@
     "newGroupHint": "Yeni grup: adını projenin ayarlarında (⚙) yazın",
     "removeFromGroup": "“{group}” grubundan çıkar",
     "helpMenu": "Yardım",
-    "whatsNew": "Neler Yeni"
+    "whatsNew": "Neler Yeni",
+    "budgetWarn": "{project}: token bütçesinin %{pct}'i kullanıldı",
+    "budgetOver": "{project}: token bütçesi doldu",
+    "budgetBody": "Bu projeye HQ görevleri ve rutinler, bütçeyi artırana ya da bugün için yok sayana kadar bekler. Kendi yazdıklarınız hiç engellenmez."
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",
@@ -1988,6 +2018,7 @@
       "mode": "Ofis için açık ya da koyu.",
       "bot": "Ofis robotlarının gövde rengi.",
       "version": "Çalışan Agent Office sürümü.",
+      "economy": "Daha az token: 150K bağlam, Sonnet ajanlar, Tasarruf Sıkı, paylaşılan MCP yok, daha uzun boşta uyku. Bir proje bunu değiştirebilir.",
       "templates": "Kayıtlı HQ emirleri: yeniden adlandırın ya da silin. HQ yazma kutusundan veya ⌘K ile kullanın."
     }
   },

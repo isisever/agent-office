@@ -2,6 +2,8 @@
 // State: { projects: Project[], accounts: Account[], activeId: string | null } (see CONTRACT.md).
 const path = require('path');
 const crypto = require('crypto');
+const ECO = require('./economy.js');
+const BG = require('./budget.js');
 const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT, AGENT_MODEL_DEFAULT, CONTEXT_CAP_DEFAULT } = require('./accounts.js');
 const { withSkillPacks } = require('./skill-packs.js');
 const { withDelegates, delegatesValue } = require('./delegate.js');
@@ -39,6 +41,10 @@ function normalizeState(raw, { id = newId } = {}) {
     const groupField = withGroup(p.group);   // v3.86 (typed like delegatesField: TS2590)
     /** @type {{ fallbackModel?: string, limitModel?: string }} */
     const limitFields = { ...withFallbackModel(p.fallbackModel, withHome(p.homeAccount, known, accountId).homeAccount), ...withLimitModel(p.limitModel) };   // v3.111 (typed: TS2590)
+    // v3.133 economy override ('on' | 'off'; absent = the global switch) and token budget (typed: TS2590)
+    const budget = BG.normalizeBudget(p.budget);
+    /** @type {{ economy?: string, budget?: any }} */
+    const ecoFields = { ...ECO.withEconomy(p.economy), ...(budget ? { budget } : {}) };
     projects.push({
       id: typeof p.id === 'string' && p.id ? p.id : id(),
       dir: p.dir,
@@ -59,6 +65,7 @@ function normalizeState(raw, { id = newId } = {}) {
       ...groupField,   // v3.86 the PROJECTS list's group (src/project-groups.mjs draws it)
       ...withAutoApprove(p.autoApprove),
       ...(p.shareMcp === true ? { shareMcp: true } : {}),   // v3.128 the project's opt-in to the office MCP share
+      ...ecoFields,   // v3.133
       ...withSkipPermissions(p.skipPermissions),
       ...withSkillPacks(p.skillPacks), // v3.45 per-project skill pack overrides
       ...withBackup(p.backupAccount, known),
@@ -706,7 +713,33 @@ function stateFile(prev, state) {
   return out;
 }
 
+
+// --- economy override and token budget (contract v3.133)
+/** value: 'inherit' | 'on' | 'off'. Same state when nothing changes. */
+function setProjectEconomy(state, id, value) {
+  const p = findProject(state, id);
+  const v = ECO.economyValue(value);
+  if (!p || ECO.economyValue(p.economy) === v) return state;
+  return { ...state, projects: state.projects.map((x) => {
+    if (x.id !== id) return x;
+    const { economy: _, ...rest } = x;
+    return { ...rest, ...ECO.withEconomy(v) };
+  }) };
+}
+/** value: a budget (budget.js normalizeBudget) or null to remove it. Same state when nothing changes. */
+function setProjectBudget(state, id, value) {
+  const p = findProject(state, id);
+  const v = BG.normalizeBudget(value);
+  if (!p || JSON.stringify(p.budget || null) === JSON.stringify(v)) return state;
+  return { ...state, projects: state.projects.map((x) => {
+    if (x.id !== id) return x;
+    const { budget: _, ...rest } = x;
+    return v ? { ...rest, budget: v } : rest;
+  }) };
+}
+
 module.exports = {
+  setProjectEconomy, setProjectBudget,
   forRenderer, stateFile,
   historyDir,
   MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty, followsProjectAccount,
