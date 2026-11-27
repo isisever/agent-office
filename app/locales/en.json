@@ -1,6 +1,8 @@
 {
   "_name": "English",
   "studio": {
+    "switchLabel": "Studio",
+    "switchTitle": "Studio experience on or off ({key})",
     "newSession": "New session",
     "search": "Search",
     "hq": "HQ",
@@ -67,6 +69,47 @@
       "projects": "edit rename group usage",
       "settings": "preferences language theme",
       "office": "experience switch back"
+    },
+    "untitled": "New session",
+    "now": "now",
+    "working": "Working",
+    "waiting": "Waiting for your approval",
+    "waitingShort": "Needs you",
+    "worktreeKey": "new worktree",
+    "renameTitle": "Click to rename this session",
+    "branch": "Branch",
+    "accountMenu": "Account, theme and settings",
+    "theme": "Studio theme",
+    "themeSystem": "System",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "accounts": "Accounts",
+    "start": {
+      "starting": "Starting the session…",
+      "failed": "The session could not start. Try again.",
+      "changeAccount": "change",
+      "changeAccountTitle": "Change the account in project settings",
+      "worktree": "New worktree",
+      "modelDefault": "Project default model",
+      "modelsLoading": "Loading this account's models…",
+      "modeDefault": "Project default mode",
+      "placeholder": "What should we work on?",
+      "send": "Start session",
+      "stepFailed": "Not started: {step} could not be set ({why}). Your message is still here; change the choice or send again.",
+      "step": {
+        "theModel": "the model",
+        "mode": "the permission mode",
+        "prompt": "the message"
+      },
+      "why": {
+        "locked": "this project keeps its permission mode",
+        "busy": "the session stayed busy",
+        "not-running": "the chat did not start in time",
+        "bad": "this choice is not offered for this account",
+        "gone": "the session is gone",
+        "error": "Claude refused it",
+        "other": "something went wrong"
+      }
     }
   },
   "app": {
@@ -820,7 +863,11 @@
     "fileGone": "This file is no longer there.",
     "fileShown": "This file could run code when opened, so it is shown in its folder instead.",
     "fileNotAttached": "This file was not attached in this chat, so it cannot be opened from here. Show in Finder works for files inside the project.",
-    "drop": { "any": "Drop files here", "one": "Drop 1 file", "many": "Drop {count} files" },
+    "drop": {
+      "any": "Drop files here",
+      "one": "Drop 1 file",
+      "many": "Drop {count} files"
+    },
     "fileRemove": "Remove this file",
     "pick": {
       "modelTitle": "Model for the next turns",
@@ -832,10 +879,12 @@
         "haiku": "Haiku"
       },
       "mode": {
+        "auto": "Auto",
         "default": "Ask permissions",
         "acceptEdits": "Accept edits",
         "plan": "Plan mode",
-        "bypassPermissions": "Bypass permissions"
+        "bypassPermissions": "Bypass permissions",
+        "dontAsk": "Don't ask"
       },
       "why": {
         "terminal": "only in a running GUI chat (use /model in the terminal)",
@@ -847,7 +896,11 @@
         "busy": "A turn is running: change it when it is done.",
         "not-running": "This session is not running as a chat.",
         "other": "Could not change it."
-      }
+      },
+      "managerNote": "Manager answers",
+      "managerNoteTitle": "This project's Auto-approve is on: the manager still answers its prompts",
+      "managerOffNote": "Auto mode, manager off",
+      "managerOffNoteTitle": "This session still runs in auto mode, but the project's Auto-approve was turned off in the Office: the manager no longer answers what auto mode asks. Pick another mode to change it."
     },
     "revealMac": "Show in Finder",
     "revealOutside": "This file is not inside the project folder (or is gone): it cannot be shown here.",
@@ -905,7 +958,12 @@
       "ended": "The session ended (exit {code}). Start it again to go on with the same conversation.",
       "endedError": "Claude stopped with an error (exit {code}):",
       "restart": "Start again"
-    }
+    },
+    "edit": "Edit",
+    "editTitle": "Put this message back in the input to edit and send it again",
+    "copyCode": "Copy code",
+    "jumpLatest": "Jump to latest",
+    "context": "Context: {used} of {limit} tokens ({pct}%)"
   },
   "main": {
     "guiTerminalNote": "This tab runs as a chat (chat view). Its terminal is empty; use the Chat button, or Terminal in the chat to continue here.",

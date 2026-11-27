@@ -175,21 +175,28 @@ function tabTitle(project, tab, staff) {
  * running ones that will start again when shown.
  * accountOf(project) → the label of the Claude account the project runs on (A.accountOf, the Office's account name);
  * only the label is listed, never a token or a config folder.
- * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[], accountOf?: (p: any) => unknown }} o
+ * infoOf(ptyId) → the running session's transcript info { title, prompt, branch, at, busy, waiting } or null: its row
+ * is named like /resume (v3.118: /rename, Claude Code's title, the first prompt; '' when none, the renderer shows "New
+ * session"), with the git branch, the last activity and the live state (busy: a turn runs; waiting: an approval or a
+ * question is open). The tab's own label (staff member, worktree branch, folder) is kept as `label`.
+ * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[], accountOf?: (p: any) => unknown, infoOf?: (ptyId: string) => any }} o
  */
-function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '' }) {
+function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '', infoOf = () => null }) {
   const byId = new Map((status || []).map((s) => [s.id, s]));
   const rec = Array.isArray(recent) ? recent : [];
   return (projects || []).map((p) => {
     const st = byId.get(p.id) || {};
     const tabSt = new Map((st.tabs || []).map((t) => [t.n, t]));
     const tabs = (Array.isArray(p.tabs) ? p.tabs : []).filter((t) => !t.shell).slice().sort((a, b) => a.n - b.n);
+    const row = (ptyId, n, label, isRunning, isAsleep) => {
+      const info = (isRunning && infoOf(ptyId)) || null;
+      const name = info ? String(info.title || info.prompt || '').slice(0, 200) : '';
+      return { ptyId, n, title: name, label, branch: info?.branch || '', at: Number(info?.at) || 0,
+        busy: info?.busy === true, waiting: info?.waiting === true, isRunning, isAsleep };
+    };
     const running = [
-      { ptyId: p.id, n: MAIN_TAB, title: p.name, isRunning: st.isRunning === true, isAsleep: st.isAsleep === true },
-      ...tabs.map((t) => ({
-        ptyId: `${p.id}:${t.n}`, n: t.n, title: tabTitle(p, t, staff),
-        isRunning: tabSt.get(t.n)?.isRunning === true, isAsleep: tabSt.get(t.n)?.isAsleep === true,
-      })),
+      row(p.id, MAIN_TAB, p.name, st.isRunning === true, st.isAsleep === true),
+      ...tabs.map((t) => row(`${p.id}:${t.n}`, t.n, tabTitle(p, t, staff), tabSt.get(t.n)?.isRunning === true, tabSt.get(t.n)?.isAsleep === true)),
     ];
     const recentHere = rec.filter((r) => r.projectId === p.id).sort((a, b) => b.at - a.at).slice(0, RECENT_PER_PROJECT)
       .map((r) => ({ sessionId: r.sessionId, title: r.title || baseName(r.dir) || p.name, at: r.at }));
@@ -214,6 +221,38 @@ function modeLock({ skip = false, desk = false } = {}) {
   if (desk) return 'desk';
   return skip ? 'bypass' : '';
 }
+/**
+ * v3.120 Studio's Auto: picking the `auto` mode also turns the project's Auto-approve on (one source of truth with the
+ * Office: the manager answers what auto mode still asks). Any other mode changes only the session and never turns it off.
+ */
+const turnsAutoApproveOn = (mode) => mode === 'auto';
+
+/**
+ * v3.120 manager decision: a GUI chat of an Auto-approve project starts in claude's auto mode, like the person's
+ * terminal shows "auto mode on". Never the HQ session, a desk or a guarded session (mail, staff, extra permission
+ * rules: modeLock 'desk'), never a skip-permissions project (it stays bypass), and only when the account offers `auto`.
+ * @param {{ gui?: boolean, autoApprove?: boolean, hq?: boolean, lock?: string, modes?: string[] }} o
+ * @returns {string[]} the extra launch arguments
+ */
+function guiStartModeArgs({ gui = false, autoApprove = false, hq = false, lock = '', modes = [] } = {}) {
+  if (!gui || autoApprove !== true || hq || lock || !Array.isArray(modes) || !modes.includes('auto')) return [];
+  return ['--permission-mode', 'auto'];
+}
+/**
+ * v3.120 chat:setting answers 'not-running' (startStep retries) for a model while the new tab's initialize answer has
+ * not come: its model list is still empty, so an account model ("sonnet[1m]", "opusplan") would be refused as 'bad'.
+ * @param {string} key @param {boolean|undefined} modelsKnown the GUI chat's modelsKnown() (undefined: an old wrapper)
+ */
+const modelListPending = (key, modelsKnown) => key === 'model' && modelsKnown === false;
+/**
+ * v3.120 may a set-Auto's late 'ok' turn the project's Auto-approve on? Only when it was off before the request and
+ * is still off with no change in between (`epochBefore` === `epochAfter`, the count of Auto-approve changes): the
+ * person turning it off (or on and off) while the request waited wins.
+ * @param {{ before?: boolean, after?: boolean, epochBefore?: number, epochAfter?: number }} o
+ */
+function autoApproveAfterSet({ before = false, after = false, epochBefore = 0, epochAfter = 0 } = {}) {
+  return before === false && after === false && epochBefore === epochAfter;
+}
 /** May chat:setting change `key` in a chat whose mode is held by `lock` (modeLock)? */
 function settingAllowed(lock, key) {
   return key !== 'mode' || !lock;
@@ -221,5 +260,5 @@ function settingAllowed(lock, key) {
 
 module.exports = {
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
-  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed,
+  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs, autoApproveAfterSet, modelListPending,
 };

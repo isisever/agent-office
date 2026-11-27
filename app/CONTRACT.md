@@ -60,7 +60,7 @@ agentOffice.tokens.brief(): Promise<TokenBrief[]>                       // v3.13
 agentOffice.tokens.onBrief(cb: (list: TokenBrief[]) => void): () => void  // v3.13, about once a minute
 agentOffice.office.themes(): Promise<Record<string, ThemeSpec>>
 agentOffice.clipboard.hasImage(): Promise<boolean>
-agentOffice.clipboard.read(): Promise<{ hasImage: boolean, text: string, files: string[] }>  // files: copied in Finder (osascript), on Linux a file manager (text/uri-list via Electron, wl-paste or xclip), on Windows Explorer (CF_HDROP / FileNameW via Electron, else PowerShell's Get-Clipboard)
+agentOffice.clipboard.read(): Promise<{ hasImage: boolean, text: string, files: string[], dirs: string[] }>  // dirs (v3.121): the files that are folders · files: copied in Finder (v3.121 every one: JXA reads the pasteboard's file URLs only, `platform.js` MAC_CLIPBOARD_FILES_JXA / filesFromMacPasteboard; the old AppleScript, first file only, if JXA fails), on Linux a file manager (text/uri-list via Electron, wl-paste or xclip), on Windows Explorer (CF_HDROP / FileNameW via Electron, else PowerShell's Get-Clipboard)
 agentOffice.platform: 'darwin' | 'linux' | 'win32'                     // process.platform; renderer/platform.js sets <html class="platform-…"> and picks the shortcuts
 agentOffice.pathForFile(file: File): string
 ```
@@ -2956,6 +2956,12 @@ type StudioProject = { id, name, dir, engine, account: string, active: boolean, 
 - **The setting**: Settings → Experience (Office / Studio), or ⌘⇧E (Ctrl+Shift+E on Linux and Windows) in either
   experience. Main keeps it in state.json (`experience`, only `'studio'` is read back, so a first start is the Office);
   `src/studio.js` `normalizeExperience`. The renderer puts `body.studio` on and mounts `renderer/studio.js`.
+- **The title bar switch**: an Outlook-style labelled "Studio" switch (`#experience-switch`, `role="switch"`,
+  `aria-checked`, a native button so Enter and Space work, `-webkit-app-region: no-drag`) at the right end of the title
+  bar in both experiences: after the "working · delivered" stats in the Office, after `#studio-header` in Studio. A click
+  runs the same experience switch as ⌘⇧E and Settings (idle tabs move to the chat on entering Studio, nothing busy
+  restarts). The tooltip names the hotkey (`src/studio-keys.mjs` `experienceSwitch`); below 760 px the label hides and
+  the switch stays.
 - **Layout**: `body.studio` hides `#sidebar`, `#office`, `#divider`, `#tabs`, `#tab-add` and the side panels; Studio's
   `#studio-sidebar` comes first in `#body` and the main region is the Office's own `#terminal`, so the chat view
   (`renderer/chat.js`, v3.80) is reused, not rendered twice. With no session (no project) the start screen shows
@@ -3039,7 +3045,9 @@ type StudioProject = { id, name, dir, engine, account: string, active: boolean, 
   checks by source text).
 - **Composer (v3.121)**: one rounded box: the input, then a row with attach, mic (a round ghost icon button like attach),
   the model and permission pickers, the overflow menu (Terminal) and send. `src/composer.mjs` holds the pure logic.
-  - **Chips**: files dropped, pasted (Finder copy) or picked (multi-select; folders too on macOS) become chips in the
+  - **Chips**: files dropped, pasted (Finder copy: every copied file since v3.121, folders as folder chips from
+    `clipboard.read()`'s `dirs`, each registered with `chat:attach` like a picked one; a pasted image (screenshot) is
+    still attached as an image; Windows (CF_HDROP / PowerShell) and Linux (`text/uri-list`) already read every file) or picked (multi-select; folders too on macOS) become chips in the
     order given, the same path once (`addChips`); a folder is one chip (`dir`, sent as `@path`, never expanded). In a GUI
     chat dropped/picked images go with the message as images (click: a larger preview). While dragging the composer
     shows the count (`dropText`: "Drop 3 files"). A chip: click opens it in its default app, right click has Open, Show in
@@ -3061,6 +3069,116 @@ type StudioProject = { id, name, dir, engine, account: string, active: boolean, 
     mode: the mode picker is disabled and `chat:setting` answers 'locked' (`STU.modeLock`); the model picker stays.
   - **Idle at start**: a GUI chat is busy only from a sent message or a `message_start` until `result`; a whole user or
     assistant message outside a turn no longer marks it busy (`nextLive`), so a fresh or resumed chat is not "Working…".
+
+
+### Studio UX (v3.120)
+
+Pure logic in `src/studio-ux.mjs` (tests: `test/studio-ux.test.mjs`); the DOM in `renderer/studio.js` and `renderer/chat.js`.
+
+```ts
+StudioProject.running[] += { label: string,   // the tab's own label (staff member, worktree branch, folder), was `title`
+  title: string,                              // the session's name ('' → the renderer shows "New session")
+  branch: string, at: number,                 // the transcript's git branch and last change (ms, 0 unknown)
+  busy: boolean, waiting: boolean }           // a turn runs (GUI chat) / an approval or a question is open
+chat:read gui += { info: { model: string, usage: null | { input_tokens, cache_read_input_tokens, cache_creation_input_tokens } }, contextCap: number,
+                  models: [{ value, label, description, resolved }] }
+chat.startModels(projectId) → studio:models → { models: [{ value, label, description, resolved }], loading: boolean,
+                  gui: boolean, modeLock: '' | 'bypass', modes: string[], autoApprove: boolean }
+chat:read gui += { modes: string[], autoApprove: boolean }   // the account's picker modes (never bypassPermissions); the project's Auto-approve
+```
+
+1. **Header**: in Studio the title bar's Office items (≡, ⚙, AGENT OFFICE, the project, the counts) are hidden by CSS and
+   `#studio-header` shows the active session's name, chips for its project, git branch and account, and its state
+   (Working with a spinner, or the waiting badge). A click (or Enter) on the name edits it in place; Enter sends
+   `/rename <name>` with `chat:rename` (`GS.renameCommand`: one line, at most 120 characters): a GUI chat takes it as a
+   message, which Claude Code's stream-json input runs locally (checked with claude 2.1.332 in a throwaway session: a
+   `system` `session_title_changed` event and a `custom-title` transcript line, no model turn); a terminal tab answers
+   'terminal' and the renderer types it with `chat:send`. A rename never goes through `chat:command` and never moves
+   or restarts a session. Escape or blur keeps it. The Office's
+   elements are untouched and come back with `experience: 'office'`.
+2. **Session names**: main names a running session from its transcript like /resume (v3.118 `sessionInfo`): the /rename
+   title, then Claude Code's title, then the first prompt (`studioTabInfo`, the transcript is read again only when its
+   size or time changed); none → "New session". `CHAT.sessionNames` remembers the last /rename and Claude Code title
+   per file with the byte offset read so far, and later reads only the lines appended since (up to 8 MB; split lines
+   wait for their end), so a rename that scrolls out of both 64 KB windows stays. Limit: the first look at a transcript
+   (and the /resume list, `sessionList`) reads only the two windows, so a rename in the middle of a long transcript
+   the app never saw growing is not found. A row shows a relative time (`relativeTime`, `Intl.RelativeTimeFormat`
+   in the UI language), a spinner while working and a "Needs you" badge while waiting. A project with a single session
+   and nothing recent is one compact row (the head opens that session). The sidebar refreshes every 5 s.
+3. **Start screen**: ⌘N, + New session, a group's + and a project with no session show it over the chat: a greeting
+   with the account's first name (`firstName` of `studioUser`'s name), a centered composer, the project picker, the
+   project's account (read-only, "change" opens project settings), New worktree, model and permission mode ('' = the
+   project's own). `studio:models` also answers `gui` (a new tab runs as a GUI chat; false on Windows or for another
+   engine) and `modeLock` (`STU.modeLock`: 'bypass' for a skip-permissions project); `startPickers` applies the chat
+   pickers' rule (`pickerState`): no model or mode picker for a terminal tab, and a held mode is shown disabled
+   ("Bypass permissions" or the project default with the lock's reason) so it cannot be picked. Sending:
+   `startPlan(choice, models, caps)` → `tabs:add` with 'same' or 'worktree', then each setting through `chat:setting`
+   once the GUI chat runs, then the prompt with `chat:send`. Each step must answer 'ok' (`startStep`): only
+   'not-running' and 'busy' are tried again, for at most 30 s (`START_WAIT_MS`); 'locked', 'bad', 'gone',
+   'error:…', a rejected call or the time running out stop the start before the prompt is sent. The text stays in the
+   composer and a note names the step and why (`startFailure`). Sending again for the same project and tab mode uses
+   the tab the failed start created while it is open (`reuseN`), never a second one. Tabs have no per-tab start flag for model or mode, so they are always applied right after the start.
+   Escape (with a session behind it) or picking a session leaves it.
+4. **Model label**: the model picker's first option names the model the session runs (`modelName` of the `system`
+   `init` message's `model`, then each top-level answer's `message.model`), e.g. "Opus 5.5"; "Model as started" until known.
+   **Model list** (src/model-list.js): the picker lists the models the session's account can use, not a fixed list.
+   A GUI chat sends the stream-json `initialize` control request (request_id `ao-initialize`) as its first line, with no
+   prompt; claude's answer has `models: [{ value, resolvedModel, displayName, description, supportsEffort, … }]`
+   (Claude Code 2.1.x; `value` 'default' = the account's default, e.g. "Default (recommended)", then aliases such as
+   opus / sonnet / haiku / fable and full ids). `parseModels` turns it into options (`default` → '', first; bad, repeated
+   or control-character values skipped; at most 60) and `chat:read` gives them as `gui.models`; the '' option is
+   still labelled with the running model. A session that reports nothing (an error reply, an older claude) falls back
+   to '', opus, sonnet, haiku (`FALLBACK`). `chat:setting` 'model' answers 'bad' for a value not in the session's
+   list (`allowedModel`), and gui-proc's `settingLine` takes only those values. The start screen, where no session
+   runs, uses a per-account cache in userData `model-cache.json` (key: the account's config dir, '' = Default; never in
+   ~/.claude; at most 100 accounts, oldest dropped): every session's report merges into it (`mergeCache`: an empty list
+   never wipes one, a different list replaces it). An account with no cache is probed in the background: a short-lived
+   claude with that account's `CLAUDE_CONFIG_DIR` and the GUI flags, in an empty temp folder, sent only `initialize`
+   and killed as soon as it answers (or after 20 s; a probe that gives nothing is retried after 5 minutes; none on
+   Windows, where the fallback shows until a session reports). Until the probe answers the start picker shows only the
+   project default and a disabled "Loading this account's models…" line, asking again every 1.5 s; a loaded list is
+   asked again after a minute. `startPlan(choice, models)` keeps a model only from the offered list.
+   **Permission modes and Auto**: the mode pickers list the modes the account's claude takes, not a fixed list.
+   `initialize` does not list them (claude 2.1.332), so the same probe, after `initialize`, sends
+   `set_permission_mode` with the value `__ao_probe__` (request_id `ao-probe-mode`) and parses its error
+   "Cannot set permission mode: must be one of acceptEdits, auto, bypassPermissions, default, dontAsk, plan"
+   (`parseModes`; an initialize field `permission_modes`, if a claude ever sends one, is used instead and the second
+   request is skipped). Only this throwaway probe sends it, never a real session. The list is cached with the models
+   (`mergeModes`, `cachedModes`; a models update keeps it, an empty report never wipes it); an account whose cache
+   has no modes is probed again. `pickerModes`: every reported mode except `bypassPermissions` (shown only as a
+   skip-permissions session's locked display), in the order Auto, Ask permissions, Accept edits, Plan mode, then the
+   rest (dontAsk: "Don't ask"; a mode with no text shows its name); no report → `FALLBACK_MODES` (auto, default,
+   acceptEdits, plan). `chat:setting` 'mode' answers 'bad' for a value not in that list (`allowedMode`) and gui-proc's
+   `settingLine` takes only the list main passes. **Auto** in Agent Office means two things together: claude runs in
+   `auto` mode, and what auto mode still asks is answered by the manager (`guiAsk` → `GS.autoAllows` with the
+   project's Auto-approve and the plugin's `canAutoApprove`: the same rules as the Office, never wider). So picking
+   Auto (a chat picker or the start screen) sets the session to `auto` and, once claude answers ok, turns the
+   project's Auto-approve on (`STU.turnsAutoApproveOn`, main `autoApproveOn`: the Office's one setting; its idle
+   terminal tabs restart to read it, GUI chats keep running because `guiAsk` reads the project's current setting at
+   each ask). Any other mode changes only that session and never turns Auto-approve off; while Auto-approve is on the
+   chat shows a small "Manager answers" note next to the picker (`pickerState().managerNote`) and the start screen's
+   mode tooltip says so. The picker shows Auto selected when the session reports `auto`. Desk and guarded sessions
+   ('desk') and skip-permissions sessions ('bypass') keep the mode picker locked and show no note. **Start in auto**
+   (manager decision): a GUI chat of an Auto-approve project starts with `--permission-mode auto` after the GUI flags
+   (`STU.guiStartModeArgs`, main's GUI spawn only), matching the "auto mode on" the person sees in the terminal; never
+   the HQ session, a desk or guarded session (modeLock 'desk': its own rules), a skip-permissions project (stays
+   bypass) or an account whose modes lack `auto`. Office terminal tabs are unchanged. gui-proc records a start's
+   `--permission-mode` as the session's mode, so the picker shows Auto from the first read. **Manager off**: when the
+   project's Auto-approve is turned off in the Office while a GUI chat runs in auto, the chat shows "Auto mode, manager
+   off" next to the picker (`composer.mjs` `managerOffNote`, from chat:read's current `autoApprove`); the session's
+   mode is never changed for it, the person picks another mode to change it.
+5. **Message actions** (Studio only): Copy on every message (as before), a copy button in each code block's corner,
+   Edit on the person's messages (puts the text back in the input to send again; the conversation is not rewound),
+   "Jump to latest" while the list is scrolled more than 120 px up, and animated dots on the live line while a turn runs.
+6. **Context ring**: from the last top-level answer's usage (input + cache read + cache creation tokens) against the
+   project's context cap, else 1,000,000 for a `[1m]` model, else 200,000 (`contextUsage`); the tooltip gives tokens
+   used, the limit and the percentage; hidden until the session has answered once. Terminal tabs have no ring.
+7. **Account menu**: the footer is one account button; its menu has Studio's theme (System / Light / Dark, this
+   window's localStorage `ao.studio.theme`, `body[data-studio-theme]`, the Office's mode is not changed), Accounts,
+   Settings and Go to the Office (⌘⇧E).
+8. **Keys** (`studioKey`): ⌘L focuses the composer (the start screen's when shown); ⌘⇧N the start screen with New
+   worktree on (Ctrl+Shift+Alt+N on Linux and Windows, where Ctrl+Shift+N is ⌘N); Escape stops a running turn only
+   from an empty input in Studio (the Office keeps Escape as before). Tooltips name the keys.
 
 ## Phone controller (v3.121)
 

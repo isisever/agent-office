@@ -9,7 +9,8 @@ import { mountDevices, mergeRemote } from './devices.js';
 import { setLang, onLang, t } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
 import { mountStudio } from './studio.js';
-import { studioKey, otherExperience } from '../src/studio-keys.mjs';
+import { startStep, startFailure } from '../src/studio-ux.mjs';
+import { studioKey, otherExperience, experienceSwitch } from '../src/studio-keys.mjs';
 import { chatShownFor, chatButtonFor } from '../src/chat-view.mjs';
 import { themeChoices, effectiveTheme } from '../src/themes.mjs';
 import { normalizeLook, normalizeMode, effectiveMode, chromeFor, terminalTheme } from '../src/appearance.mjs';
@@ -392,10 +393,25 @@ function applyExperience(p) {
   studioOn = experience === 'studio';
   studio?.setOn(studioOn);
   sidebar?.setExperience?.(experience);
+  syncExperienceSwitch();
   applyAppearance();
   render();
   focusActive();
 }
+/** v3.120 the title bar's Studio switch follows the experience and the language. */
+function syncExperienceSwitch() {
+  const btn = $('experience-switch');
+  if (!btn) return;
+  const s = experienceSwitch(experience, isMac);
+  btn.setAttribute('aria-checked', s.ariaChecked);
+  btn.classList.toggle('on', s.checked);
+  const label = btn.querySelector('.xs-label');
+  if (label) label.textContent = t('studio.switchLabel');
+  btn.title = t('studio.switchTitle', { key: s.hotkey });
+  btn.setAttribute('aria-label', t('studio.switchLabel'));
+}
+$('experience-switch')?.addEventListener('click', () => setExperience(otherExperience(experience)));
+onLang(syncExperienceSwitch);
 function setExperience(value) {
   applyExperience({ experience: value });
   api.prefs?.set({ experience: value }).then((r) => { if (r && r.experience !== experience) applyExperience(r); }).catch((e) => console.error(e));
@@ -486,10 +502,48 @@ async function addTab(projectId, mode) {
     if (tab?.n) {
       applyProjects(await api.projects.list());
       selectTab(projectId, tab.n);
-      return;
+      return tab.n;
     }
   } catch (e) { console.error(e); }
   focusActive();
+  return 0;
+}
+/**
+ * v3.120 Studio UX start screen: a new tab (same folder or a new worktree), then the chosen model and mode through
+ * chat:setting once its GUI chat runs (tabs start with the project's own), then the first prompt. Each setting must
+ * answer 'ok' (only 'not-running' and 'busy' are tried again, for START_WAIT_MS); anything else stops the start before
+ * the prompt is sent, so a prompt never runs with a mode or model other than the one chosen. plan.reuseN: the tab an
+ * earlier failed start of the same project created (used again instead of a second tab while it is still open).
+ * → { ok, n, failed?: { step: 'tab' | 'model' | 'mode' | 'prompt', why, detail } }
+ * @param {string} projectId @param {{ tabMode: 'same' | 'worktree', settings: [string, string][], reuseN?: number }} plan @param {string} text
+ */
+async function startStudioSession(projectId, plan, text) {
+  leaveBoard();
+  selectProject(projectId);
+  const p = projects.find((x) => x.id === projectId);
+  const reuse = plan.reuseN && p && tabsOf(p).some((x) => x.n === plan.reuseN) ? plan.reuseN : 0;
+  const n = reuse || await addTab(projectId, plan.tabMode);
+  if (!n) return { ok: false, n: 0, failed: { step: 'tab', why: 'other', detail: '' } };
+  if (reuse) selectTab(projectId, n);
+  const pty = tabPtyId(projectId, n);
+  const wait = () => new Promise((r) => setTimeout(r, 400));
+  /** @param {'model' | 'mode' | 'prompt'} step @param {() => Promise<any>} call */
+  const until = async (step, call) => {
+    const t0 = Date.now();
+    for (;;) {
+      const r = await call().catch(() => 'error');
+      const next = startStep(r, Date.now() - t0);
+      if (next === 'ok') return null;
+      if (next === 'fail') return { step, ...startFailure(r) };
+      await wait();
+    }
+  };
+  for (const [key, value] of plan.settings) {
+    const failed = await until(key === 'model' ? 'model' : 'mode', () => api.chat.setting(pty, key, value));
+    if (failed) return { ok: false, n, failed };
+  }
+  const failed = await until('prompt', () => api.chat.send(pty, text));
+  return failed ? { ok: false, n, failed } : { ok: true, n };
 }
 async function closeTab(projectId, n) {
   try {
@@ -1116,6 +1170,8 @@ window.addEventListener('keydown', (e) => {
   e.stopImmediatePropagation();
   if (k.type === 'toggle') setExperience(otherExperience(experience));
   else if (k.type === 'new') studio?.newSession();
+  else if (k.type === 'newWorktree') studio?.newWorktreeSession();
+  else if (k.type === 'focus') { if (!studio?.focusStart()) focusActive(); }   // ⌘L the composer
   else if (k.type === 'search') studio?.openPalette();   // ⌘K: the command palette (renderer/studio.js)
   else studio?.selectIndex(k.index);
 }, true);
@@ -1346,6 +1402,10 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   activePty,
   hasSession: () => Boolean(activePty()),
   commands: (projectId) => studioCommands(projectId),
+  startSession: (projectId, plan, text) => startStudioSession(projectId, plan, text),
+  projectSettings: (projectId) => studioCommands(projectId).find((c) => c.id === 'projectSettings')?.run(),
+  showAccounts: () => studioCommands(studio?.currentProject() || '').find((c) => c.id === 'accounts')?.run(),
+  isMac,
 } });
 /**
  * v3.120 Studio's ⌘K palette: every Office feature Studio has no button for. Each one calls the Office's own handler

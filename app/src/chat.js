@@ -195,6 +195,15 @@ function chatAgents(transcript, workers, now = Date.now(), fsm = fs) {
 const SESSIONS_MAX = 50;
 const SESSION_PEEK = 64 * 1024;   // bytes read at each end of a transcript for its title and first prompt
 const SID_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}\.jsonl$/;
+/** Bytes [from, from + n) of a file (empty when it cannot be read). */
+function peekBuf(fsm, file, from, n) {
+  let fd;
+  try {
+    fd = fsm.openSync(file, 'r');
+    const buf = Buffer.alloc(n);
+    return buf.subarray(0, fsm.readSync(fd, buf, 0, n, from));
+  } catch { return Buffer.alloc(0); } finally { if (fd !== undefined) try { fsm.closeSync(fd); } catch {} }
+}
 /** Bytes [from, from + n) of a file as text ('' when it cannot be read). */
 function peek(fsm, file, from, n) {
   let fd;
@@ -204,8 +213,63 @@ function peek(fsm, file, from, n) {
     return buf.subarray(0, fsm.readSync(fd, buf, 0, n, from)).toString('utf8');
   } catch { return ''; } finally { if (fd !== undefined) try { fsm.closeSync(fd); } catch {} }
 }
-/** One transcript's title, first prompt and branch from its two ends → { title, prompt, branch }. */
-function sessionInfo(file, size, fsm = fs) {
+const NAMES_SCAN_MAX = 8 * 1024 * 1024;   // bytes appended since the last look that sessionNames still reads in full
+const NAMES_CHUNK = 256 * 1024;
+/** The last custom-title and ai-title in some transcript text (lines that name neither are not parsed). */
+function namesIn(text, into) {
+  for (const line of text.split('\n')) {
+    if (!line.includes('-title"')) continue;
+    let j;
+    try { j = JSON.parse(line); } catch { continue; }
+    if (j?.type === 'custom-title' && typeof j.customTitle === 'string') into.custom = j.customTitle;
+    else if (j?.type === 'ai-title' && typeof j.aiTitle === 'string') into.ai = j.aiTitle;
+  }
+  return into;
+}
+/**
+ * v3.120 a transcript's names (the last /rename, Claude Code's last title) remembered across reads → { end, custom, ai }:
+ * `end` is the offset after the last whole line read. With `prev` (the answer of an earlier call on the same file, the
+ * file not shorter) only the lines appended since prev.end are read, up to NAMES_SCAN_MAX, so a rename that has scrolled
+ * out of both 64 KB windows of sessionInfo is kept. The first look (or a jump past NAMES_SCAN_MAX, or a shorter file)
+ * reads the two windows only: a rename in the middle of a long transcript that was never seen growing is not found.
+ * @param {string} file @param {number} size @param {{ end: number, custom: string, ai: string } | null | undefined} [prev]
+ */
+function sessionNames(file, size, prev, fsm = fs) {
+  const ok = prev && Number.isInteger(prev.end) && prev.end >= 0 && prev.end <= size && size - prev.end <= NAMES_SCAN_MAX;
+  const kept = prev && Number.isInteger(prev.end) && prev.end <= size;
+  const out = { end: 0, custom: kept && typeof prev.custom === 'string' ? prev.custom : '', ai: kept && typeof prev.ai === 'string' ? prev.ai : '' };
+  /** Reads [from, to) and scans its whole lines; out.end moves past the last one. */
+  const scan = (/** @type {number} */ from, /** @type {number} */ to) => {
+    let rest = Buffer.alloc(0);
+    let lineStart = from;
+    for (let at = from; at < to; at += NAMES_CHUNK) {
+      const buf = Buffer.concat([rest, peekBuf(fsm, file, at, Math.min(NAMES_CHUNK, to - at))]);
+      const cut = buf.lastIndexOf(0x0a);
+      if (cut < 0) { rest = buf; continue; }
+      namesIn(buf.subarray(0, cut).toString('utf8'), out);
+      lineStart += cut + 1;
+      out.end = lineStart;
+      rest = buf.subarray(cut + 1);
+    }
+  };
+  if (ok) { out.end = prev.end; scan(prev.end, size); return out; }
+  // the first look (or too much appended): the head window, then the tail window
+  const fresh = { end: 0, custom: '', ai: '' };
+  namesIn(peekBuf(fsm, file, 0, Math.min(size, SESSION_PEEK)).toString('utf8'), fresh);
+  const from = Math.max(0, size - SESSION_PEEK);
+  const known = { custom: out.custom, ai: out.ai };   // what an earlier look saw (newer than the head window)
+  out.custom = '';
+  out.ai = '';
+  scan(from, size);
+  out.custom = out.custom || known.custom || fresh.custom;
+  out.ai = out.ai || known.ai || fresh.ai;
+  return out;
+}
+/**
+ * One transcript's title, first prompt and branch from its two ends → { title, prompt, branch }. names (sessionNames):
+ * the remembered names, which win over what the two windows show.
+ */
+function sessionInfo(file, size, fsm = fs, names = null) {
   const head = peek(fsm, file, 0, Math.min(size, SESSION_PEEK));
   const tail = size > SESSION_PEEK ? peek(fsm, file, size - SESSION_PEEK, SESSION_PEEK) : '';
   let custom = '';
@@ -227,6 +291,7 @@ function sessionInfo(file, size, fsm = fs) {
       }
     }
   }
+  if (names) { custom = names.custom || custom; ai = names.ai || ai; }
   return { title: cut(oneLine(custom || ai), 120), prompt: cut(oneLine(prompt), 200), branch: cut(oneLine(branch), 80) };
 }
 /**
@@ -349,4 +414,4 @@ function linkItems(items, { redact = (s) => require('./hq.js').redact(s), toolDe
   return out;
 }
 
-module.exports = { sessionList, AGENT_TOOLS, agentFile, chatAgents, IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };
+module.exports = { sessionList, sessionInfo, sessionNames, AGENT_TOOLS, agentFile, chatAgents, IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };

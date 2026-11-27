@@ -154,8 +154,10 @@ test('GUI chat: the process wrapper is shaped like a pty and answers through mai
   assert.deepEqual(made[0].opts.stdio, ['pipe', 'pipe', 'pipe']);
   assert.equal(made[0].opts.detached, true, 'its own process group');
   assert.equal(typeof t.onData(() => {}).dispose, 'function');
+  // v3.120 Studio UX: the only line at start is the initialize request (no prompt)
+  assert.deepEqual(c.written, [{ type: 'control_request', request_id: 'ao-initialize', request: { subtype: 'initialize' } }]);
   t.write('x'); t.resize(80, 24);   // no terminal: nothing happens
-  assert.equal(c.written.length, 0);
+  assert.equal(c.written.length, 1);
 
   assert.equal(t.sendUser('hello'), true);
   assert.deepEqual(c.written.at(-1), { type: 'user', message: { role: 'user', content: 'hello' } });
@@ -384,4 +386,19 @@ test('GUI chat setting: waits for claude\'s control_response; an error reply cha
   const lost = t.setting('mode', 'plan');
   c.emit('exit', 0, null);
   assert.equal(await lost, 'gone');
+});
+
+test('v3.120 renameCommand: the /rename message for a GUI chat, one clean line of at most 120 characters', () => {
+  assert.equal(GS.renameCommand('  My\nname\u0007 '), '/rename My name');
+  assert.equal(GS.renameCommand('x'.repeat(300)), `/rename ${'x'.repeat(120)}`);
+  assert.equal(GS.renameCommand('  '), '');
+  assert.equal(GS.renameCommand(null), '');
+});
+
+test('v3.120 GUI chat: a start with --permission-mode auto is the session mode the picker shows', () => {
+  const { spawn } = fakeSpawn();
+  const t = spawnGui(spawn, 'sh', ['-c', 'exec claude', 'claude', '--input-format', 'stream-json', '--permission-mode', 'auto'], { cwd: '/', env: {} }, { killGroup: () => {} });
+  assert.deepEqual(t.settings(), { model: '', mode: 'auto' });
+  const plain = spawnGui(spawn, 'sh', ['-c', 'exec claude'], { cwd: '/', env: {} }, { killGroup: () => {} });
+  assert.deepEqual(plain.settings(), { model: '', mode: '' });
 });

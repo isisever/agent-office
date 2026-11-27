@@ -5,14 +5,15 @@
 // one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
 // v3.108 GUI chat: a tab that runs claude on its SDK protocol (chat:read returns `gui`) has no terminal to read: its
 // permission requests, questions and plans come as data and are answered with chat:answer; Stop is chat:interrupt.
-import { t } from './i18n.js';
+import { t, hasText } from './i18n.js';
 import { micButton } from './voice.js';
 import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
-import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, MODEL_OPTIONS, MODE_OPTIONS } from '../src/composer.mjs';
+import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, managerOffNote, modelChoices, modeChoices } from '../src/composer.mjs';
 import { icon } from './studio-icons.js';
+import { modelName, contextUsage, shortTokens } from '../src/studio-ux.mjs';
 
 const POLL_MS = 400;    // while shown (a read is a stat and the bytes added since)
 const KEEP = 400;       // items kept on screen (older ones are dropped from the top)
@@ -141,7 +142,13 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   chipBar.hidden = true;
   const modelSel = h('select', { class: 'chat-pick chat-pick-model', onchange: () => setting('model', modelSel.value) });
   const modeSel = h('select', { class: 'chat-pick chat-pick-mode', onchange: () => setting('mode', modeSel.value) });
-  const pickers = h('span', { class: 'chat-picks chat-studio-only' }, modelSel, modeSel);
+  // v3.120 Studio UX: the context the session uses (the last answer's input tokens) as a small ring
+  const ctxRing = h('span', { class: 'chat-ctx', role: 'img' });
+  ctxRing.hidden = true;
+  // v3.120 the project's Auto-approve is on while this session runs another mode: the manager still answers
+  const modeNote = h('span', { class: 'chat-pick-note' });
+  modeNote.hidden = true;
+  const pickers = h('span', { class: 'chat-picks chat-studio-only' }, ctxRing, modelSel, modeSel, modeNote);
   const moreTerm = h('button', { class: 'chat-more-item', type: 'button', role: 'menuitem', onclick: () => { moreMenu.hidden = true; onTerminal(); } }, icon('terminal'), h('span', {}));
   const moreMenu = h('div', { class: 'chat-more-menu', role: 'menu' }, moreTerm);
   moreMenu.hidden = true;
@@ -177,6 +184,11 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   agentView.tabIndex = -1;
   agentView.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeAgent(); } });
   el.append(banner, list, empty, agentView, picker, live, card, endBox, agentBar, replyBar, composer, why);
+  // v3.120 Studio UX: "jump to latest" while the list is scrolled up
+  const jump = h('button', { class: 'chat-jump chat-studio-only', type: 'button', title: t('chat.jumpLatest'), 'aria-label': t('chat.jumpLatest'), onclick: () => { list.scrollTo?.({ top: list.scrollHeight, behavior: 'smooth' }); } }, icon('down', 14), h('span', {}, t('chat.jumpLatest')));
+  jump.hidden = true;
+  el.append(jump);
+  list.addEventListener('scroll', () => { jump.hidden = list.scrollHeight - list.scrollTop - list.clientHeight < 120; }, { passive: true });
   card.hidden = true;
   banner.hidden = true;
   why.hidden = true;
@@ -192,7 +204,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   let cursor = null;
   let sid;   // undefined until the first read
   const tools = new Map();   // tool call id → its line (marked done/failed by its result)
-  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number }, settings?: { model: string, mode: string } }} */
+  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number }, settings?: { model: string, mode: string }, info?: { model: string, usage: any }, contextCap?: number }} */
   let gui = null;   // v3.108 a GUI chat tab's open requests and live line (null: a terminal tab)
   const ASK_REDRAW = '\u0000';   // askShown that matches no request: the next setGui draws the card again
   let askShown = '';   // the open request's id, as drawn
@@ -257,7 +269,14 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   function message(kind, text, body, ro = false) {
     const copy = h('button', { class: 'chat-act', onclick: () => copyText(String(text), copy) }, t('chat.copy'));
     const reply = h('button', { class: 'chat-act', onclick: () => replyTo(String(text)) }, t('chat.reply'));
-    return h('div', { class: `chat-msg ${kind}` }, body, h('div', { class: 'chat-acts' }, copy, kind === 'error' || source || ro ? null : reply));
+    // v3.120 Studio UX: a person's message can be put back in the input to edit and send again (Studio only, CSS)
+    const edit = kind === 'user' && !source && !ro ? h('button', { class: 'chat-act chat-edit chat-studio-only', title: t('chat.editTitle'), onclick: () => { input.value = String(text); input.focus(); input.dispatchEvent(new Event('input')); } }, t('chat.edit')) : null;
+    // v3.120 Studio UX: each code block has its own copy button in its corner
+    for (const pre of body.querySelectorAll?.('pre.chat-code') || []) {
+      const b = h('button', { class: 'chat-code-copy chat-studio-only', type: 'button', title: t('chat.copyCode'), onclick: (/** @type {Event} */ e) => { e.stopPropagation(); copyText(pre.firstChild?.textContent || pre.textContent || '', b); } }, t('chat.copy'));
+      pre.append(b);
+    }
+    return h('div', { class: `chat-msg ${kind}` }, body, h('div', { class: 'chat-acts' }, copy, edit, kind === 'error' || source || ro ? null : reply));
   }
   /** One chat item → its row (or null). map: the tool rows waiting for their result; ro: no Reply (a sub-agent's view). */
   function item(it, map = tools, ro = false) {
@@ -846,13 +865,32 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     return body;
   }
   function drawPickOptions() {
-    modelSel.replaceChildren(...MODEL_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.model.${m || 'start'}`))));
-    // bypassPermissions is never offered: it only shows the mode of a session started with skip permissions
-    modeSel.replaceChildren(...MODE_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.mode.${m}`))),
-      h('option', { value: 'bypassPermissions', disabled: true, hidden: true }, t('chat.pick.mode.bypassPermissions')));
+    drawModelOptions(true);
+    drawModeOptions(true);
     drawPicks();
   }
+  /** v3.120 the account's reported modes (modeChoices); bypassPermissions is never offered: it only shows the mode of a
+   * session started with skip permissions. A mode with no text of its own shows its name. */
+  function drawModeOptions(force = false) {
+    const list = modeChoices(gui);
+    const sig = list.join(',');
+    if (!force && modeSel.dataset.sig === sig) return;
+    modeSel.dataset.sig = sig;
+    const label = (/** @type {string} */ m) => (hasText(`chat.pick.mode.${m}`) ? t(`chat.pick.mode.${m}`) : m);
+    modeSel.replaceChildren(...list.map((m) => h('option', { value: m }, label(m))),
+      h('option', { value: 'bypassPermissions', disabled: true, hidden: true }, t('chat.pick.mode.bypassPermissions')));
+  }
+  /** v3.120 Studio UX: the model options are the models the session reported (modelChoices); redrawn when they change. */
+  function drawModelOptions(force = false) {
+    const list = modelChoices(gui);
+    const sig = list.map((m) => `${m.value}\u0001${m.label}`).join('\u0002');
+    if (!force && modelSel.dataset.sig === sig) return;
+    modelSel.dataset.sig = sig;
+    modelSel.replaceChildren(...list.map((m) => h('option', { value: m.value, title: m.description }, m.label || t(`chat.pick.model.${m.value || 'start'}`))));
+  }
   function drawPicks() {
+    drawModelOptions();
+    drawModeOptions();
     const st = pickerState(gui, gui?.settings || picks);
     if (modelSel.value !== st.model) modelSel.value = st.model;
     if (modeSel.value !== st.mode) modeSel.value = st.mode;
@@ -860,7 +898,30 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     modeSel.disabled = !st.modeEnabled;   // also a skip-permissions or desk session's mode (st.lock)
     const why = st.why ? ` · ${t(`chat.pick.why.${st.why}`)}` : '';
     modelSel.title = `${t('chat.pick.modelTitle')}${why}`;
+    // v3.120 Studio UX: the '' option names the model the session really runs (system init, then each answer)
+    const running = modelName(gui?.info?.model);
+    const first = modelSel.options[0];
+    if (first) first.textContent = running || t('chat.pick.model.start');
+    const ctx = contextUsage(gui?.info?.usage, gui?.info?.model, gui?.contextCap);
+    ctxRing.hidden = !ctx;
+    if (ctx) {
+      const c = 2 * Math.PI * 7;
+      const dash = `${((ctx.pct / 100) * c).toFixed(2)} ${c.toFixed(2)}`;
+      if (ctxRing.dataset.dash !== dash) {
+        ctxRing.dataset.dash = dash;
+        ctxRing.innerHTML = `<svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="7" class="chat-ctx-bg"/><circle cx="9" cy="9" r="7" class="chat-ctx-fg" stroke-dasharray="${dash}" transform="rotate(-90 9 9)"/></svg>`;
+      }
+      ctxRing.classList.toggle('high', ctx.pct >= 80);
+      ctxRing.title = t('chat.context', { used: shortTokens(ctx.used), limit: shortTokens(ctx.limit), pct: ctx.pct });
+      ctxRing.setAttribute('aria-label', ctxRing.title);
+    }
     modeSel.title = `${t('chat.pick.modeTitle')}${st.lock ? ` · ${t(`chat.pick.why.${st.lock}`)}` : why}`;
+    // v3.120 Auto-approve turned off in the Office while this chat runs in auto: say so, never change the mode
+    const off = managerOffNote(gui, gui?.settings || picks);
+    modeNote.hidden = !st.managerNote && !off;
+    modeNote.classList.toggle('off', off);
+    if (st.managerNote) { modeNote.textContent = t('chat.pick.managerNote'); modeNote.title = t('chat.pick.managerNoteTitle'); }
+    else if (off) { modeNote.textContent = t('chat.pick.managerOffNote'); modeNote.title = t('chat.pick.managerOffNoteTitle'); }
   }
   async function setting(/** @type {'model' | 'mode'} */ key, /** @type {string} */ value) {
     let r = 'error';
@@ -941,7 +1002,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     if (source || document.activeElement !== input) return false;
     let clip = null;
     try { clip = await api.clipboard.read(); } catch (e) { console.error(e); return false; }
-    if (Array.isArray(clip?.files) && clip.files.length) { attachPaths(clip.files.filter((p) => typeof p === 'string' && p)); return true; }
+    if (Array.isArray(clip?.files) && clip.files.length) { attachPaths(clip.files.filter((p) => typeof p === 'string' && p), Array.isArray(clip.dirs) ? clip.dirs : []); return true; }
     // text with an image (spreadsheet cells, rich text): the normal paste keeps the text and adds the image
     if (!clip?.hasImage || (typeof clip.text === 'string' && clip.text.trim())) return false;
     try {
@@ -1124,7 +1185,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     // Enter sends, Shift+Enter is a new line; not while an input method is composing (Turkish/CJK IMEs)
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
     else if (e.key === 'Escape' && replying) { e.preventDefault(); replyTo(''); }
-    else if (e.key === 'Escape' && gui?.live.busy) { e.preventDefault(); interrupt(); }   // v3.108 Esc stops the turn, as in the terminal
+    else if (e.key === 'Escape' && gui?.live.busy && (!studioOn() || !input.value.trim())) { e.preventDefault(); interrupt(); }   // v3.120 Studio: only from an empty input   // v3.108 Esc stops the turn, as in the terminal
   });
 
   return {

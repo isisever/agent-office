@@ -5042,3 +5042,17 @@ test('v3.114 a server name other accounts bring with different configs is suffix
   assert.deepEqual(rows.filter((x) => x.name === 'tickets').map((x) => [x.source, x.origin]), [['office', erp]]);
   assert.deepEqual(rows.filter((x) => x.source === 'otherAccount').map((x) => [x.name, x.account]), [['grafana-Alpha', 'a1'], ['same', 'a1'], ['grafana-Beta', 'b1']]);
 });
+
+test('v3.121 macOS paste: every copied file from the JXA output, never a path made from text', () => {
+  const OSm = require('../src/platform.js');
+  assert.deepEqual(OSm.filesFromMacPasteboard('["/Users/a/x.png","/Users/a/My Folder","/Users/a/x.png"]\n'), ['/Users/a/x.png', '/Users/a/My Folder']);
+  assert.deepEqual(OSm.filesFromMacPasteboard('[]'), []);
+  assert.deepEqual(OSm.filesFromMacPasteboard('hello world'), [], 'plain text is not JSON');
+  assert.deepEqual(OSm.filesFromMacPasteboard('"/etc/passwd"'), [], 'not an array');
+  assert.deepEqual(OSm.filesFromMacPasteboard('["relative/x", 7, null, "/ok"]'), ['/ok']);
+  assert.equal(OSm.filesFromMacPasteboard(JSON.stringify(Array.from({ length: 300 }, (_, i) => `/f${i}`))).length, 200);
+  assert.match(OSm.MAC_CLIPBOARD_FILES_JXA, /NSPasteboardURLReadingFileURLsOnlyKey/, 'file URLs only (the furl check)');
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(MAIN, /execFile\('\/usr\/bin\/osascript', \['-l', 'JavaScript', '-e', OS\.MAC_CLIPBOARD_FILES_JXA\]/);
+  assert.match(MAIN, /files, dirs: clipboardDirs\(files\)/);
+});

@@ -64,8 +64,14 @@ test('session listing: main tab first, tabs by number, no shells, recent newest 
   const status = [{ id: 'a', isRunning: true, isAsleep: false, attention: 'permission', tabs: [{ n: 2, isRunning: false, isAsleep: true }, { n: 3, isRunning: true, isAsleep: false }] }];
   const recent = [{ projectId: 'a', sessionId: 'old', title: '', dir: '/w/alpha', at: 1 }, { projectId: 'a', sessionId: 'new', title: 'Fix', dir: '', at: 5 }];
   const out = S.listSessions({ projects, status, recent, activeId: 'a', staff: [{ id: 'm1', name: 'Ada' }] });
-  assert.deepEqual(out[0].running.map((r) => [r.ptyId, r.title, r.isRunning, r.isAsleep]), [
+  assert.deepEqual(out[0].running.map((r) => [r.ptyId, r.label, r.isRunning, r.isAsleep]), [
     ['a', 'Alpha', true, false], ['a:2', 'agent-office/2', false, true], ['a:3', 'alpha', true, false], ['a:5', 'Ada', false, false]]);
+  assert.deepEqual(out[0].running.map((r) => r.title), ['', '', '', ''], 'no transcript info: no name (the renderer shows New session)');
+  // v3.120 Studio UX: a running session is named from its transcript (/rename or Claude's title, else the first prompt)
+  const infos = { a: { title: 'Renamed', prompt: 'p', branch: 'main', at: 7, busy: true }, 'a:3': { title: '', prompt: 'Fix the build', waiting: true }, 'a:2': { title: 'asleep' } };
+  const named = S.listSessions({ projects, status, recent, infoOf: (id) => infos[id] || null })[0].running;
+  assert.deepEqual(named.map((r) => [r.title, r.branch, r.at, r.busy, r.waiting]), [
+    ['Renamed', 'main', 7, true, false], ['', '', 0, false, false], ['Fix the build', '', 0, false, true], ['', '', 0, false, false]]);
   assert.deepEqual(out[0].recent.map((r) => [r.sessionId, r.title]), [['new', 'Fix'], ['old', 'alpha']]);
   assert.equal(out[0].active, true);
   assert.equal(out[0].attention, 'permission');
@@ -93,6 +99,12 @@ test('hotkeys: the toggle everywhere, Studio keys only in Studio', async () => {
   assert.deepEqual(studioKey({ ...mac, meta: true, code: 'Digit9' }, 'studio'), { type: 'session', index: 8 });
   assert.equal(studioKey({ ...mac, meta: true, code: 'Digit0' }, 'studio'), null, '⌘0 stays HQ');
   assert.deepEqual(studioKey({ ...mac, meta: true, code: 'KeyN' }, 'studio'), { type: 'new' });
+  assert.deepEqual(studioKey({ ...mac, meta: true, shift: true, code: 'KeyN' }, 'studio'), { type: 'newWorktree' });
+  assert.deepEqual(studioKey({ ...lin, ctrl: true, shift: true, alt: true, code: 'KeyN' }, 'studio'), { type: 'newWorktree' });
+  assert.deepEqual(studioKey({ ...lin, ctrl: true, shift: true, code: 'KeyN' }, 'studio'), { type: 'new' });
+  assert.deepEqual(studioKey({ ...mac, meta: true, code: 'KeyL' }, 'studio'), { type: 'focus' });
+  assert.equal(studioKey({ ...mac, meta: true, shift: true, code: 'KeyN' }, 'office'), null);
+  assert.equal(studioKey({ ...mac, meta: true, code: 'KeyL' }, 'office'), null);
   assert.deepEqual(studioKey({ ...mac, meta: true, code: 'KeyK' }, 'studio'), { type: 'search' });
   assert.equal(studioKey({ ...mac, meta: true, alt: true, code: 'KeyK' }, 'studio'), null);
   assert.deepEqual(studioKey({ ...lin, ctrl: true, shift: true, code: 'Digit2' }, 'studio'), { type: 'session', index: 1 });
@@ -207,4 +219,67 @@ test('status isGui: a stopped tab reports the mode it would start in (main.js wi
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(src, /function guiMode\(id\) \{\n {2}const t = terms\.get\(id\);\n {2}if \(t\) return Boolean\(t\.gui\);/);
   assert.match(src, /isGui: guiMode\(P\.tabPtyId\(p\.id, t\.n\)\)/);
+});
+
+test('v3.120 Auto turns the project\'s Auto-approve on; no other mode does (and none turns it off)', () => {
+  assert.equal(S.turnsAutoApproveOn('auto'), true);
+  for (const m of ['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions', '']) assert.equal(S.turnsAutoApproveOn(m), false, m);
+});
+
+test('v3.120 the title bar Studio switch: role=switch, no-drag, same toggle, hotkey tooltip', async () => {
+  const { experienceSwitch } = await import('../src/studio-keys.mjs');
+  assert.deepEqual(experienceSwitch('studio', true), { checked: true, ariaChecked: 'true', hotkey: '⌘⇧E' });
+  assert.deepEqual(experienceSwitch('office', false), { checked: false, ariaChecked: 'false', hotkey: 'Ctrl+Shift+E' });
+  assert.equal(experienceSwitch('bogus', true).checked, false);
+  const html = fs.readFileSync(path.join(__dirname, '../renderer/index.html'), 'utf8');
+  const btn = /<button id="experience-switch"[^>]*>/.exec(html)?.[0] || '';
+  assert.match(btn, /role="switch"/);
+  assert.match(btn, /aria-checked=/);
+  assert.ok(html.indexOf('id="experience-switch"') > html.indexOf('id="stats"'), 'the switch sits after the stats');
+  const css = fs.readFileSync(path.join(__dirname, '../renderer/style.css'), 'utf8');
+  assert.match(css, /#experience-switch \{[^}]*-webkit-app-region: no-drag/);
+  assert.match(css, /@media \(max-width: \d+px\) \{ #experience-switch \.xs-label \{ display: none; \} \}/);
+  const app = fs.readFileSync(path.join(__dirname, '../renderer/app.js'), 'utf8');
+  assert.match(app, /\$\('experience-switch'\)\?\.addEventListener\('click', \(\) => setExperience\(otherExperience\(experience\)\)\)/,
+    'the switch uses the same experience switch as ⌘⇧E');
+  for (const lang of ['en', 'tr']) {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, `../locales/${lang}.json`), 'utf8')).studio;
+    assert.ok(s.switchLabel && s.switchTitle.includes('{key}'), lang);
+  }
+});
+
+test('v3.120 a GUI chat of an Auto-approve project starts in auto mode, never a desk, guarded, skip or HQ session', () => {
+  const modes = ['auto', 'default', 'acceptEdits', 'plan'];
+  const auto = ['--permission-mode', 'auto'];
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes }), auto);
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: false, modes }), [], 'Auto-approve off: the default mode');
+  assert.deepEqual(S.guiStartModeArgs({ gui: false, autoApprove: true, modes }), [], 'the terminal path is unchanged');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, hq: true, modes }), [], 'never HQ');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, lock: S.modeLock({ desk: true }), modes }), [], 'a desk or guarded session keeps its rules');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, lock: S.modeLock({ skip: true }), modes }), [], 'skip permissions stays bypass');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes: ['default', 'plan'] }), [], 'the account has no auto mode');
+  assert.deepEqual(S.guiStartModeArgs(), []);
+  const main = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
+  assert.match(main, /const startMode = STU\.guiStartModeArgs\(\{ gui: true, autoApprove: P\.autoApproveOf\(project\), hq: Boolean\(project\.hq\)/);
+  assert.match(main, /GS\.guiArgs\(guiPrompt \? args\.slice\(0, -1\) : args\), \.\.\.startMode\]/, 'only the GUI spawn gets it');
+});
+
+test('modelListPending: a model waits (not-running) until the initialize answer; modes and old wrappers do not', () => {
+  assert.equal(S.modelListPending('model', false), true);
+  assert.equal(S.modelListPending('model', true), false);
+  assert.equal(S.modelListPending('model', undefined), false);
+  assert.equal(S.modelListPending('mode', false), false);
+});
+
+test('guiStartModeArgs: no reported modes (never probed) means no mode flag', () => {
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes: [] }), []);
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes: ['default', 'plan'] }), []);
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes: ['default', 'auto'] }), ['--permission-mode', 'auto']);
+});
+
+test('autoApproveAfterSet: a late set-Auto ok never turns Auto-approve back on after the person changed it', () => {
+  assert.equal(S.autoApproveAfterSet({ before: false, after: false, epochBefore: 3, epochAfter: 3 }), true, 'the normal case');
+  assert.equal(S.autoApproveAfterSet({ before: true, after: false, epochBefore: 3, epochAfter: 4 }), false, 'turned off meanwhile');
+  assert.equal(S.autoApproveAfterSet({ before: false, after: false, epochBefore: 3, epochAfter: 5 }), false, 'on then off meanwhile');
+  assert.equal(S.autoApproveAfterSet({ before: false, after: true, epochBefore: 3, epochAfter: 4 }), false, 'already on');
 });
