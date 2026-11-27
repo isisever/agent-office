@@ -809,6 +809,7 @@
     "fileClear": "Tümünü çıkar",
     "fileGone": "Bu dosya artık yok.",
     "fileShown": "Bu dosya açılınca kod çalıştırabilir; bu yüzden klasöründe gösterildi.",
+    "fileNotAttached": "Bu dosya bu sohbette eklenmedi; buradan açılamaz. Proje klasöründeki dosyalar Finder'da gösterilebilir.",
     "drop": { "any": "Dosyaları buraya bırakın", "one": "1 dosyayı bırakın", "many": "{count} dosyayı bırakın" },
     "fileRemove": "Bu dosyayı çıkar",
     "pick": {
@@ -823,11 +824,14 @@
       "mode": {
         "default": "İzin sor",
         "acceptEdits": "Düzenlemeleri kabul et",
-        "plan": "Plan modu"
+        "plan": "Plan modu",
+        "bypassPermissions": "İzinleri atla"
       },
       "why": {
         "terminal": "yalnızca çalışan bir GUI sohbetinde (terminalde /model kullanın)",
-        "busy": "tur bitene kadar bekleyin"
+        "busy": "tur bitene kadar bekleyin",
+        "bypass": "izinleri atlayarak başladı: mod başladığı gibi kalır",
+        "desk": "masa kendi izin kurallarını korur: mod başladığı gibi kalır"
       },
       "failed": {
         "busy": "Bir tur çalışıyor: bitince değiştirin.",

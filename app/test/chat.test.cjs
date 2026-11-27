@@ -343,7 +343,8 @@ test('v3.109 "@" files: git list, walk, ranking, mentions; tool lines carry thei
   assert.equal(items[0].path, '/w/src/a.js');
   assert.equal('path' in items[1], false);
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  const reveal = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:reveal'"), MAIN.indexOf("ipcMain.handle('chat:reveal'") + 400);
+  const reveal = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:reveal'"), MAIN.indexOf("ipcMain.handle('chat:reveal'") + 900);
+  assert.match(reveal, /^ipcMain\.handle\('chat:reveal', \(_e, id, p\) => revealInside\(String\(id \|\| ''\), p\)\);\n/);
   assert.match(reveal, /FM\.revealTarget\(\[r\.dir, r\.project\?\.dir\], p\)/);
   assert.match(reveal, /if \(!target\) return 'outside';/);
   assert.match(reveal, /if \(target\.root\) eShell\.openPath\(target\.path\); else eShell\.showItemInFolder\(target\.path\);/);
@@ -462,7 +463,7 @@ test('v3.113 Show in Finder: real paths on both sides, worktree tabs, files that
   assert.match(R, /api\.chat\.pick\(ptyId, Boolean\(gui\)\)/);
   // v3.121 picked non-image files go through attachPaths: chips in Studio, still @path in the input in the Office
   assert.match(R, /if \(blobs\.length\) addImages\(blobs\.map[^\n]*\n\s+if \(paths\.length\) attachPaths\(paths[,)]/);
-  assert.match(R, /function attachPaths\([^)]*\) \{\n\s+if \(studioOn\(\) && !source\) addFiles\([^\n]*\n\s+else insertPaths\(paths\);/);
+  assert.match(R, /function attachPaths\([^)]*\) \{\n\s+if \(studioOn\(\) && !source\) addFiles\([^\n]*\n\s+else \{ registerAttached\(paths\); insertPaths\(paths\); \}/);
   assert.match(R, /new Blob\(\[im\.data\]/);
   assert.doesNotMatch(R, /atob/);
   assert.match(R, /if \(attach\.disabled\) return;/);
@@ -645,7 +646,7 @@ test('v3.121 openTarget: a chip opens in its default app; what could run code is
     assert.equal(FM.openTarget(''), null);
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  assert.match(MAIN, /ipcMain\.handle\('chat:openFile', async \(e, p, how\) => \{\n\s+if \(e\.sender !== win\?\.webContents\) return 'gone';/);
+  assert.match(MAIN, /ipcMain\.handle\('chat:openFile', async \(e, id, p, how\) => \{\n\s+if \(!fromWin\(e\)\) return 'gone';/);
   const R = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat.js'), 'utf8');
   assert.match(R, /fileChips = \[\]; drawChips\(\); {3}\/\/ only after a send that worked/, 'chips clear only after a successful send');
 });
@@ -681,4 +682,59 @@ test('v3.121 openTarget: a symbolic link and any bundle are only shown; launcher
     }
     assert.equal(FM.openTarget(path.join(d, 'plain.txt')).action, 'open');
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('v3.121 attached files: only paths the person attached in this tab open; others are at most revealed in the project', () => {
+  const ATT = require('../src/attached.js');
+  const a = ATT.createAttached({ max: 3 });
+  assert.equal(a.add('t1', ['/p/a.txt', 'rel/b.txt', '', null, '/p/x\0y']), 1);
+  assert.ok(a.has('t1', '/p/a.txt'));
+  assert.ok(a.has('t1', '/p/sub/../a.txt'), 'normalized');
+  assert.ok(!a.has('t2', '/p/a.txt'), 'per tab');
+  assert.ok(!a.has('t1', 'rel/b.txt'));
+  assert.ok(!a.has('t1', '/p/other.txt'));
+  a.add('t1', ['/p/b', '/p/c', '/p/d']);
+  assert.ok(!a.has('t1', '/p/a.txt'), 'the oldest goes past the cap');
+  a.forget('t1');
+  assert.ok(!a.has('t1', '/p/d'));
+  // the @paths of a message the person sent (the chat's mention format); relative mentions and e-mail are not paths
+  assert.deepEqual(ATT.sentPaths('look at @/u/a.txt and @"/u/My File.pdf"\n\n@src/x.js mail me@host.com @/u/b'), ['/u/a.txt', '/u/My File.pdf', '/u/b']);
+  assert.deepEqual(ATT.sentPaths(''), []);
+
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = (start, n) => MAIN.slice(MAIN.indexOf(start), MAIN.indexOf(start) + n);
+  const open = body("ipcMain.handle('chat:openFile'", 600);
+  assert.match(open, /if \(!attachedFiles\.has\(id, p\)\) return how === 'reveal' \? revealInside\(id, p\) : 'refused';/);
+  assert.ok(open.indexOf('attachedFiles.has') < open.indexOf('FM.openTarget'), 'checked before anything opens');
+  assert.match(body("ipcMain.handle('chat:pick'", 2000), /attachedFiles\.add\(String\(id\), \[\.\.\.paths, \.\.\.images\.map\(\(i\) => i\.path\)\]\);/);
+  assert.match(body("ipcMain.handle('chat:send'", 1200), /attachedFiles\.add\(id, ATT\.sentPaths\(body\)\);/);
+  assert.match(body("ipcMain.handle('chat:attach'", 300), /if \(!fromWin\(e\)\) return 0;/);
+  assert.match(body('function revealInside(', 400), /FM\.revealTarget\(\[r\.dir, r\.project\?\.dir\], p\)/);
+  // HQ, delegated and paired-device prompts never reach chat:send: they are typed into the tab by main itself
+  assert.equal((MAIN.match(/attachedFiles\.add\(/g) || []).length, 3, 'only pick, attach and send add paths');
+  const PRE = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  assert.match(PRE, /openFile: \(id, path, how\) => ipcRenderer\.invoke\('chat:openFile', id, path, how\)/);
+  assert.match(PRE, /attach: \(id, paths\) => ipcRenderer\.invoke\('chat:attach', id, paths\)/);
+  const R = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat.js'), 'utf8');
+  assert.match(R, /api\.chat\.openFile\(ptyId, p, how\)/);
+  assert.match(R, /function addFiles\([^\n]*\n\s+registerAttached\(/, 'dropped files are registered');
+});
+
+test('v3.121 chat:setting: only from the window; a skip-permissions or desk session keeps its mode, the model may change', () => {
+  const STU = require('../src/studio.js');
+  assert.equal(STU.modeLock({}), '');
+  assert.equal(STU.modeLock({ skip: true }), 'bypass');
+  assert.equal(STU.modeLock({ desk: true }), 'desk');
+  assert.equal(STU.modeLock({ skip: true, desk: true }), 'desk', 'a mail desk turns bypass off: its own rules hold');
+  assert.equal(STU.settingAllowed('', 'mode'), true);
+  assert.equal(STU.settingAllowed('bypass', 'mode'), false);
+  assert.equal(STU.settingAllowed('desk', 'mode'), false);
+  assert.equal(STU.settingAllowed('desk', 'model'), true);
+  assert.equal(STU.settingAllowed('bypass', 'model'), true);
+  const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const h = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:setting'"), MAIN.indexOf("ipcMain.handle('chat:setting'") + 500);
+  assert.match(h, /^ipcMain\.handle\('chat:setting', async \(e, id, key, value\) => \{\n\s+if \(!fromWin\(e\)\) return 'bad';/);
+  assert.match(h, /if \(!STU\.settingAllowed\(guiModeLock\.get\(String\(id\)\) \|\| '', String\(key\)\)\) return 'locked';/);
+  assert.match(MAIN, /guiModeLock\.set\(id, STU\.modeLock\(\{ skip: P\.skipPermissionsArgs\(project\)\.length > 0, desk: Boolean\(mailMcp\) \|\| Boolean\(r\.tab\?\.staffId\) \|\| guarded !== settings \}\)\);/);
+  assert.match(MAIN, /modeLock: guiModeLock\.get\(id\) \|\| ''/, 'the chat learns the lock with its GUI info');
 });

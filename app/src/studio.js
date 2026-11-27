@@ -205,7 +205,21 @@ function accountDisplayName(json) {
   return typeof n === 'string' ? n.trim().slice(0, 80) : '';
 }
 
+/**
+ * v3.121 what holds a GUI chat's permission mode for the Studio picker: 'bypass' (started with skip permissions: the
+ * picker shows that mode and never drops it), 'desk' (a mail desk or any session with permission rules of its own:
+ * its "ask" rules are never loosened from the UI), '' (the picker may change it). The model picker is never held.
+ */
+function modeLock({ skip = false, desk = false } = {}) {
+  if (desk) return 'desk';
+  return skip ? 'bypass' : '';
+}
+/** May chat:setting change `key` in a chat whose mode is held by `lock` (modeLock)? */
+function settingAllowed(lock, key) {
+  return key !== 'mode' || !lock;
+}
+
 module.exports = {
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
-  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName,
+  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed,
 };

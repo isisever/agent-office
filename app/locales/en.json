@@ -819,6 +819,7 @@
     "fileClear": "Remove all",
     "fileGone": "This file is no longer there.",
     "fileShown": "This file could run code when opened, so it is shown in its folder instead.",
+    "fileNotAttached": "This file was not attached in this chat, so it cannot be opened from here. Show in Finder works for files inside the project.",
     "drop": { "any": "Drop files here", "one": "Drop 1 file", "many": "Drop {count} files" },
     "fileRemove": "Remove this file",
     "pick": {
@@ -833,11 +834,14 @@
       "mode": {
         "default": "Ask permissions",
         "acceptEdits": "Accept edits",
-        "plan": "Plan mode"
+        "plan": "Plan mode",
+        "bypassPermissions": "Bypass permissions"
       },
       "why": {
         "terminal": "only in a running GUI chat (use /model in the terminal)",
-        "busy": "wait until the turn is done"
+        "busy": "wait until the turn is done",
+        "bypass": "started with skip permissions: the mode stays as started",
+        "desk": "a desk keeps its own permission rules: the mode stays as started"
       },
       "failed": {
         "busy": "A turn is running: change it when it is done.",

@@ -3045,13 +3045,19 @@ type StudioProject = { id, name, dir, engine, account: string, active: boolean, 
     shows the count (`dropText`: "Drop 3 files"). A chip: click opens it in its default app, right click has Open, Show in
     Finder and Remove; ✕ removes one, Remove all shows with two or more. Chips are cleared only after a send that worked.
     Sent messages show the same chips (from the trailing `@path` line, `splitMentions`), with Open and Show in Finder.
-  - `agentOffice.chat.openFile(path, how)` → `chat:openFile` (own window only): `how` 'open' | 'reveal' → 'ok' |
-    'shown' | 'gone'. Any existing absolute path; whatever could run code when opened (app bundles, executables,
-    scripts and installers by extension, `FM.openTarget`) is only shown in Finder ('shown').
+  - `agentOffice.chat.openFile(id, path, how)` → `chat:openFile` (own window only): `how` 'open' | 'reveal' → 'ok' |
+    'shown' | 'gone' | 'refused' | 'outside'. Only a path the person attached in that tab (`src/attached.js`): picked
+    (`chat:pick`), dropped or pasted (`agentOffice.chat.attach(id, paths)` → `chat:attach`), or an absolute `@path` in a
+    message sent with `chat:send`. Any other chip (HQ, delegated or paired-device prompts) is never opened ('refused');
+    its Show in Finder works only inside the tab's or project's folder, like `chat:reveal`. Whatever could run code when
+    opened (any bundle with `Contents/Info.plist`, a symbolic link, executables, scripts, installers and launchers by
+    extension, `FM.openTarget`) is only shown in Finder ('shown').
   - **Pickers**: `agentOffice.chat.setting(id, 'model' | 'mode', value)` → `chat:setting` sends claude a `set_model` /
     `set_permission_mode` control request (models '' | opus | sonnet | haiku; modes default | acceptEdits | plan) and
     waits for its `control_response` (10 s): 'ok' (recorded), 'error:<claude's message>' (nothing changed; the picker
     goes back and the note shows the message), 'busy' (a turn, an open request or another setting waits: refused),
-    'not-running' | 'bad' | 'gone'. Never a restart. Checked live with Claude Code 2.1.332.
+    'not-running' | 'bad' | 'gone'. Never a restart. Checked live with Claude Code 2.1.332. Own window only. A session
+    started with skip permissions shows bypassPermissions and a desk (mail, staff or its own permission rules) keeps its
+    mode: the mode picker is disabled and `chat:setting` answers 'locked' (`STU.modeLock`); the model picker stays.
   - **Idle at start**: a GUI chat is busy only from a sent message or a `message_start` until `result`; a whole user or
     assistant message outside a turn no longer marks it busy (`nextLive`), so a fresh or resumed chat is not "Working…".

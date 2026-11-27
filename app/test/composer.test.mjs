@@ -51,12 +51,24 @@ test('splitMentions leaves ordinary text alone', () => {
 });
 
 test('pickerState: terminal tabs and busy chats cannot switch; values are checked', () => {
-  assert.deepEqual(pickerState(null), { enabled: false, model: '', mode: 'default', why: 'terminal' });
+  const base = { lock: '', modeEnabled: false };
+  assert.deepEqual(pickerState(null), { enabled: false, model: '', mode: 'default', why: 'terminal', ...base });
   assert.equal(pickerState({ live: { busy: false }, asks: [], ended: { code: 0 } }).why, 'terminal');
-  assert.deepEqual(pickerState({ live: { busy: true }, asks: [] }, { model: 'opus' }), { enabled: false, model: 'opus', mode: 'default', why: 'busy' });
+  assert.deepEqual(pickerState({ live: { busy: true }, asks: [] }, { model: 'opus' }), { enabled: false, model: 'opus', mode: 'default', why: 'busy', ...base });
   assert.equal(pickerState({ live: { busy: false }, asks: [{ id: 'a' }] }).why, 'busy');
-  assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'gpt', mode: 'bypassPermissions' }), { enabled: true, model: '', mode: 'default', why: '' });
-  assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'haiku', mode: 'plan' }), { enabled: true, model: 'haiku', mode: 'plan', why: '' });
+  assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'gpt', mode: 'bypassPermissions' }), { enabled: true, model: '', mode: 'default', why: '', lock: '', modeEnabled: true });
+  assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'haiku', mode: 'plan' }), { enabled: true, model: 'haiku', mode: 'plan', why: '', lock: '', modeEnabled: true });
+});
+
+test('v3.121 pickerState: a skip-permissions session shows bypassPermissions and a desk keeps its mode; the model stays free', () => {
+  const idle = { live: { busy: false }, asks: [] };
+  assert.deepEqual(pickerState({ ...idle, modeLock: 'bypass' }, { model: 'opus', mode: 'plan' }), { enabled: true, model: 'opus', mode: 'bypassPermissions', why: '', lock: 'bypass', modeEnabled: false });
+  assert.deepEqual(pickerState({ ...idle, modeLock: 'desk' }, { mode: 'acceptEdits' }), { enabled: true, model: '', mode: 'acceptEdits', why: '', lock: 'desk', modeEnabled: false });
+  assert.equal(pickerState({ ...idle, modeLock: 'other' }).modeEnabled, true, 'an unknown lock is ignored');
+  assert.equal(pickerState({ live: { busy: true }, asks: [], modeLock: 'bypass' }).mode, 'bypassPermissions', 'shown while busy too');
+  const R = fs.readFileSync(new URL('../renderer/chat.js', import.meta.url), 'utf8');
+  assert.match(R, /modeSel\.disabled = !st\.modeEnabled;/);
+  assert.match(R, /h\('option', \{ value: 'bypassPermissions', disabled: true, hidden: true \}/, 'listed only to show it, never to pick it');
 });
 
 test('v3.121 addChips: drop order kept, same path once, folders stay one chip', () => {

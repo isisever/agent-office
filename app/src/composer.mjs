@@ -110,12 +110,16 @@ export function splitMentions(text) {
 
 /**
  * The pickers' state for a tab. gui: the chat's GUI info (null: a terminal tab), settings: what this chat last set.
- * → { enabled, model, mode, why } — why: '' | 'terminal' (a terminal tab: /model there) | 'busy' (a turn runs: wait).
+ * → { enabled, model, mode, why, lock, modeEnabled } — why: '' | 'terminal' (a terminal tab: /model there) | 'busy' (a
+ * turn runs: wait). lock (gui.modeLock): 'bypass' (started with skip permissions: the mode shows bypassPermissions and
+ * cannot change) | 'desk' (a desk's own permission rules: the mode cannot change) | ''. The model picker is never locked.
  */
 export function pickerState(gui, settings = {}) {
   const model = MODEL_OPTIONS.includes(settings?.model) ? settings.model : '';
-  const mode = MODE_OPTIONS.includes(settings?.mode) ? settings.mode : 'default';
-  if (!gui || gui.ended) return { enabled: false, model, mode, why: 'terminal' };
-  if (gui.live?.busy || (gui.asks || []).length) return { enabled: false, model, mode, why: 'busy' };
-  return { enabled: true, model, mode, why: '' };
+  const lock = gui && ['bypass', 'desk'].includes(gui.modeLock) ? gui.modeLock : '';
+  const set = MODE_OPTIONS.includes(settings?.mode) ? settings.mode : 'default';
+  const mode = lock === 'bypass' ? 'bypassPermissions' : set;
+  if (!gui || gui.ended) return { enabled: false, model, mode, why: 'terminal', lock, modeEnabled: false };
+  if (gui.live?.busy || (gui.asks || []).length) return { enabled: false, model, mode, why: 'busy', lock, modeEnabled: false };
+  return { enabled: true, model, mode, why: '', lock, modeEnabled: !lock };
 }

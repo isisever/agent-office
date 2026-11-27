@@ -67,6 +67,7 @@ const VC = require('./src/voice-core.js');   // v3.119 voice input
 const { createVoice } = require('./src/voice.js');
 const PTY = require('./src/pty-attach.js');
 const STU = require('./src/studio.js');   // v3.120 Studio experience
+const ATT = require('./src/attached.js');   // v3.121 the files a person attached in a chat composer
 // dev only: a throwaway profile (two instances side by side for the device link, v3.28); never in the packaged app
 if (!app.isPackaged && process.env.AGENT_OFFICE_USER_DATA) {
   app.setPath('userData', path.resolve(process.env.AGENT_OFFICE_USER_DATA));
@@ -1246,9 +1247,12 @@ function keepTermTabs() {
 const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
 // v3.120 pty ids whose running claude is a GUI chat that ran in Studio: the Office keeps it a chat until its next start
 const studioStarted = new Set();
+// v3.121 pty id → what holds a running GUI chat's permission mode ('bypass' | 'desk' | ''; STU.modeLock)
+const guiModeLock = new Map();
 /**
- * Does this tab start as a GUI chat? v3.120 Studio decides only how a tab starts (studio: false asks for the chat view
- * alone): a running tab never restarts or moves because the experience changed.
+ * Does this tab start as a GUI chat? (studio: false asks for the chat view alone.) v3.120 entering Studio also moves
+ * running terminal Claude tabs to the GUI chat with --resume: an idle one at once, a busy one once it is idle (the
+ * idle sweep, STU.idleMoveTarget); a chat that ran in Studio stays a chat in the Office until its next start.
  */
 function guiTab(id, r, { studio = state.experience === 'studio' } = {}) {
   return GS.guiEligible({ chatView: state.chatView === true, studio, terminal: termTabs.has(id) || cmdTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
@@ -1434,6 +1438,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   if (gui && STU.normalizeExperience(state.experience) === 'studio') studioStarted.add(id); else studioStarted.delete(id);   // v3.120 until its next start
   if (!project.hq && (P.skipPermissionsOf(project) || P.autoApproveOf(project))) promptless.add(id); else promptless.delete(id);
   if (P.skipPermissionsArgs(project).length > 0) skipStarted.add(id); else skipStarted.delete(id);
+  // v3.121 a mail desk, a staff desk or a session with extra permission rules keeps its mode; skip permissions is shown
+  guiModeLock.set(id, STU.modeLock({ skip: P.skipPermissionsArgs(project).length > 0, desk: Boolean(mailMcp) || Boolean(r.tab?.staffId) || guarded !== settings }));
   // v3.116 inputAt: when something was last typed into the tab (a start prompt counts), for guiRecent
   activity.set(id, { at: startedAt, draft: false, inputAt: prompt ? startedAt : 0 });
   mcpPrint.set(id, { started: print, current: print });
@@ -5479,18 +5485,34 @@ ipcMain.handle('chat:files', async (_e, id, query) => {
 });
 // v3.113 the tab's folder, then the project's folder (a worktree or desk tab runs in a folder of its own); a file that is
 // gone shows its nearest existing folder ('gone'); the path is shown in its folder, never opened
-ipcMain.handle('chat:reveal', (_e, id, p) => {
-  const r = P.resolvePty(state, String(id || ''));
+ipcMain.handle('chat:reveal', (_e, id, p) => revealInside(String(id || ''), p));
+/** Shows a path in Finder only when it is inside the tab's or the project's folder → 'ok' | 'gone' | 'outside'. */
+function revealInside(id, p) {
+  const r = P.resolvePty(state, id);
   const target = r && isDir(r.dir) ? FM.revealTarget([r.dir, r.project?.dir], p) : null;
   if (!target) return 'outside';
   // showItemInFolder(root) would open the root's parent: open the folder itself instead
   if (target.root) eShell.openPath(target.path); else eShell.showItemInFolder(target.path);
   return target.gone ? 'gone' : 'ok';
+}
+// v3.121 per tab the paths the person attached in its composer (picked, dropped, pasted, or @path in a message they
+// sent): only these open from a chip; any other chip (transcript text from HQ, a delegated task, a paired device)
+// is at most shown in Finder, and only inside the tab's or project's folder (revealInside)
+const attachedFiles = ATT.createAttached();
+// v3.121 files dropped or pasted into the composer (the picker's own are added by chat:pick) → how many were taken
+ipcMain.handle('chat:attach', (e, id, paths) => {
+  if (!fromWin(e)) return 0;
+  const r = P.resolvePty(state, String(id || ''));
+  if (!r || r.tab?.shell) return 0;
+  return attachedFiles.add(String(id), Array.isArray(paths) ? paths.slice(0, 50) : []);
 });
-// v3.121 a composer or sent-message chip: open it in its default app ('open') or show it in Finder ('reveal'). Any existing
-// absolute path the person attached; what would run code is only shown (FM.openTarget) → 'ok' | 'shown' | 'gone'
-ipcMain.handle('chat:openFile', async (e, p, how) => {
-  if (e.sender !== win?.webContents) return 'gone';
+// v3.121 a composer or sent-message chip: open it in its default app ('open') or show it in Finder ('reveal'). Only a path
+// the person attached in this tab (attachedFiles); what would run code is only shown (FM.openTarget) → 'ok' | 'shown' |
+// 'gone' | 'refused' (not attached here: never opened) | 'outside' (not attached and not inside the project: not shown)
+ipcMain.handle('chat:openFile', async (e, id, p, how) => {
+  if (!fromWin(e)) return 'gone';
+  id = String(id || '');
+  if (!attachedFiles.has(id, p)) return how === 'reveal' ? revealInside(id, p) : 'refused';
   const target = FM.openTarget(p);
   if (!target) return 'gone';
   if (how === 'reveal' || target.action === 'reveal') { eShell.showItemInFolder(target.path); return how === 'reveal' ? 'ok' : 'shown'; }
@@ -5526,6 +5548,7 @@ ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
     }
     paths.push(p);
   }
+  attachedFiles.add(String(id), [...paths, ...images.map((i) => i.path)]);   // v3.121 picked here: its chips may open
   return { paths, images, dirs };
 });
 // The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).
@@ -5541,6 +5564,7 @@ ipcMain.handle('chat:send', (_e, id, text, images) => {
   const gui = Boolean(terms.get(id)?.gui);
   const why = CHAT.sendRefused({ text: body || (img.images.length ? 'image' : ''), running: terms.has(id), locked: handoffLocked(id), draft: !gui && Boolean(activity.get(id)?.draft), permission: !gui && attention.get(r.project.id) === 'permission' });
   if (why) { if (why === 'locked') lockedNotice(id); return why; }
+  attachedFiles.add(id, ATT.sentPaths(body));   // v3.121 the @paths the person sent from this composer may open as chips
   if (P.isHqId(id)) { hqLastKey = Date.now(); hqMinter.mint(); }
   if (gui || !img.images.length) return typePrompt(id, body, { images: img.images }) ? 'ok' : 'not-running';
   // a terminal tab: each image goes to a file of the app's (0600) and in as @path, which Claude Code attaches
@@ -5568,7 +5592,7 @@ function saveChatImages(images) {
 /** null for a terminal tab; else { asks, live, gui: true } (the tab may be stopped: then nothing is open). */
 function guiInfo(id) {
   const t = terms.get(id);
-  if (t?.gui) return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' } };
+  if (t?.gui) return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, modeLock: guiModeLock.get(id) || '' };
   const r = P.resolvePty(state, id);
   if (!r || terms.has(id) || !guiTab(id, r)) return null;
   const ended = guiEnded.get(id);
@@ -5586,9 +5610,12 @@ ipcMain.handle('chat:answer', (_e, id, askId, answer) => {
 // v3.121 Studio's model / permission pickers: a running GUI chat switches for its next turns, never mid-turn and never
 // by a restart → 'ok' | 'not-running' (no GUI chat runs) | 'busy' (a turn, an open request or a waiting setting) |
 // 'bad' | 'gone' | 'error:<claude's message>' (claude answered with an error: nothing changed)
-ipcMain.handle('chat:setting', async (_e, id, key, value) => {
+// v3.121 'locked': the permission mode of a session started with skip permissions or of a desk is never changed here
+ipcMain.handle('chat:setting', async (e, id, key, value) => {
+  if (!fromWin(e)) return 'bad';
   const t = terms.get(String(id));
   if (!t?.gui || typeof t.setting !== 'function') return 'not-running';
+  if (!STU.settingAllowed(guiModeLock.get(String(id)) || '', String(key))) return 'locked';
   if (t.live().busy || t.asks().length) return 'busy';
   return t.setting(String(key), String(value ?? ''));
 });

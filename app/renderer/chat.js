@@ -766,7 +766,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
         .map((i, k) => { try { return i.webkitGetAsEntry?.()?.isDirectory ? k : -1; } catch { return -1; } }).filter((k) => k >= 0));
       const isDirFile = (/** @type {File} */ f) => dirAt.has(files.indexOf(f));
       const pathOf = (/** @type {File} */ f) => { try { return api.pathForFile?.(f) || ''; } catch { return ''; } };
-      if (!studioOn()) { insertPaths(files.map(pathOf).filter(Boolean)); return; }
+      if (!studioOn()) { const ps = files.map(pathOf).filter(Boolean); registerAttached(ps); insertPaths(ps); return; }
       // Studio: images go with the message as images (a GUI chat), every other file as a chip (sent as @path)
       const imgs = gui ? files.filter((f) => !isDirFile(f) && IMAGE_TYPES.includes(f.type)) : [];
       if (imgs.length) addImages(imgs, (f) => { const p = pathOf(f); if (p) addFiles([{ path: p, size: f.size, type: f.type }]); });
@@ -779,9 +779,11 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   /** v3.121 a chip opens in its default app or shows in Finder (main shows what would run code instead of opening it). */
   async function openChip(/** @type {string} */ p, /** @type {'open' | 'reveal'} */ how) {
     let r = 'gone';
-    try { r = api.chat.openFile ? await api.chat.openFile(p, how) : 'gone'; } catch (e) { console.error(e); }
+    try { r = api.chat.openFile ? await api.chat.openFile(ptyId, p, how) : 'gone'; } catch (e) { console.error(e); }
     if (r === 'gone') note(t('chat.fileGone'));
     else if (r === 'shown') note(t('chat.fileShown'));
+    else if (r === 'refused') note(t('chat.fileNotAttached'));   // not attached in this chat (an HQ or delegated prompt)
+    else if (r === 'outside') note(t('chat.revealOutside'));
   }
   /** v3.121 a chip's context menu: Open, Show in Finder, and Remove for a chip that is not sent yet. */
   function chipMenu(/** @type {MouseEvent} */ e, /** @type {string} */ p, /** @type {(() => void) | null} */ onRemove) {
@@ -819,7 +821,13 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       fileChips.length > 1 ? h('button', { class: 'chat-chips-clear', type: 'button', onclick: () => { fileChips = []; drawChips(); input.focus(); } }, t('chat.fileClear')) : '');
     chipBar.hidden = !fileChips.length;
   }
+  /** v3.121 tells main which files the person dropped or pasted here: only attached files open from a chip. */
+  function registerAttached(/** @type {string[]} */ paths) {
+    const list = paths.filter((p) => typeof p === 'string' && p);
+    if (list.length && api.chat.attach) api.chat.attach(ptyId, list).catch((/** @type {unknown} */ e) => console.error(e));
+  }
   function addFiles(/** @type {{ path: string, size?: number, type?: string }[]} */ list) {
+    registerAttached(list.map((f) => f.path));
     fileChips = addChips(fileChips, list);
     drawChips();
     input.focus();
@@ -827,7 +835,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   /** Files from the picker or the clipboard: chips in Studio, @path in the input in the Office. */
   function attachPaths(/** @type {string[]} */ paths, /** @type {string[]} */ dirs = []) {
     if (studioOn() && !source) addFiles(paths.map((p) => (dirs.includes(p) ? { path: p, dir: true } : { path: p })));
-    else insertPaths(paths);
+    else { registerAttached(paths); insertPaths(paths); }
   }
   /** A person's message: its text, then (Studio) the images sent with it and the files it mentions as chips. */
   function userBody(/** @type {string} */ text, /** @type {{ type: string, data: string }[]} */ imgs = []) {
@@ -839,17 +847,20 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   }
   function drawPickOptions() {
     modelSel.replaceChildren(...MODEL_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.model.${m || 'start'}`))));
-    modeSel.replaceChildren(...MODE_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.mode.${m}`))));
+    // bypassPermissions is never offered: it only shows the mode of a session started with skip permissions
+    modeSel.replaceChildren(...MODE_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.mode.${m}`))),
+      h('option', { value: 'bypassPermissions', disabled: true, hidden: true }, t('chat.pick.mode.bypassPermissions')));
     drawPicks();
   }
   function drawPicks() {
     const st = pickerState(gui, gui?.settings || picks);
     if (modelSel.value !== st.model) modelSel.value = st.model;
     if (modeSel.value !== st.mode) modeSel.value = st.mode;
-    modelSel.disabled = modeSel.disabled = !st.enabled;
+    modelSel.disabled = !st.enabled;
+    modeSel.disabled = !st.modeEnabled;   // also a skip-permissions or desk session's mode (st.lock)
     const why = st.why ? ` · ${t(`chat.pick.why.${st.why}`)}` : '';
     modelSel.title = `${t('chat.pick.modelTitle')}${why}`;
-    modeSel.title = `${t('chat.pick.modeTitle')}${why}`;
+    modeSel.title = `${t('chat.pick.modeTitle')}${st.lock ? ` · ${t(`chat.pick.why.${st.lock}`)}` : why}`;
   }
   async function setting(/** @type {'model' | 'mode'} */ key, /** @type {string} */ value) {
     let r = 'error';
