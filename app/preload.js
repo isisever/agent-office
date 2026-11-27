@@ -170,7 +170,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
   },
   clipboard: {
     hasImage: () => ipcRenderer.invoke('clipboard:hasImage'),
-    read: () => ipcRenderer.invoke('clipboard:read'),   // { hasImage, text, files }
+    read: () => ipcRenderer.invoke('clipboard:read'),   // { hasImage, text, files, dirs }
     onPaste: listen('edit:paste'),                      // the menu's Paste (⌘V; Ctrl+Shift+V on Linux and Windows)
     nativePaste: () => ipcRenderer.send('edit:nativePaste'), // outside the terminal: normal paste
   },

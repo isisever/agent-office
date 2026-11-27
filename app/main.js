@@ -5949,7 +5949,17 @@ ipcMain.on('pty:restart', (_e, id) => {
 // Files copied in Finder: one file is public.file-url, several are NSFilenamesPboardType (plist).
 // Electron 44 clipboard API: has() and readText() return Promises, there is no availableFormats/readImage.
 // It doesn't see files copied in Finder; macOS's own clipboard (osascript, furl) provides them.
+// v3.121 every copied file: the pasteboard's file URLs through JXA (OS.MAC_CLIPBOARD_FILES_JXA, args array, no
+// shell); only if that fails, the old AppleScript, which names the first file only.
 function macClipboardFiles() {
+  return new Promise((resolve) => {
+    execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', OS.MAC_CLIPBOARD_FILES_JXA], { timeout: 3000 }, (err, stdout) => {
+      if (err) macClipboardFirstFile().then(resolve);
+      else resolve(OS.filesFromMacPasteboard(String(stdout || '')));
+    });
+  });
+}
+function macClipboardFirstFile() {
   // first check whether the clipboard really holds a file (furl): otherwise macOS turns plain text into a path too
   const script = 'repeat with c in (clipboard info)\n if item 1 of c is «class furl» then return POSIX path of (the clipboard as «class furl»)\nend repeat\nreturn ""';
   return new Promise((resolve) => {
@@ -6019,14 +6029,16 @@ async function clipboardHasImage() {
   for (const t of IMAGE_TYPES) if (await clipboard.has(t)) return true;
   return false;
 }
+/** v3.121 which of the copied paths are folders (the composer shows them as folder chips) */
+const clipboardDirs = (/** @type {string[]} */ files) => files.filter((f) => { try { return fs.statSync(f).isDirectory(); } catch { return false; } });
 ipcMain.handle('clipboard:read', async () => {
   if (IS_WIN) {
     const text = await clipboard.readText().catch(() => '');
     const { files, image } = await windowsClipboard(text);
-    return { files, hasImage: !files.length && (image || await clipboardHasImage().catch(() => false)), text };
+    return { files, dirs: clipboardDirs(files), hasImage: !files.length && (image || await clipboardHasImage().catch(() => false)), text };
   }
   const files = await clipboardFiles();
-  return { files, hasImage: !files.length && await clipboardHasImage(), text: await clipboard.readText() };
+  return { files, dirs: clipboardDirs(files), hasImage: !files.length && await clipboardHasImage(), text: await clipboard.readText() };
 });
 let sceneHidden = false;   // the renderer reports whether the pixel office is hidden (View menu label)
 ipcMain.on('scene:hidden', (_e, hidden) => { if ((hidden === true) !== sceneHidden) { sceneHidden = hidden === true; buildMenu(); } });

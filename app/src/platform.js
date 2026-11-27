@@ -14,6 +14,39 @@ const defaultShell = (env = process.env, platform = process.platform) =>
 // x-special/gnome-copied-files format (a "copy" / "cut" line, then file:// URLs).
 // Only local file:// URLs become paths; other lines (comments, http, actions) are skipped.
 // platform 'win32': file:///C:/a%20b → C:\a b, file://server/share/x → \\server\share\x.
+// v3.121 macOS: every file URL on the general pasteboard (JXA, `osascript -l JavaScript -e`). FileURLsOnly keeps the
+// furl check: plain text never turns into a path. Prints a JSON array of POSIX paths ("[]" when no file was copied).
+const MAC_CLIPBOARD_FILES_JXA = [
+  "ObjC.import('AppKit');",
+  '(() => {',
+  '  const opts = $.NSDictionary.dictionaryWithObjectForKey($.NSNumber.numberWithBool(true), $.NSPasteboardURLReadingFileURLsOnlyKey);',
+  '  const urls = $.NSPasteboard.generalPasteboard.readObjectsForClassesOptions($.NSArray.arrayWithObject($.NSURL), opts);',
+  '  const out = [];',
+  '  const n = urls && !urls.isNil() ? urls.count : 0;',
+  '  for (let i = 0; i < n; i++) { const u = urls.objectAtIndex(i); if (u.isFileURL) out.push(ObjC.unwrap(u.path)); }',
+  '  return JSON.stringify(out);',
+  '})();',
+].join('\n');
+const MAC_FILES_MAX = 200;
+/**
+ * v3.121 the JXA script's output → the copied files' absolute paths, in order, without repeats (at most
+ * MAC_FILES_MAX). Anything that is not a JSON array of absolute paths gives [] (never a path made from text).
+ * @param {string} out
+ * @returns {string[]}
+ */
+function filesFromMacPasteboard(out) {
+  let list;
+  try { list = JSON.parse(String(out || '').trim()); } catch { return []; }
+  if (!Array.isArray(list)) return [];
+  /** @type {string[]} */
+  const files = [];
+  for (const p of list) {
+    if (typeof p !== 'string' || !p.startsWith('/') || p.includes('\0') || files.includes(p)) continue;
+    files.push(p);
+    if (files.length >= MAC_FILES_MAX) break;
+  }
+  return files;
+}
 function filesFromUriList(text, platform = 'linux') {
   const out = [];
   for (const raw of String(text || '').split(/\r?\n/)) {
@@ -257,7 +290,7 @@ function dotPng(size, rgb) {
 }
 
 module.exports = {
-  isMac, isWindows, defaultShell, filesFromUriList, linuxClipboardCommands, shortcuts, canSelfUpdate,
+  isMac, isWindows, defaultShell, filesFromUriList, MAC_CLIPBOARD_FILES_JXA, filesFromMacPasteboard, linuxClipboardCommands, shortcuts, canSelfUpdate,
   envGet, withPathDir, findOnPath, findClaude, findAgy, findCommandCode, findOpenCode, cmdQuote, windowsCommand, findGitBash,
   filesFromDropFiles, filesFromFileNameW, windowsClipboardKind, pickWindowsFiles, windowsImageType, POWERSHELL_FILES, filesFromLines, dotPng,
 };

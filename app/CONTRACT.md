@@ -60,7 +60,7 @@ agentOffice.tokens.brief(): Promise<TokenBrief[]>                       // v3.13
 agentOffice.tokens.onBrief(cb: (list: TokenBrief[]) => void): () => void  // v3.13, about once a minute
 agentOffice.office.themes(): Promise<Record<string, ThemeSpec>>
 agentOffice.clipboard.hasImage(): Promise<boolean>
-agentOffice.clipboard.read(): Promise<{ hasImage: boolean, text: string, files: string[] }>  // files: copied in Finder (osascript), on Linux a file manager (text/uri-list via Electron, wl-paste or xclip), on Windows Explorer (CF_HDROP / FileNameW via Electron, else PowerShell's Get-Clipboard)
+agentOffice.clipboard.read(): Promise<{ hasImage: boolean, text: string, files: string[], dirs: string[] }>  // dirs (v3.121): the files that are folders · files: copied in Finder (v3.121 every one: JXA reads the pasteboard's file URLs only, `platform.js` MAC_CLIPBOARD_FILES_JXA / filesFromMacPasteboard; the old AppleScript, first file only, if JXA fails), on Linux a file manager (text/uri-list via Electron, wl-paste or xclip), on Windows Explorer (CF_HDROP / FileNameW via Electron, else PowerShell's Get-Clipboard)
 agentOffice.platform: 'darwin' | 'linux' | 'win32'                     // process.platform; renderer/platform.js sets <html class="platform-…"> and picks the shortcuts
 agentOffice.pathForFile(file: File): string
 ```
@@ -3045,7 +3045,9 @@ type StudioProject = { id, name, dir, engine, account: string, active: boolean, 
   checks by source text).
 - **Composer (v3.121)**: one rounded box: the input, then a row with attach, mic (a round ghost icon button like attach),
   the model and permission pickers, the overflow menu (Terminal) and send. `src/composer.mjs` holds the pure logic.
-  - **Chips**: files dropped, pasted (Finder copy) or picked (multi-select; folders too on macOS) become chips in the
+  - **Chips**: files dropped, pasted (Finder copy: every copied file since v3.121, folders as folder chips from
+    `clipboard.read()`'s `dirs`, each registered with `chat:attach` like a picked one; a pasted image (screenshot) is
+    still attached as an image; Windows (CF_HDROP / PowerShell) and Linux (`text/uri-list`) already read every file) or picked (multi-select; folders too on macOS) become chips in the
     order given, the same path once (`addChips`); a folder is one chip (`dir`, sent as `@path`, never expanded). In a GUI
     chat dropped/picked images go with the message as images (click: a larger preview). While dragging the composer
     shows the count (`dropText`: "Drop 3 files"). A chip: click opens it in its default app, right click has Open, Show in

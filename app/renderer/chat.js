@@ -1002,7 +1002,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     if (source || document.activeElement !== input) return false;
     let clip = null;
     try { clip = await api.clipboard.read(); } catch (e) { console.error(e); return false; }
-    if (Array.isArray(clip?.files) && clip.files.length) { attachPaths(clip.files.filter((p) => typeof p === 'string' && p)); return true; }
+    if (Array.isArray(clip?.files) && clip.files.length) { attachPaths(clip.files.filter((p) => typeof p === 'string' && p), Array.isArray(clip.dirs) ? clip.dirs : []); return true; }
     // text with an image (spreadsheet cells, rich text): the normal paste keeps the text and adds the image
     if (!clip?.hasImage || (typeof clip.text === 'string' && clip.text.trim())) return false;
     try {
