@@ -319,7 +319,7 @@ test('v3.94 readSettings follows a symlink only when asked (an account\'s settin
 
 test('v3.94 the desk\'s rules are synced on every app-triggered start, whatever `start` says', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  const open = src.slice(src.indexOf('async function openDesk('), src.indexOf('function personalFolderName('));
+  const open = src.slice(src.indexOf('async function openDeskNow('), src.indexOf('function personalFolderName('));
   const sync = open.indexOf('if (!terms.has(id)) await syncDeskRules(p, have, m);');
   const start = open.indexOf('if (start && !terms.has(id)) {');
   assert.ok(sync > 0 && start > sync, 'an existing desk that is not running: synced before, and without, the start');
