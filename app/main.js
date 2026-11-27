@@ -1281,7 +1281,7 @@ function guiWaits() {
   return out;
 }
 
-function startPty(id, { resume = false, sessionId = null, imported = false, prompt = '', forcePrompt = false } = {}) {
+function startPty(id, { resume = false, sessionId = null, imported = false, prompt = '', forcePrompt = false, keepGui = false } = {}) {
   // every start of a personal desk (open, restore, wake, restart on another account): its folder is trusted in the account it runs on
   trustPersonalDesk(id);
   trustDeskWorktree(id);   // v3.94 the same for a desk's worktree the app made
@@ -1358,7 +1358,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(mailMcp ? ['--strict-mcp-config'] : []), ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
   // v3.108 GUI chat: claude on the SDK protocol (no terminal); a start prompt goes in as its first message instead of
   // the positional argument, always the last one claudeArgs adds (stream-json input takes no prompt argument)
-  const gui = guiTab(id, r);
+  // keepGui: a restart by a backup-account move keeps a running chat a chat (GS.keepsGui), whatever the Office setting
+  const guiNow = guiTab(id, r);
+  const gui = GS.keepsGui({ wasGui: keepGui, now: guiNow, anyMode: guiTab(id, r, { studio: true }) });
   const guiPrompt = gui && (resumeArgs.length > 0 || forcePrompt) && R.promptArg(prompt) ? prompt : '';
   const startedAt = Date.now();
   // after the rc files: the account's folder, the project's pinned subagent model (contract v3.14), its context
@@ -1445,7 +1447,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     return broadcast();
   }
   terms.set(id, t);
-  if (gui && STU.normalizeExperience(state.experience) === 'studio') studioStarted.add(id); else studioStarted.delete(id);   // v3.120 until its next start
+  // v3.120 until its next start; a chat kept by a move (guiNow false) stays one in the Office too (no idle move back)
+  if (gui && (!guiNow || STU.normalizeExperience(state.experience) === 'studio')) studioStarted.add(id); else studioStarted.delete(id);
   if (!project.hq && (P.skipPermissionsOf(project) || P.autoApproveOf(project))) promptless.add(id); else promptless.delete(id);
   if (P.skipPermissionsArgs(project).length > 0) skipStarted.add(id); else skipStarted.delete(id);
   // v3.121 a mail desk, a staff desk or a session with extra permission rules keeps its mode; skip permissions is shown
@@ -1491,7 +1494,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       if (guiProc) guiEnded.set(id, { code: exitCode, text: GS.endNote(guiProc.stderr()), at: Date.now() });
       // the session to resume was not found or could not be opened: start fresh without showing the exit to the user
       if (isResume && exitCode !== 0 && Date.now() - startedAt < RESUME_GRACE_MS) {
-        if (!imported) return startPty(id);
+        if (!imported) return startPty(id, { keepGui: gui });
         importResumeFailed(sessionId, configDir);
       }
       stoppedHere.set(id, Date.now());   // v3.99 ended in the tab itself: a paired machine's task does not start it again for 10 minutes
@@ -3569,6 +3572,7 @@ function moveProject(projectId, from, { carryOn = [], prompt = '' } = {}) {
     if (asleep.has(id)) continue;
     let sid = lastSid.get(id) || '';
     let busy = false;
+    const wasGui = Boolean(terms.get(id)?.gui);   // a GUI chat restarts as a chat (GS.keepsGui)
     if (terms.has(id)) {
       const live = liveSession(id, from.configDir);
       if (live?.sessionId) sid = live.sessionId;
@@ -3576,7 +3580,7 @@ function moveProject(projectId, from, { carryOn = [], prompt = '' } = {}) {
       killPty(id);
     }
     // v3.111: a tab stopped by the limit gets the limit carry-on prompt (re-run the sub-agents that failed on it)
-    plan.push({ id, opts: PD.restartAfterMove({ sessionId: validSid(sid) || null, continues: !r?.tab || Boolean(r.tab.worktree), busy }, prompt && carryOn.includes(id) ? prompt : R.UNFINISHED_PROMPT) });
+    plan.push({ id, opts: { ...PD.restartAfterMove({ sessionId: validSid(sid) || null, continues: !r?.tab || Boolean(r.tab.worktree), busy }, prompt && carryOn.includes(id) ? prompt : R.UNFINISHED_PROMPT), keepGui: wasGui } });
   }
   const to = A.accountOf(state, p);
   try {

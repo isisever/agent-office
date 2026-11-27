@@ -402,3 +402,35 @@ test('v3.120 GUI chat: a start with --permission-mode auto is the session mode t
   const plain = spawnGui(spawn, 'sh', ['-c', 'exec claude'], { cwd: '/', env: {} }, { killGroup: () => {} });
   assert.deepEqual(plain.settings(), { model: '', mode: '' });
 });
+
+test('GUI chat: a usage-limit event is a limit hit as a terminal line would be (v3.17)', () => {
+  const FB = require('../src/fallback.js');
+  const hitOf = (msg) => FB.scanPty({ tail: '' }, GS.errorText(msg)).hit;
+  // the failed turn's result and the API error message claude writes on the SDK protocol
+  assert.ok(hitOf({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your session limit · resets 3pm (Europe/Istanbul)" }));
+  assert.ok(hitOf({ type: 'result', is_error: true, result: 'Claude AI usage limit reached|1767225600' }));
+  assert.ok(hitOf({ type: 'assistant', error: 'rate_limit', message: { isApiErrorMessage: true, content: [{ type: 'text', text: "You're out of extra usage · resets Oct 20, 9am" }] } }));
+  // not a limit: fast mode's cooldown, a turn that did not fail, the model saying the words in an answer
+  assert.equal(hitOf({ type: 'result', is_error: true, result: "You've hit your fast limit · resets in 2m" }), null);
+  assert.equal(hitOf({ type: 'result', is_error: false, result: "You've hit your session limit" }), null);
+  assert.equal(hitOf({ type: 'assistant', message: { content: [{ type: 'text', text: "You've hit your session limit" }] } }), null);
+  // the compaction failure (v3.77) is told apart as on a terminal
+  const c = FB.scanPty({ tail: '' }, GS.errorText({ type: 'result', is_error: true, result: "Prompt is too long · automatic compaction failed: You've reached your weekly limit" }));
+  assert.equal(c.compaction, true);
+});
+
+test('GUI chat: a restart by a backup-account move keeps a chat a chat (keepsGui)', () => {
+  // the setting says chat: a chat either way
+  assert.equal(GS.keepsGui({ wasGui: true, now: true, anyMode: true }), true);
+  assert.equal(GS.keepsGui({ wasGui: false, now: true, anyMode: true }), true);
+  // the Office with the chat view off, a chat that ran in Studio: it stays a chat
+  assert.equal(GS.keepsGui({ wasGui: true, now: false, anyMode: true }), true);
+  // a terminal tab follows the setting; a tab that cannot be a chat (switched to its terminal, HQ, Windows) never is
+  assert.equal(GS.keepsGui({ wasGui: false, now: false, anyMode: true }), false);
+  assert.equal(GS.keepsGui({ wasGui: true, now: false, anyMode: false }), false);
+  // the restart resumes the conversation, with the carry-on prompt only for the tab the limit stopped
+  const PD = require('../src/project-data.js');
+  const opts = PD.restartAfterMove({ sessionId: '11111111-2222-3333-4444-555555555555', continues: false, busy: true }, 'carry on');
+  assert.equal(opts.prompt, 'carry on');
+  assert.ok(opts.sessionId || opts.resume);
+});

@@ -30,6 +30,16 @@ function guiEligible({ chatView, studio = false, terminal, engine, hq, shell, pl
 }
 
 /**
+ * Does a tab the app restarts on its own (a backup-account move, v3.17) start as a GUI chat? It keeps the mode it ran
+ * in: a running chat stays a chat whenever it could run as one at all (anyMode: guiEligible with Studio), also in the
+ * Office with the chat view off (a chat that ran in Studio). Otherwise the setting decides, as on any start (now).
+ * @param {{ wasGui: boolean, now: boolean, anyMode: boolean }} o
+ */
+function keepsGui({ wasGui, now, anyMode }) {
+  return Boolean(now) || (Boolean(wasGui) && Boolean(anyMode));
+}
+
+/**
  * v3.110 the tabs the person switched to the terminal, as kept in state.json: strings only, each once, only tabs that
  * still exist (a removed tab or project drops out), at most 500.
  * @param {unknown} raw
@@ -252,4 +262,4 @@ function renameCommand(name) {
   return n ? `/rename ${n}` : '';
 }
 
-module.exports = { PROBE_FLAGS, renameCommand, settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+module.exports = { keepsGui, PROBE_FLAGS, renameCommand, settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
