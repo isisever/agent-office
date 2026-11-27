@@ -123,7 +123,7 @@ test('v3.120 mode picker: the account\'s modes, Auto selected when the session r
   assert.equal(st.managerNote, false);
 });
 
-test('v3.120 managerOffNote: auto mode while the project's Auto-approve is off, never a lock or a terminal tab', () => {
+test('v3.120 managerOffNote: auto mode while the project Auto-approve is off, never a lock or a terminal tab', () => {
   const gui = { live: { busy: false }, asks: [], modes: ['auto', 'default', 'acceptEdits', 'plan'], autoApprove: false };
   assert.equal(managerOffNote(gui, { mode: 'auto' }), true);
   assert.equal(managerOffNote({ ...gui, autoApprove: true }, { mode: 'auto' }), false, 'Auto-approve on: the manager answers');
