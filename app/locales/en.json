@@ -110,6 +110,35 @@
         "error": "Claude refused it",
         "other": "something went wrong"
       }
+    },
+    "set": {
+      "back": "Back to the chat",
+      "search": "Search settings",
+      "officeOnly": "Office only",
+      "manageAccounts": "Manage accounts",
+      "noProjects": "No projects yet.",
+      "allProjectSettings": "All project settings…",
+      "openTeam": "Open the team",
+      "teamOff": "Turn team mode on first.",
+      "open": "Open",
+      "updateReady": "Version {version} is downloaded.",
+      "restart": "Restart to update",
+      "autoUpdate": "Updates download on their own; a restart button shows when one is ready.",
+      "voiceOff": "Speech recognition is not included in this build.",
+      "officeNote": "These change the Office only; Studio keeps its own look.",
+      "section": {
+        "general": "General",
+        "sessions": "Sessions",
+        "accounts": "Accounts",
+        "projects": "Projects",
+        "team": "Team",
+        "voice": "Voice",
+        "mcp": "MCP & skills",
+        "devices": "Devices & phone",
+        "hq": "HQ & routines",
+        "office": "Office",
+        "about": "About & updates"
+      }
     }
   },
   "app": {
@@ -150,7 +179,9 @@
     "shellTab": "Terminal only · {dir}",
     "worktreeTab": "Git worktree, branch {branch}\n{dir}",
     "stopped": " (Claude stopped)",
-    "asleep": " (asleep: starts when opened)"
+    "asleep": " (asleep: starts when opened)",
+    "keepAwake": "Awake",
+    "keepAwakeTitle": "{label}: {state}"
   },
   "sidebar": {
     "experience": "Experience",
@@ -1832,6 +1863,54 @@
       "alt-space": "Alt+Space",
       "ctrl-shift-space": "Ctrl+Shift+Space",
       "off": "Off"
+    }
+  },
+  "settings": {
+    "label": {
+      "studioTheme": "Studio theme",
+      "accountList": "Accounts",
+      "projectSettings": "Project",
+      "teamOpen": "Team members",
+      "mcpServers": "MCP servers",
+      "skills": "Skills",
+      "devices": "Paired devices and phones",
+      "hq": "HQ",
+      "routines": "Reports and routines",
+      "version": "Version"
+    },
+    "desc": {
+      "lang": "The language of the whole app.",
+      "studioTheme": "Light or dark for Studio, or follow the system.",
+      "experience": "Start in the Office or in Studio.",
+      "resume": "Reopen the last sessions when the app starts.",
+      "resumeWork": "Continue work that was interrupted when the app closed.",
+      "sleep": "Put idle sessions to sleep after a while to save memory.",
+      "keepAwake": "Stop the computer from sleeping while agents work, or always.",
+      "chatView": "Show sessions as a chat instead of a terminal.",
+      "manager": "A manager session plans and hands work to agents.",
+      "accountList": "Your Claude accounts and their sign-in state.",
+      "fallback": "Move to a backup account when one hits its usage limit.",
+      "projectSettings": "Account, Auto-approve, permissions and context cap per project.",
+      "team": "Staff with roles and desks in your projects.",
+      "teamOpen": "See the members, their desks and add new ones.",
+      "voiceEnabled": "Talk to the composer instead of typing.",
+      "voiceLang": "The language you speak in.",
+      "voiceModel": "The on-device speech model.",
+      "voiceSend": "Send the message as soon as you stop speaking.",
+      "voiceKey": "The key you hold to talk.",
+      "shareMcp": "Share MCP servers between your accounts.",
+      "reloadMcp": "Restart sessions when their MCP servers change.",
+      "mcpServers": "Add, edit or remove MCP servers.",
+      "skills": "Bundled skill packs for every session.",
+      "devices": "Pair other computers and phones with this office.",
+      "hq": "The overview of every project.",
+      "routines": "Reports and scheduled routines on HQ's board.",
+      "office3d": "Draw the office in 3D.",
+      "theme": "The office theme, per project or automatic.",
+      "look": "The Office's look.",
+      "mode": "Light or dark for the Office.",
+      "bot": "The body colour of the office bots.",
+      "version": "The running version of Agent Office."
     }
   }
 }

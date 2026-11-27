@@ -110,6 +110,35 @@
         "error": "Claude bunu reddetti",
         "other": "bir şeyler ters gitti"
       }
+    },
+    "set": {
+      "back": "Sohbete dön",
+      "search": "Ayarlarda ara",
+      "officeOnly": "Yalnız Ofis",
+      "manageAccounts": "Hesapları yönet",
+      "noProjects": "Henüz proje yok.",
+      "allProjectSettings": "Tüm proje ayarları…",
+      "openTeam": "Ekibi aç",
+      "teamOff": "Önce ekip modunu açın.",
+      "open": "Aç",
+      "updateReady": "{version} sürümü indirildi.",
+      "restart": "Güncellemek için yeniden başlat",
+      "autoUpdate": "Güncellemeler kendiliğinden iner; hazır olunca yeniden başlat düğmesi çıkar.",
+      "voiceOff": "Ses tanıma bu sürümde yok.",
+      "officeNote": "Bunlar yalnız Ofisi değiştirir; Studio kendi görünümünü korur.",
+      "section": {
+        "general": "Genel",
+        "sessions": "Oturumlar",
+        "accounts": "Hesaplar",
+        "projects": "Projeler",
+        "team": "Ekip",
+        "voice": "Ses",
+        "mcp": "MCP ve beceriler",
+        "devices": "Cihazlar ve telefon",
+        "hq": "Merkez ve rutinler",
+        "office": "Ofis",
+        "about": "Hakkında ve güncellemeler"
+      }
     }
   },
   "app": {
@@ -150,7 +179,9 @@
     "shellTab": "Sadece terminal · {dir}",
     "worktreeTab": "Git worktree, dal {branch}\n{dir}",
     "stopped": " (Claude kapalı)",
-    "asleep": " (uykuda: açınca başlar)"
+    "asleep": " (uykuda: açınca başlar)",
+    "keepAwake": "Uyanık",
+    "keepAwakeTitle": "{label}: {state}"
   },
   "sidebar": {
     "experience": "Deneyim",
@@ -1804,6 +1835,54 @@
       "alt-space": "Alt+Space",
       "ctrl-shift-space": "Ctrl+Shift+Space",
       "off": "Kapalı"
+    }
+  },
+  "settings": {
+    "label": {
+      "studioTheme": "Studio teması",
+      "accountList": "Hesaplar",
+      "projectSettings": "Proje",
+      "teamOpen": "Ekip üyeleri",
+      "mcpServers": "MCP sunucuları",
+      "skills": "Beceriler",
+      "devices": "Eşli cihazlar ve telefonlar",
+      "hq": "Merkez",
+      "routines": "Raporlar ve rutinler",
+      "version": "Sürüm"
+    },
+    "desc": {
+      "lang": "Tüm uygulamanın dili.",
+      "studioTheme": "Studio için açık ya da koyu, ya da sisteme uy.",
+      "experience": "Ofiste ya da Studio'da başla.",
+      "resume": "Uygulama açılınca son oturumları yeniden aç.",
+      "resumeWork": "Uygulama kapanınca yarım kalan işi sürdür.",
+      "sleep": "Boştaki oturumları bir süre sonra uyut, bellek kazan.",
+      "keepAwake": "Ajanlar çalışırken ya da her zaman bilgisayarın uyumasını engelle.",
+      "chatView": "Oturumları terminal yerine sohbet olarak göster.",
+      "manager": "Bir yönetici oturumu işi planlar ve ajanlara dağıtır.",
+      "accountList": "Claude hesaplarınız ve oturum durumları.",
+      "fallback": "Bir hesap kullanım sınırına gelince yedek hesaba geç.",
+      "projectSettings": "Proje başına hesap, Otomatik onay, izinler ve bağlam sınırı.",
+      "team": "Projelerinizde rolleri ve masaları olan ekip.",
+      "teamOpen": "Üyeleri ve masalarını gör, yenilerini ekle.",
+      "voiceEnabled": "Yazmak yerine konuşarak yaz.",
+      "voiceLang": "Konuştuğunuz dil.",
+      "voiceModel": "Cihazdaki konuşma modeli.",
+      "voiceSend": "Konuşmayı bitirince mesajı hemen gönder.",
+      "voiceKey": "Konuşmak için basılı tuttuğunuz tuş.",
+      "shareMcp": "MCP sunucularını hesaplarınız arasında paylaş.",
+      "reloadMcp": "MCP sunucuları değişince oturumları yeniden başlat.",
+      "mcpServers": "MCP sunucusu ekle, düzenle ya da kaldır.",
+      "skills": "Her oturum için hazır beceri paketleri.",
+      "devices": "Başka bilgisayarları ve telefonları bu ofisle eşle.",
+      "hq": "Tüm projelerin özeti.",
+      "routines": "Merkez panosunda raporlar ve zamanlanmış rutinler.",
+      "office3d": "Ofisi 3B çiz.",
+      "theme": "Ofis teması, proje başına ya da otomatik.",
+      "look": "Ofisin görünümü.",
+      "mode": "Ofis için açık ya da koyu.",
+      "bot": "Ofis robotlarının gövde rengi.",
+      "version": "Çalışan Agent Office sürümü."
     }
   }
 }

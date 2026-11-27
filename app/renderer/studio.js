@@ -7,6 +7,7 @@
 
 import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
 import { icon } from './studio-icons.js';
+import { mountSettingsPage } from './studio-settings.js';
 import { hasText } from './i18n.js';
 import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText } from '../src/studio-ux.mjs';
 
@@ -34,7 +35,8 @@ function el(tag, props = {}, ...kids) {
  *   hooks: {
  *     selectSession: (projectId: string, n: number) => void, newSession: (projectId: string) => void,
  *     selectProject: (projectId: string) => void, selectHq: () => void, openBoard: () => void,
- *     openSettings: () => void, toggle: () => void, activePty: () => string | null, hasSession: () => boolean,
+ *     openOfficeSettings: () => void, sidebar: () => any, showPanel: (selector: string) => boolean,
+ *     appInfo: () => { version: string | null, ready: string | null }, installUpdate: () => void, toggle: () => void, activePty: () => string | null, hasSession: () => boolean,
  *     startSession: (projectId: string, plan: { tabMode: 'same' | 'worktree', settings: [string, string][], reuseN?: number }, text: string) => Promise<{ ok: boolean, n: number, failed?: { step: string, why: string, detail: string } }>,
  *     projectSettings: (projectId: string) => void, showAccounts: () => void, isMac: boolean,
  *     commands: (projectId: string) => StudioCommand[],
@@ -100,6 +102,19 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   document.getElementById('titlebar')?.append(header);
   document.getElementById('body')?.prepend(bar);
   document.getElementById('terminal')?.append(start);
+  // v3.122 Studio's Settings page (renderer/studio-settings.js), in the main region over the chat
+  const settingsPage = mountSettingsPage({
+    el, t, host: /** @type {HTMLElement} */ (document.getElementById('terminal') || document.body),
+    studioTheme: () => studioTheme(), setStudioTheme: (v) => setStudioTheme(v),
+    hooks: { sidebar: hooks.sidebar, showPanel: hooks.showPanel, selectHq: hooks.selectHq, openBoard: hooks.openBoard, appInfo: hooks.appInfo, installUpdate: hooks.installUpdate },
+  });
+  function openSettings(/** @type {string} */ section = '') {
+    if (!on) { hooks.openOfficeSettings(); return; }
+    menu.hidden = true;
+    closePalette();
+    hidePanel();
+    settingsPage.open(section);
+  }
   /** @type {any} */
   let shown = null;   // the active session's row (header)
 
@@ -264,7 +279,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       el('div', { class: 'st-user', title: `${t('studio.account')}: ${label}` },
         el('span', { class: 'st-title' }, (sameAsActive && (u.name || u.email)) || label),
         el('span', { class: 'st-email' }, [sameAsActive && u.name ? u.email : '', label].filter(Boolean).join(' · '))),
-      icon('chevron', 12)));
+      icon('chevron', 12)),
+      el('button', { class: 'st-gear', type: 'button', title: `${t('studio.settings')} (${hooks.isMac ? '⌘,' : 'Ctrl+,'})`, 'aria-label': t('studio.settings'), onclick: () => openSettings() }, icon('gear', 16)));
     const fn = firstName(sameAsActive ? u.name : '');
     greeting.textContent = fn ? t('studio.greetingName', { name: fn }) : t('studio.greeting');
     drawStart(cur);
@@ -359,13 +375,14 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const studioTheme = () => { try { const v = localStorage.getItem(THEME_KEY); return v === 'light' || v === 'dark' ? v : 'system'; } catch { return 'system'; } };
   function applyTheme() { const v = studioTheme(); if (v === 'system') document.body.removeAttribute('data-studio-theme'); else document.body.setAttribute('data-studio-theme', v); }
   applyTheme();
+  function setStudioTheme(/** @type {string} */ v) { try { if (v === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, v); } catch { /* storage off */ } applyTheme(); }
   function toggleMenu(/** @type {boolean} */ force = menu.hidden) {
     menu.hidden = !force;
     if (menu.hidden) return;
     const item = (/** @type {string} */ ic, /** @type {string} */ label, /** @type {string} */ key, /** @type {() => void} */ run, /** @type {boolean} */ checked = false) =>
       el('button', { class: `st-menu-item${checked ? ' checked' : ''}`, role: 'menuitem', type: 'button', onclick: () => { menu.hidden = true; run(); } }, icon(ic, 14), el('span', { class: 'st-title' }, label), key ? el('span', { class: 'st-key' }, key) : null);
     const theme = studioTheme();
-    const setTheme = (/** @type {string} */ v) => () => { try { if (v === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, v); } catch { /* storage off */ } applyTheme(); };
+    const setTheme = (/** @type {string} */ v) => () => setStudioTheme(v);
     menu.replaceChildren(
       el('div', { class: 'st-menu-head' }, t('studio.theme')),
       item('monitor', t('studio.themeSystem'), '', setTheme('system'), theme === 'system'),
@@ -373,7 +390,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       item('moon', t('studio.themeDark'), '', setTheme('dark'), theme === 'dark'),
       el('div', { class: 'st-menu-sep' }),
       item('user', t('studio.accounts'), '', () => hooks.showAccounts()),
-      item('gear', t('studio.settings'), '', () => hooks.openSettings()),
+      item('gear', t('studio.settings'), hooks.isMac ? '⌘,' : 'Ctrl+,', () => openSettings()),
       item('office', t('studio.toOffice'), hooks.isMac ? '⌘⇧E' : 'Ctrl+Shift+E', () => hooks.toggle()));
   }
   document.addEventListener('mousedown', (e) => { if (!menu.hidden && e.target instanceof Node && !menu.contains(e.target) && !account.contains(e.target)) menu.hidden = true; });
@@ -503,7 +520,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     setOn(/** @type {boolean} */ value) {
       on = Boolean(value);
       document.body.classList.toggle('studio', on);
-      if (!on) { document.body.classList.remove('studio-board'); closePalette(); hidePanel(); }
+      if (!on) { document.body.classList.remove('studio-board'); closePalette(); hidePanel(); settingsPage.close(); }
       bar.hidden = !on;
       header.hidden = !on;
       menu.hidden = true;
@@ -522,6 +539,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     /** ⌘L: the composer (the start screen's when it is shown) */
     focusStart() { if (!start.hidden) { startText.focus(); return true; } return false; },
     openPalette,
+    /** v3.122 Studio's Settings page, at a section ('general', 'voice', …); the Office popup outside Studio. */
+    openSettings,
     focusSearch() { search.focus(); search.select(); },
     /** An Office sidebar panel on its own over Studio ('#sb-panel-team', '.sb-accounts', …); false when it is not there. */
     showPanel,
