@@ -198,7 +198,7 @@
     "worktreeTab": "Git worktree, dal {branch}\n{dir}",
     "stopped": " (Claude kapalı)",
     "asleep": " (uykuda: açınca başlar)",
-    "keepAwake": "Uyanık",
+    "keepAwake": "Uyanık kal",
     "keepAwakeTitle": "{label}: {state}"
   },
   "sidebar": {
