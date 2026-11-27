@@ -2944,9 +2944,9 @@ panel, the tab strip) stays the default; Studio puts a session sidebar and the a
 
 ```ts
 agentOffice.prefs.get()  // + experience: 'office' | 'studio'   (state.json `experience`; written once set, 'office' when unset or unknown)
-agentOffice.prefs.set({ experience })   // anything but the two values is ignored; a change never restarts or moves a running tab
+agentOffice.prefs.set({ experience })   // anything but the two values is ignored; entering Studio moves idle tabs to the GUI chat, leaving moves nothing back
 agentOffice.studio.sessions()  // 'studio:sessions' → { experience, user: { name, email, account }, projects: StudioProject[] } | null
-ProjectStatus += { isGui: boolean; tabs: { …; isGui: boolean }[] }   // its claude runs as a GUI chat (v3.108) right now
+ProjectStatus += { isGui: boolean; tabs: { …; isGui: boolean }[] }   // runs as a GUI chat (v3.108); stopped: would start as one
 agentOffice.studio.open(projectId, ref)   // 'studio:open', ref { n } | { sessionId } → { ok, projectId, n } | { ok: false, error: 'invalid' | 'gone' }
 type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permission' | 'done' | null,
   running: { ptyId, n, title, isRunning: boolean, isAsleep: boolean }[],   // the main tab (n 1) first, then tabs by number; no shell tabs
@@ -2963,14 +2963,19 @@ type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permi
   `.claude.json`, re-read only when it changes), none when there is no name. Studio always uses the Claude look; light
   or dark follows the system (the person's look and mode stay saved for the Office). Switching back only removes the
   class: panes, tabs and sessions are never closed by a switch.
-- **Chat**: `guiEligible` takes `studio`, and it decides only how a tab **starts**: a Claude Code tab started while in
-  Studio runs as a GUI chat as with the chat view on (not HQ, a shell, another engine, a tab switched to its terminal).
-  Switching the experience never restarts or moves a running process: `prefs:set` only saves it (`STU.prefsPatch`), and
-  the idle move of the chat view (v3.108, `guiSwitchIdle`) leaves the experience out (`STU.idleMoveTarget`: a tab Studio
-  started as a chat keeps that mode until its next start; the others follow the chat view alone). The renderer follows
-  what main actually started (status `isGui`): Studio shows the chat of a tab running as a GUI chat (or one the person
-  switched to its terminal from the chat, with the Chat button to go back), and the terminal of a tab running in a
-  terminal (started in the Office, or on Windows, where GUI chat stays off) in the main region.
+- **Chat**: in Studio every Claude Code session is a GUI chat (v3.108), except on Windows, where GUI chat stays off and
+  Studio shows terminals. A terminal in Studio is a fallback (a tab the person switched to its terminal, a command's
+  own screen), never the default. HQ keeps its terminal process and shows the chat view of its transcript (v3.80).
+  - Starting: `guiEligible` takes `studio`, so every tab started in Studio (main tab, `tabs:add`, `studio:open`) starts
+    as a GUI chat.
+  - Entering Studio (`STU.prefsPatch`: `switchIdle`): idle Claude Code tabs move to the GUI chat at once, continuing
+    their session (`--resume`, `guiSwitchIdle`); a busy tab (turn, open approval, draft, agents, recent input, open
+    task, handoff lock) is never restarted: the 5 s tick moves it once it is idle (`STU.idleMoveTarget`).
+  - Leaving Studio (`leftStudio`) moves nothing back: a tab that ran as a chat in Studio keeps it in the Office until
+    its next start, so there is no restart ping-pong; other Office tabs follow the chat view as before (v3.108).
+  - The renderer follows what main runs (status `isGui`; a stopped tab: the mode it would start in, like `guiInfo`):
+    a GUI tab shows its chat in either experience (it has no terminal), and in Studio a tab still in a terminal shows
+    it with the Chat button to move it (`src/chat-view.mjs` `chatShownFor`, `chatButtonFor`).
 - **Sidebar**, top to bottom: + New session (⌘N: a new tab in the project's folder, `tabs:add` 'same'), search (⌘K:
   filters the lists by title and project), pinned HQ (the HQ session), Reports and Routines (HQ's board in the main
   region), a project picker with its Running and Recent sessions, paired machines (read-only, from `link:get`), and the
@@ -2996,5 +3001,6 @@ type StudioProject = { id, name, dir, engine, active: boolean, attention: 'permi
   Studio adds no remote sessions.
 - **Tests**: `app/test/studio.test.cjs` (experience values and its persistence wiring, the recent list, the 24 h rule,
   session listing and order, the account name, the keys, `guiEligible` with `studio`, `closable`, `sweepStep`,
-  `prefsPatch` and `idleMoveTarget` (an experience change restarts or moves nothing), the IPC's sender and argument
+  `prefsPatch` and `idleMoveTarget` (entering Studio moves idle tabs once, leaving moves nothing back, busy tabs are
+  never restarted), `chatShownFor` and `chatButtonFor`, the IPC's sender and argument
   checks by source text).

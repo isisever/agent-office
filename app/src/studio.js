@@ -121,31 +121,42 @@ function closable(r, { sid = '', handoffLocked = false, guiTaskOpen = false } = 
 }
 
 /**
- * What prefs:set does for the chat view and the experience. A chat view change moves idle tabs (v3.108); an experience
- * change only saves the setting and restarts the 24 h clocks: it never restarts or moves a running tab (Studio decides
- * only how a new tab starts).
+ * What prefs:set does for the chat view and the experience. A chat view change moves idle tabs (v3.108). Entering
+ * Studio moves idle Claude Code tabs to the GUI chat at once (busy ones when they are idle, by the tick); leaving it
+ * moves nothing back (leftStudio: the GUI tabs keep their chat in the Office until their next start). Either way the
+ * 24 h clocks start again.
  * @param {{ chatView?: boolean, experience?: string }} prev the prefs before
  * @param {any} p the patch from the renderer
- * @returns {{ patch: { chatView?: boolean, experience?: string }, switchIdle: boolean, clearSince: boolean }}
+ * @returns {{ patch: { chatView?: boolean, experience?: string }, switchIdle: boolean, clearSince: boolean, leftStudio: boolean }}
  */
 function prefsPatch(prev, p) {
-  const out = { patch: {}, switchIdle: false, clearSince: false };
+  /** @type {{ patch: { chatView?: boolean, experience?: string }, switchIdle: boolean, clearSince: boolean, leftStudio: boolean }} */
+  const out = { patch: {}, switchIdle: false, clearSince: false, leftStudio: false };
   if (!p || typeof p !== 'object') return out;
   if (typeof p.chatView === 'boolean' && p.chatView !== prev.chatView) { out.patch.chatView = p.chatView; out.switchIdle = true; }
-  if (EXPERIENCES.includes(p.experience) && p.experience !== normalizeExperience(prev.experience)) { out.patch.experience = p.experience; out.clearSince = true; }
+  if (EXPERIENCES.includes(p.experience) && p.experience !== normalizeExperience(prev.experience)) {
+    out.patch.experience = p.experience;
+    out.clearSince = true;
+    if (p.experience === 'studio') out.switchIdle = true; else out.leftStudio = true;
+  }
   return out;
 }
 
 /**
- * The mode an idle running Claude Code tab moves to when the chat view changes (v3.108), or null to keep it. The
- * experience is not an input: a tab whose mode Studio chose keeps it until its next start, and the others follow the
- * chat view alone.
- * @param {{ gui: boolean, studioStarted: boolean, chatTarget: boolean }} o chatTarget: guiEligible without Studio
+ * The mode an idle running Claude Code tab moves to (v3.108 guiSwitchIdle), or null to keep it. In Studio the target is
+ * the Studio start mode (a GUI chat, except a tab switched to its terminal, HQ, Windows). In the Office a tab that ran
+ * as a chat in Studio keeps it until its next start (no move back, no restart ping-pong); the others follow the chat
+ * view alone. Only idle tabs are asked (main checks that first): a busy tab is never restarted.
+ * @param {{ gui: boolean, studio: boolean, studioStarted: boolean, chatTarget: boolean, studioTarget: boolean }} o
+ * chatTarget: guiEligible without Studio; studioTarget: guiEligible with Studio
  * @returns {boolean | null}
  */
-function idleMoveTarget({ gui, studioStarted, chatTarget }) {
-  if (studioStarted || Boolean(gui) === Boolean(chatTarget)) return null;
-  return Boolean(chatTarget);
+function idleMoveTarget({ gui, studio, studioStarted, chatTarget, studioTarget }) {
+  let target;
+  if (studio) target = Boolean(studioTarget);
+  else if (studioStarted && gui) return null;
+  else target = Boolean(chatTarget);
+  return Boolean(gui) === target ? null : target;
 }
 
 const baseName = (d) => String(d || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';

@@ -1431,7 +1431,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     return broadcast();
   }
   terms.set(id, t);
-  if (gui && !guiTab(id, r, { studio: false })) studioStarted.add(id); else studioStarted.delete(id);   // v3.120 kept until its next start
+  if (gui && STU.normalizeExperience(state.experience) === 'studio') studioStarted.add(id); else studioStarted.delete(id);   // v3.120 until its next start
   if (!project.hq && (P.skipPermissionsOf(project) || P.autoApproveOf(project))) promptless.add(id); else promptless.delete(id);
   if (P.skipPermissionsArgs(project).length > 0) skipStarted.add(id); else skipStarted.delete(id);
   // v3.116 inputAt: when something was last typed into the tab (a start prompt counts), for guiRecent
@@ -4802,15 +4802,18 @@ function restartIdle(p) {
   return restarted;
 }
 /** v3.108 the chat view setting changed: idle Claude Code tabs continue their session in the other mode at once; busy
- * ones (and drafts) keep their mode until their next start. v3.120 the experience is not part of it: a tab Studio
- * started as a chat keeps that mode, and the others follow the chat view alone (STU.idleMoveTarget). */
+ * ones (and drafts) keep their mode until their next start. v3.120 in Studio (the tick runs this too) idle tabs move to
+ * the GUI chat, busy ones once idle; back in the Office a tab that ran as a chat in Studio keeps it (STU.idleMoveTarget). */
 function guiSwitchIdle() {
+  const studio = STU.normalizeExperience(state.experience) === 'studio';
   for (const p of state.projects) {
     if (p.hq || P.engineOf(p) !== 'claude') continue;
     for (const pid of P.ptyIdsOf(p)) {
       const t = terms.get(pid);
       const r = P.resolvePty(state, pid);
-      if (!t || !r || STU.idleMoveTarget({ gui: Boolean(t.gui), studioStarted: studioStarted.has(pid), chatTarget: guiTab(pid, r, { studio: false }) }) === null || handoffLocked(pid) || guiHolds(pid)) continue;
+      if (!t || !r) continue;
+      if (studio && t.gui) studioStarted.add(pid);   // v3.120 ran as a chat in Studio: the Office keeps it a chat
+      if (STU.idleMoveTarget({ gui: Boolean(t.gui), studio, studioStarted: studioStarted.has(pid), chatTarget: guiTab(pid, r, { studio: false }), studioTarget: guiTab(pid, r, { studio: true }) }) === null || handoffLocked(pid) || guiHolds(pid)) continue;
       const sid = idleSession(pid);
       if (!sid || (t.gui && (t.asks().length > 0 || t.live().busy))) continue;
       startPty(pid, { sessionId: sid, resume: true });
@@ -6125,11 +6128,12 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp });
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
-  // v3.80 chat view (the renderer switches); v3.108 idle tabs move to / from the GUI chat. v3.120 the experience (Office /
-  // Studio) only decides how new tabs start: a change never restarts or moves a running tab, it restarts the 24 h clocks
+  // v3.80 chat view (the renderer switches); v3.108 idle tabs move to / from the GUI chat. v3.120 entering Studio moves
+  // idle Claude Code tabs to the GUI chat (busy ones when idle); leaving moves nothing back; both restart the 24 h clocks
   const vx = STU.prefsPatch(prefs(), p);
   if (Object.keys(vx.patch).length) commit({ ...state, ...vx.patch });
   if (vx.clearSince) studioSince.clear();
+  if (vx.leftStudio) for (const [pid, t] of terms) if (t.gui) studioStarted.add(pid);   // leaving Studio moves nothing back
   if (vx.switchIdle) guiSwitchIdle();
   if (p && typeof p.office3d === 'boolean' && p.office3d !== prefs().office3d) commit({ ...state, office3d: p.office3d });   // v3.81 3D office (the renderer switches)
   if (p && typeof p.teamMode === 'boolean' && p.teamMode !== prefs().teamMode) commit({ ...state, teamMode: p.teamMode });   // v3.83 the TEAM panel

@@ -16,7 +16,7 @@ test('experience is persisted in state.json and read back (main.js wiring)', () 
   assert.match(src, /raw\.experience === 'studio' \? \{ experience: 'studio' \} : \{\}/, 'loaded only when studio');
   assert.match(src, /const vx = STU\.prefsPatch\(prefs\(\), p\);/, 'prefs:set goes through prefsPatch');
   assert.match(src, /if \(vx\.clearSince\) studioSince\.clear\(\);/, 'an experience change restarts the 24 h clocks');
-  assert.doesNotMatch(src, /experience: p\.experience \}\); guiSwitchIdle\(\)/, 'an experience change moves no tab');
+  assert.match(src, /if \(vx\.switchIdle\) guiSwitchIdle\(\);/, 'entering Studio moves idle tabs');
 });
 
 test('recent list: valid, unique, newest first, capped', () => {
@@ -154,22 +154,32 @@ test('sweepStep: only time asleep in Studio counts', () => {
   assert.deepEqual(S.sweepStep(since, ['p:2', 'p:3'], 64 * H + 1, 'studio', (id) => id === 'p:2'), ['p:2']);
 });
 
-test('prefsPatch and idleMoveTarget: an experience change restarts or moves no running tab', () => {
-  const v = S.prefsPatch({ chatView: false, experience: 'office' }, { experience: 'studio' });
-  assert.deepEqual(v, { patch: { experience: 'studio' }, switchIdle: false, clearSince: true });
-  assert.deepEqual(S.prefsPatch({ chatView: false, experience: 'studio' }, { experience: 'office' }).switchIdle, false);
-  assert.deepEqual(S.prefsPatch({ experience: 'studio' }, { experience: 'studio' }), { patch: {}, switchIdle: false, clearSince: false });
-  assert.deepEqual(S.prefsPatch({ experience: 'office' }, { experience: 'nope' }).patch, {});
-  assert.deepEqual(S.prefsPatch({ chatView: false }, { chatView: true }), { patch: { chatView: true }, switchIdle: true, clearSince: false });
-  assert.deepEqual(S.prefsPatch({}, null), { patch: {}, switchIdle: false, clearSince: false });
-  // the idle move takes no experience: a tab Studio started as a chat stays one; others follow the chat view alone
-  assert.equal(S.idleMoveTarget({ gui: true, studioStarted: true, chatTarget: false }), null);
-  assert.equal(S.idleMoveTarget({ gui: false, studioStarted: false, chatTarget: false }), null, 'an Office terminal stays in Studio');
-  assert.equal(S.idleMoveTarget({ gui: true, studioStarted: false, chatTarget: true }), null);
-  assert.equal(S.idleMoveTarget({ gui: false, studioStarted: false, chatTarget: true }), true, 'the chat view turned on');
-  assert.equal(S.idleMoveTarget({ gui: true, studioStarted: false, chatTarget: false }), false, 'the chat view turned off');
+test('prefsPatch and idleMoveTarget: entering Studio moves idle tabs once, leaving moves nothing back', () => {
+  const none = { patch: {}, switchIdle: false, clearSince: false, leftStudio: false };
+  assert.deepEqual(S.prefsPatch({ chatView: false, experience: 'office' }, { experience: 'studio' }),
+    { patch: { experience: 'studio' }, switchIdle: true, clearSince: true, leftStudio: false }, 'entering: idle tabs move');
+  assert.deepEqual(S.prefsPatch({ chatView: false, experience: 'studio' }, { experience: 'office' }),
+    { patch: { experience: 'office' }, switchIdle: false, clearSince: true, leftStudio: true }, 'leaving: nothing moves');
+  assert.deepEqual(S.prefsPatch({ experience: 'studio' }, { experience: 'studio' }), none);
+  assert.deepEqual(S.prefsPatch({ experience: 'office' }, { experience: 'nope' }), none);
+  assert.deepEqual(S.prefsPatch({ chatView: false }, { chatView: true }), { ...none, patch: { chatView: true }, switchIdle: true });
+  assert.deepEqual(S.prefsPatch({}, null), none);
+  const m = (o) => S.idleMoveTarget({ gui: false, studio: false, studioStarted: false, chatTarget: false, studioTarget: true, ...o });
+  // in Studio: an idle terminal tab moves to the chat (once: then it is one), unless Studio would start it in a terminal
+  assert.equal(m({ studio: true }), true, 'entering Studio: an Office terminal tab moves');
+  assert.equal(m({ studio: true, gui: true }), null, 'already a chat: no second move');
+  assert.equal(m({ studio: true, studioTarget: false }), null, 'switched to its terminal by the person, HQ, Windows');
+  assert.equal(m({ studio: true, gui: true, chatTarget: false }), null, 'the chat view going off in Studio moves nothing');
+  // in the Office: a tab that ran as a chat in Studio keeps it; others follow the chat view (v3.108, unchanged)
+  assert.equal(m({ gui: true, studioStarted: true }), null, 'leaving Studio: no move back');
+  assert.equal(m({ gui: true, studioStarted: true, chatTarget: true }), null);
+  assert.equal(m({}), null, 'an Office terminal stays one');
+  assert.equal(m({ chatTarget: true }), true, 'the chat view turned on');
+  assert.equal(m({ gui: true, chatTarget: false }), false, 'the chat view turned off (a tab not from Studio)');
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  assert.match(src, /STU\.idleMoveTarget\(\{ gui: Boolean\(t\.gui\), studioStarted: studioStarted\.has\(pid\), chatTarget: guiTab\(pid, r, \{ studio: false \}\) \}\)/, 'guiSwitchIdle leaves the experience out');
+  assert.match(src, /STU\.idleMoveTarget\(\{ gui: Boolean\(t\.gui\), studio, studioStarted: studioStarted\.has\(pid\), chatTarget: guiTab\(pid, r, \{ studio: false \}\), studioTarget: guiTab\(pid, r, \{ studio: true \}\) \}\) === null \|\| handoffLocked\(pid\) \|\| guiHolds\(pid\)\) continue;\n {6}const sid = idleSession\(pid\);\n {6}if \(!sid \|\| \(t\.gui && \(t\.asks\(\)\.length > 0 \|\| t\.live\(\)\.busy\)\)\) continue;/, 'busy tabs are never restarted');
+  assert.match(src, /if \(vx\.leftStudio\) for \(const \[pid, t\] of terms\) if \(t\.gui\) studioStarted\.add\(pid\);/);
+  assert.match(src, /guiSwitchIdle\(\); {3}\/\/ v3\.108 a tab left in the other mode/, 'the tick moves busy tabs once idle');
 });
 
 test('chat view: a GUI tab always shows its chat; Studio offers the Chat button over a terminal tab', async () => {
@@ -181,6 +191,8 @@ test('chat view: a GUI tab always shows its chat; Studio offers the Chat button 
   assert.equal(chatShownFor({ ...f, studio: true }), false, 'Studio: a tab running in a terminal shows it');
   assert.equal(chatShownFor({ ...f, studio: true, chatOff: true }), true, 'switched from its chat: chat mode (the button brings it back)');
   assert.equal(chatShownFor({ ...f, studio: true, win: true, chatOff: true }), false, 'Windows: terminals');
+  assert.equal(chatShownFor({ ...f, studio: true, hq: true }), true, 'HQ in Studio: its chat');
+  assert.equal(chatShownFor({ ...f, hq: true }), false, 'HQ in the Office without the chat view');
   const b = { ...f, capable: true, hq: false };
   assert.equal(chatButtonFor(b), false, 'Office, chat view off');
   assert.equal(chatButtonFor({ ...b, chatView: true, chatOff: true }), true);

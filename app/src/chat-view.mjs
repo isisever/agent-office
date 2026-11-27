@@ -6,14 +6,14 @@
 // empty terminal where keys go nowhere.
 
 /**
- * @typedef {{ chatView: boolean, studio: boolean, win: boolean, isGui: boolean, chatOff: boolean }} ChatFacts
+ * @typedef {{ chatView: boolean, studio: boolean, win: boolean, isGui: boolean, chatOff: boolean, hq?: boolean }} ChatFacts
  * chatView: the chat view setting; studio: Studio is on; win: Windows (no GUI chat there); chatOff: the person
  * switched this tab to its terminal from the chat.
  */
 
 /** Is the tab in chat mode (its chat shown unless the person switched it to its terminal)? @param {ChatFacts} f */
-export function chatShownFor({ chatView, studio, win, isGui, chatOff }) {
-  return chatView || isGui || (studio && !win && chatOff);
+export function chatShownFor({ chatView, studio, win, isGui, chatOff, hq = false }) {
+  return chatView || isGui || (studio && !win && (chatOff || hq));   // HQ's chat is the view of its transcript (v3.80)
 }
 
 /**

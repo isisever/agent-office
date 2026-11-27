@@ -241,7 +241,7 @@ function guiRunning(id) {
   return Boolean(n ? st?.tabs?.find((x) => x.n === Number(n))?.isGui : st?.isGui);
 }
 /** @param {string | null | undefined} id */
-const chatFacts = (id) => ({ chatView, studio: studioOn, win: osPlatform === 'win32', isGui: guiRunning(id), chatOff: Boolean(id) && chatOff.has(String(id)) });
+const chatFacts = (id) => ({ chatView, studio: studioOn, win: osPlatform === 'win32', isGui: guiRunning(id), chatOff: Boolean(id) && chatOff.has(String(id)), hq: String(id || '').split(':')[0] === HQ_ROW.id });
 /** @param {string | null | undefined} id */
 const chatShown = (id) => Boolean(id) && chatShownFor(chatFacts(id));
 const chatOff = new Set();   // pty ids the person switched back to the terminal (v3.110 seeded from main's termTabs)
@@ -361,7 +361,7 @@ function syncChat() {
     if (want) { p.chat.setAttention(attn(id)); p.chat.show(); if (!was) requestAnimationFrame(() => p.term.fit()); } else p.chat?.hide();
     if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
   }
-  const canSwitch = Boolean(visible) && chatButtonFor({ ...chatFacts(visible), capable: chatCapable(visible), hq: String(visible).split(':')[0] === HQ_ROW.id });
+  const canSwitch = Boolean(visible) && chatButtonFor({ ...chatFacts(visible), capable: chatCapable(visible) });
   if (canSwitch && !chatSwitch) {
     chatSwitch = document.createElement('button');
     chatSwitch.id = 'chat-switch';
