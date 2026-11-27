@@ -4,9 +4,9 @@
 // shown inline. Pure parts in src/studio-team-page.mjs. Texts from main (names, labels) go in with textContent.
 
 import { icon } from './studio-icons.js';
-import { TEAM_TABS } from '../src/studio-team-page.mjs';
+import { TEAM_TABS, wizardRoleDef } from '../src/studio-team-page.mjs';
 import { deptLabel } from '../src/staff-view.mjs';
-import { drawRoles } from './studio-team-roles.js';
+import { drawRoles, openHire } from './studio-team-roles.js';
 import { drawMembers } from './studio-team-members.js';
 import { drawDepartments } from './studio-team-departments.js';
 
@@ -109,14 +109,30 @@ export function mountTeamPage({ el, t, host, hooks }) {
     tabsEl.replaceChildren(...TEAM_TABS.map((id) => el('button', {
       class: `st-team-tab${id === tab ? ' active' : ''}`, type: 'button', role: 'tab', 'aria-selected': String(id === tab), onclick: () => go(id),
     }, /** @type {Record<string, string>} */ (label)[id])));
-    const lang = td.lang === 'tr' ? 'tr' : 'en';
     const view = views[tab];
     // a text box being typed in keeps its place: the live refresh waits until it is left
     const typing = document.activeElement instanceof HTMLElement && content.contains(document.activeElement) && document.activeElement.matches('input, textarea, select');
     if (typing && content.childElementCount) return;
     const scroll = content.scrollTop;
-    content.replaceChildren(...(view ? view({ el, t, td, lang, hooks, dept: (d) => deptLabel(t, d), errorText, sheet, redraw: force, go, close, state }) : []).filter((x) => x !== null));
+    content.replaceChildren(...(view ? view(viewOf(td)) : []).filter((x) => x !== null));
     content.scrollTop = scroll;
+  }
+  /** @returns {TeamView} */
+  function viewOf(/** @type {any} */ td) {
+    return { el, t, td, lang: td?.lang === 'tr' ? 'tr' : 'en', hooks, dept: (d) => deptLabel(t, d), errorText, sheet, redraw: force, go, close, state };
+  }
+  /**
+   * v3.124 the role wizard saved a role in Studio: the Roles tab with the hire sheet prefilled from it (the reloaded
+   * list's entry, else the saved role itself), where the person sets the member's name, account and projects.
+   * @param {any} saved the role from roles:save
+   */
+  async function hire(saved) {
+    await Promise.resolve(hooks.reload()).catch(() => {});
+    open('roles');
+    const td = data();
+    const def = wizardRoleDef(saved, td?.presets || []);
+    if (!def || !td?.teamMode) return;
+    await openHire(viewOf(td), def);
   }
   /** A redraw after the person's own action: a text box that kept the focus does not hold it back. */
   function force() {
@@ -150,9 +166,9 @@ export function mountTeamPage({ el, t, host, hooks }) {
     clearInterval(timer);
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || page.hidden || document.querySelector('.sb-modal-backdrop')) return;
+    if (e.key !== 'Escape' || page.hidden || document.querySelector('.sb-modal-backdrop, .rw-sheet')) return;
     e.preventDefault();
     if (!sheetEl.hidden) sheet.close(); else close();
   });
-  return { open, close, isOpen: () => !page.hidden, redraw: () => draw() };
+  return { open, close, hire, isOpen: () => !page.hidden, redraw: () => draw() };
 }

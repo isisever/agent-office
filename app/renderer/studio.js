@@ -131,7 +131,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       remove: (id) => hooks.removeMember(id),
       reload: () => hooks.reloadTeam(),
       editMember: (m) => hooks.sidebar()?.editMember?.(m),
-      openWizard: () => hooks.sidebar()?.openRoleWizard?.(),
+      openWizard: () => openWizard(),
       openDesk: (projectId, staffId) => { teamPage.close(); hooks.openDesk(projectId, staffId); },
       tools: () => hooks.teamTools(),
     },
@@ -144,6 +144,19 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     hidePanel();
     settingsPage.close();
     teamPage.open(tab);
+  }
+  /** v3.124 the role wizard as Studio's chat sheet; a saved role goes on to the Team page's hire sheet. */
+  function openWizard() {
+    hooks.sidebar()?.openRoleWizard?.({
+      studio: on,
+      addMember: !on ? undefined : (/** @type {string} */ roleId, /** @type {any} */ role) => {
+        menu.hidden = true;
+        closePalette();
+        hidePanel();
+        settingsPage.close();
+        teamPage.hire(role || { id: roleId });
+      },
+    });
   }
   function openSettings(/** @type {string} */ section = '') {
     if (!on) { hooks.openOfficeSettings(); return; }
@@ -484,7 +497,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       // v3.124 the Office TEAM panel's two buttons, with its labels: the member form for a new member (as a side sheet)
       // and the role wizard
       el('button', { class: 'st-row st-team-add', type: 'button', onclick: () => hooks.sidebar()?.editMember?.(null) }, el('span', { class: 'st-title' }, t('staff.add'))),
-      el('button', { class: 'st-row st-team-add st-team-wizard', type: 'button', onclick: () => hooks.sidebar()?.openRoleWizard?.() }, el('span', { class: 'st-title' }, t('staff.wizard.open'))));
+      el('button', { class: 'st-row st-team-add st-team-wizard', type: 'button', onclick: () => openWizard() }, el('span', { class: 'st-title' }, t('staff.wizard.open'))));
   }
 
   // ---- the account menu (footer): Studio's theme, Settings, accounts, back to the Office ----

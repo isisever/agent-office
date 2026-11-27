@@ -60,47 +60,55 @@ export function drawRoles(v) {
     ]);
   }
 
-  /** Hire: a new member prefilled from the role; the person fills name, department, account and projects. */
-  async function hire(/** @type {any} */ def) {
-    const servers = await hooks.tools().catch(() => []);
-    const prefill = prefillMember(def, { deptName: dept, servers });
-    const r = roleCard(def, lang);
-    const field = (/** @type {string} */ label, /** @type {Node} */ input) => el('label', { class: 'st-team-field' }, el('span', { class: 'st-team-label' }, label), input);
-    const name = /** @type {HTMLInputElement} */ (el('input', { class: 'st-team-input', maxlength: '40', placeholder: t('staff.namePh') }));
-    const department = /** @type {HTMLInputElement} */ (el('input', { class: 'st-team-input', maxlength: '30', list: 'st-team-depts' }));
-    department.value = prefill.department;
-    const labels = [...new Set([...DEPARTMENTS.map((d) => dept(d)), ...(td.staff || []).map((/** @type {any} */ m) => m.department).filter(Boolean)])];
-    const account = /** @type {HTMLSelectElement} */ (el('select', { class: 'st-team-input' }, el('option', { value: '' }, t('staff.projectAccount')),
-      ...hooks.accounts().map((a) => el('option', { value: a.id }, a.label))));
-    const projects = (td.projects || []).filter((/** @type {any} */ p) => !p.hq && !p.staffOwner);
-    const all = /** @type {HTMLInputElement} */ (el('input', { type: 'checkbox', onchange: () => { for (const b of boxes) b.disabled = all.checked; } }));
-    const boxes = projects.map((/** @type {any} */ p) => /** @type {HTMLInputElement} */ (el('input', { type: 'checkbox', value: p.id })));
-    const err = el('div', { class: 'st-team-error', role: 'alert', hidden: true });
-    const save = /** @type {HTMLButtonElement} */ (el('button', { class: 'st-set-btn primary', type: 'submit' }, t('studio.teamPage.hireSave')));
-    const form = el('form', { class: 'st-team-form', onsubmit: async (/** @type {Event} */ e) => {
-      e.preventDefault();
-      save.disabled = true;
-      err.hidden = true;
-      const res = await hooks.save(hireForm(prefill, { name: name.value, department: department.value, accountId: account.value, all: all.checked, projects: boxes.filter((b) => b.checked).map((b) => b.value) }));
-      save.disabled = false;
-      if (res?.ok) { sheet.close(); v.go('members'); return; }
-      err.textContent = v.errorText(res?.error);   // main's own check (name, a used name, the 50-member limit)
-      err.hidden = false;
-    } },
-    el('p', { class: 'st-team-desc' }, t('studio.teamPage.hireText', { role: r.name })),
-    field(t('staff.name'), name),
-    field(t('staff.department'), department),
-    el('datalist', { id: 'st-team-depts' }, ...labels.map((d) => el('option', { value: d }))),
-    field(t('staff.account'), account),
-    el('div', { class: 'st-team-field' }, el('span', { class: 'st-team-label' }, t('staff.projects')),
-      el('label', { class: 'st-team-check' }, all, el('span', {}, t('staff.allProjects'))),
-      ...projects.map((/** @type {any} */ p, /** @type {number} */ i) => el('label', { class: 'st-team-check' }, boxes[i], el('span', {}, p.name)))),
-    el('p', { class: 'st-team-hint' }, t('studio.teamPage.hireHint')),
-    err,
-    el('div', { class: 'st-team-actions' }, el('button', { class: 'st-set-btn', type: 'button', onclick: () => detail(def.id) }, t('sidebar.cancel')), save));
-    sheet.open(t('studio.teamPage.hireTitle', { role: r.name }), [form]);
-    name.focus();
-  }
+  /** Hire: the shared hire sheet (openHire); Cancel goes back to the role's detail. */
+  const hire = (/** @type {any} */ def) => openHire(v, def, () => detail(def.id));
 
   return [el('div', { class: 'st-team-toolbar' }, el('label', { class: 'st-set-searchbox st-team-searchbox' }, icon('search', 14), search), seg), grid];
+}
+
+/**
+ * Hire: a new member prefilled from the role; the person fills name, department, account and projects. Also opened by
+ * the role wizard in Studio once it saved a role (v3.124, studio-team.js hire). Cancel runs onCancel, else closes.
+ * @param {import('./studio-team.js').TeamView} v @param {any} def a RoleDef @param {(() => void) | null} [onCancel]
+ */
+export async function openHire(v, def, onCancel = null) {
+  const { el, t, td, lang, hooks, dept, sheet } = v;
+  const servers = await hooks.tools().catch(() => []);
+  const prefill = prefillMember(def, { deptName: dept, servers });
+  const r = roleCard(def, lang);
+  const field = (/** @type {string} */ label, /** @type {Node} */ input) => el('label', { class: 'st-team-field' }, el('span', { class: 'st-team-label' }, label), input);
+  const name = /** @type {HTMLInputElement} */ (el('input', { class: 'st-team-input', maxlength: '40', placeholder: t('staff.namePh') }));
+  const department = /** @type {HTMLInputElement} */ (el('input', { class: 'st-team-input', maxlength: '30', list: 'st-team-depts' }));
+  department.value = prefill.department;
+  const labels = [...new Set([...DEPARTMENTS.map((d) => dept(d)), ...(td.staff || []).map((/** @type {any} */ m) => m.department).filter(Boolean)])];
+  const account = /** @type {HTMLSelectElement} */ (el('select', { class: 'st-team-input' }, el('option', { value: '' }, t('staff.projectAccount')),
+    ...hooks.accounts().map((a) => el('option', { value: a.id }, a.label))));
+  const projects = (td.projects || []).filter((/** @type {any} */ p) => !p.hq && !p.staffOwner);
+  const all = /** @type {HTMLInputElement} */ (el('input', { type: 'checkbox', onchange: () => { for (const b of boxes) b.disabled = all.checked; } }));
+  const boxes = projects.map((/** @type {any} */ p) => /** @type {HTMLInputElement} */ (el('input', { type: 'checkbox', value: p.id })));
+  const err = el('div', { class: 'st-team-error', role: 'alert', hidden: true });
+  const save = /** @type {HTMLButtonElement} */ (el('button', { class: 'st-set-btn primary', type: 'submit' }, t('studio.teamPage.hireSave')));
+  const form = el('form', { class: 'st-team-form', onsubmit: async (/** @type {Event} */ e) => {
+    e.preventDefault();
+    save.disabled = true;
+    err.hidden = true;
+    const res = await hooks.save(hireForm(prefill, { name: name.value, department: department.value, accountId: account.value, all: all.checked, projects: boxes.filter((b) => b.checked).map((b) => b.value) }));
+    save.disabled = false;
+    if (res?.ok) { sheet.close(); v.go('members'); return; }
+    err.textContent = v.errorText(res?.error);   // main's own check (name, a used name, the 50-member limit)
+    err.hidden = false;
+  } },
+  el('p', { class: 'st-team-desc' }, t('studio.teamPage.hireText', { role: r.name })),
+  field(t('staff.name'), name),
+  field(t('staff.department'), department),
+  el('datalist', { id: 'st-team-depts' }, ...labels.map((d) => el('option', { value: d }))),
+  field(t('staff.account'), account),
+  el('div', { class: 'st-team-field' }, el('span', { class: 'st-team-label' }, t('staff.projects')),
+    el('label', { class: 'st-team-check' }, all, el('span', {}, t('staff.allProjects'))),
+    ...projects.map((/** @type {any} */ p, /** @type {number} */ i) => el('label', { class: 'st-team-check' }, boxes[i], el('span', {}, p.name)))),
+  el('p', { class: 'st-team-hint' }, t('studio.teamPage.hireHint')),
+  err,
+  el('div', { class: 'st-team-actions' }, el('button', { class: 'st-set-btn', type: 'button', onclick: () => (onCancel ? onCancel() : sheet.close()) }, t('sidebar.cancel')), save));
+  sheet.open(t('studio.teamPage.hireTitle', { role: r.name }), [form]);
+  name.focus();
 }

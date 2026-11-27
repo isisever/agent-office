@@ -68,6 +68,37 @@ export function prefillMember(def, { deptName = (d) => d, servers = [] } = {}) {
 }
 
 /**
+ * v3.124 the role the wizard just saved, as a RoleDef for Studio's hire sheet: the library entry from staff.list when
+ * the reloaded list has it, else the saved role itself (its name is one string, or { en, tr }), so the hire sheet
+ * opens prefilled with its name, department, brief and skill packs either way. Null without an id.
+ * @param {any} saved the role from roles:save @param {any[]} [presets] staff.list presets after the reload
+ */
+export function wizardRoleDef(saved, presets = []) {
+  const id = typeof saved?.id === 'string' ? saved.id : '';
+  if (!id) return null;
+  const listed = (Array.isArray(presets) ? presets : []).find((d) => d && d.id === id);
+  if (listed) return listed;
+  const both = (/** @type {unknown} */ v) => {
+    const en = typeof v === 'string' ? v : (v && typeof v === 'object' ? String(/** @type {any} */ (v).en || /** @type {any} */ (v).tr || '') : '');
+    const tr = v && typeof v === 'object' && typeof /** @type {any} */ (v).tr === 'string' ? /** @type {any} */ (v).tr : en;
+    return { en, tr: tr || en };
+  };
+  const strings = (/** @type {unknown} */ a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []);
+  return {
+    id,
+    name: both(saved.name),
+    ...(saved.short ? { short: both(saved.short) } : {}),
+    department: typeof saved.department === 'string' ? saved.department : '',
+    description: both(saved.description),
+    brief: typeof saved.brief === 'string' ? saved.brief : '',
+    skillPacks: strings(saved.skillPacks),
+    tools: strings(saved.tools),
+    writesCode: saved.writesCode !== false,
+    custom: true,
+  };
+}
+
+/**
  * The staff:save form for a hire: the prefill with what the person filled in (no id: main adds the member).
  * @param {ReturnType<typeof prefillMember>} prefill
  * @param {{ name?: string, department?: string, accountId?: string, all?: boolean, projects?: string[] }} input

@@ -1041,12 +1041,16 @@ export function mountSidebar(el, on) {
       removeRole: (id) => on.team?.removeRole(id), initialPreset, mailAccounts: mail ? mail.accounts() : [],
     });
   }
-  /** v3.84 the role wizard; a saved role can go straight to a new member's popup (the list is reloaded first). */
-  function openWizard() {
+  /**
+   * v3.84 the role wizard; a saved role can go straight to a new member's popup (the list is reloaded first).
+   * v3.124 Studio passes { studio: true, addMember }: the wizard as Studio's chat sheet, then Studio's hire sheet.
+   * @param {{ studio?: boolean, addMember?: (roleId: string, role?: any) => void }} [opts]
+   */
+  function openWizard(opts = {}) {
     openRoleWizard({
       h, t, lang: locale(), openModal, closeModal, listPacks,
       ask: (req) => Promise.resolve(on.team?.wizard(req)), saveRole: (form) => Promise.resolve(on.team?.saveRole(form)),
-      addMember: (roleId) => editMember(null, roleId),
+      addMember: opts.addMember || ((roleId) => editMember(null, roleId)), studio: opts.studio === true,
     });
   }
 
@@ -1453,7 +1457,7 @@ export function mountSidebar(el, on) {
     /** v3.122 Studio's Team section: team mode, members, role presets, desk states and projects (read-only). */
     teamData: () => ({ teamMode: team.teamMode, staff: team.staff, presets: team.presets, desks, projects, lang: locale() }),
     /** v3.124 Studio's Team page "Custom role" card: the Office's role wizard (a saved role goes on to the member editor). */
-    openRoleWizard: () => openWizard(),
+    openRoleWizard: (/** @type {any} */ opts) => openWizard(opts || {}),
     /** v3.124 Studio's Team page → Edit: the Office's own member popup (its fields, save and checks), drawn as a side sheet. */
     editMember: (m, initialPreset = '') => editMember(m, initialPreset, 'st-sheet-modal'),
     /** v3.122 the Skills packs (fresh rows, the same calls as the popup's). */
