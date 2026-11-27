@@ -1,0 +1,121 @@
+/* ==== Studio's own design (contract v3.120): everything here is scoped under body.studio, so the Office's looks and
+   themes are untouched. Fonts are bundled (renderer/fonts, SIL OFL 1.1, licence texts beside them); nothing is loaded
+   from the network (the page's CSP allows 'self' only). Light or dark follows the system (app.js sets data-mode). ==== */
+
+@font-face {
+  font-family: "Studio Inter"; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url("./fonts/inter-latin-wght.woff2") format("woff2-variations"), url("./fonts/inter-latin-wght.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Studio Inter"; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url("./fonts/inter-latin-ext-wght.woff2") format("woff2-variations"), url("./fonts/inter-latin-ext-wght.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Studio Serif"; font-style: normal; font-weight: 200 900; font-display: swap;
+  src: url("./fonts/source-serif-4-latin-wght.woff2") format("woff2-variations"), url("./fonts/source-serif-4-latin-wght.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Studio Serif"; font-style: normal; font-weight: 200 900; font-display: swap;
+  src: url("./fonts/source-serif-4-latin-ext-wght.woff2") format("woff2-variations"), url("./fonts/source-serif-4-latin-ext-wght.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ---- tokens. The Office's semantic variables are computed on <html>, so Studio sets each one again on body: every
+   Office element shown in Studio (the chat view, popups, panels) picks up Studio's colours and fonts. ---- */
+body.studio {
+  /* Studio's own scale */
+  --st-bg: #f8f6f1;          /* warm off-white page */
+  --st-side: #f1eee7;        /* sidebar */
+  --st-raised: #ffffff;      /* composer, cards */
+  --st-bubble: #ebe7de;      /* the person's message */
+  --st-text: #29261f;
+  --st-muted: #75716a;
+  --st-faint: #a19c93;
+  --st-border: rgba(41, 38, 31, .11);
+  --st-border-strong: rgba(41, 38, 31, .2);
+  --st-hover: rgba(41, 38, 31, .055);
+  --st-select: rgba(41, 38, 31, .085);
+  --st-accent: #c4673f;      /* the one accent: send, focus, links */
+  --st-accent-ink: #a5502c;
+  --st-on-accent: #ffffff;
+  --st-code-bg: #f0ede6;
+  --st-shadow: 0 1px 2px rgba(41, 38, 31, .05), 0 4px 16px rgba(41, 38, 31, .06);
+  --st-radius-s: 8px;
+  --st-radius: 12px;
+  --st-radius-l: 20px;
+  --st-font: "Studio Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --st-serif: "Studio Serif", ui-serif, Georgia, serif;
+  --st-mono: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  --st-column: 760px;
+
+  /* the Office's semantic variables, mapped onto Studio's scale */
+  --bg: var(--st-bg);
+  --surface: var(--st-side);
+  --raised: var(--st-raised);
+  --popup: var(--st-raised);
+  --text: var(--st-text);
+  --muted: var(--st-muted);
+  --border: var(--st-border);
+  --accent: var(--st-accent);
+  --accent-text: var(--st-accent-ink);
+  --on-accent: var(--st-on-accent);
+  --status-bg: var(--st-side);
+  --status-text: var(--st-text);
+  --frame: var(--st-bg);
+  --line: var(--st-border);
+  --line-strong: var(--st-border-strong);
+  --line-w: 1px;
+  --tint: var(--st-muted);
+  --scroll: rgba(41, 38, 31, .18);
+  --hover: var(--st-hover);
+  --hover-soft: var(--st-hover);
+  --track: rgba(41, 38, 31, .08);
+  --overlay: rgba(30, 28, 24, .32);
+  --shadow: rgba(41, 38, 31, .18);
+  --radius: var(--st-radius-s);
+  --font-ui: var(--st-font);
+  --font-head: var(--st-font);
+  --font-mono: var(--st-mono);
+  --font-code: var(--st-mono);
+
+  font: 14px/1.45 var(--st-font);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  color: var(--st-text);
+  background: var(--st-bg);
+}
+:root[data-mode="dark"] body.studio {
+  --st-bg: #1f1e1b;          /* warm near-black */
+  --st-side: #191816;
+  --st-raised: #2a2925;
+  --st-bubble: #34322d;
+  --st-text: #ece9e2;
+  --st-muted: #a8a399;
+  --st-faint: #7a766e;
+  --st-border: rgba(236, 233, 226, .1);
+  --st-border-strong: rgba(236, 233, 226, .2);
+  --st-hover: rgba(236, 233, 226, .055);
+  --st-select: rgba(236, 233, 226, .09);
+  --st-accent: #d9825c;
+  --st-accent-ink: #e39a78;
+  --st-on-accent: #1f1e1b;
+  --st-code-bg: #262521;
+  --st-shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 6px 20px rgba(0, 0, 0, .25);
+  --scroll: rgba(236, 233, 226, .18);
+  --track: rgba(236, 233, 226, .1);
+  --overlay: rgba(0, 0, 0, .5);
+  --shadow: rgba(0, 0, 0, .45);
+  color-scheme: dark;
+}
+body.studio :focus-visible { outline: 2px solid color-mix(in srgb, var(--st-accent) 55%, transparent); outline-offset: 1px; }
+body.studio ::selection { background: color-mix(in srgb, var(--st-accent) 28%, transparent); }
+body.studio ::-webkit-scrollbar { width: 10px; height: 10px; }
+body.studio ::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
+body.studio ::-webkit-scrollbar-track { background: transparent; }
+/* the window frame: no Office borders around the regions, one calm surface */
+body.studio #title { font: 600 14px/1 var(--st-font); letter-spacing: 0; color: var(--st-text); }
+body.studio #terminal { border: 0; border-radius: 0; background: var(--st-bg); }
+body.studio button { font-family: inherit; }

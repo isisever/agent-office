@@ -1662,8 +1662,8 @@ body.voice-recording #voice-hud { border-color: var(--danger, #c0392b); }
 
 /* ---- Studio experience (contract v3.120, renderer/studio.js) ----
    body.studio hides the Office (scene, left panel, tab strip, side panels) and shows Studio's sidebar; the main region
-   is the Office's own #terminal, filling the window. Removing the class shows the Office exactly as it was. Studio
-   always uses the Claude look (app.js forces data-look="claude", light/dark from the system). */
+   is the Office's own #terminal, filling the window. Removing the class shows the Office exactly as it was. Studio's
+   own design (tokens, fonts, sidebar, chat, composer) is in studio.css, scoped under body.studio. */
 #studio-sidebar { display: none; }
 body.studio #sidebar, body.studio #office, body.studio #divider, body.studio #tabs, body.studio #tab-add,
 body.studio #agent-panel, body.studio #usage-panel, body.studio #machines-panel, body.studio #hq-board,

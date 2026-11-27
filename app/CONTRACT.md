@@ -2960,8 +2960,10 @@ type StudioProject = { id, name, dir, engine, account: string, active: boolean, 
   `#studio-sidebar` comes first in `#body` and the main region is the Office's own `#terminal`, so the chat view
   (`renderer/chat.js`, v3.80) is reused, not rendered twice. With no session (no project) the start screen shows
   "What's next, <name>?": the display name of the active project's Claude account (`oauthAccount.displayName` in its
-  `.claude.json`, re-read only when it changes), none when there is no name. Studio always uses the Claude look; light
-  or dark follows the system (the person's look and mode stay saved for the Office). Switching back only removes the
+  `.claude.json`, re-read only when it changes), none when there is no name. Studio has its own design (`renderer/studio.css`,
+  tokens scoped under `body.studio`: a warm off-white / warm near-black palette, one accent, Inter for the UI and
+  Source Serif 4 for the assistant's prose, both OFL and bundled in `renderer/fonts/`, no network fonts); light or dark
+  follows the system. The person's look and mode stay as they are underneath and for the Office. Switching back only removes the
   class: panes, tabs and sessions are never closed by a switch.
 - **Chat**: in Studio every Claude Code session is a GUI chat (v3.108), except on Windows, where GUI chat stays off and
   Studio shows terminals. A terminal in Studio is a fallback (a tab the person switched to its terminal, a command's

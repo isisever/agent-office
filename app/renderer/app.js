@@ -63,7 +63,7 @@ const HQ_ROW = { id: 'hq', name: 'HQ', hq: true };
 let hqSelected = false;
 // v3.120 the experience (Office / Studio, renderer/studio.js); main keeps the setting (prefs experience)
 let experience = 'office';
-let studioOn = false;   // Studio always uses the Claude look, light/dark following the system
+let studioOn = false;   // Studio has its own design (renderer/studio.css); light/dark follow the system there
 /** @type {ReturnType<typeof mountStudio>} */
 let studio = null;
 let hqUi = null;
@@ -81,7 +81,7 @@ let login = null; // login overlay (login.js)
 // they are; light: derived, src/appearance.mjs); the Claude look's colours are fixed in style.css, so they are unset.
 let look = 'pixel';
 let modeSetting = 'system';
-const lookNow = () => (studioOn ? 'claude' : look);
+const lookNow = () => look;   // Studio keeps the person's look underneath; body.studio's own tokens cover it
 const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
 const shownMode = () => effectiveMode(studioOn ? 'system' : modeSetting, systemDark.matches);
 const termTheme = () => terminalTheme(lookNow(), shownMode(), theme);
