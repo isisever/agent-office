@@ -4,6 +4,7 @@ import { mountChat } from './chat.js';
 import { mountSidebar } from './sidebar.js';
 import { shownOrder } from '../src/project-groups.mjs';
 import { mountHq } from './hq-board.js';
+import { paletteRows } from './templates-ui.js';
 import { mountLogin } from './login.js';
 import { mountDevices, mergeRemote } from './devices.js';
 import { setLang, onLang, t, getLang } from './i18n.js';
@@ -1440,7 +1441,7 @@ async function openBoardChat(card) {
   selectProject(r?.ok ? r.projectId : p.id);
   if (r?.ok) selectTab(r.projectId, r.n);
 }
-hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices, openChat: (card) => { openBoardChat(card); } });
+hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices, openChat: (card) => { openBoardChat(card); }, fillHq: (text) => fillHq(text) });
 
 // v3.120 Studio: its sidebar and start screen (renderer/studio.js); the main region is the Office's own #terminal
 const leaveBoard = () => document.body.classList.remove('studio-board');
@@ -1489,6 +1490,21 @@ mountBudgetBanner({ api, t, names: () => new Map((sidebar?.projectList?.() || []
  * or shows the Office's own panel (studio.showPanel: the sidebar panel on its own over Studio), never a copy.
  * @param {string} projectId the project Studio acts on (src/studio-view.mjs currentProjectId)
  */
+/**
+ * v3.134 Fills HQ's composer with a template's text: the chat input, or a bracketed paste into HQ's terminal. It never
+ * sends: the person edits it and sends it, so the send is their own typed order.
+ */
+function fillHq(/** @type {string} */ text) {
+  leaveBoard();
+  selectProject(HQ_ROW.id);
+  window.setTimeout(() => {
+    const id = activePty();
+    const p = id ? panes.get(id) : null;
+    if (!p) return;
+    if (p.chatOn && p.chat?.setDraft) p.chat.setDraft(text);
+    else p.term?.insert?.(text);
+  }, 80);
+}
 function studioCommands(projectId) {
   const p = projects.find((x) => x.id === projectId) || null;
   const act = activeProject();
@@ -1496,7 +1512,8 @@ function studioCommands(projectId) {
   const cmd = (id, run, when = true) => (when ? [{ id, label: t(`studio.cmd.${id}`), keywords: t(`studio.cmdKeys.${id}`), run }] : []);
   const panel = (sel, fallback) => () => { if (!studio?.showPanel(sel)) fallback?.(); };
   return [
-    ...cmd('team', () => studio?.openTeam()),   // v3.124 the Team page (team mode off: its own switch)
+    ...cmd('team', () => studio?.openTeam()),
+    ...cmd('runTemplate', () => { paletteRows(fillHq).then((rows) => studio?.openPalette(rows, t('templates.paletteHint'))).catch((e) => console.error(e)); }),   // v3.134   // v3.124 the Team page (team mode off: its own switch)
     ...cmd('worktree', () => { leaveBoard(); addTab(p.id, 'worktree'); }, Boolean(p)),
     ...cmd('newTab', () => { leaveBoard(); addTab(p.id); }, Boolean(p)),   // main's "+" menu: same folder, worktree, a desk, a shell
     ...cmd('closeTab', () => closeTab(act.id, n), Boolean(act) && act.id !== HQ_ROW.id && n !== MAIN_TAB),

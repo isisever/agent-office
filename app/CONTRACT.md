@@ -3693,3 +3693,66 @@ idle sleep. Economy mode bundles the cheaper choices behind one switch; budgets 
   blocked project with Raise / Ignore today / ×. The budget is edited in project settings (daily, weekly, M tokens or
   USD).
 - **Not verified live** in a running app.
+
+## Fan-out orders and role assignment (v3.132)
+
+Amends v3.130 ("Orders from HQ") and v3.83/v3.84 (staff). Pure rules in `src/hq-fanout.js`; wiring in `main.js`
+(`hqFanOut`); the tool schema in `src/office-mcp.js`.
+
+- **Fan-out.** HQ's `office_dispatch` accepts `targets: [{ project, machine?, member? | desk? | role?, title? }]`
+  (1 to `FANOUT_MAX` = 8) instead of a single target, with one shared `task`, `type`, `title` and `request`.
+  `FO.fanOutRefusal` refuses before anything runs: `bad-targets` (not a non-empty array), `too-many-targets` (> 8,
+  with `max`), `fanout-mixed` (also `project`/`machine`/`staff`/`member`/`role`/`desk`/`after`/`then`: a fan-out
+  never has stages), `bad-target` (not an object, no `project`, an unknown key, a non-string value, or more than one
+  of `member`/`desk`/`staff`/`role`). `member` and `desk` both name a staff member (its desk) and become `staff`;
+  the app's internal `desk` is never set from a target.
+- **Same path, no shortcut.** `FO.expandFanOut` gives one single-dispatch argument object per target in the
+  request's order, and `hqFanOut` passes each to `hqDispatch` unchanged: consent (`consentFor`, the dialog per
+  target with `askBeforeDispatch`, the follow-up rules), the caps and the order queue (`capReason`, `hqOrderEnqueue`),
+  routine holds, redaction (`HQ.redact`) and the sealed store all apply to every target as to a single dispatch.
+  The targets run one after another, so each cap check sees the rows of the ones before it (8 open per order,
+  `MAX_OPEN` 12); `hqDispatch` itself sends a call that still carries `targets` back to `hqFanOut`. Desks still open
+  concurrently: `hqDispatch` never starts a desk (v3.126), the queue starts each with its task, and `openDesk` runs
+  per desk under the keyed lock. The first target's `request` is passed to the later ones.
+- **Result.** `{ status: 'fanout', request, results: [{ n, project, machine?, role?, member?, id?, status, reason?, ... }] }`,
+  one per target in order (`n` from 1); a refused target does not stop the others.
+- **Role assignment.** A target with `role` (a preset id such as `qa` or `software-developer`, a preset name in any
+  language, or a member's own role name; case ignored) gets a member from `FO.pickMember({ staff, project, role, load,
+  warm, defs })`: members with that role who may work on the project (`ST.mayWork`, a personal workspace only its
+  owner), the fewest open HQ tasks first (`FO.memberLoad`: board rows by `staffId` not in `HQ.TERMINAL`; idle = 0),
+  a tie to a member whose desk in that project runs (`deskStates` busy/idle), then the team's order. No fit:
+  `{ status: 'rejected', reason: 'no-member-for-role', roles }` with the role names available on that project. A
+  role target on a paired machine is refused `staff-local-only`, without a team `no-team`, an unknown local project
+  `unknown-project`. The picked member then goes through the normal staff checks in `hqDispatch`.
+- **HQ brief.** `plugin/hooks/hq.ts` adds one line: fan out with `targets[]`, assign by `role`.
+- **Board.** A fan-out order is one order card: `projects[]`/`members[]` list every target's project and member, and
+  each target chip (`tasks[]`) shows `project @member` (renderer `board-view.js`).
+- Tests: `test/hq-fanout.test.cjs` (refusals, expansion order, pickMember, memberLoad, caps and consent per target,
+  main wiring, the order card). **Not verified live** in a running app.
+
+## Order templates (v3.134)
+
+Stored HQ order texts the person reuses. A template is only a draft: it never sends, never mints an order id and never
+carries authority. Pure rules in `src/order-templates.js` (store) and `src/template-fill.mjs` (composer text);
+the window parts in `renderer/templates-ui.js`; wiring in `main.js`.
+
+- **Template.** `{ id, name, text, type, targets? }`: `id` `tp` + 8 hex (minted by main), `name` 1..80 (one line),
+  `text` 1..4000 (longer is refused, not cut), `type` `bugfix` | `hotfix` | `feature`, `targets` up to 10 short names
+  (≤ 80 each, unique). Control characters other than tab and newline are dropped, so no terminal escape is ever pasted.
+- **Store.** `state.orderTemplates` in `state.json` (saved atomically like the rest of the state), at most
+  `MAX_TEMPLATES` (50); a hand-edited list is read through `normalizeList` (invalid rows and duplicate ids dropped).
+- **IPC** (each checks the sender is the app window, `fromWin`, and validates its arguments):
+  `templates:list` → `Template[]`; `templates:save({ id?, name, text, type, targets? })` → `{ ok, id, list }` or
+  `{ ok: false, reason: 'invalid' | 'unknown' | 'too-many' }` (an `id` must be a known one; none = new);
+  `templates:remove(id)` → `{ ok, list }` or `{ ok: false, reason: 'invalid' | 'unknown' }`;
+  `templates:fromOrder('o:<request id>')` → `{ ok, draft }` (the order's original prompt from board.json, the card's
+  type and its tasks' projects as targets) for the card's "Save as template". Changes are pushed as `templates:changed`.
+- **Use.** Picking a template puts `fillText(tpl)` into HQ's composer: `"<type>: <text>"`, then `Targets: a, b` when it
+  has targets (a text that already starts with a type prefix gets the template's type instead). In the chat view it
+  replaces the input's text; in the terminal it is a bracketed paste into claude's input (no Enter). The person edits
+  it and sends it: that send is an ordinary typed HQ prompt (v3.130), so it is an order with typed authority because
+  the person sent it, never because of the template. Nothing auto-sends.
+- **Where.** HQ's chat composer: a **Templates** menu (every template, then **Save as template** for the input's text;
+  `fromText` reads a type prefix and a `Targets:` line back out). Studio ⌘K: **Run template…** lists the templates
+  in the palette. The board: an order card's **⋯** menu has **Save as template**. Rename and delete (and, in the
+  Office, Use): Studio Settings → HQ & routines → Order templates, and the Office's HQ panel (the gear under HQ).

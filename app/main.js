@@ -71,7 +71,9 @@ const KA = require('./src/keep-awake.js');
 const VC = require('./src/voice-core.js');   // v3.119 voice input
 const { createVoice } = require('./src/voice.js');
 const PTY = require('./src/pty-attach.js');
-const BM = require('./src/board-model.js');   // v3.131 the board: orders and conversations
+const BM = require('./src/board-model.js');
+const FO = require('./src/hq-fanout.js');   // v3.132 fan-out orders and role assignment
+const OT = require('./src/order-templates.js');   // v3.134 order templates
 const STU = require('./src/studio.js');   // v3.120 Studio experience
 const WN = require('./src/whats-new.js');   // v3.123 What's new after an update
 const ATT = require('./src/attached.js');   // v3.121 the files a person attached in a chat composer
@@ -2111,7 +2113,7 @@ function officeTool(tab, tool, args) {
   args = OM.modelArgs(tool, args);   // a model's call never carries the app's own `desk` / `staffName` (v3.83 fix)
   if (tool === 'office_machines') return officeMachines();
   if (tool === 'office_project') return officeProject(tab, args);
-  if (tool === 'office_dispatch') return tab === HQ.HQ_ID ? hqDispatch(args) : officeDispatch(tab, args);
+  if (tool === 'office_dispatch') return tab === HQ.HQ_ID ? (args.targets !== undefined ? hqFanOut(args) : hqDispatch(args)) : officeDispatch(tab, args);
   if (tool === 'office_board' || tool === 'office_summary' || tool === 'office_task') {   // v3.46 HQ only (the socket refuses them from other tabs too)
     if (tab !== HQ.HQ_ID) return { error: 'unknown-tool' };
     return tool === 'office_board' ? hqBoardTool(args) : tool === 'office_task' ? hqTaskOp(args) : hqSummary(args);
@@ -2547,6 +2549,34 @@ function notifyRemoteSent(project, machine, request = '') {
   if (hqOrderOpen(request)) { hqOrderNotice(request, 'start'); return; }   // v3.130 one notice per order
   notify(T('main.hqRemoteSent', { project: LC.cleanLine(String(project || ''), 80), machine: LC.cleanLine(String(machine || ''), 80) }), '', null);
 }
+// v3.132 fan-out: `targets[]` (at most FO.FANOUT_MAX) with one shared task and type. Each target becomes one single
+// dispatch, in the request's order, through the unchanged hqDispatch path (consent, caps / order queue, redaction,
+// seal); nothing is shortcut. They run one after another so every cap check sees the rows before it; a desk is never
+// started by hqDispatch (v3.126), the queue starts each desk with its task, so the desks still open concurrently.
+// A target with `role` gets a member by FO.pickMember (role, allowed on the project, fewest open tasks, warm desk).
+async function hqFanOut(args) {
+  const bad = FO.fanOutRefusal(args);
+  if (bad) return { status: 'rejected', reason: bad, ...(bad === 'too-many-targets' ? { max: FO.FANOUT_MAX } : {}) };
+  /** @type {any[]} */ const results = [];
+  let request = typeof args.request === 'string' ? args.request : '';
+  for (const item of FO.expandFanOut(args)) {
+    /** @type {any} */ const one = { ...item.args, ...(request ? { request } : {}) };
+    const where = { n: item.n, project: one.project, ...(one.machine ? { machine: one.machine } : {}), ...(item.role ? { role: item.role } : {}) };
+    if (item.role) {
+      const remote = Boolean(HQ.parseRemoteKey(one.project)) || !isHere(String(one.machine || '').trim());
+      const p = remote ? null : byName(state.projects, one.project);
+      if (remote || !teamOn() || !p) { results.push({ ...where, status: 'rejected', reason: remote ? 'staff-local-only' : !teamOn() ? 'no-team' : 'unknown-project' }); continue; }
+      const warm = deskStates().filter((d) => d.projectId === p.id && (d.state === 'busy' || d.state === 'idle') && d.staffId).map((d) => d.staffId);
+      const pick = FO.pickMember({ staff: state.staff, project: p, role: item.role, load: FO.memberLoad(loadHqBoard().tasks), warm, defs: presetRoles() });
+      if (!('member' in pick)) { results.push({ ...where, status: 'rejected', reason: pick.reason, roles: pick.roles }); continue; }
+      one.staff = pick.member.name;
+    }
+    /** @type {any} */ const r = await hqDispatch(one);
+    if (!request && typeof r?.request === 'string' && r.request) request = r.request;   // later targets join the same request
+    results.push({ ...where, ...(one.staff ? { member: one.staff } : {}), ...r });
+  }
+  return { status: 'fanout', ...(request ? { request } : {}), results };
+}
 /** HQ's office_dispatch: caps, consent, auto-start of a local target, 4 h queue wait, dispatcher-side pacing for devices. */
 // v3.79 waitingId: a released stage (approved at creation, src/hq-chain.js) takes over its waiting row instead of a new one
 // v3.91 sentByInitiative: a first stage HQ sent on its own (decided in hqDispatchStages); its row is marked
@@ -2554,6 +2584,7 @@ function notifyRemoteSent(project, machine, request = '') {
 // person allowed); its row is stamped `consented`
 // v3.99 noDialog: a stage for a paired machine that went without a dialog (the chain's rule decided): the person is told when it is sent
 async function hqDispatch(args, { approved = false, excludeId = '', waitingId = '', sentByInitiative = false, consentGiven = false, noDialog = false, fromQueue = /** @type {any} */ (null) } = {}) {
+  if (args?.targets !== undefined) return hqFanOut(args);   // v3.132 never a fan-out past its per-target path
   const capBoard = () => { const b = loadHqBoard(); return excludeId ? { ...b, tasks: b.tasks.filter((t) => t.id !== excludeId) } : b; };
   // only ids the minter issued; else the current one; else the one capped 'adhoc' bucket. An approved held task keeps
   // the request it was held under (v3.47: no re-resolve).
@@ -6772,6 +6803,41 @@ ipcMain.handle('board:done', (e, id) => {
   if (!r.ok) return { ok: false, error: 'gone' };
   saveBoardStore(r.store);
   return { ok: true, ...boardView() };
+});
+// --- v3.134 Order templates (src/order-templates.js): kept in state.json (saved atomically), at most 50. Using one only
+// fills HQ's composer in the renderer; nothing here sends a prompt or mints an order.
+const templatesView = () => OT.normalizeList(state.orderTemplates);
+const templatesSet = (list) => { commit({ ...state, orderTemplates: list }); send('templates:changed', templatesView()); };
+const newTemplateId = () => `tp${crypto.randomBytes(4).toString('hex')}`;
+// templates:list() → Template[] | null
+ipcMain.handle('templates:list', (e) => (fromWin(e) ? templatesView() : null));
+// templates:save({ id?, name, text, type, targets? }) → { ok: true, id, list } | { ok: false, reason: 'invalid' | 'unknown' | 'too-many' }
+ipcMain.handle('templates:save', (e, raw) => {
+  if (!fromWin(e)) return { ok: false, reason: 'invalid' };
+  const r = OT.save(state.orderTemplates, raw, { newId: newTemplateId });
+  if (!r.ok) return r;
+  templatesSet(r.list);
+  return { ok: true, id: r.id, list: templatesView() };
+});
+// templates:remove(id) → { ok: true, list } | { ok: false, reason: 'invalid' | 'unknown' }
+ipcMain.handle('templates:remove', (e, id) => {
+  if (!fromWin(e) || typeof id !== 'string' || !OT.ID_RE.test(id)) return { ok: false, reason: 'invalid' };
+  const r = OT.remove(state.orderTemplates, id);
+  if (!r.ok) return r;
+  templatesSet(r.list);
+  return { ok: true, list: templatesView() };
+});
+// templates:fromOrder('o:<request id>') → { ok: true, draft: { name, text, type, targets } } | { ok: false, reason }:
+// an order card's original text, type and target projects, for "Save as template" (the renderer then saves it)
+ipcMain.handle('templates:fromOrder', (e, id) => {
+  if (!fromWin(e) || !BM.validCardId(id) || !String(id).startsWith('o:')) return { ok: false, reason: 'invalid' };
+  const req = loadHqBoard().requests.find((r) => r.id === String(id).slice(2));
+  const card = boardView().cards.find((c) => c.id === id);
+  if (!req || !card) return { ok: false, reason: 'gone' };
+  const text = String(req.prompt || card.title || '').trim();
+  if (!text) return { ok: false, reason: 'invalid' };
+  const targets = OT.normalizeTargets([...new Set((card.tasks || []).map((x) => x.project).filter(Boolean))]);
+  return { ok: true, draft: { name: String(card.title || text).slice(0, OT.NAME_MAX), text, type: card.type, targets } };
 });
 // board:report({ from?, to? } ms, groupBy 'project' | 'type' | 'member') → Report | { error: 'invalid' } | null
 ipcMain.handle('board:report', (e, range, groupBy) => {

@@ -132,6 +132,8 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
   terminals.add(self);
 
   return {
+    /** v3.134 a template's text as a paste into claude's input (bracketed: no Enter, the person sends it). */
+    insert(/** @type {string} */ text) { if (!dead) { term.paste(String(text || '')); term.focus(); } },
     /** Data from the pty (written even while hidden, so history is kept). */
     write(d) {
       dead = false;

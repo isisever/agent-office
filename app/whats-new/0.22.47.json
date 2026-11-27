@@ -43,6 +43,18 @@
         "en": "The leaf next to Awake turns on economy mode: a 150K context, Sonnet agents, Savings Strict, no shared MCP servers and a longer idle sleep, in every project that does not override it. Each project can also get a daily or weekly budget in tokens or USD, with a thin meter in the sidebar and the board's report; at 100% HQ tasks and routines wait until you raise it or ignore it for today. Your own typing is never blocked.",
         "tr": "Uyanık kal'ın yanındaki yaprak tasarruf modunu açar: kendi ayarı olmayan her projede 150K bağlam, Sonnet ajanlar, Tasarruf Sıkı, paylaşılan MCP sunucusu yok ve daha uzun boşta uyku. Her projeye ayrıca token ya da USD cinsinden günlük veya haftalık bütçe verebilirsiniz; kenar çubuğunda ve panonun raporunda ince bir gösterge çıkar. %100'de HQ görevleri ve rutinler, siz artırana ya da bugün için yok sayana kadar bekler. Kendi yazdıklarınız hiç engellenmez."
       }
+    },
+    {
+      "id": "order-templates",
+      "experience": "both",
+      "title": {
+        "en": "Order templates for HQ",
+        "tr": "HQ için emir şablonları"
+      },
+      "body": {
+        "en": "Save an order you send often as a template, from HQ's composer or an order card's menu. Pick it from Templates next to HQ's composer (or Run template… in ⌘K): it fills the composer with its type and targets, you edit it and press Send yourself. Rename or delete templates in Settings → HQ & routines.",
+        "tr": "Sık gönderdiğiniz bir emri HQ yazma kutusundan ya da bir emir kartının menüsünden şablon olarak kaydedin. HQ yazma kutusunun yanındaki Şablonlar'dan (veya ⌘K'de Şablon çalıştır…) seçin: yazma kutusunu türü ve hedefleriyle doldurur, düzenleyip Gönder'e kendiniz basarsınız. Şablonları Ayarlar → HQ ve rutinler'de yeniden adlandırın ya da silin."
+      }
     }
   ]
 }

@@ -28,7 +28,8 @@
       "command": "Command",
       "session": "Session",
       "recent": "Recent",
-      "project": "Project"
+      "project": "Project",
+      "template": "Template"
     },
     "cmd": {
       "team": "Team and desks",
@@ -52,7 +53,8 @@
       "whatsNew": "What's new",
       "usage": "Usage: tokens and cost of this project",
       "machines": "Machines: resources and projects",
-      "mail": "Mail: accounts and outbox"
+      "mail": "Mail: accounts and outbox",
+      "runTemplate": "Run template…"
     },
     "cmdKeys": {
       "team": "staff members desks roles wizard",
@@ -76,7 +78,8 @@
       "whatsNew": "whats new release notes changes update tour features",
       "usage": "tokens cost spend today week month model agents",
       "machines": "devices computers remote cpu memory projects login",
-      "mail": "email outbox drafts accounts"
+      "mail": "email outbox drafts accounts",
+      "runTemplate": "template order hq run fill"
     },
     "untitled": "New session",
     "now": "now",
@@ -2005,7 +2008,8 @@
       "machines": "Machines",
       "hq": "HQ",
       "routines": "Reports and routines",
-      "version": "Version"
+      "version": "Version",
+      "templates": "Order templates"
     },
     "desc": {
       "lang": "The language of the whole app.",
@@ -2042,7 +2046,8 @@
       "mode": "Light or dark for the Office.",
       "bot": "The body colour of the office bots.",
       "version": "The running version of Agent Office.",
-      "economy": "Spend fewer tokens: 150K context, Sonnet agents, Savings Strict, no shared MCP, longer idle sleep. A project can override it."
+      "economy": "Spend fewer tokens: 150K context, Sonnet agents, Savings Strict, no shared MCP, longer idle sleep. A project can override it.",
+      "templates": "Saved HQ orders: rename or delete them. Use them from HQ's composer or ⌘K."
     }
   },
   "board": {
@@ -2109,6 +2114,29 @@
     "headline": "{range}: {bugfix} bugfix, {hotfix} hotfix, {feature} feature closed",
     "none": "(none)",
     "noReport": "Nothing was closed in this range.",
-    "pickDates": "Pick a start and an end date."
+    "pickDates": "Pick a start and an end date.",
+    "more": "More"
+  },
+  "templates": {
+    "button": "Templates",
+    "tip": "Order templates: fill HQ's composer with a saved order. You edit it and send it yourself.",
+    "none": "No templates yet",
+    "noneManage": "No templates yet. Use \"Save as template\" in HQ's composer or on an order card.",
+    "saveAs": "Save as template",
+    "saved": "Saved as template \"{name}\".",
+    "emptyText": "Type the order first, then save it as a template.",
+    "title": "Order templates",
+    "use": "Use",
+    "rename": "Rename",
+    "delete": "Delete",
+    "saveName": "Save",
+    "name": "Template name",
+    "paletteHint": "Pick a template: it fills HQ's composer, you send it",
+    "why": {
+      "invalid": "This template could not be saved (name up to 80 characters, text up to 4000).",
+      "unknown": "That template is gone.",
+      "too-many": "You have 50 templates already. Delete one first.",
+      "gone": "That order is gone."
+    }
   }
 }

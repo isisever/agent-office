@@ -598,12 +598,13 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     closePalette();
     try { it.run(); } catch (e) { console.error(e); }
   }
-  function openPalette() {
+  /** ⌘K; `items` (v3.134 "Run template…") replaces the rows with these, `hint` the placeholder. */
+  function openPalette(/** @type {StudioCommand[] | undefined} */ items = undefined, hint = '') {
     if (!on) return;
     hidePanel();
-    palItems = paletteItems();
+    palItems = Array.isArray(items) ? items : paletteItems();
     palInput.value = '';
-    palInput.placeholder = t('studio.paletteHint');
+    palInput.placeholder = hint || t('studio.paletteHint');
     palSel = 0;
     palette.hidden = false;
     drawPalette();

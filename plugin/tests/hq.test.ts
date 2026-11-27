@@ -134,3 +134,10 @@ test('remote targets (v3.99): HQ is told which paired machines run its tasks una
   expect(HQ_INITIATIVE_SWAPS.length).toBe(7)
   for (const [off] of HQ_INITIATIVE_SWAPS) expect(HQ_TEMPLATE).toContain(off)
 })
+
+test('fan-out (v3.132): the brief names targets[] and role assignment in both modes', () => {
+  for (const t of [hqText(), hqText(true)]) {
+    expect(t).toContain('office_dispatch({ targets: [{ project, machine?, member? | role? }]')
+    expect(t).toContain('no-member-for-role')
+  }
+})

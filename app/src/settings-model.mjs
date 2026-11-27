@@ -67,6 +67,7 @@ export const SETTINGS = Object.freeze([
   // HQ & routines
   { key: 'hq', section: 'hq', type: 'custom', studioOnly: true },
   { key: 'routines', section: 'hq', type: 'custom', studioOnly: true },
+  { key: 'templates', section: 'hq', type: 'custom', studioOnly: true },   // v3.134 order templates
   // Office (the Office's look only)
   { key: 'office3d', section: 'office', type: 'switch', office: 'office3d', officeOnly: true },
   { key: 'theme', section: 'office', type: 'choice', office: 'theme', officeOnly: true },
