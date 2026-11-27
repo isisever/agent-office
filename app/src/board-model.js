@@ -17,6 +17,7 @@ const TITLE_MAX = 80;
 const isObj = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x);
 const isStr = (x) => typeof x === 'string';
 const num = (x) => (Number.isFinite(x) && x > 0 ? x : 0);
+// eslint-disable-next-line no-control-regex -- control characters are stripped on purpose
 const line = (s, max) => String(s ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 
 /** A valid type or ''. */
