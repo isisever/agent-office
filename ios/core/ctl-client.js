@@ -58,6 +58,12 @@ class CtlClient {
     const remote = W.hex(conn.remotePublicKey);
     const p = this.pairing;
     let paired = this.paired && this.paired.pub === remote && !p;
+    let proved = false;   // this phone sent its pair-hello on this connection
+    // closed after the phone proved the code but before pair-ok: the desktop said no (or went away), so end at once
+    conn.on('close', () => {
+      if (this.conn === conn && !paired) this.conn = null;
+      if (proved && !paired && p && this.pairing === p) p.reject(new Error('declined'));
+    });
     const r = new W.LineReader((raw) => {
       if (paired) return this.handle(raw);
       const m = W.validatePair(raw);
@@ -68,6 +74,7 @@ class CtlClient {
         // scanning the QR is this person's yes: prove the code at once
         this.conn = conn;
         this.write({ t: 'pair-hello', name: this.name, proof: this.wire.pairProof(p.key, 'joiner', this.pub, remote), kind: 'controller' });
+        proved = true;
       } else if (m.t === 'pair-ok') {
         if (!this.wire.proofOk(p.key, 'ok', remote, this.pub, m.proof)) return bad();
         this.paired = { pub: remote, secret: m.secret, name: m.name };
@@ -85,7 +92,11 @@ class CtlClient {
     this.conn = conn;
     this.write({ t: 'hello', v: 2, name: this.name, caps: W.CTL_CAPS });   // 'sess': it reads the HQ session
     const beat = setInterval(() => this.write({ t: 'ping' }), 5000);
-    conn.on('close', () => { clearInterval(beat); if (this.conn === conn) this.conn = null; this.onEvent({ t: 'offline' }); });
+    conn.on('close', () => {
+      clearInterval(beat);
+      if (this.conn === conn) { this.conn = null; this.failWaits(); }   // no answer can come on a closed connection
+      this.onEvent({ t: 'offline' });
+    });
     this.onEvent({ t: 'online' });
   }
   handle(raw) {
@@ -98,17 +109,31 @@ class CtlClient {
   }
   /** Types one HQ turn on the desktop → the ctl-hq-status answer. */
   hq(text, id = `p${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`) {
-    return new Promise((resolve) => { this.hqWaits.set(id, resolve); this.write({ t: 'ctl-hq', id, text }); });
+    return this.ask(id, { t: 'ctl-hq', id, text });
   }
   reports(limit = 20, id = `r${Date.now().toString(36)}`) {
-    return new Promise((resolve) => { this.hqWaits.set(id, resolve); this.write({ t: 'ctl-reports', id, limit }); });
+    return this.ask(id, { t: 'ctl-reports', id, limit });
+  }
+  /** Sends a request and waits for its answer; offline (now, or before the answer) → { status: 'rejected', reason: 'offline' }. */
+  ask(id, m) {
+    return new Promise((resolve) => {
+      if (!this.conn || this.conn.destroyed) return resolve({ id, status: 'rejected', reason: 'offline' });
+      this.hqWaits.set(id, resolve);
+      this.write(m);
+    });
+  }
+  /** Settles every pending request as offline. */
+  failWaits() {
+    const waits = [...this.hqWaits];
+    this.hqWaits.clear();
+    for (const [id, resolve] of waits) resolve({ id, status: 'rejected', reason: 'offline' });
   }
   /** Reads the HQ session: sess-items / sess-end arrive as events. keep() every minute or so; close() ends it. */
   hqSession(id = `s${Date.now().toString(36)}`) {
     this.write({ t: 'sess-open', id, project: 'hq' });
     return { id, keep: () => this.write({ t: 'sess-keep', id }), close: () => this.write({ t: 'sess-close', id }) };
   }
-  destroy() { this.cancelPair('destroyed'); return this.swarm.destroy(); }
+  destroy() { this.cancelPair('destroyed'); this.failWaits(); return this.swarm.destroy(); }
 }
 
 module.exports = { CtlClient };

@@ -66,3 +66,36 @@ test('a second pair() cancels the first', { skip }, async () => {
   assert.equal(c.pairing, null);
   assert.equal(swarm.left.length, 2);
 });
+
+const fakeConn = () => Object.assign(new EventEmitter(), { remotePublicKey: Buffer.from(deskPub, 'hex'), destroyed: false, written: [],
+  write(x) { this.written.push(x); }, destroy() { if (this.destroyed) return; this.destroyed = true; this.emit('close'); } });
+
+test('a connection closed after the phone proved the code rejects the pairing as declined at once', { skip }, async () => {
+  const { c, swarm } = client();
+  const p = c.pair(url('acid-aged-also-area-army'), { ttlMs: 60000 });
+  const conn = fakeConn();
+  swarm.emit('connection', conn);
+  const w = W.createWire(crypto);
+  const { key } = w.pairSecrets('acid-aged-also-area-army');
+  conn.emit('data', Buffer.from(W.encode({ t: 'pair-hello', name: 'Desk', proof: w.pairProof(key, 'inviter', deskPub, c.pub), kind: 'controller' })));
+  assert.equal(conn.written.length, 1);   // the phone's own pair-hello
+  conn.destroy();                         // the person at the desktop said no
+  await assert.rejects(p, /declined/);
+  assert.equal(c.pairing, null);
+  assert.equal(swarm.left.length, 1);
+});
+
+test('hq() and reports() settle as offline: with no connection, and when the connection closes', { skip }, async () => {
+  const { c } = client();
+  assert.deepEqual(await c.hq('status', 'a1'), { id: 'a1', status: 'rejected', reason: 'offline' });
+  assert.deepEqual(await c.reports(5, 'r1'), { id: 'r1', status: 'rejected', reason: 'offline' });
+  const conn = fakeConn();
+  c.session(conn);
+  const turn = c.hq('status', 'a2');
+  const reps = c.reports(5, 'r2');
+  assert.equal(c.hqWaits.size, 2);
+  conn.destroy();
+  assert.deepEqual(await turn, { id: 'a2', status: 'rejected', reason: 'offline' });
+  assert.deepEqual(await reps, { id: 'r2', status: 'rejected', reason: 'offline' });
+  assert.equal(c.hqWaits.size, 0);
+});
