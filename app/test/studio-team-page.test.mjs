@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { TEAM_TABS, roleCard, filterRoles, prefillMember, hireForm, memberPacks, memberCards, departmentCounts, renameForms, renameBoxValue } from '../src/studio-team-page.mjs'
+import { TEAM_TABS, roleCard, filterRoles, prefillMember, hireForm, memberPacks, memberCards, departmentCounts, renameForms, renameBoxValue, wizardRoleDef } from '../src/studio-team-page.mjs'
 
 const ROLES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'roles')
 const presets = readdirSync(ROLES).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(ROLES, f), 'utf8')))
@@ -112,4 +112,28 @@ test('renameBoxValue: the draft survives redraws, else the label', () => {
   assert.equal(renameBoxValue(undefined, 'R&D'), 'R&D')
   assert.equal(renameBoxValue('Research', 'R&D'), 'Research')
   assert.equal(renameBoxValue('', 'R&D'), '')   // a box the person emptied stays empty
+})
+
+test('wizardRoleDef: the wizard\'s saved role as the hire sheet\'s role', () => {
+  const saved = { id: 'my-social-media', name: 'Social media', department: 'marketing', description: 'Posts', brief: 'Write posts.', skillPacks: ['canva', 3], tools: ['gmail'], writesCode: false }
+  const def = wizardRoleDef(saved, [])
+  assert.deepEqual(def.name, { en: 'Social media', tr: 'Social media' })
+  assert.equal(def.custom, true)
+  assert.deepEqual(def.skillPacks, ['canva'])
+  const card = roleCard(def, 'tr')
+  assert.equal(card.name, 'Social media')
+  assert.equal(card.brief, 'Write posts.')
+  assert.equal(card.writesCode, false)
+  const prefill = prefillMember(def, { deptName: (d) => d.toUpperCase(), servers: [{ id: 's1', name: 'gmail' }, { id: 's2', name: 'slack' }] })
+  assert.deepEqual(prefill.role, { preset: 'my-social-media' })
+  assert.equal(prefill.department, 'MARKETING')
+  assert.deepEqual(prefill.skillPacks, { canva: true })
+  assert.deepEqual(prefill.tools, ['s1'])
+  assert.equal(prefill.name, '')
+  // the reloaded list's entry wins; a name in both languages is kept
+  const listed = { id: 'my-social-media', name: { en: 'Listed', tr: 'Listed (tr)' }, brief: 'x', custom: true }
+  assert.equal(wizardRoleDef(saved, [listed]), listed)
+  assert.deepEqual(wizardRoleDef({ id: 'my-x', name: { en: 'A', tr: 'B' } }).name, { en: 'A', tr: 'B' })
+  assert.equal(wizardRoleDef({ name: 'no id' }), null)
+  assert.equal(wizardRoleDef(null), null)
 })
