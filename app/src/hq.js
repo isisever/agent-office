@@ -4,6 +4,7 @@
 // an offline machine's projects (names and ids only) for the PROJECTS list.
 'use strict';
 const fs = require('fs');
+const BM = require('./board-model.js');   // v3.131 order types
 const path = require('path');
 const { REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK } = require('./link-core.js');
 
@@ -318,6 +319,7 @@ function addTask(board, t, now = Date.now()) {
     id: t.id, request: t.request || '', title: line(t.title || t.task || '', TITLE_MAX), machine: t.pub === 'self' || !t.pub ? 'self' : t.pub,
     machineName: line(t.machineName || '', 64), project: line(t.project || '', 64), ...(t.projectId ? { projectId: t.projectId } : {}), ...(t.staff ? { staff: line(t.staff, 40), ...(isStr(t.staffId) ? { staffId: t.staffId.slice(0, 64) } : {}) } : {}),   // v3.83 the staff member's desk (v3.91 its id: the target check)
     status: STATUSES.includes(t.status) ? t.status : 'queued', ...(t.reason ? { reason: line(t.reason, 40) } : {}),
+    type: BM.orderType(t.type, t.title, t.task),   // v3.131 bugfix | hotfix | feature: HQ's explicit type, else classified
     at: now, brief: `tasks/${t.id}/brief.md`, commits: [], prs: [], read: false,
     ...(typeof t.after === 'string' && t.after ? { after: t.after.slice(0, 64) } : {}),   // v3.79 the stage it waits for
     ...(t.byInitiative === true ? { byInitiative: true } : {}),   // v3.91 HQ sent it on its own (no consent asked)
@@ -328,7 +330,9 @@ function addTask(board, t, now = Date.now()) {
   if (task.request) {
     const r = requests.find((x) => x.id === task.request);
     requests = r ? requests.map((x) => (x === r ? { ...x, tasks: [...x.tasks, task.id], done: false } : x))
-      : [{ id: task.request, at: now, prompt: line(redact(t.prompt || ''), 150), tasks: [task.id], done: false, ...(t.routine ? { routine: line(t.routine, 16), run: line(t.run, 16) } : {}) }, ...requests];
+      // v3.131 the order's type: HQ's explicit type, else a prefix or keywords
+      : [{ id: task.request, at: now, prompt: line(redact(t.prompt || ''), 150), tasks: [task.id], done: false,
+        type: BM.orderType(t.type, t.prompt, t.title, t.task), ...(BM.typeOf(t.type) ? { typeBy: 'hq' } : {}), ...(t.routine ? { routine: line(t.routine, 16), run: line(t.run, 16) } : {}) }, ...requests];
   }
   return { tasks, requests };
 }
@@ -524,7 +528,14 @@ function createPacer({ burst = 3, everyMs = 10000, now = Date.now } = {}) {
   };
   return {
     /** send now when a token is free, else hold (sent by flush in order). → true when sent now. */
-    submit(key, send) { if (!held.some((h) => h.key === key) && take(key)) { send(); return true; } held.push({ key, send }); return false; },
+    // v3.131 held sends wait in type priority (bugfix, hotfix, feature), then in order
+    submit(key, send, type = 'feature') {
+      if (!held.some((h) => h.key === key) && take(key)) { send(); return true; }
+      const rank = BM.rankOf(type);
+      const at = held.findIndex((h) => h.rank > rank);
+      held.splice(at < 0 ? held.length : at, 0, { key, send, rank });
+      return false;
+    },
     flush() { for (let i = 0; i < held.length;) { const h = held[i]; if (held.slice(0, i).some((x) => x.key === h.key) || !take(h.key)) { i++; continue; } held.splice(i, 1); h.send(); } },
     get size() { return held.length; },
   };

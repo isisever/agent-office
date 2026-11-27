@@ -9,6 +9,7 @@
 // session never reported) and a report written after the person typed into that session themselves (personPrompted,
 // v3.89 amendment: it may answer the person, not the task); nothing is ever sent without the consent given when it
 // was created.
+const BM = require('./board-model.js');   // v3.131 release order
 const ADHOC = 'adhoc';
 const WAITING = 'waiting';
 const BLOCKED = 'blocked';
@@ -78,7 +79,9 @@ function settle(board, now = Date.now(), waitMs = WAIT_MS) {
     else if (st === 'block') block.push({ id: t.id, status: BLOCKED, reason: !pre ? 'after-lost' : pre.status === 'rejected' && pre.resumed === true ? 'after-blocked' : pre.closedByHq ? 'after-closed-by-hq' : pre.status === 'reported' && pre.personPrompted ? 'after-person-prompted' : `after-${pre.status}` });
     else if (now - t.at > waitMs) block.push({ id: t.id, status: 'expired', reason: 'after-timeout' });
   }
-  return { release, block };
+  // v3.131 stages released together go by type priority (bugfix, hotfix, feature), then the oldest first
+  const at = new Map(board.tasks.map((t) => [t.id, t]));
+  return { release: BM.byPriority(release, (x) => at.get(x.id)?.type, (x) => at.get(x.id)?.at), block };
 }
 
 /**
