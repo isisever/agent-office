@@ -202,6 +202,7 @@ class Link extends EventEmitter {
     // the inviter names itself at once; the joiner proves the code (its pair-hello) only after its person said yes
     if (p.role === 'inviter') hello();
     let device = null;
+    let invalid = 0;   // a paired phone's first session runs on this reader: the same 20-invalid limit as ctlSession
     let confirmed = false;   // the person at this machine said yes on this connection
     const finish = () => {
       done = true;
@@ -215,7 +216,7 @@ class Link extends EventEmitter {
       this.session(conn, device, 'paired');
     };
     this.reader(conn, (raw) => {
-      if (device) return device.kind === 'controller' ? this.handleCtl(conn, device, raw) : this.handle(conn, device, raw);    // the same stream carries the session once paired
+      if (device) return device.kind === 'controller' ? this.handleCtl(conn, device, raw, () => { if (++invalid > 20) conn.destroy(); }) : this.handle(conn, device, raw);    // the same stream carries the session once paired
       const m = C.validatePair(raw);
       if (!m || this.pairing !== p) return fail();
       if ((m.kind || null) !== (p.kind || null)) return fail();   // v3.121 a phone never joins a desktop code, nor a desktop a phone code
@@ -643,6 +644,10 @@ class Link extends EventEmitter {
   // finds the transcript and feeds sessPush) → frames at most SESS_FRAMES_PER_SEC → endSess. Nothing here reads a file.
 
   sessOf(pub) { return [...this.sessOut.values()].filter((s) => s.pub === pub); }
+  /** v3.121 may this subscription still be fed? An own office: any project; a paired phone: the HQ session only. */
+  maySess(s) {
+    return C.maySessions(this.devices, this.secrets, s.pub) || (s.project === 'hq' && C.isController(this.devices, this.secrets, s.pub));
+  }
   /** A device asks to read one of our projects' sessions: only while it is paired and not paused (v3.101). */
   receiveSessOpen(conn, d, m) {
     if (!this.peerHas(d.pub, 'sess')) return;   // it never said it understands the answer
@@ -666,7 +671,7 @@ class Link extends EventEmitter {
   sessPush(key, items, { reset = false } = {}) {
     const s = this.sessOut.get(key);
     if (!s) return false;
-    if (!C.maySessions(this.devices, this.secrets, s.pub)) { this.endSess(key, 'not-allowed', 'revoked'); return false; }
+    if (!this.maySess(s)) { this.endSess(key, 'not-allowed', 'revoked'); return false; }
     const frames = C.sessFrames(s.id, s.seq, items, reset);
     if (reset) s.queue.length = 0;
     s.seq += frames.length;
@@ -678,7 +683,7 @@ class Link extends EventEmitter {
   pumpSess(s) {
     if (s.cool || !s.queue.length || this.sessOut.get(s.key) !== s) return;
     // the permission is read again before every frame: turning it off or removing the device stops the stream at once
-    if (!C.maySessions(this.devices, this.secrets, s.pub)) return void this.endSess(s.key, 'not-allowed', 'revoked');
+    if (!this.maySess(s)) return void this.endSess(s.key, 'not-allowed', 'revoked');
     if (s.conn.destroyed) return void this.endSess(s.key, null, 'offline');
     this.write(s.conn, s.queue.shift());
     s.cool = setTimeout(() => { s.cool = null; this.pumpSess(s); }, this.sessGapMs);
@@ -774,8 +779,10 @@ class Link extends EventEmitter {
     const s = C.sanitizeCommand(text);
     const snap = this.remotes.get(pub)?.snap;
     const rec = { id: crypto.randomBytes(8).toString('hex'), pub, project, projectName: C.cleanLine(snap?.projects.find((p) => p.id === project)?.name || projectName || project, 60), firstLine: C.cleanLine(String(text).split('\n')[0], 80), status: 'sent', at: this.now() };
+    const office = C.trusted(this.devices, this.secrets, pub) && !C.isController(this.devices, this.secrets, pub);
     if (!s.ok) Object.assign(rec, { status: 'rejected', reason: s.reason });
-    else if (!conn && report && hold && C.trusted(this.devices, this.secrets, pub)) Object.assign(rec, { status: 'held', reason: 'offline', held: true });
+    else if (C.isController(this.devices, this.secrets, pub)) Object.assign(rec, { status: 'rejected', reason: 'not-allowed' });   // v3.121 a phone is never an office
+    else if (!conn && report && hold && office) Object.assign(rec, { status: 'held', reason: 'offline', held: true });
     else if (!conn) Object.assign(rec, { status: 'rejected', reason: report ? 'offline' : 'not-running' });
     else if (report && !this.peerHas(pub, 'report')) Object.assign(rec, { status: 'rejected', reason: 'no-report' });
     if (report) {
@@ -1026,6 +1033,7 @@ class Link extends EventEmitter {
   // session. Nothing else: every other message from a controller is dropped, and isController is checked each time.
 
   ctlSession(conn, device, why) {
+    if (!C.isController(this.devices, this.secrets, device.pub)) return void conn.destroy();   // before any hello or view
     const old = this.ctlConns.get(device.pub);
     if (old && old.conn !== conn) old.conn.destroy();
     const c = { conn, sentJson: '', statuses: new Map() };
@@ -1041,17 +1049,22 @@ class Link extends EventEmitter {
       clearInterval(beat);
       clearTimeout(silence);
       for (const s of [...this.sessOut.values()]) if (s.conn === conn) this.endSess(s.key, null, 'offline');
-      if (this.ctlConns.get(device.pub) === c) this.ctlConns.delete(device.pub);
+      if (this.ctlConns.get(device.pub) === c) { this.ctlConns.delete(device.pub); this.peers.delete(device.pub); }
       this.emit('change');
     });
-    this.write(conn, { t: 'hello', v: C.PROTOCOL, name: this.name, ...(this.appVersion ? { app: this.appVersion } : {}), caps: ['ctl'] });
+    this.write(conn, { t: 'hello', v: C.PROTOCOL, name: this.name, ...(this.appVersion ? { app: this.appVersion } : {}), caps: W.CTL_CAPS });
     this.flushCtl();
     this.emit('change');
   }
   handleCtl(conn, device, raw, onInvalid = () => {}) {
     if (!C.isController(this.devices, this.secrets, device.pub)) return conn.destroy();   // forgotten or unsealed: at once
     const d = this.devices.find((x) => x.pub === device.pub) || device;
-    if (raw?.t === 'ping' || raw?.t === 'hello') return;
+    if (raw?.t === 'ping') return;
+    if (raw?.t === 'hello') {   // only the caps a phone may have count: 'ctl' and 'sess' (it then gets sess-end)
+      const caps = Array.isArray(raw.caps) ? raw.caps.filter((c) => W.CTL_CAPS.includes(c)) : [];
+      this.peers.set(d.pub, { v: Number(raw.v) || 0, app: '', caps });
+      return;
+    }
     if (raw?.t === 'sess-open' || raw?.t === 'sess-keep' || raw?.t === 'sess-close') {
       const m = C.validateMessage(raw);
       if (!m) return onInvalid();

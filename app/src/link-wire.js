@@ -110,6 +110,8 @@ function validatePair(m) {
 // --- v3.121 phone controller messages (cap 'ctl'). A controller reads a snapshot and types HQ turns, nothing else.
 
 const CTL_STATUS = ['working', 'idle', 'approval'];
+/** v3.121 the caps a phone controller and the desktop exchange in their hello: 'sess' = it reads the HQ session (sess-end). */
+const CTL_CAPS = ['ctl', 'sess'];
 const CTL_HQ_STATUS = ['queued', 'delivered', 'rejected'];
 const CTL_REASONS = ['not-allowed', 'rate-limited', 'empty', 'too-large', 'not-text', 'no-hq', 'busy', 'offline', 'failed'];
 const CTL_PROJECTS = 50;
@@ -224,7 +226,7 @@ function parsePairUrl(text) {
 
 module.exports = {
   PAIR_TTL_MS, MAX_FRAME, MAX_COMMAND, MAX_NAME, CODE_WORDS, WORDS, PAIR_SALT, SCRYPT, KINDS,
-  CTL_STATUS, CTL_HQ_STATUS, CTL_REASONS, CTL_PROJECTS, CTL_REPORTS, CTL_REPORT_TEXT,
+  CTL_STATUS, CTL_CAPS, CTL_HQ_STATUS, CTL_REASONS, CTL_PROJECTS, CTL_REPORTS, CTL_REPORT_TEXT,
   ESCAPES, CONTROLS, cleanLine, deviceName, isStr, isInt, isId, hex, isHex, toHex, fromHex, utf8Len, normalizeCode,
   LineReader, encode, validatePair, validateCtl, cleanCtlView, createWire, pairUrl, parsePairUrl,
 };
