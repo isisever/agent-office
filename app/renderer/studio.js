@@ -41,6 +41,7 @@ function el(tag, props = {}, ...kids) {
  *     openOfficeSettings: () => void, sidebar: () => any, showPanel: (selector: string) => boolean,
  *     appInfo: () => { version: string | null, ready: string | null }, installUpdate: () => void, toggle: () => void,
  *     openWhatsNew?: () => void,
+ *     openFloat?: (selector: string) => boolean, closeFloat?: (selector: string) => void,
  *     openDesk: (projectId: string, staffId: string) => Promise<string | null>, startDesk: (projectId: string, staffId: string, text: string) => Promise<{ ok: boolean, failed?: { step: string, why: string, detail: string } }>, activePty: () => string | null, hasSession: () => boolean,
  *     startSession: (projectId: string, plan: { tabMode: 'same' | 'worktree', settings: [string, string][], reuseN?: number }, text: string) => Promise<{ ok: boolean, n: number, failed?: { step: string, why: string, detail: string } }>,
  *     projectSettings: (projectId: string) => void, showAccounts: () => void, isMac: boolean,
@@ -50,6 +51,9 @@ function el(tag, props = {}, ...kids) {
  *   },
  * }} o
  */
+/** v3.122 the Office's floating panels outside the sidebar that studio.showPanel can show (hooks.openFloat opens them). */
+export const FLOATS = Object.freeze(['#usage-panel', '#machines-panel']);
+
 export function mountStudio({ api, t, modLabel, hooks }) {
   if (!api?.studio) return null;
   let on = false;
@@ -584,6 +588,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   document.body.append(panelBack);
   /** @type {{ el: HTMLDetailsElement, open: boolean, stored: Map<string, string | null> } | null} */
   let panelWas = null;   // the shown panel's open state and stored ao.panel.* values before showPanel opened it
+  /** @type {{ el: HTMLElement, selector: string } | null} */
+  let floatShown = null;   // a floating Office panel (FLOATS) shown over Studio
   /** The ao.panel.* values in localStorage (the Office's remembered open panels). */
   function panelStore() {
     /** @type {Map<string, string | null>} */
@@ -601,9 +607,10 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   }
   function showPanel(/** @type {string} */ selector) {
     const sb = document.getElementById('sidebar');
+    if (on && FLOATS.includes(selector)) return showFloat(selector);
     const target = /** @type {HTMLElement | null} */ (sb?.querySelector(selector) || null);
     if (!on || !sb || !target || target.hidden) return false;
-    if (panelWas) hidePanel();   // another panel was shown: put it back first
+    if (panelWas || floatShown) hidePanel();   // another panel was shown: put it back first
     let top = target;
     while (top.parentElement && top.parentElement !== sb) top = top.parentElement;
     for (const c of sb.children) c.classList.toggle('studio-shown', c === top);
@@ -616,7 +623,29 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     panelBack.hidden = false;
     return true;
   }
+  /**
+   * v3.122 a floating Office panel outside the sidebar (Usage, Machines): the Office opens it with its own show(), which
+   * fills it and keeps refreshing it while it is open; Studio only centres it as a card (body.studio-float).
+   */
+  function showFloat(/** @type {string} */ selector) {
+    const target = /** @type {HTMLElement | null} */ (document.querySelector(selector));
+    if (!target) return false;
+    if (panelWas || floatShown) hidePanel();
+    if (!hooks.openFloat?.(selector) || target.hidden) return false;
+    floatShown = { el: target, selector };
+    target.classList.add('studio-shown');
+    document.body.classList.add('studio-float');
+    panelBack.hidden = false;
+    return true;
+  }
   function hidePanel() {
+    const float = floatShown;
+    floatShown = null;
+    if (float) {
+      float.el.classList.remove('studio-shown');
+      document.body.classList.remove('studio-float');
+      hooks.closeFloat?.(float.selector);   // the Office's own hide(): stops its refresh timer
+    }
     // the panel's open state and the Office's stored value as they were before showPanel (the toggle event is async:
     // the stored values are put back after the Office's own toggle handler has run)
     const was = panelWas;

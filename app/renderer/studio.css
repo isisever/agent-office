@@ -216,6 +216,7 @@ body.studio #studio-palette .st-pal-list { padding: 6px; }
 body.studio #studio-palette .st-pal-row { min-height: 32px; padding: 0 10px; border-radius: var(--st-radius-s); }
 body.studio #studio-palette .st-pal-row.active { background: var(--st-select); }
 body.studio #studio-palette .st-pal-kind { color: var(--st-faint); opacity: 1; }
+body.studio.studio-float .agent-panel.studio-shown { background: var(--st-raised); border: 1px solid var(--st-border); border-radius: var(--st-radius); box-shadow: 0 16px 48px var(--shadow); }
 body.studio.studio-panel #sidebar { background: var(--st-raised); border: 1px solid var(--st-border); border-radius: var(--st-radius); box-shadow: 0 16px 48px var(--shadow); }
 
 /* ---- conversation: a centred column, plain prose for the assistant, soft bubbles for the person ---- */

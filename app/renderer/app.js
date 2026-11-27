@@ -1331,7 +1331,7 @@ try {
   usagePanel = mountUsagePanel($('usage-panel'), {
     anchor: $('office'),
     load: (id) => api.tokens?.report(id) ?? Promise.resolve(null),
-    onClose: () => focusActive(),
+    onClose: () => { studio?.hidePanel(); focusActive(); },
   });
 } catch (e) {
   console.warn('Kullanım paneli yüklenemedi:', e.message);
@@ -1362,7 +1362,7 @@ const devices = mountDevices($('sidebar'), api, { onMachines: () => machines?.to
 // v3.32 Machines panel (renderer/machines.js): every machine's resources and projects, over the office like the others
 try {
   const { mountMachines } = await import('./machines.js');
-  machines = mountMachines($('machines-panel'), { api, view: () => devices.view(), anchor: $('office'), onClose: () => focusActive(),
+  machines = mountMachines($('machines-panel'), { api, view: () => devices.view(), anchor: $('office'), onClose: () => { studio?.hidePanel(); focusActive(); },
     onLogin: (device, account) => login?.openRemote({ api, device, account, view: () => devices.view() }) });   // v3.34 login relay
   devices.onView(() => { machines?.render(); login?.updateRemote(); });
   if (new URLSearchParams(location.search).has('machines')) setTimeout(() => machines?.show(), 300);
@@ -1411,6 +1411,8 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   openOfficeSettings: () => sidebar?.openSettings(),
   sidebar: () => sidebar,
   showPanel: (sel) => Boolean(studio?.showPanel(sel)),
+  openFloat: (sel) => openFloatPanel(sel),   // v3.122 Usage and Machines over Studio: the Office's own show()
+  closeFloat: (sel) => { if (sel === '#usage-panel') usagePanel?.hide(); else if (sel === '#machines-panel') machines?.hide(); },
   appInfo: () => ({ version: appVersion, ready: updateVersion }),
   openWhatsNew: () => openWhatsNew(),   // v3.123 Studio Settings → About
   openDesk: (projectId, staffId) => { leaveBoard(); return openDesk(projectId, staffId); },
@@ -1459,6 +1461,9 @@ function studioCommands(projectId) {
     ...cmd('skills', () => studio?.openSettings('mcp')),
     ...cmd('voice', () => studio?.openSettings('voice')),
     ...cmd('pair', panel('#sb-devices')),
+    ...cmd('machines', panel('#machines-panel')),   // v3.122 the Office's floating panels (studio.js FLOATS)
+    ...cmd('usage', panel('#usage-panel'), Boolean(p)),
+    ...cmd('mail', panel('#sb-panel-mail')),   // the MAIL panel, when mail is on (showPanel is false without it)
     ...cmd('remoteTask', () => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); }),   // HQ's board: send-as-task to any target
     ...cmd('addProject', () => addProject()),
     ...cmd('projectSettings', () => sidebar?.openProjectSettings(p.id), Boolean(p)),
@@ -1471,6 +1476,17 @@ function studioCommands(projectId) {
   ];
 }
 studio?.setOn(studioOn);
+
+
+/** v3.122 a floating Office panel opened for Studio: Usage of Studio's current project, or Machines; false when absent. */
+function openFloatPanel(/** @type {string} */ sel) {
+  if (sel === '#machines-panel') { if (!machines) return false; if (!machines.shown()) machines.show(); return true; }
+  if (sel !== '#usage-panel' || !usagePanel) return false;
+  const p = projects.find((x) => x.id === studio?.currentProject());
+  if (!p) return false;
+  if (usagePanel.shownId() !== p.id) usagePanel.show(p);   // show() on the shown project would close it
+  return true;
+}
 
 // ---- v3.123 What's new (renderer/whats-new.js): once after an update, and from Help → What's new, ⌘K and
 // Settings → About. "Try it" runs one of these fixed actions (src/whats-new.js ACTIONS); each returns the selector to
