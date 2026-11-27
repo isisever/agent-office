@@ -9,7 +9,7 @@ const EXPERIENCES = ['office', 'studio', 'both'];
 // "Try it" may only run one of these; each maps to an existing handler in the renderer (renderer/app.js whatsNewActions)
 // v3.123 (with v3.122): open-studio-settings is Studio's Settings page, open-start-screen a new Studio session's start
 // screen; spotlight only points at the item's target (it needs one)
-const ACTIONS = ['spotlight', 'open-studio', 'open-office', 'open-settings', 'open-studio-settings', 'open-palette', 'open-start-screen', 'open-devices', 'open-team', 'focus-composer'];
+const ACTIONS = ['spotlight', 'open-studio', 'open-office', 'open-settings', 'open-studio-settings', 'open-palette', 'open-start-screen', 'open-devices', 'open-team', 'open-team-page', 'focus-composer'];
 // open-settings:<section>: the Settings popup, then the row marked data-settings-section="<section>"
 const SETTINGS_SECTIONS = ['experience', 'keep-awake', 'language', 'about'];
 const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;

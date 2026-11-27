@@ -1515,6 +1515,8 @@ const whatsNewActions = {
     if (studioOn) { studio?.openTeam(); return '#studio-team .st-set-top'; }   // v3.124 the Team page
     return whatsNewPanel('#sb-panel-team') || (sidebar?.openSettings(), '');
   },
+  // v3.124 Studio's Team page at its Roles tab, switching to Studio
+  'open-team-page': () => { if (experience !== 'studio') setExperience('studio'); studio?.openTeam('roles'); return '#studio-team .st-team-tabs'; },
   'focus-composer': () => { if (!studio?.focusStart()) focusActive(); return ''; },
 };
 const whatsNew = mountWhatsNew({
