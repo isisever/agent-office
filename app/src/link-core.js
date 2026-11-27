@@ -554,14 +554,17 @@ const snapshotFor = (snap, manage) => (manage || !snap?.workers ? snap : { ...sn
  */
 const ctlHqStatus = (busy, attention) => (attention === 'permission' ? 'approval' : busy === 'busy' || busy === 'starting' ? 'working' : 'idle');
 /**
- * v3.121 One controller HQ turn, typed like a turn the person typed: ready → typed; cold (HQ not running) → started
- * with it as the first prompt; anything else (the person is typing, a turn runs) → refused, never queued behind.
- * @returns {boolean} typed or started
+ * v3.121 One controller HQ turn: HQ off → 'no-hq'; an approval prompt open → 'busy'; ready → typed; cold (HQ not
+ * running) → started with it as the first prompt; anything else (the person is typing, a turn runs) → 'busy', never
+ * queued behind. It carries no "the person typed it" authority (main.js mints no request id for it).
+ * @returns {'queued' | 'busy' | 'no-hq'}
  */
-function ctlTurn({ busy, type, start }) {
-  if (busy === 'ready') return type() !== false;
-  if (busy === 'cold') { start(); return true; }
-  return false;
+function ctlTurn({ enabled = true, busy, approval = false, type, start }) {
+  if (!enabled) return 'no-hq';            // HQ is off (or has no project): a phone never starts it
+  if (approval) return 'busy';             // an approval prompt is open in HQ: nothing is typed over it
+  if (busy === 'ready') return type() !== false ? 'queued' : 'busy';
+  if (busy === 'cold') { start(); return 'queued'; }
+  return 'busy';
 }
 const logEntry = (at, device, project, text, outcome) => ({ at: new Date(at).toISOString(), device, project, firstLine: cleanLine(String(text).split(/\r?\n/)[0], 120), outcome });
 

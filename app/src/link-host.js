@@ -37,7 +37,7 @@ const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks be
  *   loginOf?: (projectId: string) => 'in' | 'out' | 'unknown', reportsDir?: string,
  *   answersPrompts?: (projectId: string) => boolean, confirmPair?: (device: string) => Promise<boolean>,   // v3.101 the pairing dialog on this machine
  *   hqSessionOf?: () => { file?: string, reason?: string },   // v3.121 the HQ transcript a controller reads
- *   ctlHq?: (text: string, o: { device: string, id: string }) => boolean | void | Promise<boolean | void>, ctlReports?: (limit: number) => any[] | Promise<any[]>,   // v3.121 phone controller
+ *   ctlHq?: (text: string, o: { device: string, id: string }) => boolean | string | void | Promise<boolean | string | void>, ctlReports?: (limit: number) => any[] | Promise<any[]>,   // v3.121 phone controller
  *   onReport?: (r: { id: string, machine: string, pub: string, report: any }) => void,
  *   asleep?: (projectId: string) => boolean, attentionOf?: (projectId: string) => string,   // v3.48 why a device's task waits / needs approval
  *   stoppedHere?: (projectId: string) => number,   // v3.99 when the person at this machine last stopped that project themselves (0: never)
@@ -196,7 +196,11 @@ function setupLink(d) {
       // v3.121 a phone controller types an HQ turn / asks for the reports; no host callback = refused ('no-hq') / none
       if (d.ctlHq) link.on('ctl-hq', ({ device, id, text, reply }) => {
         clog({ device: device.name, project: 'hq', firstLine: C.cleanLine(text.split(/\r?\n/)[0], 120) });
-        Promise.resolve().then(() => d.ctlHq?.(text, { device: device.name, id })).then((ok) => reply(ok === false ? 'rejected' : 'queued', ok === false ? 'busy' : undefined), () => reply('rejected', 'failed'));
+        // ctlHq → 'queued' | a refusal reason ('busy', 'no-hq'); false = 'busy' (older callers)
+        Promise.resolve().then(() => d.ctlHq?.(text, { device: device.name, id })).then((r) => {
+          const why = r === false ? 'busy' : typeof r === 'string' && r !== 'queued' ? r : '';
+          reply(why ? 'rejected' : 'queued', why || undefined);
+        }, () => reply('rejected', 'failed'));
       });
       if (d.ctlReports) link.on('ctl-reports', ({ limit, reply }) => { Promise.resolve().then(() => d.ctlReports?.(limit)).then(reply, () => reply([])); });
       link.on('report', ({ device, id, report }) => d.onReport?.({ id, machine: device.name, pub: device.pub, report }));
@@ -806,7 +810,7 @@ function setupLink(d) {
   /** v3.48 o.hold: an offline device's task waits in the outbox (sent on its next hello); o.ttl: its queue wait there (cap task-status). */
   function dispatchRemote(pub, projectId, text, { hold = false, ttl = 0, projectName = '', revive = false } = {}) {
     const l = link;
-    if (!l || !l.devices.some((x) => x.pub === pub)) return { id: '', status: 'rejected', reason: 'unknown-machine' };
+    if (!l || !C.offices(l.devices).some((x) => x.pub === pub)) return { id: '', status: 'rejected', reason: 'unknown-machine' };   // v3.121 never a phone
     const rec = l.sendCommand(pub, projectId, text, { report: true, hold, ttl, projectName, revive });   // v3.99 revive: HQ tasks only (main)
     return { id: rec.id, status: rec.status, ...(rec.reason ? { reason: rec.reason } : {}) };
   }
@@ -927,8 +931,8 @@ function setupLink(d) {
     knows: (id) => localTasks.has(id) || [...queue.values()].some((q) => q.some((c) => c.id === id)),
     /** The Link (tests; null while off). */
     link: () => link,
-    /** Paired devices a project can be handed to (online ones first). */
-    devices() { const l = start(); return l ? l.devices.map((x) => ({ id: x.pub, name: x.name, online: l.conns.has(x.pub) })) : []; },
+    /** Paired offices a project can be handed to (online ones first); v3.121 never a phone. */
+    devices() { const l = start(); return l ? C.offices(l.devices).map((x) => ({ id: x.pub, name: x.name, online: l.conns.has(x.pub) })) : []; },
     handOff, unknownFor, askAgain, keepHere,
     destroy() { clearInterval(pumpTimer); clearInterval(reportTimer); clearInterval(sessTimer); relay?.destroy(); return link?.destroy(); },
   };
