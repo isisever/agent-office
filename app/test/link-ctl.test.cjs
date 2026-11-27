@@ -86,6 +86,32 @@ test('integration: a phone pairs by QR URL, reads ctl-view and types an HQ turn'
   assert.equal(st.status, 'queued');
   assert.deepEqual(typed, ['status please']);
   phone.write({ t: 'cmd', id: 'x1', project: 'p1', text: 'rm -rf' });   // an office command from a controller is dropped
+  // the phone reads HQ's transcript: frames arrive, and the end is told to it (it said 'sess' in its hello)
+  const opened = [];
+  desk.on('sess-open', (o) => opened.push(o));
+  const hs = phone.hqSession('h1');
+  await until(() => opened.length === 1);
+  assert.equal(opened[0].project, 'hq');
+  assert.equal(opened[0].controller, true);
+  assert.equal(desk.sessPush(opened[0].key, [{ role: 'user', text: 'hello hq' }, { role: 'assistant', text: 'hi' }], { reset: true }), true);
+  await until(() => events.some((e) => e.t === 'sess-items' && e.id === 'h1'));
+  const frame = events.find((e) => e.t === 'sess-items');
+  assert.equal(frame.reset, true);
+  assert.deepEqual(frame.items.map((x) => x.text), ['hello hq', 'hi']);
+  assert.equal(desk.sessPush(opened[0].key, [{ role: 'assistant', text: 'more' }]), true);   // still allowed after the first frame
+  await until(() => events.filter((e) => e.t === 'sess-items').length === 2);
+  desk.endSess(opened[0].key, 'limit', 'test');
+  await until(() => events.some((e) => e.t === 'sess-end' && e.id === 'h1'));
+  assert.ok(hs.close);
+  phone.write({ t: 'sess-open', id: 'p2', project: 'p1' });   // any other project: refused
+  await until(() => events.some((e) => e.t === 'sess-end' && e.id === 'p2' && e.reason === 'not-allowed'));
+  assert.equal(opened.length, 1);
+  // a phone is never an office: a task for it is refused, never held for its next hello
+  const phonePub = desk.view().phones[0].pub || desk.devices.find((x) => x.kind === 'controller').pub;
+  const task = desk.sendCommand(phonePub, 'p1', 'do it', { report: true, hold: true });
+  assert.equal(task.status, 'rejected');
+  assert.equal(task.held, undefined);
+  assert.equal(desk.sendCommand(phonePub, 'p1', 'do it').status, 'rejected');
   desk.setCtlHq('working');
   await until(() => events.some((e) => e.t === 'ctl-event' && e.event.project === 'hq'));
   await desk.remove(desk.view().phones[0].id);
@@ -96,11 +122,16 @@ test('a controller HQ turn is typed only when HQ is free, started when HQ is col
   const calls = [];
   const type = () => { calls.push('type'); return true; };
   const start = () => calls.push('start');
-  assert.equal(C.ctlTurn({ busy: 'ready', type, start }), true);
-  assert.equal(C.ctlTurn({ busy: 'cold', type, start }), true);
-  assert.equal(C.ctlTurn({ busy: 'busy', type, start }), false);   // the person is typing or a turn runs: refused
-  assert.equal(C.ctlTurn({ busy: 'starting', type, start }), false);
-  assert.equal(C.ctlTurn({ busy: 'ready', type: () => false, start }), false);   // not typed (handoff lock, no pty)
+  assert.equal(C.ctlTurn({ enabled: true, busy: 'ready', type, start }), 'queued');
+  assert.equal(C.ctlTurn({ enabled: true, busy: 'cold', type, start }), 'queued');
+  assert.equal(C.ctlTurn({ enabled: true, busy: 'busy', type, start }), 'busy');   // the person is typing or a turn runs: refused
+  assert.equal(C.ctlTurn({ enabled: true, busy: 'starting', type, start }), 'busy');
+  assert.equal(C.ctlTurn({ enabled: true, busy: 'ready', type: () => false, start }), 'busy');   // not typed (handoff lock, no pty)
+  // HQ off: a cold HQ is never started from the phone, a running one never typed into
+  assert.equal(C.ctlTurn({ enabled: false, busy: 'cold', type, start }), 'no-hq');
+  assert.equal(C.ctlTurn({ enabled: false, busy: 'ready', type, start }), 'no-hq');
+  // an approval prompt open in HQ: refused, even when HQ looks ready
+  assert.equal(C.ctlTurn({ enabled: true, busy: 'ready', approval: true, type, start }), 'busy');
   assert.deepEqual(calls, ['type', 'start']);
   assert.equal(C.ctlHqStatus('busy', ''), 'working');
   assert.equal(C.ctlHqStatus('ready', 'permission'), 'approval');
@@ -110,4 +141,23 @@ test('a controller HQ turn is typed only when HQ is free, started when HQ is col
 test('link-host: only a controller may open the hq session (source gate; link-host needs Electron to run)', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '../src/link-host.js'), 'utf8');
   assert.match(src, /if \(project === 'hq' && !controller\) return refuse\('unknown-project'\)/);
+});
+
+test('a paired phone is never an office in main or link-host (dispatch, HQ machine names, hand-off menu)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const main = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
+  const host = fs.readFileSync(path.join(__dirname, '../src/link-host.js'), 'utf8');
+  // every HQ machine-name match goes through LC.offices: no raw l.devices list is left
+  assert.equal(main.replaceAll('LC.offices(l?.devices || [])', '').includes('l?.devices || []'), false);
+  assert.ok((main.match(/LC\.offices\(l\?\.devices \|\| \[\]\)/g) || []).length >= 8);
+  assert.match(host, /function dispatchRemote[^]*?C\.offices\(l\.devices\)\.some/);
+  assert.match(host, /devices\(\) \{ const l = start\(\); return l \? C\.offices\(l\.devices\)/);
+  // and the HQ setting gates a phone's turn; it mints no "the person typed it" request id
+  const ctl = main.slice(main.indexOf('ctlHq: (text) =>'), main.indexOf('ctlReports: ctlReportsList'));
+  assert.match(ctl, /enabled: Boolean\(hqSettings\(\)\.enabled && P\.hqProject\(state\)\)/);
+  assert.doesNotMatch(ctl, /hqMinter\.mint/);
+  // the offices filter itself
+  const devices = [{ pub: 'a'.repeat(64), name: 'Mac' }, { pub: 'b'.repeat(64), name: 'iPhone', kind: 'controller', ctl: true }];
+  assert.deepEqual(C.offices(devices).map((d) => d.name), ['Mac']);
 });
