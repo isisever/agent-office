@@ -3062,6 +3062,51 @@ type StudioProject = { id, name, dir, engine, account: string, active: boolean, 
   - **Idle at start**: a GUI chat is busy only from a sent message or a `message_start` until `result`; a whole user or
     assistant message outside a turn no longer marks it busy (`nextLive`), so a fresh or resumed chat is not "Working…".
 
+
+### Studio UX (v3.120)
+
+Pure logic in `src/studio-ux.mjs` (tests: `test/studio-ux.test.mjs`); the DOM in `renderer/studio.js` and `renderer/chat.js`.
+
+```ts
+StudioProject.running[] += { label: string,   // the tab's own label (staff member, worktree branch, folder), was `title`
+  title: string,                              // the session's name ('' → the renderer shows "New session")
+  branch: string, at: number,                 // the transcript's git branch and last change (ms, 0 unknown)
+  busy: boolean, waiting: boolean }           // a turn runs (GUI chat) / an approval or a question is open
+chat:read gui += { info: { model: string, usage: null | { input_tokens, cache_read_input_tokens, cache_creation_input_tokens } }, contextCap: number }
+```
+
+1. **Header**: in Studio the title bar's Office items (≡, ⚙, AGENT OFFICE, the project, the counts) are hidden by CSS and
+   `#studio-header` shows the active session's name, chips for its project, git branch and account, and its state
+   (Working with a spinner, or the waiting badge). A click (or Enter) on the name edits it in place; Enter sends
+   `/rename <name>` (`chat:command`, then `chat:send` when it answers 'terminal'), Escape or blur keeps it. The Office's
+   elements are untouched and come back with `experience: 'office'`.
+2. **Session names**: main names a running session from its transcript like /resume (v3.118 `sessionInfo`): the /rename
+   title, then Claude Code's title, then the first prompt (`studioTabInfo`, the transcript is read again only when its
+   size or time changed); none → "New session". A row shows a relative time (`relativeTime`, `Intl.RelativeTimeFormat`
+   in the UI language), a spinner while working and a "Needs you" badge while waiting. A project with a single session
+   and nothing recent is one compact row (the head opens that session). The sidebar refreshes every 5 s.
+3. **Start screen**: ⌘N, + New session, a group's + and a project with no session show it over the chat: a greeting
+   with the account's first name (`firstName` of `studioUser`'s name), a centered composer, the project picker, the
+   project's account (read-only, "change" opens project settings), New worktree, model and permission mode ('' = the
+   project's own). Sending: `startPlan(choice)` → `tabs:add` with 'same' or 'worktree', then each setting through
+   `chat:setting` once the GUI chat runs (retried while 'not-running' / 'busy', up to ~16 s), then the prompt with
+   `chat:send`. Tabs have no per-tab start flag for model or mode, so they are always applied right after the start.
+   Escape (with a session behind it) or picking a session leaves it.
+4. **Model label**: the model picker's first option names the model the session runs (`modelName` of the `system`
+   `init` message's `model`, then each top-level answer's `message.model`), e.g. "Opus 5.5"; "Model as started" until known.
+5. **Message actions** (Studio only): Copy on every message (as before), a copy button in each code block's corner,
+   Edit on the person's messages (puts the text back in the input to send again; the conversation is not rewound),
+   "Jump to latest" while the list is scrolled more than 120 px up, and animated dots on the live line while a turn runs.
+6. **Context ring**: from the last top-level answer's usage (input + cache read + cache creation tokens) against the
+   project's context cap, else 1,000,000 for a `[1m]` model, else 200,000 (`contextUsage`); the tooltip gives tokens
+   used, the limit and the percentage; hidden until the session has answered once. Terminal tabs have no ring.
+7. **Account menu**: the footer is one account button; its menu has Studio's theme (System / Light / Dark, this
+   window's localStorage `ao.studio.theme`, `body[data-studio-theme]`, the Office's mode is not changed), Accounts,
+   Settings and Go to the Office (⌘⇧E).
+8. **Keys** (`studioKey`): ⌘L focuses the composer (the start screen's when shown); ⌘⇧N the start screen with New
+   worktree on (Ctrl+Shift+Alt+N on Linux and Windows, where Ctrl+Shift+N is ⌘N); Escape stops a running turn only
+   from an empty input in Studio (the Office keeps Escape as before). Tooltips name the keys.
+
 ## Phone controller (v3.121)
 
 (v3.119 is Voice input; v3.120 is reserved for Studio.) An iPhone running Agent Office Remote pairs with this machine as a
