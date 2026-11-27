@@ -146,7 +146,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   const moreMenu = h('div', { class: 'chat-more-menu', role: 'menu' }, moreTerm);
   moreMenu.hidden = true;
   const more = h('button', { class: 'chat-more', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => { e.stopPropagation(); moreMenu.hidden = !moreMenu.hidden; } }, icon('more', 18));
-  document.addEventListener('click', () => { moreMenu.hidden = true; });
+  const closeMore = () => { moreMenu.hidden = true; };
+  document.addEventListener('click', closeMore);   // removed again in destroy()
   const row = h('div', { class: 'chat-row' }, attach, mic, h('span', { class: 'chat-row-gap chat-studio-only' }), pickers,
     h('span', { class: 'chat-more-wrap chat-studio-only' }, more, moreMenu), stop, send);
   const form = h('div', { class: 'chat-form' }, slash, atList, input, row, term);
@@ -288,8 +289,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''), reveal);
       if (it.id) map.set(it.id, line);
       if (it.agent && it.id && !source) agentRow(line, it.id);
-      // a click shows the call's whole detail (Studio draws the row as a card that opens; the Office keeps its line)
-      else line.addEventListener('click', () => { if (!window.getSelection()?.toString()) line.classList.toggle('open'); });
+      // Studio: a click shows the call's whole detail (the row is a card that opens); the Office keeps its line as it was
+      else line.addEventListener('click', () => { if (studioOn() && !window.getSelection()?.toString()) line.classList.toggle('open'); });
       return line;
     }
     if (it.kind === 'command') return h('div', { class: 'chat-cmd' }, it.text);
@@ -875,7 +876,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   }
   function drawImages() {
     imgBar.replaceChildren(...images.map((im, i) => h('span', { class: 'chat-image-chip' },
-      h('img', { src: `data:${im.type};base64,${im.data}`, alt: t('chat.imageAlt'), onclick: () => previewImage(`data:${im.type};base64,${im.data}`) }),
+      h('img', { src: `data:${im.type};base64,${im.data}`, alt: t('chat.imageAlt'), onclick: () => { if (studioOn()) previewImage(`data:${im.type};base64,${im.data}`); } }),
       h('button', { class: 'chat-image-x', title: t('chat.imageRemove'), onclick: () => { images.splice(i, 1); drawImages(); input.focus(); } }, '✕'))));
     imgBar.hidden = !images.length;
   }
@@ -1142,6 +1143,6 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     paste: () => pasteFromMenu(),
     /** v3.112 a line under the input (why the Terminal button did not switch). */
     note: (text) => note(String(text || '')),
-    destroy() { shown = false; window.clearInterval(timer); window.clearInterval(menuTimer); el.remove(); },
+    destroy() { shown = false; window.clearInterval(timer); window.clearInterval(menuTimer); document.removeEventListener('click', closeMore); el.remove(); },
   };
 }
