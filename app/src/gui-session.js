@@ -12,6 +12,8 @@ const { draftAfter } = require('./sleep.js');
 /** The flags that turn claude into the SDK protocol; they go before every other argument. */
 const GUI_FLAGS = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
   '--include-partial-messages', '--permission-prompt-tool', 'stdio'];
+/** v3.120 the model probe's flags: the SDK protocol without the account's MCP servers (a throwaway session) */
+const PROBE_FLAGS = [...GUI_FLAGS, '--strict-mcp-config'];
 const LINE_MAX = 64 * 1024 * 1024;   // a line longer than this is dropped (claude's lines are messages, not files)
 const LIVE_MAX = 4000;               // characters of the answer being written shown live (the transcript has it all)
 const ASKS_MAX = 20;                 // open requests kept per tab (claude asks one at a time per agent)
@@ -250,4 +252,4 @@ function renameCommand(name) {
   return n ? `/rename ${n}` : '';
 }
 
-module.exports = { renameCommand, settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+module.exports = { PROBE_FLAGS, renameCommand, settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };

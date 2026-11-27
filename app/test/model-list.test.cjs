@@ -179,7 +179,21 @@ test('v3.120 modes: main probes only a throwaway session and wires Auto to the p
   const i = MAIN.indexOf("ipcMain.handle('chat:setting'");
   const body = MAIN.slice(i, MAIN.indexOf('\n});\n', i));
   assert.match(body, /ML\.allowedMode\(modes, /);
-  assert.match(body, /r === 'ok' && String\(key\) === 'mode' && STU\.turnsAutoApproveOn\(String\(value\)\) && project && !project\.hq\) autoApproveOn\(project\.id\)/);
+  assert.match(body, /r === 'ok' && String\(key\) === 'mode' && STU\.turnsAutoApproveOn\(String\(value\)\) && project && !project\.hq\)/);
+  // a late ok never turns Auto-approve back on after the person changed it (state read before the await)
+  assert.ok(body.indexOf('const before = ') < body.indexOf('await t.setting('), 'Auto-approve noted before the await');
+  assert.match(body, /STU\.autoApproveAfterSet\(\{ before, after: P\.autoApproveOf\(now\), epochBefore: epoch, epochAfter: autoApproveEpoch \}\)\) autoApproveOn\(project\.id\)/);
+  assert.match(body, /STU\.modelListPending\(/);
+  // the probe: no MCP servers, one per account, back-off also when the modes are missing; quit ends every probe
+  assert.match(fnBody('probeModels'), /GS\.PROBE_FLAGS/);
+  assert.ok(GS.PROBE_FLAGS.includes('--strict-mcp-config'));
+  assert.match(fnBody('probeModels'), /ML\.probeDue\(/);
+  assert.match(fnBody('probeModels'), /if \(!found \|\| !modesFound\) modelProbeFailed\.set/);
+  assert.match(MAIN, /app\.on\('before-quit', \(\) => \{[^\n]*for \(const end of \[\.\.\.modelProbes\.values\(\)\]\) end\(\)/);
+  // a GUI chat starts in auto only from the account's REPORTED modes (never the fallback list)
+  assert.match(MAIN, /guiStartModeArgs\(\{[^\n]*modes: reportedModesOf\(project\)/);
+  // a GUI chat never gets the plugin's start-time Auto-approve (main's guiAsk reads the live setting)
+  assert.match(MAIN, /if \(gui\) delete env\.AGENT_OFFICE_AUTO_APPROVE;/);
   assert.match(fnBody('autoApproveOn'), /P\.setProjectAutoApprove\(state, projectId, true\)/);
   assert.doesNotMatch(fnBody('autoApproveOn'), /false/);
   // a GUI ask reads the project's current Auto-approve and goes through the same rules as the Office (GS.autoAllows)
@@ -195,4 +209,30 @@ test('v3.120 GUI asks: Auto-approve answers only what the manager\'s rules allow
   assert.equal(GS.autoAllows({ tool: 'Read', input: {}, autoApprove: true, mailGuard: true, canAutoApprove: allow }), false, 'a mail desk');
   assert.equal(GS.autoAllows({ tool: 'AskUserQuestion', input: {}, autoApprove: true, mailGuard: false, canAutoApprove: () => true }), false, 'a question is the person\'s');
   assert.equal(GS.autoAllows({ tool: 'Read', input: {}, autoApprove: true, mailGuard: false, canAutoApprove: null }), false, 'no rules: no answer');
+});
+
+test('GUI chat: modelsKnown turns true only when claude answers the initialize (success or error)', () => {
+  for (const subtype of ['success', 'error']) {
+    const child = Object.assign(new EventEmitter(), { pid: 9, stdout: new EventEmitter(), stderr: new EventEmitter(), kill() {} });
+    child.stdin = Object.assign(new EventEmitter(), { destroyed: false, write: () => true });
+    const t = spawnGui(() => child, 'sh', [], { cwd: '/', env: {} }, { killGroup: () => {} });
+    assert.equal(t.modelsKnown(), false, 'a new tab: the list is not known yet');
+    child.stdout.emit('data', `${JSON.stringify({ type: 'control_response', response: { subtype, request_id: 'ao-initialize', response: INIT, error: 'x' } })}\n`);
+    assert.equal(t.modelsKnown(), true, subtype);
+  }
+});
+
+test('parseModes: only the known modes; an unknown name from the error text is never offered', () => {
+  assert.deepEqual(ML.parseModes('Cannot set permission mode: must be one of default, yolo, plan, superAuto, auto'), ['default', 'plan', 'auto']);
+  assert.deepEqual(ML.parseModes(['dontAsk', 'acceptEdits', 'mystery']), ['dontAsk', 'acceptEdits']);
+  assert.equal(ML.pickerModes(ML.parseModes(['yolo'])).includes('yolo'), false);
+});
+
+test('probeDue: one probe per account; the back-off holds when the models came but the modes did not', () => {
+  const retry = 300000;
+  assert.equal(ML.probeDue({ running: true, retry, now: 1e9 }), false, 'never two at a time');
+  assert.equal(ML.probeDue({ hasModels: true, hasModes: true, retry, now: 1e9 }), false, 'nothing missing');
+  assert.equal(ML.probeDue({ hasModels: true, hasModes: false, retry, now: 1e9 }), true, 'never probed: go');
+  assert.equal(ML.probeDue({ hasModels: true, hasModes: false, failedAt: 1e9 - 1000, retry, now: 1e9 }), false, 'modes missing: still backs off');
+  assert.equal(ML.probeDue({ hasModels: false, hasModes: false, failedAt: 1e9 - retry, retry, now: 1e9 }), true, 'after the back-off');
 });

@@ -263,3 +263,23 @@ test('v3.120 a GUI chat of an Auto-approve project starts in auto mode, never a 
   assert.match(main, /const startMode = STU\.guiStartModeArgs\(\{ gui: true, autoApprove: P\.autoApproveOf\(project\), hq: Boolean\(project\.hq\)/);
   assert.match(main, /GS\.guiArgs\(guiPrompt \? args\.slice\(0, -1\) : args\), \.\.\.startMode\]/, 'only the GUI spawn gets it');
 });
+
+test('modelListPending: a model waits (not-running) until the initialize answer; modes and old wrappers do not', () => {
+  assert.equal(S.modelListPending('model', false), true);
+  assert.equal(S.modelListPending('model', true), false);
+  assert.equal(S.modelListPending('model', undefined), false);
+  assert.equal(S.modelListPending('mode', false), false);
+});
+
+test('guiStartModeArgs: no reported modes (never probed) means no mode flag', () => {
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes: [] }), []);
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes: ['default', 'plan'] }), []);
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes: ['default', 'auto'] }), ['--permission-mode', 'auto']);
+});
+
+test('autoApproveAfterSet: a late set-Auto ok never turns Auto-approve back on after the person changed it', () => {
+  assert.equal(S.autoApproveAfterSet({ before: false, after: false, epochBefore: 3, epochAfter: 3 }), true, 'the normal case');
+  assert.equal(S.autoApproveAfterSet({ before: true, after: false, epochBefore: 3, epochAfter: 4 }), false, 'turned off meanwhile');
+  assert.equal(S.autoApproveAfterSet({ before: false, after: false, epochBefore: 3, epochAfter: 5 }), false, 'on then off meanwhile');
+  assert.equal(S.autoApproveAfterSet({ before: false, after: true, epochBefore: 3, epochAfter: 4 }), false, 'already on');
+});

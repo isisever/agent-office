@@ -1396,6 +1396,10 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false';   // no claude.ai connector (a Gmail one could send behind the outbox)
     delete env.AGENT_OFFICE_AUTO_APPROVE;        // and Agent Office never answers its permission dialogs
   }
+  // v3.120 a GUI chat's permission requests reach main (guiAsk), which reads the project's Auto-approve at each ask;
+  // the plugin's PermissionRequest hook reads this variable once at session start, so a GUI chat never gets it
+  // (turning Auto-approve off must make a running chat stricter at once)
+  if (gui) delete env.AGENT_OFFICE_AUTO_APPROVE;
   if (officeMcp && LC.offices(linkHost?.link()?.devices || []).length > 0) env.AGENT_OFFICE_REMOTE = '1';   // derived at pty start
   if (sl?.userCommand) env.AGENT_OFFICE_STATUSLINE = sl.userCommand;
   delete env[D.DELEGATE_ENV];
@@ -1420,7 +1424,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     if (IS_WIN && !win32) { sendNoClaude(id); return broadcast(); }
     if (gui) {
       // v3.120 an Auto-approve project's GUI chat starts in auto mode (never HQ, a desk, a guarded or a skip session)
-      const startMode = STU.guiStartModeArgs({ gui: true, autoApprove: P.autoApproveOf(project), hq: Boolean(project.hq), modes: modesOf(project),
+      const startMode = STU.guiStartModeArgs({ gui: true, autoApprove: P.autoApproveOf(project), hq: Boolean(project.hq), modes: reportedModesOf(project),
         lock: STU.modeLock({ skip: P.skipPermissionsArgs(project).length > 0, desk: Boolean(mailMcp) || Boolean(r.tab?.staffId) || guarded !== settings }) });
       t = guiProc = GP.spawnGui(spawn, shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args), ...startMode], {
         cwd: isDir(cwd) ? cwd : app.getPath('home'),
@@ -4789,6 +4793,7 @@ function personalSetting(id, set) {
 ipcMain.handle('projects:setAutoApprove', (_e, target, value) => {
   const { next, id } = personalSetting(target, (s, pid) => P.setProjectAutoApprove(s, pid, value === true));
   if (next === state) return { restarted: [] };
+  autoApproveEpoch++;   // v3.120 chat:setting's late set-Auto checks it (STU.autoApproveAfterSet)
   commit(next);
   const p = P.findProject(state, id);
   return { restarted: p && P.engineOf(p) === 'claude' ? restartIdle(p) : [] };
@@ -5633,6 +5638,7 @@ function saveChatImages(images) {
 // initialize only, no prompt) killed as soon as it answers.
 const modelCachePath = () => path.join(app.getPath('userData'), 'model-cache.json');
 let modelCache = null;
+let autoApproveEpoch = 0;   // v3.120 counts Auto-approve changes (a set-Auto in flight checks it)
 const modelProbes = new Map();   // account key → the running probe's kill
 const modelProbeFailed = new Map();   // account key → when its last probe gave nothing (retried after PROBE_RETRY)
 const PROBE_WAIT = 20000;
@@ -5643,7 +5649,6 @@ function readModelCache() {
 }
 function noteModels(configDir, models) {
   const key = ML.accountKey(configDir);
-  modelProbeFailed.delete(key);
   const { cache, changed } = ML.mergeCache(readModelCache(), key, models);
   if (!changed) return;
   modelCache = cache;
@@ -5657,30 +5662,35 @@ function noteModes(configDir, modes) {
   try { SF.writeAtomic(modelCachePath(), JSON.stringify(cache)); } catch (e) { console.error('model cache:', e.message); }
 }
 /** v3.120 the modes the pickers offer for a project's account: the probed list, else ML.FALLBACK_MODES */
-const modesOf = (project) => ML.pickerModes(project ? ML.cachedModes(readModelCache(), ML.accountKey(A.accountOf(state, project).configDir)) : null);
+const reportedModesOf = (project) => (project ? ML.cachedModes(readModelCache(), ML.accountKey(A.accountOf(state, project).configDir)) || [] : []);
+const modesOf = (project) => ML.pickerModes(reportedModesOf(project));
 // v3.120 the probe: initialize (the models), then set_permission_mode with an unknown value, whose error lists the
 // modes (initialize does not). Only this throwaway session in an empty temp folder gets it, never a real session.
 function probeModels(configDir) {
   const key = ML.accountKey(configDir);
-  if (IS_WIN || modelProbes.has(key)) return;   // Windows: no probe (a session of the account fills the cache)
-  if (Date.now() - (modelProbeFailed.get(key) || 0) < PROBE_RETRY) return;
+  if (IS_WIN) return;   // Windows: no probe (a session of the account fills the cache)
+  // one probe per account at a time; PROBE_RETRY after a probe that left the models or the modes missing
+  if (!ML.probeDue({ running: modelProbes.has(key), hasModels: Boolean(ML.cachedModels(readModelCache(), key)),
+    hasModes: Boolean(ML.cachedModes(readModelCache(), key)), failedAt: modelProbeFailed.get(key) || 0, retry: PROBE_RETRY })) return;
   let dir;
   try { dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ao-models-')); } catch { return; }
   const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; exec claude "$@"';
   let child = null;
   let found = false;
+  let modesFound = false;
   let timer = null;
   const end = () => {
     if (!modelProbes.has(key)) return;
     modelProbes.delete(key);
     clearTimeout(timer);
-    if (!found) modelProbeFailed.set(key, Date.now());
+    if (!found || !modesFound) modelProbeFailed.set(key, Date.now());
+    else modelProbeFailed.delete(key);
     try { if (child?.pid) process.kill(-child.pid, 'SIGKILL'); } catch {}
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   };
   modelProbes.set(key, end);
   try {
-    child = spawn(shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.GUI_FLAGS], { cwd: dir, env: A.ptyEnv(process.env, configDir), stdio: ['pipe', 'pipe', 'ignore'], detached: true });
+    child = spawn(shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.PROBE_FLAGS], { cwd: dir, env: A.ptyEnv(process.env, configDir), stdio: ['pipe', 'pipe', 'ignore'], detached: true });
   } catch { end(); return; }
   const lines = GS.createLines();
   child.stdout?.on('data', (chunk) => {
@@ -5692,11 +5702,11 @@ function probeModels(configDir) {
         if (models.length) { found = true; noteModels(configDir, models); }
         // a claude that lists its modes in initialize needs no second request
         const listed = ML.parseModes(res?.permission_modes || res?.available_permission_modes || res?.permissionModes);
-        if (listed.length) { noteModes(configDir, listed); end(); continue; }
+        if (listed.length) { modesFound = true; noteModes(configDir, listed); end(); continue; }
         try { child.stdin.write(ML.modeProbeLine('ao-probe-mode')); } catch { end(); }
       } else if (msg.response?.request_id === 'ao-probe-mode') {
         const modes = msg.response.subtype === 'error' ? ML.parseModes(String(msg.response.error || '')) : [];
-        if (modes.length) noteModes(configDir, modes);
+        if (modes.length) { modesFound = true; noteModes(configDir, modes); }
         end();
       }
     }
@@ -5716,7 +5726,7 @@ ipcMain.handle('studio:models', (_e, projectId) => {
   if (!p || P.engineOf(p) !== 'claude') return { models: ML.FALLBACK, loading: false, gui: false, modeLock: '' };
   const { configDir } = A.accountOf(state, p);
   const key = ML.accountKey(configDir);
-  if (!ML.cachedModels(readModelCache(), key) || !ML.cachedModes(readModelCache(), key)) probeModels(configDir);
+  probeModels(configDir);   // only when a list is missing and no probe runs or failed lately (ML.probeDue)
   const gui = guiTab('', { project: p, tab: null }, { studio: true });
   const modeLock = STU.modeLock({ skip: P.skipPermissionsArgs(p).length > 0 });
   return { ...ML.startModels(readModelCache(), key, modelProbes.has(key)), gui, modeLock, modes: modesOf(p), autoApprove: !p.hq && P.autoApproveOf(p) };
@@ -5752,16 +5762,24 @@ ipcMain.handle('chat:setting', async (e, id, key, value) => {
   if (!t?.gui || typeof t.setting !== 'function') return 'not-running';
   if (!STU.settingAllowed(guiModeLock.get(String(id)) || '', String(key))) return 'locked';
   if (t.live().busy || t.asks().length) return 'busy';
+  // v3.120 a new tab whose initialize answer has not come yet has no model list: 'not-running' (startStep retries)
+  if (STU.modelListPending(String(key), typeof t.modelsKnown === 'function' ? t.modelsKnown() : undefined)) return 'not-running';
   // v3.120 Studio UX: a model only from the list this session reported (the fallback aliases when it reported none)
   if (String(key) === 'model' && !ML.allowedModel(t.models?.(), String(value ?? ''))) return 'bad';
   // v3.120 a mode only from the account's reported list (FALLBACK_MODES when none); never bypassPermissions
   const project = P.resolvePty(state, String(id))?.project || null;
   const modes = modesOf(project);
   if (String(key) === 'mode' && !ML.allowedMode(modes, String(value ?? ''))) return 'bad';
+  const before = Boolean(project) && P.autoApproveOf(project);
+  const epoch = autoApproveEpoch;
   const r = await t.setting(String(key), String(value ?? ''), modes);
   // v3.120 Auto = claude's auto mode AND the manager answers what it still asks: the project's own Auto-approve, the
   // one setting the Office uses. Another mode changes only this session; the project setting is never turned off here.
-  if (r === 'ok' && String(key) === 'mode' && STU.turnsAutoApproveOn(String(value)) && project && !project.hq) autoApproveOn(project.id);
+  if (r === 'ok' && String(key) === 'mode' && STU.turnsAutoApproveOn(String(value)) && project && !project.hq) {
+    // the person may have turned Auto-approve off while the request waited: a late 'ok' never turns it back on
+    const now = P.findProject(state, project.id);
+    if (now && STU.autoApproveAfterSet({ before, after: P.autoApproveOf(now), epochBefore: epoch, epochAfter: autoApproveEpoch })) autoApproveOn(project.id);
+  }
   return r;
 });
 /** v3.120 turns a project's Auto-approve on from Studio's Auto: as projects:setAutoApprove, but its GUI chats keep
@@ -5769,6 +5787,7 @@ ipcMain.handle('chat:setting', async (e, id, key, value) => {
 function autoApproveOn(projectId) {
   const next = P.setProjectAutoApprove(state, projectId, true);
   if (next === state) return;
+  autoApproveEpoch++;
   commit(next);
   const p = P.findProject(state, projectId);
   if (!p || P.engineOf(p) !== 'claude') return;
@@ -6514,4 +6533,4 @@ if (!isSecondInstance) app.whenReady().then(async () => {
 });
 app.on('activate', () => { if (!win && state) createWindow(); });
 app.on('window-all-closed', () => { killAll(); app.quit(); });
-app.on('before-quit', () => { appQuitting = true; killAll(); voice?.stop(); });
+app.on('before-quit', () => { appQuitting = true; for (const end of [...modelProbes.values()]) end(); killAll(); voice?.stop(); });

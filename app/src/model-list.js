@@ -77,6 +77,16 @@ function mergeCache(cache, key, models, now = Date.now()) {
   return { cache: next, changed: true };
 }
 
+/**
+ * v3.120 may a model/mode probe start for an account? Not while one runs, not when both lists are cached, and not
+ * within `retry` ms of a probe that left either list missing (an older claude without the modes, a timeout).
+ * @param {{ running?: boolean, hasModels?: boolean, hasModes?: boolean, failedAt?: number, now?: number, retry?: number }} o
+ */
+function probeDue({ running = false, hasModels = false, hasModes = false, failedAt = 0, now = Date.now(), retry = 5 * 60 * 1000 } = {}) {
+  if (running || (hasModels && hasModes)) return false;
+  return now - (Number(failedAt) || 0) >= retry;
+}
+
 /** The cached list for an account (re-checked, since the file is on disk), or null when none is cached. */
 function cachedModels(cache, key) {
   const e = cache && typeof cache === 'object' ? cache[key] : null;
@@ -111,6 +121,8 @@ const MODE_ORDER = ['auto', 'default', 'acceptEdits', 'plan'];
 /** Never offered: it only shows (locked) the mode of a session started with skip permissions. */
 const LOCKED_MODE = 'bypassPermissions';
 const PROBE_MODE = '__ao_probe__';
+/** The modes this app knows; an unknown name in claude's report is never offered (LOCKED_MODE is known, never offered). */
+const KNOWN_MODES = Object.freeze(['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', LOCKED_MODE]);
 
 /**
  * The modes claude reports → string[] ([] when none): an array (an initialize field, if a claude ever lists them) or
@@ -128,7 +140,7 @@ function parseModes(src) {
   const out = [];
   for (const v of list) {
     const name = typeof v === 'string' ? v.trim().replace(/^['"`]|['"`]$/g, '') : '';
-    if (MODE_RE.test(name) && name !== PROBE_MODE && !out.includes(name)) out.push(name);
+    if (MODE_RE.test(name) && KNOWN_MODES.includes(name) && !out.includes(name)) out.push(name);
     if (out.length >= MAX_MODES) break;
   }
   return out;
@@ -166,4 +178,4 @@ function cachedModes(cache, key) {
 const modeProbeLine = (requestId) => `${JSON.stringify({ type: 'control_request', request_id: String(requestId), request: { subtype: 'set_permission_mode', mode: PROBE_MODE } })}\n`;
 
 module.exports = { FALLBACK, parseModels, pickerModels, allowedModel, modelValues, sameModels, accountKey, mergeCache, cachedModels, startModels, initLine, MAX_MODELS, MAX_ACCOUNTS,
-  FALLBACK_MODES, LOCKED_MODE, parseModes, pickerModes, allowedMode, mergeModes, cachedModes, modeProbeLine };
+  FALLBACK_MODES, LOCKED_MODE, KNOWN_MODES, probeDue, parseModes, pickerModes, allowedMode, mergeModes, cachedModes, modeProbeLine };

@@ -238,6 +238,21 @@ function guiStartModeArgs({ gui = false, autoApprove = false, hq = false, lock =
   if (!gui || autoApprove !== true || hq || lock || !Array.isArray(modes) || !modes.includes('auto')) return [];
   return ['--permission-mode', 'auto'];
 }
+/**
+ * v3.120 chat:setting answers 'not-running' (startStep retries) for a model while the new tab's initialize answer has
+ * not come: its model list is still empty, so an account model ("sonnet[1m]", "opusplan") would be refused as 'bad'.
+ * @param {string} key @param {boolean|undefined} modelsKnown the GUI chat's modelsKnown() (undefined: an old wrapper)
+ */
+const modelListPending = (key, modelsKnown) => key === 'model' && modelsKnown === false;
+/**
+ * v3.120 may a set-Auto's late 'ok' turn the project's Auto-approve on? Only when it was off before the request and
+ * is still off with no change in between (`epochBefore` === `epochAfter`, the count of Auto-approve changes): the
+ * person turning it off (or on and off) while the request waited wins.
+ * @param {{ before?: boolean, after?: boolean, epochBefore?: number, epochAfter?: number }} o
+ */
+function autoApproveAfterSet({ before = false, after = false, epochBefore = 0, epochAfter = 0 } = {}) {
+  return before === false && after === false && epochBefore === epochAfter;
+}
 /** May chat:setting change `key` in a chat whose mode is held by `lock` (modeLock)? */
 function settingAllowed(lock, key) {
   return key !== 'mode' || !lock;
@@ -245,5 +260,5 @@ function settingAllowed(lock, key) {
 
 module.exports = {
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
-  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs,
+  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs, autoApproveAfterSet, modelListPending,
 };

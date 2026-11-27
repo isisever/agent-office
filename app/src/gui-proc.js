@@ -38,7 +38,8 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup 
   const startMode = args.indexOf('--permission-mode');
   const settings = { model: '', mode: startMode >= 0 ? String(args[startMode + 1] || '') : '' };
   /** @type {{ model: string, usage: null | { input_tokens: number, cache_read_input_tokens: number, cache_creation_input_tokens: number }, models: import('./model-list.js').ModelOption[] }} */
-  const info = { model: '', usage: null, models: [] };   // v3.120 Studio UX: the running model and the last answer's usage
+  const info = { model: '', usage: null, models: [] };
+  let initAnswered = false;   // v3.120 claude answered our initialize (until then the model list is not known yet)   // v3.120 Studio UX: the running model and the last answer's usage
   /** @type {Map<string, { key: string, value: string, done: (r: string) => void, timer: any }>} */
   const pending = new Map();   // v3.121 setting requests waiting for claude's control_response
 
@@ -73,6 +74,7 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup 
       }
       // v3.120 Studio UX: claude's answer to our initialize: the models this account can use (the picker's list)
       if (msg.type === 'control_response' && msg.response?.request_id === INIT_ID) {
+        initAnswered = true;
         if (msg.response.subtype === 'success') {
           info.models = ML.parseModels(msg.response.response);
           if (info.models.length && onModels) { try { onModels(info.models); } catch (e) { console.error('gui models:', e.message); } }
@@ -157,6 +159,8 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup 
     info: () => ({ model: info.model, usage: info.usage ? { ...info.usage } : null }),
     /** v3.120 Studio UX: the models claude reported for this session ([] until it answers, or when it lists none) */
     models: () => info.models.slice(),
+    /** v3.120 true once claude answered the initialize (success or error): models() is then final */
+    modelsKnown: () => initAnswered,
     /** Answers an open card; 'ok', 'gone' (no such request any more) or 'bad-answer'. */
     answer(askId, answer) {
       const open = asks.get(String(askId));
