@@ -257,6 +257,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       const line = h('div', { class: 'chat-tool pending', title: it.detail || '' }, h('span', { class: 'chat-tool-name' }, it.name), h('span', { class: 'chat-tool-detail' }, it.detail || ''), reveal);
       if (it.id) map.set(it.id, line);
       if (it.agent && it.id && !source) agentRow(line, it.id);
+      // a click shows the call's whole detail (Studio draws the row as a card that opens; the Office keeps its line)
+      else line.addEventListener('click', () => { if (!window.getSelection()?.toString()) line.classList.toggle('open'); });
       return line;
     }
     if (it.kind === 'command') return h('div', { class: 'chat-cmd' }, it.text);
