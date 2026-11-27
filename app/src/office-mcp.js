@@ -42,6 +42,12 @@ const TOOLS = [
           items: { type: 'object', properties: { machine: { type: 'string' }, project: { type: 'string' }, staff: { type: 'string' }, task: { type: 'string' }, title: { type: 'string' }, type: { type: 'string', enum: ['bugfix', 'hotfix', 'feature'] } }, required: ['task'], additionalProperties: false },
         },
         staff: { type: 'string', description: 'HQ, team mode, this machine only: a staff member\'s name from office_machines. The task goes to that member\'s own desk (session) in the project, which must be one of its projects (else staff-not-allowed: the person can assign the project in the member\'s settings); without a project, to the member\'s personal workspace (a folder of its own for work that belongs to no project: designs, documents, research, mail). A member can work on several projects at once; one project folder has one desk at work at a time, so the task may wait. A team job with several steps goes as stages of one request (`then`), in the turn the person typed it, so the person approves the chain once.' },
+        // v3.132 fan-out: one shared task and type for several targets, each its own task in the same request
+        targets: {
+          type: 'array', minItems: 1, maxItems: 8,
+          description: 'HQ only, instead of project/machine/staff (and never with then/after): the same task for up to 8 targets, one task each, in this order, each with its own consent and caps like a single dispatch. A target names a member (member) or a role (role: a preset id such as qa or software-developer, or a role name): the app then picks a member with that role who may work on the project, the one with the fewest open tasks (a warm desk wins a tie); none fits: no-member-for-role with the roles there. Returns { status: fanout, request, results: [{ n, project, member?, role?, id, status, reason? }] } or a refusal (bad-targets, too-many-targets, fanout-mixed, bad-target).',
+          items: { type: 'object', properties: { project: { type: 'string' }, machine: { type: 'string' }, member: { type: 'string', description: 'A staff member\'s name (its desk).' }, desk: { type: 'string', description: 'Same as member.' }, role: { type: 'string' }, title: { type: 'string' } }, required: ['project'], additionalProperties: false },
+        },
       },
       required: ['task'],
       additionalProperties: false,
