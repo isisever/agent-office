@@ -19,6 +19,30 @@
         },
         "action": "open-team-page"
       }
+    },
+    {
+      "id": "picker-fix",
+      "title": {
+        "en": "Model picker stays open",
+        "tr": "Model seçici açık kalıyor"
+      },
+      "body": {
+        "en": "The model and mode lists no longer close while you scroll them, and the default model shows its name, such as \"Default (Opus 5.5)\".",
+        "tr": "Model ve mod listeleri artık kaydırırken kapanmıyor; varsayılan model de adıyla görünüyor, örneğin \"Varsayılan (Opus 5.5)\"."
+      },
+      "experience": "studio"
+    },
+    {
+      "id": "settings-cog",
+      "title": {
+        "en": "A clearer Settings icon",
+        "tr": "Daha net Ayarlar simgesi"
+      },
+      "body": {
+        "en": "Settings now shows a cog, so it no longer looks like the theme switch.",
+        "tr": "Ayarlar artık bir çark simgesiyle görünüyor; tema düğmesiyle karışmıyor."
+      },
+      "experience": "studio"
     }
   ]
 }
