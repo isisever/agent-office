@@ -3385,3 +3385,32 @@ TEAM panel is unchanged.
 - Studio hooks (`app.js`): `saveMember`, `removeMember` (staff IPC, then `loadStaff`), `reloadTeam`, `teamTools`
   (`mcp:apps`). Sidebar API: `editMember(m, preset?)`. Strings `studio.teamPage.*`; existing `staff.*` reused.
 - **Not verified live**: the page in a running app (drawn and typechecked; the helpers are unit tested).
+
+## Fast HQ desk start (v3.126)
+
+Amends v3.83 (desks), its amendment (a 'starting' tab gets the task as its first prompt) and v3.79 (stage chains).
+
+- **No pre-start for a desk.** `hqDispatch` starts the target before queueing only when `HQ.preStartTarget({ running,
+  desk })` holds: never for a desk, so the queue's desk path (`isDesk`, a 'gone' desk) starts it once with the task as
+  its first prompt (`startWithPrompt`). A stopped or sleeping boss tab still starts first, as before.
+- **HQ-started desks.** A desk that was not running when HQ dispatched to it is marked (`hqDesks`, `d.hqDesk`). If such
+  a desk still sits in 'starting' with no prompt, `LH.startingAction({ since, now, hqDesk, locked })` says 'restart'
+  at once (no `STARTING_MS` wait); any other tab keeps the 20 s wait. `startWithPrompt` keeps its own refusals (a
+  prompt already given, the person typing, already started that way).
+- **Event wakes.** Queueing a task pumps the queue at once (`onCommand` → `pump()`). `onOfficeReport` calls
+  `hqChainSweep()` right after the board row, so the next stage is released without waiting for `hqTick` (≤ 5 s).
+  `scanReports` also runs on an `fs.watch` of the reports dir (debounced 150 ms); the 5 s poll stays as the fallback
+  and retries the watch each round.
+- **Project lock.** One helper, `deskLockOf(pty)` (main, over `ST.deskWaitsFor`), decides the lock for typing
+  (`linkTabState`), the first start (the pump's 'gone' path, `d.deskLock`) and the restart with a prompt
+  (`startingAction` `locked`), so no path bypasses it. 'Parallel' is `project.parallel === true` (Parallel desks:
+  each desk has its own worktree): there HQ's desks never wait on each other or on the boss tab. Without it, a desk
+  waits while any other tab of the project is at work. The person's own terminals are not affected (the lock applies
+  only to HQ's queued desk tasks).
+- **Visible.** `hqWaits()` adds `waitsFor` (the name of the tab holding the lock); the board shows `hq.wait.lock`
+  ("waits for {tab}") and `HQ.waitFields` gives HQ `waitsFor` and a note naming that tab. A permission prompt or a
+  draft (`blockedBy`) still comes first.
+- **Concurrent desk opening.** `openDesk` runs under `ST.createKeyedLock()`: one run per desk (project + member, no
+  duplicate tab) and one `git worktree add` per repository, while different desks open concurrently.
+- Tests: `test/hq.test.cjs` (preStartTarget, startingAction, wakes, waitFields), `test/staff.test.cjs`
+  (deskWaitsFor, createKeyedLock). **Not verified live** in a running app.
