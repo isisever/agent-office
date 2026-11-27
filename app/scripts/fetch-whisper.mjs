@@ -91,7 +91,8 @@ async function fetchAsset(key, dest) {
     fs.writeFileSync(file, buf);
     const out = path.join(work, 'x');
     fs.mkdirSync(out);
-    execFileSync('tar', ['-xf', file, '-C', out], { stdio: 'inherit' });
+    // Relative paths: GNU tar (Git Bash on Windows runners) reads "C:\\..." as a remote host.
+    execFileSync('tar', ['-xf', a.name, '-C', 'x'], { cwd: work, stdio: 'inherit' });
     const exe = key.startsWith('win') ? 'whisper-server.exe' : 'whisper-server';
     const server = findFile(out, exe);
     if (!server) throw new Error(`${exe} is not in ${a.name}`);
