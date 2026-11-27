@@ -122,6 +122,11 @@ export function mountTeamPage({ el, t, host, hooks }) {
     content.replaceChildren();
     content.scrollTop = 0;
     draw();
+    focusSearch();
+  }
+  /** v3.124 the Roles tab (every Add member entry) opens with its search focused. */
+  function focusSearch() {
+    if (tab === 'roles') /** @type {HTMLElement | null} */ (content.querySelector('.st-team-search'))?.focus();
   }
   function open(/** @type {string} */ to = '') {
     if (TEAM_TABS.includes(to)) tab = to;
@@ -130,7 +135,7 @@ export function mountTeamPage({ el, t, host, hooks }) {
     draw();
     clearInterval(timer);
     timer = window.setInterval(draw, SYNC_MS);
-    backBtn.focus();
+    if (tab === 'roles' && data()?.teamMode) focusSearch(); else backBtn.focus();
   }
   function close() {
     page.hidden = true;

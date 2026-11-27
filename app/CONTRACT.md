@@ -3348,6 +3348,10 @@ TEAM panel is unchanged.
   as the member popup does); the person fills name, department, account and projects; `hireForm` → `staff:save`
   (no id: an add); on success the Members tab. "Custom role" opens the Office's role wizard (`sidebar.addMember()`,
   its popup; restyling it as a Studio chat sheet is left for later).
+  Every Studio "Add member" entry (the sidebar Team section's "+ Add member", the Members tab's "Add member" and
+  "Browse roles") opens the Roles tab with its search focused; "Custom role" is the gallery's last card and the only
+  Studio entry to the wizard (`sidebar.openRoleWizard()`, which replaces v3.122's `sidebar.addMember()`). The Office's
+  TEAM panel keeps its own "+ Add team member" and wizard buttons.
 - **Departments** (`drawDepartments`, `departmentCounts`, `renameForms`): each department with its member count;
   Rename (≤ 30, as main) saves each member of it with the new label through `staff:save`; members main refused are
   named with its reason. An empty name is refused; the same name (or a function's label unchanged) changes nothing.

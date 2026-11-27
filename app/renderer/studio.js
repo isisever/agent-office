@@ -130,7 +130,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       remove: (id) => hooks.removeMember(id),
       reload: () => hooks.reloadTeam(),
       editMember: (m) => hooks.sidebar()?.editMember?.(m),
-      openWizard: () => hooks.sidebar()?.addMember?.(),
+      openWizard: () => hooks.sidebar()?.openRoleWizard?.(),   // only the gallery's Custom role card
       openDesk: (projectId, staffId) => { teamPage.close(); hooks.openDesk(projectId, staffId); },
       tools: () => hooks.teamTools(),
     },
@@ -477,7 +477,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
           ...(open ? (m.desks.length ? m.desks.map((d) => el('button', { class: 'st-row st-desk', type: 'button', title: stateText(d.state), onclick: () => hooks.openDesk(d.projectId, m.id) },
             el('span', { class: `st-member-state ${d.state}` }), el('span', { class: 'st-title' }, d.name))) : [el('div', { class: 'st-none st-desk' }, t('studio.team.noDesks'))]) : [])];
         })]),
-      el('button', { class: 'st-row st-team-add', type: 'button', onclick: () => hooks.sidebar()?.addMember?.() }, icon('plus', 14), el('span', { class: 'st-title' }, t('studio.team.add'))));
+      el('button', { class: 'st-row st-team-add', type: 'button', onclick: () => openTeam('roles') }, icon('plus', 14), el('span', { class: 'st-title' }, t('studio.team.add'))));   // v3.124 the preset gallery
   }
 
   // ---- the account menu (footer): Studio's theme, Settings, accounts, back to the Office ----

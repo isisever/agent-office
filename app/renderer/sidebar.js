@@ -1452,8 +1452,8 @@ export function mountSidebar(el, on) {
     },
     /** v3.122 Studio's Team section: team mode, members, role presets, desk states and projects (read-only). */
     teamData: () => ({ teamMode: team.teamMode, staff: team.staff, presets: team.presets, desks, projects, lang: locale() }),
-    /** v3.122 Studio's "+ Add member": the Office's role wizard (a saved role goes on to the member editor). */
-    addMember: () => openWizard(),
+    /** v3.124 Studio's Team page "Custom role" card: the Office's role wizard (a saved role goes on to the member editor). */
+    openRoleWizard: () => openWizard(),
     /** v3.124 Studio's Team page → Edit: the Office's own member popup (its fields, save and checks), drawn as a side sheet. */
     editMember: (m, initialPreset = '') => editMember(m, initialPreset, 'st-sheet-modal'),
     /** v3.122 the Skills packs (fresh rows, the same calls as the popup's). */
