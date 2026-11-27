@@ -822,3 +822,21 @@ body.studio #studio-team .st-team-dept-row.editing .st-team-input { flex: 1; min
 body.studio #studio-team .st-team-depts + .st-team-error { max-width: 640px; margin-top: 10px; }
 body.studio #studio-team .st-team-head-btns { display: flex; gap: 8px; margin-bottom: 12px; }
 body.studio #studio-sidebar .st-team-wizard .st-title { color: var(--st-muted); }
+
+/* v3.131 the board in Studio's main region (renderer/board-view.js), with Studio's tokens */
+body.studio.studio-board #hq-board { padding: 20px 24px; background: var(--st-bg); color: var(--st-text); font-family: var(--st-font); }
+body.studio .bv-tab { border-radius: var(--st-radius-s); }
+body.studio .bv-tab.on { background: var(--st-raised); border-color: var(--st-border); }
+body.studio .bv-pick, body.studio .bv-search, body.studio .bv-date { border-color: var(--st-border); border-radius: var(--st-radius-s); background: var(--st-raised); color: var(--st-text); }
+body.studio .bv-search:focus, body.studio .bv-pick:focus { outline: 2px solid var(--st-accent); outline-offset: -1px; }
+body.studio .bv-card { border-color: var(--st-border); border-radius: var(--st-radius); background: var(--st-raised); box-shadow: var(--st-shadow); }
+body.studio .bv-card:hover { border-color: var(--st-border-strong); }
+body.studio .bv-menu { border-color: var(--st-border); border-radius: var(--st-radius-s); background: var(--st-raised); box-shadow: var(--st-shadow); }
+body.studio .bv-menu-item:hover, body.studio .bv-menu-item.on { background: var(--st-hover); }
+body.studio .bv-done { border-color: var(--st-accent); color: var(--st-accent-ink); border-radius: var(--st-radius-s); }
+body.studio .bv-headline { font-family: var(--st-serif); font-size: 18px; font-weight: 500; }
+body.studio .bv-report th, body.studio .bv-report td { border-color: var(--st-border); }
+body.studio .bv-bar { background: var(--st-accent); }
+body.studio .bv-bar.bv-bugfix { background: #dc2626; }
+body.studio .bv-bar.bv-hotfix { background: #d97706; }
+body.studio .bv-bar.bv-feature { background: #2563eb; }
