@@ -3513,17 +3513,30 @@ summary, else done. A chat is needs-you while it waits for the person, working w
 **Type priority (the owner's order): 1. bugfix, 2. hotfix, 3. feature.** Cards sort by type, then oldest first. The
 same rule (`byPriority`) orders held pacer sends (`hqPacer.submit(key, send, type)`, third argument) and stages
 released together by hq-chain. It never lets a send skip the rate limit or a consent check; it only reorders what
-already waits.
+already waits. **Aging:** in release order (not card sorting) a waiting item is promoted one rank for every
+`AGE_MS` (10 min) it has waited (`agedRank`), ties go oldest first, so a stream of bugfix or hotfix sends can never
+starve a feature: a held feature send or waiting feature stage ranks like a bugfix after at most 20 min and then goes
+before every newer one (it still waits for the rate limit). **Release type follows the order:** held sends and waiting
+stages read their type when they are released (`submit`'s third argument may be a function, `settle(board, now,
+waitMs, typeFn)`): main's `releaseType` gives the type the person set on the order (`board:setType`), else the item's
+own type. Nothing stored or sealed is rewritten, so stage digests stay valid. `type` is one of the sealed stage fields
+(`STAGE_FIELDS`): a stage whose stored type changes after it was accepted is refused `stage-changed`.
 
 **Classifier** (`classify`, English and Turkish): an explicit `bugfix:` / `hotfix:` / `feature:` prefix (optionally in
 brackets) wins; then hotfix words (urgent, hotfix, prod, production, asap, critical, acil, kritik, canlıda); then bugfix
 words (bug, fix, broken, crash, error, regression, hata, bozuk, çalışmıyor, düzelt); else feature. An order's type is
 the `type` argument of office_dispatch (HQ, `typeBy: 'hq'`), else a prefix in its texts, else the keywords of the request
-prompt and task titles. A chat's type follows its title while `typeBy` is `auto`. **The person can override any card's
+prompt and task titles. **The type is raised, never lowered:** a later task of the same request with an explicit
+`type` or a `bugfix:` / `hotfix:` / `feature:` prefix raises the order's stored type to the highest priority seen
+(keywords alone do not; an explicit `type` sets `typeBy: 'hq'`). The person's type (board-cards.json) is final: the card
+shows it whatever the stored type becomes. A chat's type follows its title while `typeBy` is `auto`. **The person can override any card's
 type** (`board:setType`, `typeBy: 'person'`); the classifier never changes it again.
 
 **Chat-card lifecycle:** created on the first person prompt (or when the session is already busy); moves with the tab
-state every 15 s (hqTick); a card in Review for **24 h** (`REVIEW_CLOSE_MS`) closes by itself (`closedBy: 'auto'`);
+state every 15 s (hqTick); an open card whose tab is gone (its `ptyId` is not a live tab: closed, or the app quit) moves
+to Review and starts its Review clock (`detachGone`), so it never stays working or needs-you; when its session gets a
+dispatched task later, its chat card is dropped (`markTaskSession`: it is part of the order now); a chat title is
+passed through `HQ.redact` before it is cut to 80 characters and stored; a card in Review for **24 h** (`REVIEW_CLOSE_MS`) closes by itself (`closedBy: 'auto'`);
 the person can close it (`board:done`, `closedBy: 'person'`); a closed card opens again when its session works or
 waits again (one card per conversation). An order closes when HQ reports it done, or when the person marks it done.
 
@@ -3538,7 +3551,7 @@ waits again (one card per conversation). An order closes when HQ reports it done
 
 Card ids are validated (`c:` + a session uuid, `o:` + `[A-Za-z0-9_-]{1,64}`) and must name a card the board shows now.
 
-**Storage:** `<userData>/hq/board-cards.json`, written atomically in a 0700 folder: `{ v: 1, chats: [...],
+**Storage:** `<userData>/hq/board-cards.json`, written atomically (file mode 0600, `SF.writeAtomic`) in a 0700 folder: `{ v: 1, chats: [...],
 orders: { <request id>: { type?, doneAt? } }, taskSids: [session uuids] }`. Loading drops anything unknown or broken.
 Caps: 200 open chat cards (oldest activity dropped first), 500 closed chat cards (newest kept), 1000 order entries,
 1000 task sessions (`taskSids`, newest kept; they survive a restart so a task session never turns into a chat card).
