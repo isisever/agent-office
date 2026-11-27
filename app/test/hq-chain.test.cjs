@@ -120,8 +120,8 @@ const path = require('path');
 const MAIN_SRC = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 function stageHarness({ ask = false, allow = true, link = null, realConfirm = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-chain-'));
-  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips', 'hqLocalTarget', 'hqLocalKey', 'hqTargetAuto', 'hqRemoteTarget', 'notifyRemoteSent', ...(realConfirm ? ['confirmHqDispatch'] : [])];   // realConfirm: main's own single-dispatch dialog
-  const lines = ['const hqStages', 'const isHere', 'const byName', 'const officeName', 'const routineRunOfRequest', 'const openHqRoutineRequest', 'const routineById', 'const readJson'];
+  const names = ['hqDispatch', 'hqDispatchStages', 'confirmHqStages', 'hqWaitRow', 'hqReleaseStage', 'hqChainSweep', 'hqStatus', 'hqRequestsDone', 'tagRoutineRec', 'notifyInitiative', 'hqTargetSkips', 'hqLocalTarget', 'hqLocalKey', 'hqTargetAuto', 'hqRemoteTarget', 'notifyRemoteSent', 'hqOrderNotice', 'hqOrderEnqueue', 'hqOrderAhead', ...(realConfirm ? ['confirmHqDispatch'] : [])];   // realConfirm: main's own single-dispatch dialog
+  const lines = ['const hqStages', 'const hqOrderOpen', 'const isHere', 'const byName', 'const officeName', 'const routineRunOfRequest', 'const openHqRoutineRequest', 'const routineById', 'const readJson', 'const hqQueueRank'];
   const src = [
     ...lines.map((l) => { const x = MAIN_SRC.split('\n').find((y) => y.startsWith(l)); assert.ok(x, l); return x; }),
     ...names.map((n) => { const i = MAIN_SRC.search(new RegExp(`^(async )?function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return MAIN_SRC.slice(i, MAIN_SRC.indexOf('\n}\n', i) + 2); }),
@@ -130,7 +130,11 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
     state: { projects: [{ id: 'pa', name: 'office', dir: '/w/office' }, { id: 'pb', name: 'erp', dir: '/w/erp' }], hq: { enabled: true, ...(ask ? { askBeforeDispatch: true } : {}) }, routines: [] }, link };
   const prelude = `
     const { HQ, CH, LC, SF, P, ROUT, BM, fs, path, crypto } = env.mods; const state = env.state; const OM = { TASK_MAX: 8192 };
-    const hqMinter = HQ.createMinter(); env.minter = hqMinter; const hqPacer = HQ.createPacer();
+    // v3.130 these tests cover the rules outside an order (an order closed): every typed id the minter mints is closed;
+    // the order store is in memory and holds no order
+    const hqMinter = HQ.createMinter(); { const mint = hqMinter.mint; hqMinter.mint = (a) => { const id = mint(a); hqMinter.closeOrder(id); return id; }; }
+    env.minter = hqMinter; const hqPacer = HQ.createPacer();
+    const HO = env.mods.HO; const hqOrderStore = HO.createOrderStore({ file: '', key: null }); const hqOrders = () => hqOrderStore; const stateWritable = true;
     const releaseType = (r, own) => BM.typeOf(own) || 'feature';   // main's lookup of the person's order type (no store here)
     const win = { isFocused: () => true, isDestroyed: () => false }; const T = (k, v) => k + (v ? JSON.stringify(v) : '');
     const dialog = { showMessageBox: async (_w, o) => { env.dialogs.push(o); return { response: env.response ?? (env.allow ? 0 : 1) }; } };
@@ -152,7 +156,7 @@ function stageHarness({ ask = false, allow = true, link = null, realConfirm = fa
       const own = { id: 'own-' + m.id, name: personalFolderName(m), dir: '/w/own', staffOwner: m.id, ...ST.personalDraft(m.personal) }; state.projects.push(own); return own; };
     const officeDispatch = (tab, args, o) => { const id = 'c' + (++env.n); env.sent.push({ id, project: args.project, task: args.task, ...(args.machine ? { machine: args.machine, revive: o?.revive === true } : {}) }); return { id, status: 'queued' }; };
   `;
-  env.mods = { BM: require('../src/board-model.js'), ST: require('../src/staff.js'), ROUT: require('../src/routines.js'), HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
+  env.mods = { HO: require('../src/hq-order.js'), BM: require('../src/board-model.js'), ST: require('../src/staff.js'), ROUT: require('../src/routines.js'), HQ, CH, LC: require('../src/link-core.js'), SF: require('../src/state-file.js'), P: require('../src/projects.js'), fs, path, crypto: require('crypto') };
   const api = new Function('env', `${prelude}\n${src}\nreturn { hqDispatch, hqChainSweep, hqStatus, hqStages };`)(env);
   return { env, api };
 }

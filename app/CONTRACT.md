@@ -3489,6 +3489,87 @@ its sub-agents. Agent Office passes only what a session needs (src/mcp-lean.js, 
 - No health state for MCP servers exists in the app, so a failing server is not skipped automatically; turning the
   share off removes the failing shared ones.
 
+## Orders from HQ (v3.130)
+
+Amends v3.103 ("HQ hands out the tasks the person asked for") and v3.91/v3.92. HQ is the top manager: a task the
+person types in HQ is an **order**. It enters the system directly (no card, no waiting) and keeps the person's
+authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; wiring in `main.js`.
+
+- **Order.** Every id minted from a prompt the person typed in HQ (terminal Enter, chat send) is an order
+  (`createMinter`: `isOrder`, `closeOrder`, `restoreOrder`; `main.hqMintTyped` also records it in the order store).
+  It is open until `office_summary` is written for it (`hqOrderClose`) or `ORDER_MS` (24 h) after the prompt.
+  Phone turns mint no id, routine ids are never orders, `adhoc` is never an order.
+- **Phone turns.** A turn HQ gets from a phone controller (`ctl-hq`, v3.121) calls `hqMinter.markPhone()` instead of
+  `clear()`. While that flag is set, `isOrder` is false for every id, so no order lends its typed authority: an
+  explicitly named order id gets the untyped rules (the v3.103 follow-up limits, else the dialog), no order queueing,
+  no auto-continue, no release without the dialog after a restart. The flag stays through reports and routine mints
+  and ends only when the person's next typed prompt mints an id. The order queue waits (it is not dropped) meanwhile.
+  The flag is kept in the sealed order store (`main.hqMarkPhone`, cleared by `hqMintTyped`) and set again in the
+  minter when the store opens, so a restart during a phone turn does not give the restored orders their authority back.
+- **Authority.** The first report still ends the typed *turn* (`hqMinter.clear()`); a later turn of an open order
+  gets consent `'follow'` (no dialog) and `followRefusal` keeps only `unknown-machine`, `skip-permissions` and
+  `new-unattended-target`: no `follow-up-cap` (4) and no 2 h window (`request-expired` only after 24 h or a close).
+  A closed order falls back to the v3.103 follow-up rules (4 per request within 2 h of the prompt).
+  `askBeforeDispatch` on: everything as v3.103 (the dialog).
+- **Order store** (`userData/hq/orders.json`, 0600): open orders, the accepted digests of waiting stages, the order
+  queue, the notices sent and the auto-continue count. Sealed as `{ v: 1, body, mac }`, `mac` = HMAC-SHA256 of the
+  body with a 32-byte key kept in `userData/hq/order-key.bin` encrypted with Electron `safeStorage`. A file whose MAC
+  does not match reads as empty; without OS encryption, or with Linux `basic_text` (a hard-coded key,
+  `HO.keychainOk`), the key lives for one run only (nothing is trusted after a restart: the dialog). On first use the
+  open orders are restored into the minter. Rollback: every save raises a generation kept in the body and next to the
+  key in `order-key.bin` (`<hex>:<gen>`); a store older than the kept generation (an earlier `orders.json` copied
+  back) reads as empty (`HO.genOk`). The store also keeps the phone flag.
+- **Restart.** A waiting stage of an open order whose `stage.json` matches its sealed digest is released after an app
+  restart without the dialog. The sealed value is `HO.stageSeal(CH.stageDigest(rec), { request, byInitiative })`, so
+  an edited board row (its request or `byInitiative`) does not match either. Since v3.131 `type` is one of
+  `CH.STAGE_FIELDS`, so the digest (and with it the seal) also binds the stage's type: an edited type in `stage.json`
+  reads as tampered. Tampered, unknown or not an open order:
+  the v3.103 dialog. A stage known in memory uses the `byInitiative` it was accepted with, never the board's.
+- **Order queue.** For an open order (and `askBeforeDispatch` off), a dispatch refused by `open-cap`/`request-cap`
+  or by the project queue (`queue-full`, link-host `QUEUE_MAX` 5) is queued instead: a board row with status
+  `queued`, reason `order-queue`, `orderQueued: true` and `ahead` (n before it); the result is
+  `{ id, status: 'queued', reason: 'order-queue', waitingFor, ahead }`. Rows waiting there do not count toward the
+  caps: `capReason(board, request, queued)` leaves out the ids in the sealed queue (`queuedIds`), never rows by the
+  board's `orderQueued` flag; the lost-row sweep ends only rows still `queued`/`order-queue`. The kept task is
+  `HQ.redact`ed, and one over `TASK_MAX` is refused (`too-large`) before it is kept. Consent and the routine hold-off
+  are decided before queueing (`HO.overCapRoute`): only consent `'none'` with nothing holding it off is queued as
+  typed; a routine turn (or consent `'held'`) gets today's held card; anything else is queued untyped and decided
+  again at release. The queue does not release while a phone turn or an HQ routine turn is live (`HO.pumpMay`: a
+  routine run counts only while its id is live in the minter, so the person's typed prompt lets the queue drain); it
+  is checked again before every release, since a release awaits. An item released from the queue that would become a
+  held card stays queued instead (`HO.heldAction`): it is still in the sealed queue and must not run twice.
+  Request cap: for an open order (`askBeforeDispatch` off) `capReason(..., { order: true })` counts only the
+  request's OPEN tasks against `MAX_PER_REQUEST` (8); removed and ended rows do not count. Without this, tasks queued
+  for `request-cap` could never be released, since ended tasks keep counting. Chosen over not queueing on
+  `request-cap`: the order still has bounds (`open-cap` 12 across HQ, 8 open at once per order, `ORDER_QUEUE_MAX` 50
+  waiting, the 24 h `ORDER_MS` ceiling, and the order ends at `office_summary`). A closed order is back to counting
+  every task it ever got.
+- **Residual risk: rollback of both files.** The generation is kept in `order-key.bin`, and that file is still a
+  file in userData. A process running as the user can copy `order-key.bin` and `orders.json` together and later put
+  both back. The restored pair matches its own generation, so an older state (an earlier open order, stage seal or
+  queue) is accepted. Keeping the last generation outside userData (for example in the macOS Keychain) is not done:
+  `safeStorage` only encrypts data and stores nothing itself, so it would need a new native keychain dependency. A
+  process that can do this already runs as the person and can type into HQ, so this gives it no authority it lacks. `hqTick` releases them (higher `priority` first, then by type priority with aging as in "Board: orders and
+  conversations" below, then FIFO) as `capReason` allows. A queued item keeps its `type` in the sealed queue (the
+  explicit `type` or a `bugfix:`/`hotfix:`/`feature:` prefix, else the classified one); its release rank is
+  `BM.agedRank(releaseType(request, type), at, now)`, so the owner's type of the order applies; one that meets a full
+  project queue again keeps its place. At most `ORDER_QUEUE_MAX` (50) per order (`order-queue-full`). A queued item
+  of the person's typed turn keeps that turn's consent; one queued in a later turn passes the follow-up rules at
+  release. Closing the order drops its queue (`order-closed`); Cancel on the card removes it. Staged chains
+  (`then`/`after`) still refuse over the caps. Board: "queued (n ahead)" (`hq.orderQueued`).
+- **Auto-continue.** A stage of an open order blocked by `after-partial`, `after-failed`, `after-expired` or
+  `after-lost` is continued by the app once per order (`HO.mayAutoContinue`, the v3.92 `CH.resume` path), the row
+  marked `autoContinued` ("continued by HQ"), and HQ's inbox row carries `autoContinued: true` (the plugin's
+  `blockedText` then words it as continued, `stageContinued`, not as a block). A second block, or
+  any other reason (`after-rejected`, `after-closed-by-hq`, `after-person-prompted`, `after-blocked`), waits for the
+  person's Continue. Never with `askBeforeDispatch` on.
+- **Notices.** One OS notice per order when it starts (`main.hqOrder_start`), one when it needs the person
+  (`needs-approval` or a block HQ does not continue, `main.hqOrder_needs`) and one at its end (`office_summary`,
+  `main.hqOrder_end`). Inside an open order `hqInitiativeSent`, `hqRemoteSent` and `hqRequestDone` are not shown.
+- **Unchanged boundaries.** The dialog for `adhoc`, foreign or expired ids and phone turns; routine held cards and
+  `holdsOffId`; the depth rule; target projects' own permission prompts and the mail guard; pairing confirmation;
+  redaction; receiver-side checks on paired devices.
+
 ## Board: orders and conversations (v3.131)
 
 The board (src/board-model.js, pure; main.js keeps the store) shows two kinds of card in one list:
@@ -3512,7 +3593,8 @@ summary, else done. A chat is needs-you while it waits for the person, working w
 
 **Type priority (the owner's order): 1. bugfix, 2. hotfix, 3. feature.** Cards sort by type, then oldest first. The
 same rule (`byPriority`) orders held pacer sends (`hqPacer.submit(key, send, type)`, third argument) and stages
-released together by hq-chain. It never lets a send skip the rate limit or a consent check; it only reorders what
+released together by hq-chain, and (v3.130) items in an open order's queue (see "Orders from HQ", Order queue:
+after any explicit `priority`, before FIFO). It never lets a send skip the rate limit or a consent check; it only reorders what
 already waits. **Aging:** in release order (not card sorting) a waiting item is promoted one rank for every
 `AGE_MS` (10 min) it has waited (`agedRank`), ties go oldest first, so a stream of bugfix or hotfix sends can never
 starve a feature: a held feature send or waiting feature stage ranks like a bugfix after at most 20 min and then goes
