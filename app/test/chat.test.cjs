@@ -461,7 +461,7 @@ test('v3.113 Show in Finder: real paths on both sides, worktree tabs, files that
   assert.match(R, /class: 'chat-attach'/);
   assert.match(R, /api\.chat\.pick\(ptyId, Boolean\(gui\)\)/);
   // v3.121 picked non-image files go through attachPaths: chips in Studio, still @path in the input in the Office
-  assert.match(R, /if \(blobs\.length\) addImages\(blobs\.map[^\n]*\n\s+if \(paths\.length\) attachPaths\(paths\);/);
+  assert.match(R, /if \(blobs\.length\) addImages\(blobs\.map[^\n]*\n\s+if \(paths\.length\) attachPaths\(paths[,)]/);
   assert.match(R, /function attachPaths\([^)]*\) \{\n\s+if \(studioOn\(\) && !source\) addFiles\([^\n]*\n\s+else insertPaths\(paths\);/);
   assert.match(R, /new Blob\(\[im\.data\]/);
   assert.doesNotMatch(R, /atob/);
