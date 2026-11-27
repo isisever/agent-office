@@ -176,6 +176,8 @@ export function mountSettingsPage({ el, t, host, studioTheme, setStudioTheme, ho
       case 'mcpServers': return head(button(t('studio.set.open'), panel('#sb-panel-mcp')));
       case 'skills': return el('div', { class: 'st-set-block st-set-skills' }, sb()?.skillsSection?.() || null);
       case 'devices': return head(button(t('studio.set.open'), panel('#sb-devices')));
+      case 'usage': return head(button(t('studio.set.open'), panel('#usage-panel')));   // the current project's usage
+      case 'machines': return head(button(t('studio.set.open'), panel('#machines-panel')));
       case 'hq': return head(button(t('studio.set.open'), () => { close(); hooks.selectHq(); }));
       case 'routines': return head(button(t('studio.set.open'), () => { close(); hooks.openBoard(); }));
       case 'version': {
