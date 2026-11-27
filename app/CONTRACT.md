@@ -3488,3 +3488,58 @@ its sub-agents. Agent Office passes only what a session needs (src/mcp-lean.js, 
 - **HQ**: unchanged (v3.46): only the agent-office server, strict.
 - No health state for MCP servers exists in the app, so a failing server is not skipped automatically; turning the
   share off removes the failing shared ones.
+
+## Board: orders and conversations (v3.131)
+
+The board (src/board-model.js, pure; main.js keeps the store) shows two kinds of card in one list:
+
+- **Order cards** (`id: 'o:<request id>'`, `kind: 'order'`): one per HQ request of board.json. Its tasks give the
+  column and `progress: { done, total }`; `tasks: [{ id, title, project, machine, status, column, member? }]`,
+  `projects`, `members`, `routine?`.
+- **Chat cards** (`id: 'c:<session uuid>'`, `kind: 'chat'`): one per project session the person talks in (Office or
+  Studio, terminal or chat tab), created on the first person prompt. `sessionId`, `projectId`, `ptyId`, `studio`.
+  A session that carried a dispatched task (HQ, a project boss or a paired device) is already an order or a remote
+  task and never gets a chat card.
+- Both carry `title` (≤ 80), `type`, `typeBy` (`auto` | `hq` | `person`), `column`, `at`, `closedAt`, `closedBy?`
+  (chats: `auto` | `person`), `durationMs`, `project`, `member`, `tokens`, `usd` (chats: from the session's status-line
+  usage file; orders: 0 for now).
+
+**Columns:** `todo`, `working`, `needs-you`, `review`, `done`. An order's tasks map through `columnOf`: queued/waiting →
+todo; delivered/running → working; needs-approval, awaiting-consent, blocked, failed, expired, lost and a rejection other
+than cancelled/declined → needs-you; partial → review; reported → done. The request is needs-you if any task is, else
+working if any task runs (or some ended and some wait), review when every task ended but HQ has not closed it with a
+summary, else done. A chat is needs-you while it waits for the person, working while busy, else review.
+
+**Type priority (the owner's order): 1. bugfix, 2. hotfix, 3. feature.** Cards sort by type, then oldest first. The
+same rule (`byPriority`) orders held pacer sends (`hqPacer.submit(key, send, type)`, third argument) and stages
+released together by hq-chain. It never lets a send skip the rate limit or a consent check; it only reorders what
+already waits.
+
+**Classifier** (`classify`, English and Turkish): an explicit `bugfix:` / `hotfix:` / `feature:` prefix (optionally in
+brackets) wins; then hotfix words (urgent, hotfix, prod, production, asap, critical, acil, kritik, canlıda); then bugfix
+words (bug, fix, broken, crash, error, regression, hata, bozuk, çalışmıyor, düzelt); else feature. An order's type is
+the `type` argument of office_dispatch (HQ, `typeBy: 'hq'`), else a prefix in its texts, else the keywords of the request
+prompt and task titles. A chat's type follows its title while `typeBy` is `auto`. **The person can override any card's
+type** (`board:setType`, `typeBy: 'person'`); the classifier never changes it again.
+
+**Chat-card lifecycle:** created on the first person prompt (or when the session is already busy); moves with the tab
+state every 15 s (hqTick); a card in Review for **24 h** (`REVIEW_CLOSE_MS`) closes by itself (`closedBy: 'auto'`);
+the person can close it (`board:done`, `closedBy: 'person'`); a closed card opens again when its session works or
+waits again (one card per conversation). An order closes when HQ reports it done, or when the person marks it done.
+
+**IPC** (main window only; anything else gets `null` or `{ ok: false, error: 'invalid' }`):
+
+- `board:cards()` → `{ columns: [{ id, cards: [card ids] }], cards: [Card], types }`; main also pushes `board:cards`
+  with the same view when the store changes.
+- `board:setType(id, 'bugfix' | 'hotfix' | 'feature')` → `{ ok: true, ...view }` | `{ ok: false, error: 'invalid' | 'gone' }`.
+- `board:done(id)` → `{ ok: true, ...view }` | `{ ok: false, error: 'invalid' | 'gone' }`.
+- `board:report({ from?, to? } ms, groupBy 'project' | 'type' | 'member')` → `{ groupBy, from, to, rows: [{ key,
+  count, durationMs, tokens, usd, orders, chats }], total }` over the cards closed in the range | `{ error: 'invalid' }`.
+
+Card ids are validated (`c:` + a session uuid, `o:` + `[A-Za-z0-9_-]{1,64}`) and must name a card the board shows now.
+
+**Storage:** `<userData>/hq/board-cards.json`, written atomically in a 0700 folder: `{ v: 1, chats: [...],
+orders: { <request id>: { type?, doneAt? } }, taskSids: [session uuids] }`. Loading drops anything unknown or broken.
+Caps: 200 open chat cards (oldest activity dropped first), 500 closed chat cards (newest kept), 1000 order entries,
+1000 task sessions (`taskSids`, newest kept; they survive a restart so a task session never turns into a chat card).
+Order cards themselves come from board.json and follow its caps.
