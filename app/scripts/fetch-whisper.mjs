@@ -92,7 +92,9 @@ async function fetchAsset(key, dest) {
     const out = path.join(work, 'x');
     fs.mkdirSync(out);
     // Relative paths: GNU tar (Git Bash on Windows runners) reads "C:\\..." as a remote host.
-    execFileSync('tar', ['-xf', a.name, '-C', 'x'], { cwd: work, stdio: 'inherit' });
+    // Windows: Git Bash's GNU tar comes first on PATH and reads neither zips nor "C:\\" paths; System32's bsdtar does.
+    const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+    execFileSync(tar, ['-xf', a.name, '-C', 'x'], { cwd: work, stdio: 'inherit' });
     const exe = key.startsWith('win') ? 'whisper-server.exe' : 'whisper-server';
     const server = findFile(out, exe);
     if (!server) throw new Error(`${exe} is not in ${a.name}`);
