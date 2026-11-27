@@ -18,6 +18,7 @@ const SYNC_MS = 1000;   // the controls follow changes made elsewhere (the Offic
  *   hooks: {
  *     sidebar: () => any, showPanel: (selector: string) => boolean, selectHq: () => void, openBoard: () => void,
  *     appInfo: () => { version: string | null, ready: string | null }, installUpdate: () => void, openTeam?: () => void,
+ *     openWhatsNew?: () => void,   // v3.123 About → What's new
  *   },
  * }} o
  */
@@ -179,7 +180,8 @@ export function mountSettingsPage({ el, t, host, studioTheme, setStudioTheme, ho
         const info = hooks.appInfo();
         return el('div', { class: 'st-set-block' }, head(el('span', { class: 'st-set-version' }, info.version || '—')),
           info.ready ? el('div', { class: 'st-set-actions' }, notice(t('studio.set.updateReady', { version: info.ready })), button(t('studio.set.restart'), () => hooks.installUpdate(), true))
-            : notice(t('studio.set.autoUpdate')));
+            : notice(t('studio.set.autoUpdate')),
+          hooks.openWhatsNew ? el('div', { class: 'st-set-actions' }, button(t('sidebar.whatsNew'), () => { close(); hooks.openWhatsNew?.(); })) : null);
       }
       default: return head(null);
     }
