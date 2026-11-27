@@ -214,19 +214,49 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   // panel is the Office's own element with its own handlers, not a copy.
   const panelBack = el('div', { id: 'studio-panel-back', hidden: true, onmousedown: () => hidePanel() });
   document.body.append(panelBack);
+  /** @type {{ el: HTMLDetailsElement, open: boolean, stored: Map<string, string | null> } | null} */
+  let panelWas = null;   // the shown panel's open state and stored ao.panel.* values before showPanel opened it
+  /** The ao.panel.* values in localStorage (the Office's remembered open panels). */
+  function panelStore() {
+    /** @type {Map<string, string | null>} */
+    const m = new Map();
+    try {
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('ao.panel.')) m.set(k, localStorage.getItem(k)); }
+    } catch { /* no storage */ }
+    return m;
+  }
+  function restorePanelStore(/** @type {Map<string, string | null>} */ was) {
+    try {
+      for (const k of panelStore().keys()) if (!was.has(k)) localStorage.removeItem(k);
+      for (const [k, v] of was) if (v !== null) localStorage.setItem(k, v);
+    } catch { /* no storage */ }
+  }
   function showPanel(/** @type {string} */ selector) {
     const sb = document.getElementById('sidebar');
     const target = /** @type {HTMLElement | null} */ (sb?.querySelector(selector) || null);
     if (!on || !sb || !target || target.hidden) return false;
+    if (panelWas) hidePanel();   // another panel was shown: put it back first
     let top = target;
     while (top.parentElement && top.parentElement !== sb) top = top.parentElement;
     for (const c of sb.children) c.classList.toggle('studio-shown', c === top);
-    if (top.tagName === 'DETAILS') /** @type {HTMLDetailsElement} */ (top).open = true;
+    if (top.tagName === 'DETAILS') {
+      const d = /** @type {HTMLDetailsElement} */ (top);
+      panelWas = { el: d, open: d.open, stored: panelStore() };
+      d.open = true;   // fires the Office's toggle handler, which stores it: hidePanel puts both back
+    }
     document.body.classList.add('studio-panel');
     panelBack.hidden = false;
     return true;
   }
   function hidePanel() {
+    // the panel's open state and the Office's stored value as they were before showPanel (the toggle event is async:
+    // the stored values are put back after the Office's own toggle handler has run)
+    const was = panelWas;
+    panelWas = null;
+    if (was) {
+      if (was.el.open !== was.open) { was.el.addEventListener('toggle', () => restorePanelStore(was.stored), { once: true }); was.el.open = was.open; }
+      else restorePanelStore(was.stored);
+    }
     document.body.classList.remove('studio-panel');
     panelBack.hidden = true;
     for (const c of document.getElementById('sidebar')?.children || []) c.classList.remove('studio-shown');
