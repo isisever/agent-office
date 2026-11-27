@@ -3291,7 +3291,7 @@ step-through quickstart, once.
   with `data-settings-section="<section>"`, in Studio the v3.122 Settings page at that row's section),
   `open-studio-settings` (Studio's Settings page, switching to Studio), `spotlight` (nothing but the item's
   `target`, which it requires), `open-palette`, `open-start-screen` (a new
-  Studio session's start screen, its Who? picker spotlighted), `open-devices`, `open-team`, `focus-composer`
+  Studio session's start screen, its Who? picker spotlighted), `open-devices`, `open-team`, `open-team-page` (v3.124), `focus-composer`
   (`src/whats-new.js` ACTIONS, SETTINGS_SECTIONS; `validateManifest` lists the problems). A missing or invalid file is
   never shown.
 - **When** (`src/whats-new.js` `decide`, at start before the first save): `state.lastSeenVersion` (state.json) against
@@ -3310,7 +3310,7 @@ step-through quickstart, once.
   when that would leave none); texts in the UI language, English otherwise. The Office's modal look (`style.css .wn-*`),
   Studio's tokens in Studio (`studio.css body.studio .wn-*`). "Try it" closes the card, runs the action
   (`app.js whatsNewActions`: setExperience, the Settings popup, Studio's palette, the Devices panel — in Studio
-  via `studio.showPanel` —, Team: Studio's sidebar Team section or Settings → Team, the Office's Team panel, and the composer) and spotlights `target`, or the action's own element
+  via `studio.showPanel` —, Team: Studio's Team page (v3.124), the Office's Team panel, and the composer) and spotlights `target`, or the action's own element
   (`#experience-switch`, the Settings row, the panel), for 4.5 s with the item's title as a tooltip; a click ends it.
 - **Ways back**: Help → What's New, Studio's ⌘K "What's new" (`studio.cmd.whatsNew`), Settings → About (the Office popup's
   last row and Studio's Settings page About section: the version and a What's new button).
@@ -3318,3 +3318,50 @@ step-through quickstart, once.
   problems listed) or 2 (usage); `scripts/release.mjs` step 1 runs it and stops (a dry run warns).
 - **Tests**: `app/test/whats-new.test.cjs` "v3.123 …" (version order, `decide`, actions, validation, the shipped
   manifests, packaging, the card's helpers, the release check); `app/test/locales.test.mjs` covers the new strings.
+
+## Studio Team page (v3.124)
+Studio's own Team page in the main region (`renderer/studio-team.js`, like the v3.122 Settings page), replacing the
+old "scroll the sidebar" behaviour. Pure parts in `src/studio-team-page.mjs`, tested in
+`test/studio-team-page.test.mjs`. It reads the Office's team data (`sidebar.teamData()`: team mode, presets, staff,
+desks, projects) and calls the Office's own handlers; main keeps every limit and check (`ST.saveMember`: ≤ 50
+members, unique names ignoring case, a valid role) and its errors (`staff.error.*`) are shown inline. The Office's
+TEAM panel is unchanged.
+- **Opened from** Settings → Team "Open the team" (`openTeam` hook), the sidebar's Team header (a button now), ⌘K
+  "Team" (`studio.cmd.team` → `studio.openTeam()`), What's new `open-team` (in Studio) and `open-team-page` (switches
+  to Studio, the Roles tab). Outside Studio `openTeam` shows the Office's Team panel. Opening Settings, a session or a
+  new session closes it; Esc closes the side sheet first, then the page.
+- **Team mode off**: an empty state with "Turn on team mode", which drives the Office's own Settings checkbox
+  (`sidebar.settingControl('team')`, its change event → `prefs.set({ teamMode })` → `staff:list`) and redraws as soon
+  as the list says team mode is on.
+- **Members** (`drawMembers`, `memberCards`): cards grouped by department (`byDepartment`: named first, "No
+  department" last), each with initials, name, role (`roleOf`, UI language), department label, account label (or
+  "Project's account"), allowed projects (`allowedProjects`), skill packs (`memberPacks`: the role's defaults with the
+  member's own on/off on top) and the live state idle / working / needs you (`memberState`) with the open desks.
+  Open desk: the only project at once, else a project pick; then the Office's desk path. Edit: the Office's own
+  member popup (`sidebar.editMember(m)` → `openMemberEditor`, every field, its save and checks) drawn as a side sheet
+  (`.sb-modal.st-sheet-modal`). Remove: `confirm`, then `staff:remove`.
+- **Roles** (`drawRoles`, `filterRoles`, `roleCard`): every preset and library role as a card (initial, name, short
+  description in the UI language, department, writes code, default skill packs), a search (name, short name,
+  description, id, department label) and a filter All / Writes code / No code. A card opens a side sheet with the full
+  description, packs, suggested tools and the brief read only in a folded `<details>`. "Add to team" (Hire):
+  `prefillMember` (the role by id, its department label, its packs on, the app-added MCP servers it suggests ticked,
+  as the member popup does); the person fills name, department, account and projects; `hireForm` → `staff:save`
+  (no id: an add); on success the Members tab. "Custom role" opens the Office's role wizard (`sidebar.openRoleWizard()`,
+  its popup; restyling it as a Studio chat sheet is left for later).
+- **Adding a member**: Studio offers the Office TEAM panel's two buttons with its labels: "+ Add team member"
+  (`staff.add`: `sidebar.editMember(null)`, the Office's member form with its preset list, as a side sheet) and
+  "Role wizard" (`staff.wizard.open`: `sidebar.openRoleWizard()`, which replaces v3.122's `sidebar.addMember()`), in
+  the Team page header on every tab (team mode on) and under the sidebar's Team section (replacing its "+ Add member",
+  `studio.team.add`, which opened the wizard). The Roles gallery stays the browse-and-hire path; its last card,
+  "Custom role", also opens the wizard; the Roles tab opens with its search focused. The Office's TEAM panel is unchanged.
+- **Departments** (`drawDepartments`, `departmentCounts`, `renameForms`): each department with its member count;
+  Rename (≤ 30, as main) saves each member of it with the new label through `staff:save`; members main refused are
+  named with its reason. An empty name is refused; the same name (or a function's label unchanged) changes nothing.
+  The box keeps the person's draft (`renameBoxValue`) across the live redraws and a failed save; the forms are built
+  from the staff list as it is at Save, so an edit saved meanwhile is kept.
+- **Desk restarts** (amends v3.83): `staff:save` restarts a member's idle desks only when `ST.deskRestartNeeded(before,
+  after)` holds: the name, role (preset, own texts, brief, writesCode), skill packs, account, tools, mail or projects
+  changed. A department label alone (a Departments rename) restarts nothing. Tested in `test/staff.test.cjs`.
+- Studio hooks (`app.js`): `saveMember`, `removeMember` (staff IPC, then `loadStaff`), `reloadTeam`, `teamTools`
+  (`mcp:apps`). Sidebar API: `editMember(m, preset?)`. Strings `studio.teamPage.*`; existing `staff.*` reused.
+- **Not verified live**: the page in a running app (drawn and typechecked; the helpers are unit tested).

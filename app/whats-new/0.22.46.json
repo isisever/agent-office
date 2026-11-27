@@ -1,0 +1,24 @@
+{
+  "version": "0.22.46",
+  "items": [
+    {
+      "id": "studio-team-page",
+      "experience": "both",
+      "title": {
+        "en": "A Team page in Studio",
+        "tr": "Studio'da Ekip sayfası"
+      },
+      "body": {
+        "en": "Studio has a full Team page: your members with their live state, a gallery of 19 ready-made roles to hire from, and your departments. Open it from the sidebar's Team header, ⌘K or Settings.",
+        "tr": "Studio'da artık tam bir Ekip sayfası var: üyeleriniz ve anlık durumları, işe alabileceğiniz 19 hazır rolün galerisi ve departmanlarınız. Kenar çubuğundaki Ekip başlığından, ⌘K'dan ya da Ayarlar'dan açın."
+      },
+      "try": {
+        "label": {
+          "en": "Browse roles",
+          "tr": "Rollere göz at"
+        },
+        "action": "open-team-page"
+      }
+    }
+  ]
+}

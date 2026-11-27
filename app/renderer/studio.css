@@ -651,3 +651,127 @@ body.studio #studio-sidebar .st-member-state.asleep { background: none; border: 
 body.studio #studio-sidebar .st-desk { width: 100%; padding-left: 40px; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
 body.studio #studio-sidebar .st-team-add { width: 100%; border: 0; background: none; font: inherit; color: var(--st-muted); text-align: left; cursor: pointer; }
 body.studio #studio-start .st-start-who[hidden] { display: none; }
+
+/* ---- v3.124 the Team page (renderer/studio-team.js): Settings' frame, tabs, cards and a side sheet ---- */
+#studio-team[hidden], body.studio #studio-team [hidden] { display: none !important; }
+body.studio #studio-team {
+  position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--st-bg); color: var(--st-text);
+  font: 13.5px/1.45 var(--st-font);
+}
+body.studio #studio-team .st-set-top { display: flex; align-items: center; gap: 12px; padding: 18px 28px 0; border-bottom: 1px solid var(--st-border); flex-wrap: wrap; }
+body.studio #studio-team .st-set-back {
+  display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--st-radius-s); background: none; color: var(--st-muted); cursor: pointer;
+}
+body.studio #studio-team .st-set-back:hover { background: var(--st-hover); color: var(--st-text); }
+body.studio #studio-team .st-set-title { margin: 0 0 12px; font: 400 24px/1.2 var(--st-serif); flex: 1 1 auto; }
+body.studio #studio-team .st-team-tabs { display: flex; gap: 4px; flex-basis: 100%; }
+body.studio #studio-team .st-team-tab {
+  padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--st-muted); font: 500 13px/1 var(--st-font); cursor: pointer;
+}
+body.studio #studio-team .st-team-tab:hover { color: var(--st-text); }
+body.studio #studio-team .st-team-tab.active { color: var(--st-text); border-bottom-color: var(--st-accent); }
+body.studio #studio-team .st-team-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 18px 28px 48px; }
+body.studio #studio-team .st-set-btn {
+  padding: 6px 12px; border: 1px solid var(--st-border-strong); border-radius: var(--st-radius-s); background: var(--st-raised); color: var(--st-text); font: inherit; cursor: pointer;
+}
+body.studio #studio-team .st-set-btn:hover { background: var(--st-hover); }
+body.studio #studio-team .st-set-btn.primary { border-color: var(--st-accent); background: var(--st-accent); color: var(--st-on-accent); }
+body.studio #studio-team .st-set-btn.warn { color: #b3412e; }
+body.studio #studio-team .st-set-btn:disabled { opacity: .5; cursor: default; }
+body.studio #studio-team :is(.st-set-btn, .st-team-tab, .st-set-back, .st-team-card, input, select, textarea):focus-visible { outline: 2px solid var(--st-accent); outline-offset: 2px; }
+body.studio #studio-team .st-team-empty { max-width: 460px; margin: 10vh auto 0; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+body.studio #studio-team .st-team-empty h2 { margin: 0; font: 400 22px/1.2 var(--st-serif); }
+body.studio #studio-team .st-team-empty p { margin: 0 0 8px; color: var(--st-muted); }
+body.studio #studio-team .st-team-empty-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--st-select); color: var(--st-accent); }
+body.studio #studio-team .st-sheet-back { position: absolute; inset: 0; background: rgba(0, 0, 0, .18); }
+body.studio #studio-team .st-sheet {
+  position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 100%); display: flex; flex-direction: column;
+  background: var(--st-raised); border-left: 1px solid var(--st-border); box-shadow: var(--st-shadow);
+}
+body.studio #studio-team .st-sheet-head { display: flex; align-items: center; gap: 8px; padding: 16px 20px; border-bottom: 1px solid var(--st-border); }
+body.studio #studio-team .st-sheet-title { flex: 1; margin: 0; font: 400 20px/1.2 var(--st-serif); }
+body.studio #studio-team .st-sheet-body { flex: 1; overflow-y: auto; padding: 16px 20px 28px; display: flex; flex-direction: column; gap: 14px; }
+/* the Office's member popup opened from the Team page (sidebar.editMember): a side sheet in Studio */
+body.studio .sb-modal.st-sheet-modal {
+  position: fixed; top: 0; right: 0; bottom: 0; left: auto; width: min(480px, 100vw); max-width: none; max-height: none; height: 100vh;
+  margin: 0; border-radius: 0; transform: none;
+}
+/* the Roles gallery */
+body.studio #studio-team .st-team-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+body.studio #studio-team .st-team-searchbox {
+  display: flex; align-items: center; gap: 6px; flex: 0 1 320px; padding: 6px 10px; border: 1px solid var(--st-border-strong); border-radius: var(--st-radius-s); background: var(--st-raised); color: var(--st-muted);
+}
+body.studio #studio-team .st-team-searchbox:focus-within { border-color: var(--st-accent); }
+body.studio #studio-team .st-team-search { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--st-text); font: inherit; }
+body.studio #studio-team .st-team-seg { display: inline-flex; padding: 2px; border-radius: var(--st-radius-s); background: var(--st-select); }
+body.studio #studio-team .st-team-seg-opt { padding: 5px 10px; border: 0; border-radius: 6px; background: none; color: var(--st-muted); font: inherit; cursor: pointer; }
+body.studio #studio-team .st-team-seg-opt[aria-checked="true"] { background: var(--st-raised); color: var(--st-text); box-shadow: var(--st-shadow); }
+body.studio #studio-team .st-team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+body.studio #studio-team .st-team-card {
+  display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--st-border); border-radius: var(--st-radius); background: var(--st-raised);
+  color: var(--st-text); font: inherit; text-align: left; cursor: pointer; min-width: 0;
+}
+body.studio #studio-team button.st-team-card:hover { border-color: var(--st-border-strong); box-shadow: var(--st-shadow); }
+body.studio #studio-team .st-team-custom { border-style: dashed; background: none; }
+body.studio #studio-team .st-team-card-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+body.studio #studio-team .st-team-avatar {
+  flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--st-select); color: var(--st-accent-ink); font: 600 13px/1 var(--st-font);
+}
+body.studio #studio-team .st-team-card-name { display: flex; flex-direction: column; min-width: 0; font-weight: 600; }
+body.studio #studio-team .st-team-card-sub { color: var(--st-muted); font-weight: 400; font-size: 12px; }
+body.studio #studio-team .st-team-card-text { color: var(--st-muted); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+body.studio #studio-team .st-team-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+body.studio #studio-team .st-team-chip { padding: 2px 8px; border-radius: 999px; background: var(--st-select); color: var(--st-muted); font-size: 11.5px; }
+body.studio #studio-team .st-team-chip.code { color: var(--st-accent-ink); }
+body.studio #studio-team .st-team-none { grid-column: 1 / -1; color: var(--st-muted); }
+body.studio #studio-team .st-team-desc { margin: 0; color: var(--st-text); }
+body.studio #studio-team .st-team-field { display: flex; flex-direction: column; gap: 6px; }
+body.studio #studio-team .st-team-label { color: var(--st-muted); font: 600 12px/1.3 var(--st-font); }
+body.studio #studio-team .st-team-input {
+  padding: 7px 10px; border: 1px solid var(--st-border-strong); border-radius: var(--st-radius-s); background: var(--st-bg); color: var(--st-text); font: inherit;
+}
+body.studio #studio-team .st-team-check { display: flex; align-items: center; gap: 8px; }
+body.studio #studio-team .st-team-hint { margin: 0; color: var(--st-faint); font-size: 12px; }
+body.studio #studio-team .st-team-error { padding: 8px 10px; border-radius: var(--st-radius-s); background: rgba(179, 65, 46, .1); color: #b3412e; }
+body.studio #studio-team .st-team-form { display: flex; flex-direction: column; gap: 14px; }
+body.studio #studio-team .st-team-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+body.studio #studio-team .st-team-brief { border: 1px solid var(--st-border); border-radius: var(--st-radius-s); }
+body.studio #studio-team .st-team-brief summary { padding: 8px 10px; cursor: pointer; color: var(--st-muted); font-weight: 600; }
+body.studio #studio-team .st-team-brief pre { margin: 0; padding: 0 10px 10px; white-space: pre-wrap; font: 12.5px/1.5 var(--st-mono); color: var(--st-text); }
+/* the Members tab */
+body.studio #studio-team .st-team-count { color: var(--st-muted); }
+body.studio #studio-team .st-start-gap { flex: 1; }
+body.studio #studio-team .st-team-group { display: flex; align-items: center; gap: 8px; margin: 18px 0 10px; font: 600 12px/1.3 var(--st-font); letter-spacing: .02em; color: var(--st-muted); }
+body.studio #studio-team .st-team-group-n { padding: 0 6px; border-radius: 999px; background: var(--st-select); font-weight: 500; }
+body.studio #studio-team .st-team-member { cursor: default; }
+body.studio #studio-team .st-team-member .st-team-card-name { flex: 1; }
+body.studio #studio-team .st-team-state { display: inline-flex; align-items: center; gap: 6px; flex: none; color: var(--st-muted); font-size: 12px; }
+body.studio #studio-team .st-team-state.needs { color: #9a7412; font-weight: 600; }
+body.studio #studio-team .st-team-state.working { color: var(--st-accent-ink); }
+body.studio #studio-team .st-member-state { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--st-border-strong); }
+body.studio #studio-team .st-member-state.working { background: var(--st-accent); }
+body.studio #studio-team .st-member-state.needs { background: #d4a72c; box-shadow: 0 0 0 3px rgba(212, 167, 44, .25); }
+body.studio #studio-team .st-member-state.asleep { background: none; border: 1px dashed var(--st-border-strong); }
+body.studio #studio-team .st-team-line { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--st-muted); font-size: 12.5px; }
+body.studio #studio-team .st-team-line span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.studio #studio-team :is(.st-team-desks, .st-team-pick) { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+body.studio #studio-team .st-team-desk {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--st-border); border-radius: 999px; background: var(--st-bg); color: var(--st-text); font: inherit; font-size: 12px; cursor: pointer;
+}
+body.studio #studio-team .st-team-desk:hover { border-color: var(--st-border-strong); }
+body.studio #studio-team .st-team-member .st-team-actions { margin-top: auto; padding-top: 4px; }
+body.studio #studio-team .st-team-member .st-set-btn { padding: 4px 10px; font-size: 12.5px; }
+/* the sidebar's Team header opens the page */
+body.studio #studio-sidebar .st-team-open { display: flex; align-items: center; gap: 4px; width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+body.studio #studio-sidebar .st-team-open .st-title { flex: 1; }
+body.studio #studio-sidebar .st-team-open .st-icon { transform: rotate(-90deg); opacity: .6; }
+body.studio #studio-sidebar .st-team-open:hover { color: var(--st-text); }
+/* the Departments tab */
+body.studio #studio-team .st-team-depts { max-width: 640px; margin-top: 12px; border: 1px solid var(--st-border); border-radius: var(--st-radius); background: var(--st-raised); overflow: hidden; }
+body.studio #studio-team .st-team-dept-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+body.studio #studio-team .st-team-dept-row + .st-team-dept-row { border-top: 1px solid var(--st-border); }
+body.studio #studio-team .st-team-dept-name { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.studio #studio-team .st-team-dept-row.editing .st-team-input { flex: 1; min-width: 0; }
+body.studio #studio-team .st-team-depts + .st-team-error { max-width: 640px; margin-top: 10px; }
+body.studio #studio-team .st-team-head-btns { display: flex; gap: 8px; margin-bottom: 12px; }
+body.studio #studio-sidebar .st-team-wizard .st-title { color: var(--st-muted); }

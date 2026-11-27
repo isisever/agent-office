@@ -284,6 +284,17 @@ function saveMember(staff, form, known = {}, newId = newStaffId) {
   if (!exists && list.length >= STAFF_MAX) return { error: 'too-many' };
   return { staff: exists ? list.map((m) => (m.id === id ? member : m)) : [...list, member], member };
 }
+/**
+ * Must a saved member's idle desks restart? Only when something a running desk was started with changed: the name and
+ * role (the desk's role file and brief), skill packs, the account, MCP tools and mail (its servers) or the projects.
+ * A department label (or the personal draft, set by the project setters) changes nothing a desk runs with.
+ * @param {any} before the member as it was (undefined: a new member, no desks yet) @param {any} after the saved member
+ */
+function deskRestartNeeded(before, after) {
+  if (!before || !after) return false;
+  const pick = (m) => JSON.stringify([m.name, m.role, packMap(m.skillPacks), m.accountId || '', m.tools || [], m.mail || [], m.projects]);
+  return pick(before) !== pick(after);
+}
 const removeMember = (staff, id) => (Array.isArray(staff) ? staff : []).filter((m) => m.id !== id);
 
 /** A project removed from this machine leaves every member's list ('all' stays 'all'). */
@@ -393,6 +404,6 @@ function findMember(staff, key) {
 
 module.exports = {
   personalDraft, personalTarget, setPersonalDraft, takePersonalDraft, routePersonalSetting, applyPersonalDraft, NOT_ALLOWED_HINT,
-  STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, removeMember,
+  STAFF_MAX, DEPARTMENTS, packMap, normalizeCustomRole, normalizeCustomRoles, customRoleFile, saveCustomRole, removeCustomRole, normalizeRoleDef, loadRoles, roleValue, normalizeMember, normalizeStaff, newStaffId, saveMember, deskRestartNeeded, removeMember,
   dropProject, dropAccount, mayWork, personalOf, memberRole, deskWorktree, appMadeWorktree, deskWaits, deskRoleFile, machineStaff, findMember,
 };

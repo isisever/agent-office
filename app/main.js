@@ -4053,12 +4053,13 @@ const staffKnown = () => ({
 ipcMain.handle('staff:list', () => ({ teamMode: state.teamMode === true, presets: presetRoles(), departments: ST.DEPARTMENTS, staff: state.staff || [] }));
 ipcMain.handle('staff:save', (_e, form) => {
   if (!stateWritable) return { ok: false, error: 'state' };
+  const before = (state.staff || []).find((m) => m.id === form?.id);
   const r = ST.saveMember(state.staff || [], form && typeof form === 'object' ? form : {}, staffKnown());
   if (!r.staff) return { ok: false, error: r.error };
   commit({ ...state, staff: r.staff });
-  // the member's role or packs may have changed: its idle desks restart in their conversation (new role file and
-  // packs at start); busy ones get them at their next start
-  for (const p of state.projects) for (const t of P.desksOf(p)) {
+  // the member's role, packs, account, tools or projects changed: its idle desks restart in their conversation (new
+  // role file and packs at start); busy ones get them at their next start. v3.124: a department label alone restarts nothing
+  if (ST.deskRestartNeeded(before, r.member)) for (const p of state.projects) for (const t of P.desksOf(p)) {
     if (t.staffId !== r.member.id) continue;
     const pid = `${p.id}:${t.n}`;
     const sid = terms.has(pid) ? idleSession(pid) : '';
