@@ -3488,3 +3488,46 @@ its sub-agents. Agent Office passes only what a session needs (src/mcp-lean.js, 
 - **HQ**: unchanged (v3.46): only the agent-office server, strict.
 - No health state for MCP servers exists in the app, so a failing server is not skipped automatically; turning the
   share off removes the failing shared ones.
+
+## Orders from HQ (v3.130)
+
+Amends v3.103 ("HQ hands out the tasks the person asked for") and v3.91/v3.92. HQ is the top manager: a task the
+person types in HQ is an **order**. It enters the system directly (no card, no waiting) and keeps the person's
+authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; wiring in `main.js`.
+
+- **Order.** Every id minted from a prompt the person typed in HQ (terminal Enter, chat send) is an order
+  (`createMinter`: `isOrder`, `closeOrder`, `restoreOrder`; `main.hqMintTyped` also records it in the order store).
+  It is open until `office_summary` is written for it (`hqOrderClose`) or `ORDER_MS` (24 h) after the prompt.
+  Phone turns mint no id, routine ids are never orders, `adhoc` is never an order.
+- **Authority.** The first report still ends the typed *turn* (`hqMinter.clear()`); a later turn of an open order
+  gets consent `'follow'` (no dialog) and `followRefusal` keeps only `unknown-machine`, `skip-permissions` and
+  `new-unattended-target`: no `follow-up-cap` (4) and no 2 h window (`request-expired` only after 24 h or a close).
+  A closed order falls back to the v3.103 follow-up rules (4 per request within 2 h of the prompt).
+  `askBeforeDispatch` on: everything as v3.103 (the dialog).
+- **Order store** (`userData/hq/orders.json`, 0600): open orders, the accepted digests of waiting stages, the order
+  queue, the notices sent and the auto-continue count. Sealed as `{ v: 1, body, mac }`, `mac` = HMAC-SHA256 of the
+  body with a 32-byte key kept in `userData/hq/order-key.bin` encrypted with Electron `safeStorage`. A file whose MAC
+  does not match reads as empty; without OS encryption the key lives for one run only (nothing is trusted after a
+  restart). On first use the open orders are restored into the minter.
+- **Restart.** A waiting stage of an open order whose `stage.json` matches its sealed digest (`CH.stageDigest`) is
+  released after an app restart without the dialog. Tampered, unknown or not an open order: the v3.103 dialog.
+- **Order queue.** For an open order (and `askBeforeDispatch` off), a dispatch refused by `open-cap`/`request-cap`
+  or by the project queue (`queue-full`, link-host `QUEUE_MAX` 5) is queued instead: a board row with status
+  `queued`, reason `order-queue`, `orderQueued: true` and `ahead` (n before it); the result is
+  `{ id, status: 'queued', reason: 'order-queue', waitingFor, ahead }`. Rows waiting there do not count toward the
+  caps. `hqTick` releases them (higher `priority` first, then FIFO) as `capReason` allows; one that meets a full
+  project queue again keeps its place. At most `ORDER_QUEUE_MAX` (50) per order (`order-queue-full`). A queued item
+  of the person's typed turn keeps that turn's consent; one queued in a later turn passes the follow-up rules at
+  release. Closing the order drops its queue (`order-closed`); Cancel on the card removes it. Staged chains
+  (`then`/`after`) still refuse over the caps. Board: "queued (n ahead)" (`hq.orderQueued`).
+- **Auto-continue.** A stage of an open order blocked by `after-partial`, `after-failed`, `after-expired` or
+  `after-lost` is continued by the app once per order (`HO.mayAutoContinue`, the v3.92 `CH.resume` path), the row
+  marked `autoContinued` ("continued by HQ"), and HQ's inbox row carries `autoContinued: true`. A second block, or
+  any other reason (`after-rejected`, `after-closed-by-hq`, `after-person-prompted`, `after-blocked`), waits for the
+  person's Continue. Never with `askBeforeDispatch` on.
+- **Notices.** One OS notice per order when it starts (`main.hqOrder_start`), one when it needs the person
+  (`needs-approval` or a block HQ does not continue, `main.hqOrder_needs`) and one at its end (`office_summary`,
+  `main.hqOrder_end`). Inside an open order `hqInitiativeSent`, `hqRemoteSent` and `hqRequestDone` are not shown.
+- **Unchanged boundaries.** The dialog for `adhoc`, foreign or expired ids and phone turns; routine held cards and
+  `holdsOffId`; the depth rule; target projects' own permission prompts and the mail guard; pairing confirmation;
+  redaction; receiver-side checks on paired devices.
