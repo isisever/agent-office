@@ -3504,6 +3504,8 @@ authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; w
   explicitly named order id gets the untyped rules (the v3.103 follow-up limits, else the dialog), no order queueing,
   no auto-continue, no release without the dialog after a restart. The flag stays through reports and routine mints
   and ends only when the person's next typed prompt mints an id. The order queue waits (it is not dropped) meanwhile.
+  The flag is kept in the sealed order store (`main.hqMarkPhone`, cleared by `hqMintTyped`) and set again in the
+  minter when the store opens, so a restart during a phone turn does not give the restored orders their authority back.
 - **Authority.** The first report still ends the typed *turn* (`hqMinter.clear()`); a later turn of an open order
   gets consent `'follow'` (no dialog) and `followRefusal` keeps only `unknown-machine`, `skip-permissions` and
   `new-unattended-target`: no `follow-up-cap` (4) and no 2 h window (`request-expired` only after 24 h or a close).
@@ -3512,15 +3514,25 @@ authority until it is closed. Pure rules in `src/hq-order.js` and `src/hq.js`; w
 - **Order store** (`userData/hq/orders.json`, 0600): open orders, the accepted digests of waiting stages, the order
   queue, the notices sent and the auto-continue count. Sealed as `{ v: 1, body, mac }`, `mac` = HMAC-SHA256 of the
   body with a 32-byte key kept in `userData/hq/order-key.bin` encrypted with Electron `safeStorage`. A file whose MAC
-  does not match reads as empty; without OS encryption the key lives for one run only (nothing is trusted after a
-  restart). On first use the open orders are restored into the minter.
-- **Restart.** A waiting stage of an open order whose `stage.json` matches its sealed digest (`CH.stageDigest`) is
-  released after an app restart without the dialog. Tampered, unknown or not an open order: the v3.103 dialog.
+  does not match reads as empty; without OS encryption, or with Linux `basic_text` (a hard-coded key,
+  `HO.keychainOk`), the key lives for one run only (nothing is trusted after a restart: the dialog). On first use the
+  open orders are restored into the minter. Rollback: every save raises a generation kept in the body and next to the
+  key in `order-key.bin` (`<hex>:<gen>`); a store older than the kept generation (an earlier `orders.json` copied
+  back) reads as empty (`HO.genOk`). The store also keeps the phone flag.
+- **Restart.** A waiting stage of an open order whose `stage.json` matches its sealed digest is released after an app
+  restart without the dialog. The sealed value is `HO.stageSeal(CH.stageDigest(rec), { request, byInitiative })`, so
+  an edited board row (its request or `byInitiative`) does not match either. Tampered, unknown or not an open order:
+  the v3.103 dialog. A stage known in memory uses the `byInitiative` it was accepted with, never the board's.
 - **Order queue.** For an open order (and `askBeforeDispatch` off), a dispatch refused by `open-cap`/`request-cap`
   or by the project queue (`queue-full`, link-host `QUEUE_MAX` 5) is queued instead: a board row with status
   `queued`, reason `order-queue`, `orderQueued: true` and `ahead` (n before it); the result is
   `{ id, status: 'queued', reason: 'order-queue', waitingFor, ahead }`. Rows waiting there do not count toward the
-  caps. `hqTick` releases them (higher `priority` first, then FIFO) as `capReason` allows; one that meets a full
+  caps: `capReason(board, request, queued)` leaves out the ids in the sealed queue (`queuedIds`), never rows by the
+  board's `orderQueued` flag; the lost-row sweep ends only rows still `queued`/`order-queue`. The kept task is
+  `HQ.redact`ed, and one over `TASK_MAX` is refused (`too-large`) before it is kept. Consent and the routine hold-off
+  are decided before queueing (`HO.overCapRoute`): only consent `'none'` with nothing holding it off is queued as
+  typed; a routine turn (or consent `'held'`) gets today's held card; anything else is queued untyped and decided
+  again at release. The queue does not release while a phone turn or an HQ routine turn is live (`HO.pumpMay`). `hqTick` releases them (higher `priority` first, then FIFO) as `capReason` allows; one that meets a full
   project queue again keeps its place. At most `ORDER_QUEUE_MAX` (50) per order (`order-queue-full`). A queued item
   of the person's typed turn keeps that turn's consent; one queued in a later turn passes the follow-up rules at
   release. Closing the order drops its queue (`order-closed`); Cancel on the card removes it. Staged chains

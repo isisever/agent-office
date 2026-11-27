@@ -288,9 +288,10 @@ function loadBoard(raw) {
 const openTasks = (board) => board.tasks.filter(OPEN);
 /** v3.87 fix: the tasks of a real request whose rows were removed (office_task remove): they still count toward its cap. */
 const removedOf = (board, request) => (request && request !== ADHOC ? Math.max(0, Number((board.requests || []).find((r) => r.id === request)?.removed) || 0) : 0);
-/** Caps before a dispatch: 8 per request, 12 open. → reason or null. */
-function capReason(board, request) {
-  board = { ...board, tasks: board.tasks.filter((t) => t.orderQueued !== true) };   // v3.130 an order's queued rows wait outside the caps
+/** Caps before a dispatch: 8 per request, 12 open. → reason or null. v3.130 `queued`: the ids waiting in the sealed
+ *  order queue (HO store queuedIds), which wait outside the caps; never the board's own `orderQueued` flag. */
+function capReason(board, request, queued = null) {
+  if (queued instanceof Set && queued.size) board = { ...board, tasks: board.tasks.filter((t) => !queued.has(t.id)) };
   if (openTasks(board).length >= MAX_OPEN) return 'open-cap';
   // the adhoc bucket counts its open tasks only (it never ends); a real request counts every task it ever got, removed rows too
   if (request && board.tasks.filter((t) => t.request === request && (request !== ADHOC || OPEN(t))).length + removedOf(board, request) >= MAX_PER_REQUEST) return 'request-cap';

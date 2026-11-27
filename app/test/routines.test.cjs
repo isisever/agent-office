@@ -415,7 +415,7 @@ function remoteHarness({ online = true, ask = true } = {}) {
     remotes: new Map([[PUB, { snap: { projects: [{ id: 'web', name: 'Web' }] } }]]), outgoing: [] };
   const prelude = `
     const { HQ, ROUT, LC, SF, P, fs, path, crypto, T } = env; let state = env.state;
-    const hqMinter = HQ.createMinter(); const hqPacer = HQ.createPacer(); const hqOrderNotice = () => {}; const hqOrderOpen = () => false; const hqOrderEnqueue = () => ({ status: 'rejected', reason: 'request-cap' }); const hqOrders = () => ({ isOpen: () => false, stage() {}, stageOk: () => false, dropStage() {} }); const HO = env.HO;   // v3.130 no open order in routine turns
+    const hqMinter = HQ.createMinter(); const hqPacer = HQ.createPacer(); const hqOrderNotice = () => {}; const hqOrderOpen = () => false; const hqOrderEnqueue = () => ({ status: 'rejected', reason: 'request-cap' }); const hqOrders = () => ({ isOpen: () => false, stage() {}, stageOk: () => false, dropStage() {}, queuedIds: () => new Set() }); const HO = env.HO;   // v3.130 no open order in routine turns
     let win = { isFocused: () => true, isDestroyed: () => false }; const isLoaded = true; const appQuitting = false;
     env.setWin = (w) => { win = w; };
     const addRun = (a) => env.added.push(a); const rtFileName = () => path.join(${JSON.stringify(dir)}, 'routines.json'); const powerMonitor = { on() {} };

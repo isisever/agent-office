@@ -260,7 +260,7 @@ test('caps: 8 per request, 12 open, depth 1', () => {
   assert.equal(HQ.depthRefused(b, 'other'), false);
   assert.equal(HQ.depthRefused(b, 'hq'), false);
   assert.match(fnBody('officeDispatch'), /HQ\.depthRefused\(loadHqBoard\(\), tab\)\) return \{ status: 'rejected', reason: 'depth' \}/);
-  assert.match(fnBody('hqDispatch'), /HQ\.capReason\(board, request\)/);
+  assert.match(fnBody('hqDispatch'), /HQ\.capReason\(board, request, hqOrders\(\)\.queuedIds\(\)\)/);
 });
 
 test('remote rows: keyed <pub>:<id>, restricted actions; offline peers from the cache (names and ids only)', () => {
@@ -360,7 +360,7 @@ test('a foreign request id resolves to the current id and consentFor sees it liv
 test('caps are re-checked after the consent dialog resolves', () => {
   const body = fnBody('hqDispatch');
   const a = body.indexOf('confirmHqDispatch(args, remote)');
-  const b = body.indexOf('HQ.capReason(loadHqBoard(), request)', a);
+  const b = body.indexOf('HQ.capReason(loadHqBoard(), request, hqOrders().queuedIds())', a);
   assert.ok(a > 0 && b > a, 'fresh capReason after the dialog');
   // behavior: the board that filled while the dialog was open now refuses
   let board = HQ.emptyBoard();
@@ -1687,10 +1687,112 @@ test('v3.130 order follow-ups: no count and no cap refusal, Skip and new-unatten
   assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [local], now: t }), 'follow-up-cap');
 });
 
-test('v3.130 caps ignore rows waiting in the order queue', () => {
+test('v3.130 caps ignore rows waiting in the sealed order queue, never the board flag alone', () => {
   const tasks = Array.from({ length: HQ.MAX_OPEN }, (_, i) => ({ id: `q${i}`, request: 'r1', status: 'queued', orderQueued: true }));
-  assert.equal(HQ.capReason({ tasks, requests: [] }, 'r1'), null);
-  assert.equal(HQ.capReason({ tasks: tasks.map((x) => ({ ...x, orderQueued: false })), requests: [] }, 'r1'), 'open-cap');
+  assert.equal(HQ.capReason({ tasks, requests: [] }, 'r1', new Set(tasks.map((t) => t.id))), null);
+  assert.equal(HQ.capReason({ tasks, requests: [] }, 'r1'), 'open-cap');                 // an edited board.json flag counts
+  assert.equal(HQ.capReason({ tasks, requests: [] }, 'r1', new Set(['other'])), 'open-cap');
+  const s = HO.createOrderStore({ file: '', key: null });
+  s.add('r1', Date.now());
+  s.enqueue({ id: 'q0', request: 'r1', args: { task: 'x' } });
+  assert.deepEqual([...s.queuedIds()], ['q0']);
+});
+
+test('v3.130 review: over the caps, only the typed turn queues as typed; a routine turn holds it off', () => {
+  assert.equal(HO.overCapRoute({ consent: 'none', heldOff: false }), 'typed');
+  assert.equal(HO.overCapRoute({ consent: 'none', heldOff: true }), 'hold');    // a routine turn naming the order id
+  assert.equal(HO.overCapRoute({ consent: 'held', heldOff: false }), 'hold');
+  assert.equal(HO.overCapRoute({ consent: 'follow' }), 'queue');                 // decided again at release
+  assert.equal(HO.overCapRoute({ consent: 'ask' }), 'queue');
+  const body = fnBody('hqDispatch');
+  const a = body.indexOf('HO.overCapRoute(');
+  assert.ok(a > 0 && a < body.indexOf("if (cap) return { status: 'rejected', reason: cap };"), 'decided before the cap refusal');
+  assert.ok(!/typed: hqMinter\.isLive\(request\)/.test(body), 'never typed from isLive alone');
+  // the pump waits during a phone turn and during a live routine turn
+  assert.equal(HO.pumpMay({}), true);
+  assert.equal(HO.pumpMay({ phone: true }), false);
+  assert.equal(HO.pumpMay({ routineLive: true }), false);
+  assert.match(fnBody('hqOrderPump'), /HO\.pumpMay\(\{ phone: hqMinter\.isPhone\(\), routineLive: Boolean\(openHqRoutineRequest\(\)\) \}\)/);
+});
+
+test('v3.130 review: the phone flag survives a restart in the sealed store', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-order-'));
+  const file = path.join(dir, 'orders.json');
+  const key = Buffer.alloc(32, 7);
+  const a = HO.createOrderStore({ file, key });
+  a.add('r1');
+  assert.equal(a.phone(), false);
+  a.setPhone(true);
+  const b = HO.createOrderStore({ file, key });
+  assert.equal(b.phone(), true);
+  const m = HQ.createMinter();
+  for (const o of b.open()) m.restoreOrder(o.id, o.at);
+  if (b.phone()) m.markPhone();
+  assert.equal(m.isOrder('r1'), false);   // restored, but no authority in a phone turn
+  b.setPhone(false);
+  assert.equal(HO.createOrderStore({ file, key }).phone(), false);
+  assert.match(fnBody('hqOrders'), /if \(hqOrderStore\.phone\(\)\) hqMinter\.markPhone\(\)/);
+  assert.match(fnBody('hqMintTyped'), /setPhone\(false\)/);
+  assert.match(fnBody('hqMarkPhone'), /setPhone\(true\)/);
+});
+
+test('v3.130 review: an older orders.json copied back is refused (generation in the key file)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-order-'));
+  const file = path.join(dir, 'orders.json');
+  const ss = { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'keychain', encryptString: (x) => Buffer.from(x), decryptString: (x) => x.toString() };
+  const k1 = HO.orderKey(path.join(dir, 'order-key.bin'), ss);
+  const a = HO.createOrderStore({ file, key: k1.key, gen: k1.gen });
+  a.add('r1');
+  a.stage('w1', 'd1');
+  const old = fs.readFileSync(file);
+  a.dropStage('w1');
+  fs.writeFileSync(file, old);   // the copy with the stage digest still in it
+  const k2 = HO.orderKey(path.join(dir, 'order-key.bin'), ss);
+  assert.equal(k2.key.equals(k1.key), true);
+  const b = HO.createOrderStore({ file, key: k2.key, gen: k2.gen });
+  assert.equal(b.stageOk('w1', 'd1'), false);
+  assert.deepEqual(b.open(), []);
+  b.add('r2');   // a fresh store after a refusal is newer than every kept generation
+  const k3 = HO.orderKey(path.join(dir, 'order-key.bin'), ss);
+  assert.deepEqual(HO.createOrderStore({ file, key: k3.key, gen: k3.gen }).open().map((o) => o.id), ['r2']);
+  assert.equal(HO.genOk(3, 4), false);
+  assert.equal(HO.genOk(4, 4), true);
+  assert.equal(HO.genOk(undefined, 1), false);
+  assert.equal(HO.genOk(0, null), true);
+});
+
+test('v3.130 review: Linux basic_text safeStorage is not trusted (a key for this run only)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-order-'));
+  const ss = (backend) => ({ isEncryptionAvailable: () => true, getSelectedStorageBackend: () => backend, encryptString: (x) => Buffer.from(x), decryptString: (x) => x.toString() });
+  const real = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+  try {
+    assert.equal(HO.keychainOk(ss('basic_text')), false);
+    assert.equal(HO.keychainOk(ss('gnome_libsecret')), true);
+    const k = HO.orderKey(path.join(dir, 'order-key.bin'), ss('basic_text'));
+    assert.equal(k.gen, null);
+    assert.equal(fs.existsSync(path.join(dir, 'order-key.bin')), false);
+    assert.equal(HO.orderKey(path.join(dir, 'order-key.bin'), ss('basic_text')).key.equals(k.key), false);
+  } finally { Object.defineProperty(process, 'platform', { value: real }); }
+  assert.equal(HO.keychainOk({ isEncryptionAvailable: () => false }), false);
+});
+
+test('v3.130 review: the stage seal covers the request and byInitiative', () => {
+  const d = 'digest-1';
+  const sealed = HO.stageSeal(d, { request: 'r1', byInitiative: true });
+  assert.equal(HO.stageSeal(d, { request: 'r1', byInitiative: true }), sealed);
+  assert.notEqual(HO.stageSeal(d, { request: 'r1', byInitiative: false }), sealed);   // byInitiative dropped in board.json
+  assert.notEqual(HO.stageSeal(d, { request: 'r2', byInitiative: true }), sealed);
+  assert.notEqual(HO.stageSeal('digest-2', { request: 'r1', byInitiative: true }), sealed);
+  const rel = fnBody('hqReleaseStage');
+  assert.match(rel, /stageOk\(id, HO\.stageSeal\(CH\.stageDigest\(st\), \{ request: t\.request, byInitiative: t\.byInitiative === true \}\)\)/);
+  assert.match(rel, /let follow = known && typeof known\.byInitiative === 'boolean' \? known\.byInitiative/);
+});
+
+test('v3.130 review: the order queue keeps the redacted task and checks its size first', () => {
+  const body = fnBody('hqOrderEnqueue');
+  assert.ok(body.indexOf("'too-large'") > 0 && body.indexOf("'too-large'") < body.indexOf('hqOrders().enqueue('));
+  assert.match(body, /task: HQ\.redact\(raw\)/);
 });
 
 test('v3.130 sealed store: digest verify, tamper and unknown key fall back, restart restores open orders', () => {

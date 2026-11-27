@@ -49,7 +49,32 @@ function mayAutoContinue({ task, open, used = 0, ask = false }) {
   return !ask && open === true && isObj(task) && task.status === 'blocked' && isStr(task.after) && AUTO_REASONS.has(task.reason) && task.autoContinued !== true && used < AUTO_CONTINUE_MAX;
 }
 
-const emptyData = () => ({ orders: {}, stages: {}, queue: [], seq: 0 });
+/** Over the caps, an open order's dispatch: 'hold' (a routine turn holds it off, or consent says held: today's held
+ *  card), 'typed' (the person's own typed turn: it keeps that consent in the queue) or 'queue' (consent is decided again
+ *  at its release: the follow-up rules or the dialog). Never 'typed' unless consent is 'none' and nothing holds it off. */
+function overCapRoute({ consent, heldOff = false }) {
+  if (heldOff || consent === 'held') return 'hold';
+  return consent === 'none' ? 'typed' : 'queue';
+}
+/** May the order queue release now? Not in a phone turn and not while an HQ routine turn is live (its releases would
+ *  only become held cards again, every tick). */
+const pumpMay = ({ phone = false, routineLive = false } = {}) => !phone && !routineLive;
+/** The sealed digest of a waiting stage: its stage.json digest bound to the board fields the release trusts (the
+ *  request and whether HQ sent it on its own), so an edited board.json row does not match. */
+function stageSeal(digest, { request = '', byInitiative = false } = {}) {
+  return crypto.createHash('sha256').update(JSON.stringify(['stage-seal-1', String(digest || ''), String(request || ''), byInitiative === true])).digest('hex');
+}
+/** A store read back is trusted only when its generation is not older than the one kept in the OS-protected key file
+ *  (an older orders.json copied back is refused). No kept generation (null): any. */
+const genOk = (storeGen, keyGen) => keyGen === null || keyGen === undefined || (Number.isFinite(storeGen) && storeGen >= keyGen);
+/** Is OS encryption real? Linux without a keyring falls back to a hard-coded key ('basic_text'): not trusted. */
+function keychainOk(safeStorage) {
+  try { if (!safeStorage?.isEncryptionAvailable?.()) return false; } catch { return false; }
+  try { if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text') return false; } catch { /* older Electron */ }
+  return true;
+}
+
+const emptyData = () => ({ orders: {}, stages: {}, queue: [], seq: 0, phone: false, gen: 0 });
 function clean(d, now) {
   const out = emptyData();
   if (!isObj(d)) return out;
@@ -57,19 +82,30 @@ function clean(d, now) {
   for (const [id, g] of Object.entries(isObj(d.stages) ? d.stages : {})) if (isStr(g)) out.stages[id] = g;
   out.queue = (Array.isArray(d.queue) ? d.queue : []).filter((x) => isObj(x) && isStr(x.id) && isStr(x.request) && isObj(x.args) && Number.isFinite(x.seq) && orderOpen(out.orders[x.request], now));
   out.seq = Number.isFinite(d.seq) ? d.seq : 0;
+  out.phone = d.phone === true;
+  out.gen = Number.isFinite(d.gen) ? d.gen : 0;
   return out;
 }
 
 /**
  * The order store (userData/hq/orders.json, 0600). `key`: a Buffer/string, or null (then nothing is read or kept
- * across a restart: memory only). Every change is written sealed at once.
+ * across a restart: memory only). Every change is written sealed at once. `gen`: { get(), set(n) } keeping the store's
+ * generation in the OS-protected key file (orderKey); every save raises it, and a store older than it reads as empty.
  */
-function createOrderStore({ file, key, now = Date.now }) {
+function createOrderStore({ file, key, gen = null, now = Date.now }) {
   let d = emptyData();
-  if (key && file) { try { d = clean(unseal(key, JSON.parse(fs.readFileSync(file, 'utf8'))), now()); } catch { d = emptyData(); } }
+  const keptGen = () => { try { const g = gen ? gen.get() : null; return Number.isFinite(g) ? g : null; } catch { return null; } };
+  if (key && file) {
+    try {
+      const got = clean(unseal(key, JSON.parse(fs.readFileSync(file, 'utf8'))), now());
+      d = genOk(got.gen, keptGen()) ? got : emptyData();
+    } catch { d = emptyData(); }
+  }
   const save = () => {
     if (!key || !file) return;
-    try { fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 }); const tmp = `${file}.tmp`; fs.writeFileSync(tmp, JSON.stringify(seal(key, d)), { mode: 0o600 }); fs.renameSync(tmp, file); } catch (e) { console.error('hq orders:', e.message); }
+    d.gen = Math.max(Number(d.gen) || 0, keptGen() || 0) + 1;
+    try { fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 }); const tmp = `${file}.tmp`; fs.writeFileSync(tmp, JSON.stringify(seal(key, d)), { mode: 0o600 }); fs.renameSync(tmp, file); } catch (e) { console.error('hq orders:', e.message); return; }
+    try { gen?.set(d.gen); } catch (e) { console.error('hq orders gen:', /** @type {any} */ (e).message); }
   };
   const order = (id) => (isStr(id) ? d.orders[id] : undefined);
   return {
@@ -102,6 +138,11 @@ function createOrderStore({ file, key, now = Date.now }) {
     stageOk(id, digest) { return isStr(id) && isStr(digest) && d.stages[id] === digest; },
     dropStage(id) { if (d.stages[id] === undefined) return; delete d.stages[id]; save(); },
     queue() { return d.queue.slice(); },
+    /** the ids waiting in the order queue (the caps leave these rows out: never a board.json flag) */
+    queuedIds() { return new Set(d.queue.map((x) => x.id)); },
+    /** the phone flag (HQ's current turn came from a phone controller), kept across a restart */
+    phone() { return d.phone === true; },
+    setPhone(on) { if (d.phone === (on === true)) return; d.phone = on === true; save(); },
     /** → { ok, item } | { ok: false, reason } */
     enqueue({ id, request, args, priority = 0, typed = false, seq = undefined }) {
       if (!isStr(id) || !isStr(request) || !isObj(args)) return { ok: false, reason: 'bad-request' };
@@ -119,17 +160,25 @@ function createOrderStore({ file, key, now = Date.now }) {
   };
 }
 
-/** The key that seals the store: 32 random bytes kept in `file` encrypted with Electron's safeStorage. Without OS
- *  encryption: a key for this run only (the store is then never trusted after a restart: today's dialog). */
+/** The key that seals the store: 32 random bytes kept in `file` encrypted with Electron's safeStorage, next to the
+ *  store's generation (`<hex>:<gen>`) → { key, gen: { get, set } | null }. Without real OS encryption (none, or Linux
+ *  `basic_text`): a key for this run only and no generation (the store is never trusted after a restart: today's dialog). */
 function orderKey(file, safeStorage) {
+  const once = () => ({ key: crypto.randomBytes(32), gen: null });
   try {
-    if (!safeStorage?.isEncryptionAvailable?.()) return crypto.randomBytes(32);
-    try { const k = safeStorage.decryptString(fs.readFileSync(file)); if (/^[0-9a-f]{64}$/.test(k)) return Buffer.from(k, 'hex'); } catch {}
-    const k = crypto.randomBytes(32).toString('hex');
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(file, safeStorage.encryptString(k), { mode: 0o600 });
-    return Buffer.from(k, 'hex');
-  } catch { return crypto.randomBytes(32); }
+    if (!keychainOk(safeStorage)) return once();
+    let hex = '';
+    let g = 0;
+    try { const m = /^([0-9a-f]{64})(?::(\d{1,15}))?$/.exec(safeStorage.decryptString(fs.readFileSync(file))); if (m) { hex = m[1]; g = Number(m[2] || 0); } } catch {}
+    const write = (n) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      const tmp = `${file}.tmp`;
+      fs.writeFileSync(tmp, safeStorage.encryptString(`${hex}:${n}`), { mode: 0o600 });
+      fs.renameSync(tmp, file);
+    };
+    if (!hex) { hex = crypto.randomBytes(32).toString('hex'); g = 0; write(0); }
+    return { key: Buffer.from(hex, 'hex'), gen: { get: () => g, set: (n) => { if (!Number.isFinite(n) || n <= g) return; write(n); g = n; } } };
+  } catch { return once(); }
 }
 
-module.exports = { ORDER_MS, ORDER_QUEUE_MAX, AUTO_CONTINUE_MAX, AUTO_REASONS, orderOpen, seal, unseal, releaseOrder, aheadOf, nextRelease, queueRefusal, mayAutoContinue, createOrderStore, orderKey };
+module.exports = { ORDER_MS, ORDER_QUEUE_MAX, AUTO_CONTINUE_MAX, AUTO_REASONS, orderOpen, seal, unseal, releaseOrder, aheadOf, nextRelease, queueRefusal, mayAutoContinue, createOrderStore, orderKey, overCapRoute, pumpMay, stageSeal, genOk, keychainOk };
