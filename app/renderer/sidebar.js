@@ -543,6 +543,7 @@ export function mountSidebar(el, on) {
   // Applies like the boss setting: next start, idle tabs right away.
   const AGENT_ALIASES = ['sonnet', 'haiku', 'opus'];
   const FABLE_IDS = ['fable', 'claude-fable-5-2'];
+  const isOpusPin = (v) => typeof v === 'string' && /^(opus|claude-opus-)/i.test(v);
   function agentModelSelect(p) {
     // v3.68, v3.73: after the three aliases, the rest of the Claude Code boss choices (Fable, the full ids)
     // Fable has no worker file entry on Antigravity and Command Code, so it is offered on Claude Code projects only
@@ -562,19 +563,25 @@ export function mountSidebar(el, on) {
         custom?.picked(v);
       },
     },
-    opt('auto', t('sidebar.agentModelAuto')), opt('sonnet', t('sidebar.agentModelSonnet')),
+    opt('auto', t('sidebar.agentModelAuto', { model: 'Sonnet' })), opt('sonnet', t('sidebar.agentModelSonnet')),
     opt('haiku', t('sidebar.agentModelHaiku')), opt('opus', t('sidebar.agentModelOpus')),
     ...more.map((c) => opt(c.value, c.label)),
     custom ? opt(CUSTOM_MODEL, t('sidebar.modelCustom')) : null);
     const wrap = control(p, 'agentModel', t('sidebar.agentModel'), sel);
     if (custom) wrap.append(custom.input);
+    // v3.127: a saved Opus pin stays as the person chose it; the hint only names the cost
+    if (isOpusPin(p.agentModel)) wrap.append(h('div', { class: 'sb-note' }, t('sidebar.agentModelOpusHint')));
     return wrap;
   }
 
   // When the project's Claude summarizes its conversation (contract v3.15): Auto (Claude Code's own window) or a cap
   // in tokens. Applies like the agent model: next start, idle tabs right away.
+  // v3.127: Auto runs at 200K (CONTEXT_CAP_DEFAULT, accounts.js) and says so; Full is the model's whole window (1M)
+  const CONTEXT_CAP_CHOICES = [[100000, '100K'], [150000, '150K'], [200000, '200K'], [400000, '400K']];
+  const CONTEXT_CAP_FULL = 1000000;
   function contextCapSelect(p) {
-    const now = [200000, 400000].includes(p.contextCap) ? String(p.contextCap) : 'auto';
+    const known = [...CONTEXT_CAP_CHOICES.map(([v]) => v), CONTEXT_CAP_FULL];
+    const now = known.includes(p.contextCap) ? String(p.contextCap) : 'auto';
     const opt = (v, label) => h('option', { value: v, selected: now === v }, label);
     const sel = h('select', {
       class: 'sb-acct sb-mode',
@@ -582,7 +589,9 @@ export function mountSidebar(el, on) {
       onclick: (e) => e.stopPropagation(),
       onchange: (e) => queue('contextCap', () => on.setContextCap?.(p.id, e.target.value === 'auto' ? null : Number(e.target.value))),
     },
-    opt('auto', t('sidebar.contextCapAuto')), opt('200000', '200K'), opt('400000', '400K'));
+    opt('auto', t('sidebar.contextCapAuto', { cap: '200K' })),
+    ...CONTEXT_CAP_CHOICES.map(([v, label]) => opt(String(v), label)),
+    opt(String(CONTEXT_CAP_FULL), t('sidebar.contextCapFull')));
     return control(p, 'contextCap', t('sidebar.contextCap'), sel);
   }
 

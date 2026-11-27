@@ -135,16 +135,17 @@ const SAVINGS_ENV = ['AGENT_OFFICE_STEP_BUDGET', 'AGENT_OFFICE_STEP_CAP', 'AGENT
 // was started with it, and AGENT_OFFICE_FINISH=1 is set instead: the boss does the work itself, but the plugin's
 // finish guard still keeps it from stopping on a list of work it could do (manager mode has the guard built in).
 //
-// agentModel (contract v3.14): the project's pinned subagent model ('sonnet' | 'haiku' | 'opus'), or null for Auto.
-// Pinned, AGENT_OFFICE_AGENT_MODEL carries it to the launch line, which exports CLAUDE_CODE_SUBAGENT_MODEL=<model>
-// and CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 after the shell's rc files (they cannot undo it; Windows gets both directly).
-// Claude Code 2.1.296 then drops the Agent tool's model parameter and runs every subagent, agent definitions with
-// a model included, on that model. Auto leaves the user's own CLAUDE_CODE_SUBAGENT_MODEL* alone.
+// agentModel (contract v3.14, v3.127): the project's pinned subagent model, or null for Auto, which is Sonnet
+// (AGENT_MODEL_DEFAULT). AGENT_OFFICE_AGENT_MODEL carries it to the launch line, which exports
+// CLAUDE_CODE_SUBAGENT_MODEL=<model> and unsets CLAUDE_CODE_SUBAGENT_MODEL_FORCE after the shell's rc files (Windows
+// gets the env directly). Without FORCE, Claude Code (2.1.332) keeps the Agent tool's model parameter: the variable is
+// only the default for an agent started without one, so the boss's "haiku" for a search is honoured. FORCE (up to
+// v3.126) dropped that parameter and ran every subagent on the pin.
 //
-// contextCap (contract v3.15): the project's auto-compact window in tokens (200000 | 400000), or null for Auto.
-// Capped, AGENT_OFFICE_CONTEXT_CAP carries it to the launch line, which exports CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n>
-// after the rc files. Claude Code 2.1.300 then compacts when the context nears min(n, model window) − ~33k, in the
-// main session and in every subagent (same process). Auto leaves the user's own CLAUDE_CODE_AUTO_COMPACT_WINDOW alone.
+// contextCap (contract v3.15, v3.127): the project's auto-compact window in tokens, or null for Auto, which is 200000
+// (CONTEXT_CAP_DEFAULT). AGENT_OFFICE_CONTEXT_CAP carries it to the launch line, which exports
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n> after the rc files. Claude Code compacts when the context nears min(n, model
+// window), in the main session and in every subagent (same process); it accepts 100k and up, on 1M models too.
 //
 // savings (contract v3.20): the project's "Savings" level, SAVINGS below (the one place its values live). On, the
 // plugin gets the subagents' step budget (AGENT_OFFICE_STEP_BUDGET = N, AGENT_OFFICE_STEP_CAP=1 refuses calls past 2N)
@@ -156,6 +157,9 @@ const SAVINGS_ENV = ['AGENT_OFFICE_STEP_BUDGET', 'AGENT_OFFICE_STEP_CAP', 'AGENT
 // autoApprove (contract v3.71): the project's "Auto-approve" switch, off by default. On, AGENT_OFFICE_AUTO_APPROVE=1
 // lets the plugin answer Claude Code's permission dialogs with allow (plugin/hooks/auto-approve.ts holds what still
 // asks). Off, the variable is left out, even when the app itself was started with it.
+// v3.127: the defaults for a project left on Auto (projects.js re-exports both)
+const AGENT_MODEL_DEFAULT = 'sonnet';
+const CONTEXT_CAP_DEFAULT = 200000;
 function sessionEnv(env, { manager = true, agentModel = null, contextCap = null, savings = SAVINGS_DEFAULT, autoApprove = false } = {}) {
   const out = { ...env, AGENT_OFFICE_APP: '1' };
   if (autoApprove === true) out.AGENT_OFFICE_AUTO_APPROVE = '1';
@@ -170,15 +174,11 @@ function sessionEnv(env, { manager = true, agentModel = null, contextCap = null,
     out.AGENT_OFFICE_BASH_OUTPUT = out.BASH_MAX_OUTPUT_LENGTH = String(saving.bashOutput);
     out.AGENT_OFFICE_MCP_OUTPUT = out.MAX_MCP_OUTPUT_TOKENS = String(saving.mcpOutput);
   }
-  if (agentModel) {
-    out.AGENT_OFFICE_AGENT_MODEL = agentModel;
-    out.CLAUDE_CODE_SUBAGENT_MODEL = agentModel;
-    out.CLAUDE_CODE_SUBAGENT_MODEL_FORCE = '1';
-  }
-  if (contextCap) {
-    out.AGENT_OFFICE_CONTEXT_CAP = String(contextCap);
-    out.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(contextCap);
-  }
+  delete out.CLAUDE_CODE_SUBAGENT_MODEL_FORCE; // v3.127: never forced, an explicit per-agent model wins
+  const model = agentModel || AGENT_MODEL_DEFAULT;
+  out.AGENT_OFFICE_AGENT_MODEL = out.CLAUDE_CODE_SUBAGENT_MODEL = model;
+  const cap = String(contextCap || CONTEXT_CAP_DEFAULT);
+  out.AGENT_OFFICE_CONTEXT_CAP = out.CLAUDE_CODE_AUTO_COMPACT_WINDOW = cap;
   if (manager) {
     out.AGENT_OFFICE_MANAGER = '1';
     delete out.AGENT_OFFICE_FINISH;
@@ -283,6 +283,6 @@ const loginAccountId = (ptyId) =>
 
 module.exports = {
   shellEnv, DEFAULT_ID, DEFAULT_ACCOUNT, normalizeAccounts, addAccount, renameAccount, setAccountShare, removeAccount, accountOf, ptyEnv, sessionEnv,
-  SAVINGS, SAVINGS_LEVELS, SAVINGS_DEFAULT,
+  SAVINGS, SAVINGS_LEVELS, SAVINGS_DEFAULT, AGENT_MODEL_DEFAULT, CONTEXT_CAP_DEFAULT,
   lastJsonObject, authFromStatus, authFromRun, localizeAuth, claudeCommand, withAuth, loginPtyId, loginAccountId,
 };

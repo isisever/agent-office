@@ -2,7 +2,7 @@
 // State: { projects: Project[], accounts: Account[], activeId: string | null } (see CONTRACT.md).
 const path = require('path');
 const crypto = require('crypto');
-const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT } = require('./accounts.js');
+const { DEFAULT_ID, normalizeAccounts, SAVINGS_LEVELS, SAVINGS_DEFAULT, AGENT_MODEL_DEFAULT, CONTEXT_CAP_DEFAULT } = require('./accounts.js');
 const { withSkillPacks } = require('./skill-packs.js');
 const { withDelegates, delegatesValue } = require('./delegate.js');
 const HQ = require('./hq.js');
@@ -408,11 +408,15 @@ const agentModelOf = (project) => {
   const v = agentModelValue(project?.agentModel, project?.engine);
   return v && fallbackModelOf(project) ? fallbackModelOf(project) : v;
 };
+// v3.127: agents of a project with no pin (Auto) run on Sonnet by default; an Agent call that names a model still wins
+/** The default model of the project's subagents: its pin, else Sonnet. */
+const effectiveAgentModel = (project) => agentModelOf(project) ?? AGENT_MODEL_DEFAULT;
 
-// --- per-project context cap (contract v3.15)
-// Project.contextCap: 200000 | 400000 tokens makes Claude Code auto-compact earlier (CLAUDE_CODE_AUTO_COMPACT_WINDOW,
-// accounts.js sessionEnv); absent = Auto: Claude Code's own window (the model's, 1M on a 1M model). Never written for Auto.
-const CONTEXT_CAPS = [200000, 400000];
+// --- per-project context cap (contract v3.15, v3.127)
+// Project.contextCap: 100000 | 150000 | 200000 | 400000 | 1000000 (Full) tokens makes Claude Code auto-compact at that
+// size (CLAUDE_CODE_AUTO_COMPACT_WINDOW, accounts.js sessionEnv). Absent = Auto, never written: since v3.127 Auto runs
+// at CONTEXT_CAP_DEFAULT (200k), not Claude Code's own window; Full (1M) is the old Auto on a 1M model.
+const CONTEXT_CAPS = [100000, 150000, 200000, 400000, 1000000];
 const contextCapValue = (v) => (CONTEXT_CAPS.includes(v) ? v : null);
 const withContextCap = (v) => (contextCapValue(v) ? { contextCap: v } : {});
 
@@ -430,6 +434,8 @@ function setProjectContextCap(state, id, value) {
 
 /** The project's auto-compact window in tokens, or null (Auto). */
 const contextCapOf = (project) => contextCapValue(project?.contextCap);
+/** v3.127: the cap a Claude Code session of the project runs with: its own, else the 200k default (Auto). */
+const effectiveContextCap = (project) => contextCapOf(project) ?? CONTEXT_CAP_DEFAULT;
 
 // --- per-project savings (contract v3.20)
 // Project.savings: 'off' | 'strict'; absent = 'normal', the default (accounts.js SAVINGS holds what each level sets).
@@ -699,7 +705,7 @@ module.exports = {
   addProject, removeProject, setActive, setProjectAccount, setProjectManager, managerOf,
   BOSS_MODELS, BOSS_MODELS_BY_ENGINE, bossModelValue, setProjectBossModel, bossModelOf, bossModelArgs,
   AGENT_MODELS, setProjectAgentModel, agentModelOf, MODEL_ORDER, limitModelOf, fallbackModelOf, setProjectLimitModel, CUSTOM_MODEL_RE, customModelValue,
-  CONTEXT_CAPS, setProjectContextCap, contextCapOf,
+  CONTEXT_CAPS, CONTEXT_CAP_DEFAULT, setProjectContextCap, contextCapOf, effectiveContextCap, AGENT_MODEL_DEFAULT, effectiveAgentModel,
   setProjectSavings, savingsOf,
   ENGINES, setProjectEngine, engineOf,
   setProjectFiles, projectFilesOf,

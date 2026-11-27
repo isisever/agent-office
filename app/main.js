@@ -1367,7 +1367,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // cap (v3.15) and its savings' tool output caps (v3.20; accounts.js sessionEnv)
   const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; '
     + '[ -n "$AGENT_OFFICE_DELEGATE_BIN" ] && export PATH="$AGENT_OFFICE_DELEGATE_BIN:$PATH"; '  // v3.56: ao-delegate on PATH after rc (rc can clobber PATH)
-    + '[ -n "$AGENT_OFFICE_AGENT_MODEL" ] && export CLAUDE_CODE_SUBAGENT_MODEL="$AGENT_OFFICE_AGENT_MODEL" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1; '
+    + 'unset CLAUDE_CODE_SUBAGENT_MODEL_FORCE; [ -n "$AGENT_OFFICE_AGENT_MODEL" ] && export CLAUDE_CODE_SUBAGENT_MODEL="$AGENT_OFFICE_AGENT_MODEL"; '
     + '[ -n "$AGENT_OFFICE_CONTEXT_CAP" ] && export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$AGENT_OFFICE_CONTEXT_CAP"; '
     + '[ -n "$AGENT_OFFICE_BASH_OUTPUT" ] && export BASH_MAX_OUTPUT_LENGTH="$AGENT_OFFICE_BASH_OUTPUT"; '
     + '[ -n "$AGENT_OFFICE_MCP_OUTPUT" ] && export MAX_MCP_OUTPUT_TOKENS="$AGENT_OFFICE_MCP_OUTPUT"; exec claude "$@"';
@@ -5741,7 +5741,7 @@ function guiInfo(id) {
   const t = terms.get(id);
   if (t?.gui) {
     const project = P.resolvePty(state, id)?.project || null;
-    return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, models: ML.pickerModels(t.models?.()), modeLock: guiModeLock.get(id) || '', info: t.info?.() || { model: '', usage: null }, contextCap: project?.contextCap || 0,
+    return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, models: ML.pickerModels(t.models?.()), modeLock: guiModeLock.get(id) || '', info: t.info?.() || { model: '', usage: null }, contextCap: project ? P.effectiveContextCap(project) : 0,
       modes: modesOf(project), autoApprove: Boolean(project) && !project.hq && P.autoApproveOf(project) };   // v3.120 auto mode
   }
   const r = P.resolvePty(state, id);
