@@ -3583,7 +3583,7 @@ The board (src/board-model.js, pure; main.js keeps the store) shows two kinds of
   task and never gets a chat card.
 - Both carry `title` (≤ 80), `type`, `typeBy` (`auto` | `hq` | `person`), `column`, `at`, `closedAt`, `closedBy?`
   (chats: `auto` | `person`), `durationMs`, `project`, `member`, `tokens`, `usd` (chats: from the session's status-line
-  usage file; orders: 0 for now).
+  usage file; orders: v3.135, "Live order tracking and cost").
 
 **Columns:** `todo`, `working`, `needs-you`, `review`, `done`. An order's tasks map through `columnOf`: queued/waiting →
 todo; delivered/running → working; needs-approval, awaiting-consent, blocked, failed, expired, lost and a rejection other
@@ -3675,3 +3675,41 @@ Amends v3.130 ("Orders from HQ") and v3.83/v3.84 (staff). Pure rules in `src/hq-
 - Tests: `test/hq-fanout.test.cjs` (refusals, expansion order, pickMember, memberLoad, caps and consent per target,
   main wiring, the order card). **Not verified live** in a running app.
 
+## Live order tracking and cost (v3.135)
+
+Amends v3.131 (order cards' `tokens`/`usd` were 0). Pure rules in `src/order-track.js` (cost, strip items) and
+`src/board-view.mjs` (`progressLine`); wiring in `main.js` (`boardCardsTick`, `hqView`); the strip in
+`renderer/hq-board.js`.
+
+- **Order cost.** An order card's `tokens` and `usd` are the sum over its tasks (`OT.orderCost`):
+  - *Local tasks (tabs and desks):* **session usage delta, not per-turn attribution.** The app's per-tab usage files
+    (`<usageRoot>/<account>/<tab key>.json`, Claude Code's status line JSON) carry only one session's running totals
+    (`context_window.total_input_tokens + total_output_tokens`, `cost.total_cost_usd`), no per-turn rows, so the turns
+    between a task's start and end cannot be picked out. Instead every board tick (15 s) samples the session of the tab
+    the task was dispatched into (`dispatches[id].into`, only while that tab runs and the file's `session_id` is the
+    tab's session) from its `startedAt` until it ends (`HQ.TERMINAL`). The first sample is the base (a desk task's
+    session counts from zero: the desk is opened with the task, v3.126), later samples raise the last value, the first
+    sample after the task ended freezes the entry (`f: 1`). If the task moves to another session the earlier delta is
+    carried (`c`). Cost = carried + (last − base). Turns in the same session within one tick before the first sample or
+    after the end can be counted in or out; a task that ended over 2 min before it was ever sampled stays 0.
+  - *Remote tasks:* the cost the report carries (`report.cost.{tokens,usd}` or `report.{tokens,usd}`, kept as the
+    task's `cost` by `HQ.applyReport`), else unknown: the card gets `costUnknown: <n>` and shows "–" next to its cost.
+  - Storage: `board-cards.json` `orders.<request>.usage = { <taskId>: { s: session, b: [tokens, usd], l: [...],
+    c?: [...], f?: 1 } }` (at most 32 per order, broken entries dropped at load). Report rows (`board:report`) already
+    sum card `tokens`/`usd`, so closed orders now count there with their cost.
+- **Live progress, no model turns.** `hqView()` (the `hq:get`/`hq:board` payload) carries `orders`: one item per open
+  order card (`OT.orderStrip(cards, hqWaits())`, column ≠ done) `{ id, request, title, type, column, done, total,
+  targets: [{ project, machine, member?, state }], current: { state, task, project, machine, member, ahead } | null }`.
+  `current` is the task that matters most: needs (needs-approval, awaiting-consent, blocked) > working (delivered,
+  running) > queued (with `ahead` = queue place − 1) > failed > done. It is pushed with every `hq:board` (task status
+  changes, queue place changes). The renderer shows it as **app rows, not transcript**: nothing is typed into HQ and no
+  prompt is submitted, so it costs no tokens. **Only a report or a block wakes HQ** (v3.129, unchanged).
+- **Orders strip.** `#hq-orders` at the top of `#terminal` while HQ is selected (Studio: above HQ's chat; Office: above
+  HQ's terminal, with the board in the office area), hidden when no order is open and on Studio's board page. One row
+  per order, updated in place (keyed by card id): type chip, `done/total` with a progress fill, the line
+  (`progressLine`: "Order #r12 · bugfix · 3/5 done · desk Ayşe (QA) working on project X"; "queued on project Y, 2
+  ahead"; "needs you", "done", "failed"; a remote target reads "project on machine"), and the targets
+  (`project @member (machine)`). A click opens the board (Studio adds `studio-board`) filtered to that order with its
+  card expanded (`board-view` `setRequest`).
+- Tests: `test/order-track.test.cjs` (sampling, carry, freeze, cleaning, order cost incl. remote/unknown, the card and
+  report rows, strip items, progress lines). **Not verified live** in a running app.
