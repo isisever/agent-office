@@ -257,14 +257,25 @@ body.studio .chat-table-wrap { overflow-x: auto; margin: .5em 0; border: 1px sol
 body.studio .chat-table { border-collapse: collapse; width: 100%; }
 body.studio .chat-table th, body.studio .chat-table td { padding: 6px 10px; border-bottom: 1px solid var(--st-border); }
 body.studio .chat-table th { font-weight: 600; background: var(--st-hover); }
-/* a message's own buttons (copy, reply) under it on hover */
-body.studio .chat-acts { position: static; display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity .12s; font-family: var(--st-font); }
-body.studio .chat-msg.user .chat-acts { position: absolute; right: 4px; bottom: -26px; }
+/* a message's own buttons (copy, reply, edit) on hover: icon buttons with tooltips on one line OUTSIDE the message,
+   under it (right-aligned under the person's bubble, left-aligned under an answer), so they never cover its text */
+body.studio .chat-acts {
+  position: static; display: flex; flex-wrap: nowrap; gap: 2px; margin-top: 4px; white-space: nowrap;
+  opacity: 0; transition: opacity .12s; font-family: var(--st-font);
+}
+body.studio .chat-msg.user { margin-bottom: 12px; }   /* room for the buttons under the bubble, clear of the next message */
+/* no gap between the bubble and its buttons (padding, not an offset): the pointer keeps the hover on its way down */
+body.studio .chat-msg.user .chat-acts { position: absolute; top: 100%; right: 0; width: max-content; margin: 0; padding-top: 4px; justify-content: flex-end; }
 body.studio .chat-msg:hover .chat-acts, body.studio .chat-acts:focus-within { opacity: 1; }
 body.studio .chat-act {
-  padding: 2px 8px; border: 0; border-radius: 6px; background: none; color: var(--st-muted); font: 500 12px/1.5 var(--st-font); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 24px; padding: 0;
+  border: 0; border-radius: 6px; background: none; color: var(--st-muted); white-space: nowrap; cursor: pointer;
 }
-body.studio .chat-act:hover { background: var(--st-hover); color: var(--st-text); }
+body.studio .chat-act:hover, body.studio .chat-act:focus-visible { background: var(--st-hover); color: var(--st-text); }
+body.studio .chat-act-label { display: none; }   /* the label is the tooltip and the accessible name */
+body.studio .chat-act[data-state="copied"], body.studio .chat-code-copy[data-state="copied"] { color: var(--st-accent-ink); }
+body.studio .chat-act[data-state="failed"], body.studio .chat-code-copy[data-state="failed"] { color: var(--danger); }
+body:not(.studio) .chat-act .st-icon { display: none; }   /* the Office keeps its text buttons */
 /* tool calls: compact cards, a click opens the full detail */
 body.studio .chat-tool {
   align-self: flex-start; max-width: 100%; gap: 8px; align-items: center; padding: 6px 12px 6px 10px; opacity: 1;
@@ -506,8 +517,14 @@ body.studio .st-start-send:disabled { opacity: .5; cursor: default; }
 body.studio .st-start-note { min-height: 16px; color: var(--st-muted); font: 400 12px/1.3 var(--st-font); }
 
 /* message actions: code block copy, jump to latest, typing dots, the context ring */
-body.studio pre.chat-code { position: relative; }
-body.studio .chat-code-copy { position: absolute; top: 6px; right: 6px; opacity: 0; padding: 2px 8px; border: 1px solid var(--st-border); border-radius: var(--st-radius-s); background: var(--st-raised); color: var(--st-muted); font: 400 11px/1.6 var(--st-font); cursor: pointer; transition: opacity .12s; }
+/* the code block's copy button: an icon button in a strip above the code (padding-top), so it never covers a line */
+body.studio pre.chat-code { position: relative; padding-top: 32px; }
+body.studio .chat-code-copy {
+  position: absolute; top: 4px; right: 6px; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px;
+  padding: 0; opacity: 0; border: 1px solid var(--st-border); border-radius: var(--st-radius-s); background: var(--st-raised); color: var(--st-muted);
+  white-space: nowrap; cursor: pointer; transition: opacity .12s;
+}
+body.studio .chat-code-copy .chat-act-label { display: none; }
 body.studio pre.chat-code:hover .chat-code-copy, body.studio .chat-code-copy:focus-visible { opacity: 1; }
 body:not(.studio) .chat-code-copy, body:not(.studio) .chat-edit, body:not(.studio) .chat-jump { display: none !important; }
 body.studio .chat-jump:not([hidden]) { position: absolute; left: 50%; bottom: 140px; transform: translateX(-50%); z-index: 5; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--st-border); border-radius: 999px; background: var(--st-raised); color: var(--st-text); box-shadow: var(--st-shadow); font: 500 12px/1 var(--st-font); cursor: pointer; }
@@ -540,3 +557,97 @@ body.studio .wn-tip {
   background: var(--st-raised); color: var(--st-text); border: 1px solid var(--st-border);
   border-radius: var(--st-radius-s); box-shadow: var(--st-shadow); font-family: var(--st-font);
 }
+
+/* ---- v3.122 Settings page: a nav of sections, rows in rounded cards, switches and segmented controls ---- */
+body.studio #studio-sidebar .st-account { display: flex; align-items: center; }
+body.studio #studio-sidebar .st-account-btn { flex: 1 1 auto; }
+body.studio #studio-sidebar .st-gear {
+  flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--st-radius-s);
+  background: none; color: var(--st-muted); cursor: pointer;
+}
+body.studio #studio-sidebar .st-gear:hover { background: var(--st-hover); color: var(--st-text); }
+#studio-settings[hidden] { display: none; }
+body.studio #studio-settings {
+  position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--st-bg); color: var(--st-text);
+  font: 13.5px/1.45 var(--st-font);
+}
+body.studio #studio-settings .st-set-top { display: flex; align-items: center; gap: 12px; padding: 18px 28px 12px; border-bottom: 1px solid var(--st-border); }
+body.studio #studio-settings .st-set-back {
+  display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--st-radius-s); background: none; color: var(--st-muted); cursor: pointer;
+}
+body.studio #studio-settings .st-set-back:hover { background: var(--st-hover); color: var(--st-text); }
+body.studio #studio-settings .st-set-title { margin: 0; font: 400 24px/1.2 var(--st-serif); flex: 1 1 auto; }
+body.studio #studio-settings .st-set-searchbox {
+  display: flex; align-items: center; gap: 6px; width: min(300px, 40%); padding: 0 10px; height: 32px; border: 1px solid var(--st-border);
+  border-radius: var(--st-radius-s); background: var(--st-raised); color: var(--st-muted);
+}
+body.studio #studio-settings .st-set-searchbox:focus-within { border-color: var(--st-accent); }
+body.studio #studio-settings .st-set-search { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--st-text); font: inherit; }
+body.studio #studio-settings .st-set-body { flex: 1 1 auto; min-height: 0; display: flex; }
+body.studio #studio-settings .st-set-nav { flex: 0 0 210px; display: flex; flex-direction: column; gap: 1px; padding: 14px 10px; overflow-y: auto; }
+body.studio #studio-settings .st-set-nav-item {
+  display: flex; align-items: center; gap: 9px; min-height: 32px; padding: 0 10px; border: 0; border-radius: var(--st-radius-s);
+  background: none; color: var(--st-text); font: 500 13.5px var(--st-font); text-align: left; cursor: pointer;
+}
+body.studio #studio-settings .st-set-nav-item .st-icon { color: var(--st-muted); }
+body.studio #studio-settings .st-set-nav-item:hover { background: var(--st-hover); }
+body.studio #studio-settings .st-set-nav-item.active { background: var(--st-select); }
+body.studio #studio-settings .st-set-nav-item.dim { opacity: .45; }
+body.studio #studio-settings .st-set-content { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 14px 28px 40px; max-width: 760px; }
+body.studio #studio-settings .st-set-head { margin: 14px 0 8px; font: 600 12px/1.3 var(--st-font); letter-spacing: .02em; color: var(--st-muted); }
+body.studio #studio-settings .st-set-card { border: 1px solid var(--st-border); border-radius: var(--st-radius); background: var(--st-raised); overflow: hidden; }
+body.studio #studio-settings .st-set-card > * + * { border-top: 1px solid var(--st-border); }
+body.studio #studio-settings .st-set-row { display: flex; align-items: center; gap: 16px; padding: 12px 16px; }
+body.studio #studio-settings .st-set-block > .st-set-row { padding-bottom: 8px; }
+body.studio #studio-settings .st-set-text { flex: 1 1 auto; min-width: 0; }
+body.studio #studio-settings .st-set-label { font-weight: 500; display: flex; align-items: center; gap: 8px; }
+body.studio #studio-settings .st-set-desc { color: var(--st-muted); font-size: 12.5px; }
+body.studio #studio-settings .st-set-tag { padding: 1px 7px; border-radius: 999px; background: var(--st-select); color: var(--st-muted); font: 500 10.5px/1.5 var(--st-font); }
+body.studio #studio-settings .st-set-ctl { flex: none; display: flex; align-items: center; gap: 8px; }
+body.studio #studio-settings .st-set-inline { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+body.studio #studio-settings .st-set-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 16px 12px; }
+body.studio #studio-settings .st-set-item { display: flex; align-items: center; gap: 10px; padding: 8px 16px; }
+body.studio #studio-settings .st-set-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.studio #studio-settings .st-set-project-body { padding: 0 16px 8px; display: flex; flex-direction: column; gap: 6px; }
+body.studio #studio-settings .st-set-skills { padding: 8px 16px; }
+body.studio #studio-settings .st-set-version { font-family: var(--st-mono); color: var(--st-muted); }
+body.studio #studio-settings .st-switch {
+  position: relative; flex: none; width: 34px; height: 20px; padding: 0; border: 0; border-radius: 10px; background: var(--st-border-strong); cursor: pointer; transition: background .15s;
+}
+body.studio #studio-settings .st-switch-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: left .15s; }
+body.studio #studio-settings .st-switch[aria-checked="true"] { background: var(--st-accent); }
+body.studio #studio-settings .st-switch[aria-checked="true"] .st-switch-knob { left: 16px; }
+body.studio #studio-settings .st-switch:disabled { opacity: .45; cursor: default; }
+body.studio #studio-settings :is(.st-switch, .st-seg-opt, .st-set-btn, .st-set-select, .st-set-nav-item, .st-set-back):focus-visible { outline: 2px solid var(--st-accent); outline-offset: 2px; }
+body.studio #studio-settings .st-seg { display: inline-flex; padding: 2px; border-radius: var(--st-radius-s); background: var(--st-select); }
+body.studio #studio-settings .st-seg-opt { padding: 4px 10px; border: 0; border-radius: 6px; background: none; color: var(--st-muted); font: 500 12.5px var(--st-font); cursor: pointer; }
+body.studio #studio-settings .st-seg-opt[aria-checked="true"] { background: var(--st-raised); color: var(--st-text); box-shadow: var(--st-shadow); }
+body.studio #studio-settings :is(.st-set-select, .st-set-project-body select) {
+  max-width: 240px; height: 30px; padding: 0 8px; border: 1px solid var(--st-border); border-radius: var(--st-radius-s);
+  background: var(--st-raised); color: var(--st-text); font: 13px var(--st-font);
+}
+body.studio #studio-settings .st-set-btn {
+  height: 30px; padding: 0 12px; border: 1px solid var(--st-border); border-radius: var(--st-radius-s); background: var(--st-raised); color: var(--st-text); font: 500 12.5px var(--st-font); cursor: pointer;
+}
+body.studio #studio-settings .st-set-btn:hover { background: var(--st-hover); }
+body.studio #studio-settings .st-set-btn.primary { border-color: var(--st-accent); background: var(--st-accent); color: var(--st-on-accent); }
+body.studio #studio-settings .st-set-btn:disabled { opacity: .5; cursor: default; }
+body.studio #studio-settings .st-set-color { width: 34px; height: 26px; padding: 0; border: 1px solid var(--st-border); border-radius: 6px; background: none; }
+body.studio #studio-settings .st-notice { display: flex; align-items: center; gap: 6px; margin: 6px 0; color: var(--st-muted); font-size: 12px; }
+body.studio #studio-settings .st-notice .st-icon { flex: none; color: var(--st-accent); }
+@media (max-width: 760px) { body.studio #studio-settings .st-set-nav { flex-basis: 52px; } body.studio #studio-settings .st-set-nav-item span { display: none; } }
+@media (prefers-reduced-motion: reduce) { body.studio #studio-settings :is(.st-switch, .st-switch-knob) { transition: none; } }
+
+/* ---- v3.122 Team section: members with initials, role and live state; their desks below ---- */
+body.studio #studio-sidebar .st-team-dept { padding: 6px 8px 2px; color: var(--st-faint); font-size: 11px; }
+body.studio #studio-sidebar .st-member { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+body.studio #studio-sidebar .st-member .st-title { display: flex; flex-direction: column; gap: 1px; line-height: 1.2; }
+body.studio #studio-sidebar .st-member-role { color: var(--st-muted); font-size: 11.5px; }
+body.studio #studio-sidebar .st-member-avatar { width: 24px; height: 24px; font-size: 10.5px; }
+body.studio #studio-sidebar .st-member-state { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--st-border-strong); }
+body.studio #studio-sidebar .st-member-state.working { background: var(--st-accent); }
+body.studio #studio-sidebar .st-member-state.needs { background: #d4a72c; box-shadow: 0 0 0 3px rgba(212, 167, 44, .25); }
+body.studio #studio-sidebar .st-member-state.asleep { background: none; border: 1px dashed var(--st-border-strong); }
+body.studio #studio-sidebar .st-desk { width: 100%; padding-left: 40px; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+body.studio #studio-sidebar .st-team-add { width: 100%; border: 0; background: none; font: inherit; color: var(--st-muted); text-align: left; cursor: pointer; }
+body.studio #studio-start .st-start-who[hidden] { display: none; }

@@ -1809,3 +1809,24 @@ body.studio.studio-panel #sidebar > :not(.studio-shown) { display: none !importa
   100% { box-shadow: 0 0 0 12px transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .wn-spot { animation: none; } }
+
+/* v3.122 keep the computer awake (keep-awake-button.js), next to the Studio switch: a cup, filled in the accent when on */
+#keep-awake {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 6px; margin-left: 6px; border: 0; border-radius: 6px;
+  background: none; color: inherit; font: inherit; font-size: 12px; opacity: .75; cursor: pointer; -webkit-app-region: no-drag;
+  flex: none; order: 9;
+}
+#keep-awake[hidden] { display: none; }
+#keep-awake:hover { opacity: 1; }
+#keep-awake:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#keep-awake.active { opacity: 1; color: var(--accent); }
+#keep-awake.active .st-icon path:first-child { fill: currentColor; fill-opacity: .35; }
+@media (max-width: 760px) { #keep-awake .ka-label { display: none; } }
+.ka-menu {
+  position: fixed; z-index: 1000; min-width: 180px; padding: 4px; border: 1px solid var(--border, rgba(127,127,127,.3)); border-radius: 8px;
+  background: var(--popup, #222); color: var(--text, inherit); box-shadow: 0 6px 24px rgba(0,0,0,.25); -webkit-app-region: no-drag;
+}
+.ka-menu[hidden] { display: none; }
+.ka-item { display: block; width: 100%; padding: 6px 10px 6px 24px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; position: relative; }
+.ka-item:hover, .ka-item:focus-visible { background: rgba(127,127,127,.15); outline: 0; }
+.ka-item[aria-checked="true"]::before { content: "✓"; position: absolute; left: 8px; color: var(--accent); }

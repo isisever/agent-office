@@ -3,7 +3,8 @@
 // (so an open <select> or a name being typed is not disrupted by 500 ms data). A language change redraws everything.
 import { hasText, locale, onLang, t } from './i18n.js';
 import { modLabel, platform } from './platform.js';
-import { voiceSettingsRows } from './voice.js';
+import { voiceSettingsRows, voiceControls } from './voice.js';
+import { OFFICE_ORDER } from '../src/settings-model.mjs';
 import { isBossHere, projectStatus } from '../src/project-status.mjs';
 import { BOSS_MODEL_CHOICES, bossModelChoices, cap, isCustomModelId } from '../src/engine-caps.mjs';
 import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
@@ -354,6 +355,8 @@ export function mountSidebar(el, on) {
           closeModal();
           addMenu = true; addFor = p.id;
           renderAccounts();
+          // v3.122 Studio hides this sidebar: show the accounts panel on its own over Studio (Studio's inline form)
+          if (document.body.classList.contains('studio')) on.showPanel?.('.sb-accounts');
           acctList.querySelector('.sb-add-menu')?.scrollIntoView?.({ block: 'nearest' });
           return;
         }
@@ -1048,9 +1051,13 @@ export function mountSidebar(el, on) {
   }
 
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
+  // v3.122 each row by its key in the settings model (src/settings-model.mjs); Studio's Settings page drives the same controls
+  const officeRows = { resume: resumeRow, resumeWork: resumeWorkRow, manager: managerRow, team: teamRow, shareMcp: shareMcpRow, reloadMcp: reloadMcpRow, fallback: fallbackRow, sleep: sleepRow, keepAwake: keepAwakeRow, lang: langRow, look: lookRow, mode: modeRow, office3d: office3dRow, experience: experienceRow, chatView: chatViewRow, theme: themeRow, bot: botRow };
+  /** @type {Record<string, [HTMLElement, HTMLInputElement | HTMLSelectElement]>} each row's label and its control */
+  const officeControls = { resume: [resumeLabel, resumeBox], resumeWork: [resumeWorkLabel, resumeWorkBox], manager: [managerLabel, managerBox], team: [teamLabel, teamBox], shareMcp: [shareMcpLabel, shareMcpBox], reloadMcp: [reloadMcpLabel, reloadMcpBox], fallback: [fallbackLabel, fallbackBox], sleep: [sleepLabel, sleepSelect], keepAwake: [keepAwakeLabel, keepAwakeSelect], lang: [langLabel, langSelect], look: [lookLabel, lookSelect], mode: [modeLabel, modeSelect], office3d: [office3dLabel, office3dBox], experience: [experienceLabel, experienceSelect], chatView: [chatViewLabel, chatViewBox], theme: [themeLabel, themeSelect], bot: [botLabel, botInput] };
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, ...voiceSettingsRows(), langRow, lookRow, modeRow, office3dRow, experienceRow, chatViewRow, themeRow, botRow, skillsSection(), aboutRow],
+      [...OFFICE_ORDER.flatMap((k) => (k === 'voice' ? voiceSettingsRows() : k === 'skills' ? [skillsSection()] : [officeRows[k]])), aboutRow],   // v3.123 About last
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
     aboutLabel.textContent = t('sidebar.about', { version: on.appVersion?.() || '' });
   }
@@ -1429,6 +1436,53 @@ export function mountSidebar(el, on) {
       const p = projects.find((/** @type {any} */ x) => x.id === id);
       if (p) openProjectSettings(p);
       return Boolean(p);
+    },
+    /**
+     * v3.122 Studio's Settings page: a setting's label and live control (the Office popup's own elements, never shown
+     * twice: Studio reads them and drives them with their own change events). Voice keys come from voice.js.
+     */
+    settingControl(/** @type {string} */ key) {
+      if (key.startsWith('voice')) {
+        const v = voiceControls();
+        const pair = v && { voiceEnabled: [v.enabledLabel, v.enabled], voiceLang: [v.langLabel, v.lang], voiceModel: [v.modelLabel, v.model], voiceSend: [v.sendLabel, v.send], voiceKey: [v.keyLabel, v.key] }[key];
+        return pair ? { label: pair[0], control: pair[1], state: key === 'voiceModel' ? v.modelState : null, download: key === 'voiceModel' ? v.download : null } : null;
+      }
+      const pair = officeControls[key];
+      return pair ? { label: pair[0], control: pair[1], reset: key === 'bot' ? botReset : null } : null;
+    },
+    /** v3.122 Studio's Team section: team mode, members, role presets, desk states and projects (read-only). */
+    teamData: () => ({ teamMode: team.teamMode, staff: team.staff, presets: team.presets, desks, projects, lang: locale() }),
+    /** v3.122 Studio's "+ Add member": the Office's role wizard (a saved role goes on to the member editor). */
+    addMember: () => openWizard(),
+    /** v3.122 the Skills packs (fresh rows, the same calls as the popup's). */
+    skillsSection: () => skillsSection(),
+    /** v3.122 the accounts (id, label, sign-in state) and the Office's own sign-in call. */
+    accountList: () => accounts.map((/** @type {any} */ a) => ({ id: a.id, label: labelOf(a), state: a.auth?.state || '', engine: a.engine || 'claude' })),
+    login: (/** @type {string} */ id) => on.login(id),
+    /** v3.122 the projects (id, name) for Studio's per-project settings. */
+    projectList: () => projects.filter((/** @type {any} */ p) => !p.staffOwner).map((/** @type {any} */ p) => ({ id: p.id, name: p.name })),
+    /**
+     * v3.122 a project's main settings inline (account, Auto-approve, skip permissions, context cap): the project popup's
+     * own controls and draft; save() applies what changed, the account first, like the popup's Save.
+     */
+    projectInline(/** @type {string} */ id) {
+      const p = projects.find((/** @type {any} */ x) => x.id === id);
+      if (!p) return null;
+      const map = new Map();
+      badFields.clear();
+      const body = h('div', { class: 'st-set-project' }, accountSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), contextCapSelect(p));
+      // the controls queue into `draft`: point it at this map before their own change handlers run (capture phase)
+      for (const type of ['change', 'input']) body.addEventListener(type, () => { draft = map; }, true);
+      return {
+        body,
+        dirty: () => map.size > 0,
+        bindSave: (/** @type {HTMLButtonElement} */ btn) => { saveButton = btn; syncSave(); },
+        save: async () => {
+          const fns = [...map.entries()].sort((a, b) => (a[0] === 'account' ? -1 : 0) - (b[0] === 'account' ? -1 : 0)).map((x) => x[1]);
+          map.clear();
+          for (const fn of fns) { try { await fn(); } catch (e) { console.error(e); } }
+        },
+      };
     },
     /** v3.120 the Settings popup's Skills section on its own (the same rows and calls). */
     openSkills() {

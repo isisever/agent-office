@@ -263,17 +263,26 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       try { ok = document.execCommand('copy'); } catch { ok = false; }
       box.remove();
     }
-    btn.textContent = ok ? t('chat.copied') : t('chat.copyFailed');
-    setTimeout(() => { btn.textContent = t('chat.copy'); }, 1200);
+    // the label shows the outcome (the Office); Studio shows only the icon, so the outcome also goes in the tooltip
+    const label = btn.querySelector('.chat-act-label') || btn;
+    const title = btn.title;
+    label.textContent = ok ? t('chat.copied') : t('chat.copyFailed');
+    btn.title = label.textContent;
+    btn.dataset.state = ok ? 'copied' : 'failed';
+    setTimeout(() => { label.textContent = t('chat.copy'); btn.title = title; delete btn.dataset.state; }, 1200);
+  }
+  /** A message button: its label (the Office shows it) and an icon (Studio shows only that, the label as tooltip). */
+  function actButton(cls, name, label, title, onclick) {
+    return h('button', { class: cls, type: 'button', title: title || label, 'aria-label': title || label, onclick }, icon(name, 15), h('span', { class: 'chat-act-label' }, label));
   }
   function message(kind, text, body, ro = false) {
-    const copy = h('button', { class: 'chat-act', onclick: () => copyText(String(text), copy) }, t('chat.copy'));
-    const reply = h('button', { class: 'chat-act', onclick: () => replyTo(String(text)) }, t('chat.reply'));
+    const copy = actButton('chat-act', 'copy', t('chat.copy'), '', () => copyText(String(text), copy));
+    const reply = actButton('chat-act', 'reply', t('chat.reply'), '', () => replyTo(String(text)));
     // v3.120 Studio UX: a person's message can be put back in the input to edit and send again (Studio only, CSS)
-    const edit = kind === 'user' && !source && !ro ? h('button', { class: 'chat-act chat-edit chat-studio-only', title: t('chat.editTitle'), onclick: () => { input.value = String(text); input.focus(); input.dispatchEvent(new Event('input')); } }, t('chat.edit')) : null;
+    const edit = kind === 'user' && !source && !ro ? actButton('chat-act chat-edit chat-studio-only', 'edit', t('chat.edit'), t('chat.editTitle'), () => { input.value = String(text); input.focus(); input.dispatchEvent(new Event('input')); }) : null;
     // v3.120 Studio UX: each code block has its own copy button in its corner
     for (const pre of body.querySelectorAll?.('pre.chat-code') || []) {
-      const b = h('button', { class: 'chat-code-copy chat-studio-only', type: 'button', title: t('chat.copyCode'), onclick: (/** @type {Event} */ e) => { e.stopPropagation(); copyText(pre.firstChild?.textContent || pre.textContent || '', b); } }, t('chat.copy'));
+      const b = actButton('chat-code-copy chat-studio-only', 'copy', t('chat.copy'), t('chat.copyCode'), (/** @type {Event} */ e) => { e.stopPropagation(); copyText(pre.firstChild?.textContent || pre.textContent || '', b); });
       pre.append(b);
     }
     return h('div', { class: `chat-msg ${kind}` }, body, h('div', { class: 'chat-acts' }, copy, edit, kind === 'error' || source || ro ? null : reply));
