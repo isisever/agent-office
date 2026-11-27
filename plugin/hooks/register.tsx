@@ -78,6 +78,8 @@ const STRINGS = {
     task: (text: string) => `Task from Agent Office: ${text}\n\nIf it fits, split the work across subagents and run them in parallel.`,
     reportReady: (id: string, project: string, machine: string, personPrompted = false) =>
       `Remote task #${id} on ${project}@${machine} finished; read it with office_reports.${personPrompted ? ' The person typed in that session while the task ran, so the report may answer the person rather than the task: check it against the task before relying on it. Stages waiting on it were not started.' : ''}`,
+    reportsReady: (list: string, n: number, prompted: string) =>
+      `${n} remote tasks finished: ${list}; read them with office_reports.${prompted ? ` The person typed in the session of ${prompted} while it ran, so that report may answer the person rather than the task: check it against the task before relying on it. Stages waiting on it were not started.` : ''}`,
     requestDone: (request: string, n: number) => `Request #${request} finished (${n} tasks); read them with office_board and office_reports, save the summary with office_summary and answer.`,
     stageBlocked: (id: string, reason: string) => `Stage #${id} will not start (${reason}): the stage before it did not fully report. Check office_board and tell the person; do not re-dispatch on your own.`,
     stats: {
@@ -118,6 +120,8 @@ const STRINGS = {
     task: (text: string) => `Agent Ofis'ten görev: ${text}\n\nUygunsa işi alt agent'lara bölerek paralel yürüt.`,
     reportReady: (id: string, project: string, machine: string, personPrompted = false) =>
       `Uzak görev #${id} (${project}@${machine}) bitti; office_reports ile oku.${personPrompted ? ' Görev sürerken kişi o oturuma kendisi yazdı; rapor görevin değil kişinin sorusunun yanıtı olabilir: güvenmeden önce görevle karşılaştır. Onu bekleyen aşamalar başlatılmadı.' : ''}`,
+    reportsReady: (list: string, n: number, prompted: string) =>
+      `${n} uzak görev bitti: ${list}; office_reports ile oku.${prompted ? ` ${prompted} sürerken kişi o oturuma kendisi yazdı; o rapor görevin değil kişinin sorusunun yanıtı olabilir: güvenmeden önce görevle karşılaştır. Onu bekleyen aşamalar başlatılmadı.` : ''}`,
     requestDone: (request: string, n: number) => `İstek #${request} bitti (${n} görev); office_board ve office_reports ile oku, özeti office_summary ile kaydet ve yanıtla.`,
     stageBlocked: (id: string, reason: string) => `Aşama #${id} başlamayacak (${reason}): ondan önceki aşama tam rapor vermedi. office_board'a bak ve kişiye söyle; kendiliğinden yeniden dağıtma.`,
     stats: {
@@ -156,6 +160,11 @@ const CLAUDE_ROWS = 8
 const OFFICE_PERCENT = 80
 
 const TICK_MS = 1500
+// fewer boss wakes (app contract v3.129): every notice submitted is a full boss turn that re-reads its whole context,
+// so notices (report-ready, request-done, stage-blocked) wait until NOTICE_QUIET_TICKS ticks pass with no new one
+// (a burst becomes one prompt), but never more than NOTICE_MAX_TICKS after the first; a typed task goes at once
+export const NOTICE_QUIET_TICKS = 2
+export const NOTICE_MAX_TICKS = 6
 const AGENT_CHECK_MS = 5000
 const HEARTBEAT_MS = 30_000
 // a delivered bot stays in the file until it has partied and left (viewer PARTY_MS = forget time - 30 s);
@@ -190,9 +199,9 @@ const MANAGER_TEMPLATE = `# Manager mode (Agent Office)
 You are the manager in Agent Office: a dispatcher who hands the work to agents and stays available to the person. Your agents are subagents you start with the Agent tool; they work in the background (set run_in_background if your Agent tool has it) while the person watches them at their desks, and you are told when each one finishes. The person can only talk to you between your turns, so keep your own turns short.
 
 - Delegate when the input is large and the answer small (investigating or reading code, builds, tests, long commands, batches of MCP calls) or when pieces can run in parallel: start those agents in the same message (in separate git worktrees when they would touch the same files). Don't delegate a small edit whose brief would be as long as the change: do trivial edits, quick commands and lookups yourself.
-- Brief each agent self-contained: deliverable, folder, non-goals (what not to touch), acceptance check (the exact command or condition proving it done), the facts file path. Put long context in a file and pass its path. Tell every agent to write long findings to a file and report at most 15 lines plus the path.
+- Brief each agent self-contained: deliverable, folder, non-goals (what not to touch), acceptance check (the exact command or condition proving it done), the facts file path. Put long context in a file and pass its path. Have every agent write its findings to a report file and hand back a short summary (≤10 lines) pointing to it.
 - Your own tool use: orientation, reviewing reports, merging, the final check.
-- One scoped task per agent. When an agent's job is done, start a fresh agent for the next task rather than sending the finished one more work: a continued agent re-reads its whole, ever-growing context on every request.
+- One scoped task per agent. A small follow-up to an agent's work: SendMessage that agent (it has the context). A new task: a fresh agent, as a continued one re-reads its growing context on every request.
 - {{MODEL}}
 - Consult the reviewer agent (Opus) only before a big plan locks, when one error hits twice, and before reporting a non-trivial change done (it reviews \`git diff\`).
 - While agents run, answer the person, take new requests and dispatch them. Don't redo an agent's work.
@@ -322,7 +331,7 @@ When the person names one of these projects, they mean that folder: read and wor
 // working alone gets a firmer reminder, with the count, every NUDGE_REPEAT own calls after that (never on every
 // call); once nudged in a turn, every later reminder of that turn is the firm one. Never for a subagent or a
 // teammate (their calls carry agentId).
-const NUDGE_AFTER = 6
+const NUDGE_AFTER = 12 // v3.129: was 6; a boss may do a short stretch itself before it is told to hand off
 const NUDGE_REPEAT = 10
 const nudgeText = (steps: number) =>
   `Agent Office manager mode: you've done ${steps} steps of this turn yourself without handing any off. Hand the rest of the work to background agents (Agent tool), in parallel where the pieces are independent, and stay available to the person; keep your own steps to orientation, reviewing results and the final check. If the person asked you to do this yourself, carry on.`
@@ -387,6 +396,12 @@ let viewerFile = ''
 let inboxFile = ''
 const reports = new ReportTracker() // one boss (v3.35): the dispatched task this session is working on
 let inboxSeen = 0
+type Notice = { at: number; text?: string; kind?: string }
+let notices: Notice[] = [] // read, not yet submitted (NOTICE_QUIET_TICKS)
+let ticks = 0
+let firstNoticeTick = 0
+let lastNoticeTick = 0
+const noticeTexts = new Set<string>() // submitted notices: their prompt is not the person's (verifyPrompt)
 let lastAgentCheck = 0
 let project = ''
 let lastPublish = 0
@@ -856,18 +871,59 @@ async function submitTasks($: EngineInterface, raw: string) {
   if (tasks.length === 0) return
   inboxSeen = await update($, inboxAtom, () => Math.max(...tasks.map(t => t.at)))
   for (const task of tasks) {
-    // a report-ready row is a fixed notice with its own wrapper, never a task, and carries no report text (v3.35)
-    const ready =
-      task.kind === 'report-ready'
-        ? readyText(task, t.reportReady)
-        : task.kind === 'request-done'
-          ? doneText(task, t.requestDone)
-          : task.kind === 'stage-blocked'
-            ? blockedText(task, t.stageBlocked) // v3.79
-            : undefined
-    if ((task.kind === 'report-ready' || task.kind === 'request-done' || task.kind === 'stage-blocked') && !ready) continue
-    await $.prompt.submit({ asUser: true, text: ready ?? t.task(task.text ?? '') })
+    if (isNotice(task)) {
+      if (notices.length === 0) firstNoticeTick = ticks
+      lastNoticeTick = ticks
+      notices.push(task)
+    } else await $.prompt.submit({ asUser: true, text: t.task(task.text ?? '') })
   }
+}
+
+const isNotice = (task: Notice) => task.kind === 'report-ready' || task.kind === 'request-done' || task.kind === 'stage-blocked'
+
+// one notice's text; undefined for a malformed row
+function noticeText(task: Notice, s: Strings) {
+  if (task.kind === 'report-ready') return readyText(task, s.reportReady)
+  if (task.kind === 'request-done') return doneText(task, s.requestDone)
+  return blockedText(task, s.stageBlocked) // v3.79
+}
+
+/** One prompt for every notice in `rows` (v3.129): finished remote tasks share one line, each other notice keeps its
+ * own; a single notice is worded as before. '' when no row is well formed. */
+function noticesText(rows: Notice[], s: Strings): string {
+  const ready: string[] = []
+  const prompted: string[] = []
+  const rest: string[] = []
+  for (const row of rows) {
+    if (row.kind === 'report-ready') {
+      // a report-ready row is a fixed notice and carries no report text (v3.35)
+      readyText(row, (id, project, machine, personPrompted) => {
+        ready.push(`#${id} (${project}@${machine})`)
+        if (personPrompted) prompted.push(`#${id}`)
+        return ''
+      })
+      continue
+    }
+    const text = noticeText(row, s)
+    if (text) rest.push(text)
+  }
+  if (ready.length + rest.length === 1) {
+    const only = rows.find(row => noticeText(row, s))
+    return only ? (noticeText(only, s) ?? '') : ''
+  }
+  const lines = ready.length ? [s.reportsReady(ready.join(', '), ready.length, prompted.join(', ')), ...rest] : rest
+  return lines.join('\n')
+}
+
+// the notices waiting, as one prompt, once the inbox has been quiet for NOTICE_QUIET_TICKS (or NOTICE_MAX_TICKS passed)
+async function flushNotices($: EngineInterface) {
+  if (notices.length === 0) return
+  if (ticks - lastNoticeTick < NOTICE_QUIET_TICKS && ticks - firstNoticeTick < NOTICE_MAX_TICKS) return
+  const text = noticesText(notices, t)
+  notices = []
+  if (!text) return
+  noticeTexts.add(text)
+  await $.prompt.submit({ asUser: true, text })
 }
 
 // $.fs cannot delete, so rm does; best effort: what it cannot remove just stays
@@ -1028,7 +1084,9 @@ async function tick($: EngineInterface) {
   const now = Date.now()
   if (isDirty) await publish($)
   syncViewer($)
+  ticks++
   await readInbox($)
+  await flushNotices($)
   if (now - lastAgentCheck < AGENT_CHECK_MS) return
   lastAgentCheck = now
   // stopped or failed agents must not stay stuck at their desks
@@ -1623,8 +1681,10 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     finishPrompt(e.origin?.kind, e.text)
     let unattended: string | undefined // v3.95 one sentence for a dispatched task; never for the person's own prompt
+    // a notice the plugin submitted (v3.129) wakes the boss but is not the person's prompt: the verify block count stays
+    const isOwnNotice = noticeTexts.delete(e.text)
     if (e.origin?.kind !== 'task-notification') {
-      verifyPrompt()
+      if (!isOwnNotice) verifyPrompt()
       isBriefReminded = false
       // one boss (v3.35): a dispatched task opens (marker, or the id the app recorded before typing); a task with
       // another id closes one still open as partial. The person's own prompt keeps it open and followed (v3.89), so

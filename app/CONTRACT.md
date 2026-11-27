@@ -3385,3 +3385,25 @@ TEAM panel is unchanged.
 - Studio hooks (`app.js`): `saveMember`, `removeMember` (staff IPC, then `loadStaff`), `reloadTeam`, `teamTools`
   (`mcp:apps`). Sidebar API: `editMember(m, preset?)`. Strings `studio.teamPage.*`; existing `staff.*` reused.
 - **Not verified live**: the page in a running app (drawn and typechecked; the helpers are unit tested).
+
+## Fewer boss wakes (v3.129)
+Every prompt the plugin submits to the boss is a full turn that re-reads the whole context (measured: ~530 notice
+turns, ~341M context tokens; ~531 extra "ran no test" requests). The plugin (`plugin/hooks/register.tsx`,
+`plugin/hooks/harness.ts`) now wakes the boss less:
+- **Inbox notices merged and debounced.** `report-ready`, `request-done` and `stage-blocked` rows are no longer
+  submitted one per row. The tick (still every 1.5 s) collects them and submits ONE prompt once
+  `NOTICE_QUIET_TICKS` (2, ~3 s) ticks pass with no new notice, and at most `NOTICE_MAX_TICKS` (6, ~9 s) after the
+  first, so a steady trickle is still sent. Finished remote tasks share one line (`3 remote tasks finished: #a
+  (project@machine), #b (…), #c (…); read them with office_reports.`, plus the person-typed caution naming the ids it
+  applies to); each request-done and stage-blocked notice keeps its own line. A single notice is worded as before.
+  Dedupe (`inboxSeen`) is unchanged and runs at read time; a task typed in the office window is still submitted at once.
+- **Manager brief** (no longer than before): a small follow-up to an agent's work goes to that agent (SendMessage,
+  it has the context); a new task still gets a fresh agent. Agents write findings to a report file and hand back a
+  short summary (≤10 lines) pointing to it. The "do it yourself" nudge fires after 12 own steps (was 6), then every 10.
+- **"Ran no test" Stop block.** At most once per turn sequence: a notice the plugin submits (origin `plugin`, its own
+  text) no longer resets the block count; the person's own prompt (or a typed office task) does. Files in a project's
+  `docs/` (or `doc/`) folder or its own `.claude/` folder (memory, settings; `.claude/worktrees/` stays code) count as
+  no change, like `*.md`/`*.txt`, the scratchpad, `~/.claude*` and the office data folder already did.
+- **Tests**: `plugin/tests/office.test.tsx` (burst → one prompt after the quiet spell, rows kept and sent once; single
+  notice wording; NOTICE_MAX_TICKS cap; a plugin notice does not reset the verify block), `plugin/tests/harness.test.ts`
+  (docs/ and .claude/ paths; only docs or memory changed since the last check: no block), nudge tests moved to 12.
