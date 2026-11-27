@@ -8,6 +8,7 @@
 import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
 import { icon } from './studio-icons.js';
 import { mountSettingsPage } from './studio-settings.js';
+import { mountTeamPage } from './studio-team.js';
 import { teamGroups, whoOptions, whoPlan } from '../src/studio-team.mjs';
 import { hasText } from './i18n.js';
 import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText } from '../src/studio-ux.mjs';
@@ -43,6 +44,8 @@ function el(tag, props = {}, ...kids) {
  *     startSession: (projectId: string, plan: { tabMode: 'same' | 'worktree', settings: [string, string][], reuseN?: number }, text: string) => Promise<{ ok: boolean, n: number, failed?: { step: string, why: string, detail: string } }>,
  *     projectSettings: (projectId: string) => void, showAccounts: () => void, isMac: boolean,
  *     commands: (projectId: string) => StudioCommand[],
+ *     saveMember: (form: any) => Promise<any>, removeMember: (id: string) => Promise<any>, reloadTeam: () => Promise<any>,
+ *     teamTools: () => Promise<{ id: string, name: string }[]>,
  *   },
  * }} o
  */
@@ -113,13 +116,40 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const settingsPage = mountSettingsPage({
     el, t, host: /** @type {HTMLElement} */ (document.getElementById('terminal') || document.body),
     studioTheme: () => studioTheme(), setStudioTheme: (v) => setStudioTheme(v),
-    hooks: { sidebar: hooks.sidebar, showPanel: hooks.showPanel, selectHq: hooks.selectHq, openBoard: hooks.openBoard, appInfo: hooks.appInfo, installUpdate: hooks.installUpdate, openWhatsNew: hooks.openWhatsNew, openTeam: () => { teamEl.scrollIntoView?.({ block: 'start' }); } },
+    hooks: { sidebar: hooks.sidebar, showPanel: hooks.showPanel, selectHq: hooks.selectHq, openBoard: hooks.openBoard, appInfo: hooks.appInfo, installUpdate: hooks.installUpdate, openWhatsNew: hooks.openWhatsNew, openTeam: () => openTeam() },
   });
+  // v3.124 Studio's Team page (renderer/studio-team.js), in the main region like Settings
+  const teamPage = mountTeamPage({
+    el, t, host: /** @type {HTMLElement} */ (document.getElementById('terminal') || document.body),
+    hooks: {
+      teamData: () => teamInfo(),
+      accounts: () => { try { return hooks.sidebar()?.accountList?.() || []; } catch { return []; } },
+      waiting: () => waitingDesks(),
+      teamControl: () => /** @type {HTMLInputElement | null} */ (hooks.sidebar()?.settingControl?.('team')?.control || null),
+      save: (form) => hooks.saveMember(form),
+      remove: (id) => hooks.removeMember(id),
+      reload: () => hooks.reloadTeam(),
+      editMember: (m) => hooks.sidebar()?.editMember?.(m),
+      openWizard: () => hooks.sidebar()?.addMember?.(),
+      openDesk: (projectId, staffId) => { teamPage.close(); hooks.openDesk(projectId, staffId); },
+      tools: () => hooks.teamTools(),
+    },
+  });
+  /** v3.124 the Team page at a tab ('members', 'roles', 'departments'); the Office's Team panel outside Studio. */
+  function openTeam(/** @type {string} */ tab = '') {
+    if (!on) { hooks.showPanel('#sb-panel-team'); return; }
+    menu.hidden = true;
+    closePalette();
+    hidePanel();
+    settingsPage.close();
+    teamPage.open(tab);
+  }
   function openSettings(/** @type {string} */ section = '') {
     if (!on) { hooks.openOfficeSettings(); return; }
     menu.hidden = true;
     closePalette();
     hidePanel();
+    teamPage.close();
     settingsPage.open(section);
   }
   /** @type {any} */
@@ -134,6 +164,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   function newSession(/** @type {{ worktree?: boolean, projectId?: string }} */ o = {}) {
     if (o.projectId) picked = o.projectId;
     if (!currentId()) return;
+    teamPage.close();
     starting = true;
     startWorktree.checked = o.worktree === true;
     startNote.textContent = '';
@@ -233,6 +264,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   async function open(/** @type {string} */ projectId, /** @type {any} */ ref) {
     picked = projectId;
     starting = false;
+    teamPage.close();
     const r = await api.studio.open(projectId, ref).catch(() => null);
     if (r?.ok) { picked = r.projectId; hooks.selectSession(r.projectId, r.n); }
     refresh();
@@ -418,15 +450,21 @@ export function mountStudio({ api, t, modLabel, hooks }) {
 
   // ---- v3.122 the Team section: members by department, live state, their open desks ----
   const teamInfo = () => { try { return hooks.sidebar()?.teamData?.() || null; } catch { return null; } };
-  function drawTeam() {
-    const td = teamInfo();
-    if (!td?.teamMode) { teamEl.replaceChildren(); return; }
+  /** The "<projectId>|<staffId>" keys of desk sessions waiting for the person. */
+  function waitingDesks() {
     /** @type {Set<string>} */
     const waiting = new Set();
     for (const p of view.projects) for (const s of p.running) if (s.staffId && s.waiting) waiting.add(`${p.id}|${s.staffId}`);
+    return waiting;
+  }
+  function drawTeam() {
+    const td = teamInfo();
+    if (!td?.teamMode) { teamEl.replaceChildren(); return; }
+    const waiting = waitingDesks();
     const groups = teamGroups({ staff: td.staff, presets: td.presets, desks: td.desks, projects: td.projects, waiting, lang: td.lang });
     const stateText = (/** @type {string} */ s) => t(`studio.team.state.${s}`);
-    teamEl.replaceChildren(el('div', { class: 'st-head' }, t('studio.team.title')),
+    // v3.124 the header opens the Team page
+    teamEl.replaceChildren(el('button', { class: 'st-head st-team-open', type: 'button', title: t('studio.teamPage.open'), onclick: () => openTeam() }, el('span', { class: 'st-title' }, t('studio.team.title')), icon('chevron', 12)),
       ...groups.flatMap((g) => [
         ...(g.head && groups.length > 1 ? [el('div', { class: 'st-team-dept' }, g.head)] : []),
         ...g.members.flatMap((m) => {
@@ -593,7 +631,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     setOn(/** @type {boolean} */ value) {
       on = Boolean(value);
       document.body.classList.toggle('studio', on);
-      if (!on) { document.body.classList.remove('studio-board'); closePalette(); hidePanel(); settingsPage.close(); }
+      if (!on) { document.body.classList.remove('studio-board'); closePalette(); hidePanel(); settingsPage.close(); teamPage.close(); }
       bar.hidden = !on;
       header.hidden = !on;
       menu.hidden = true;
@@ -614,6 +652,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     openPalette,
     /** v3.122 Studio's Settings page, at a section ('general', 'voice', …); the Office popup outside Studio. */
     openSettings,
+    /** v3.124 Studio's Team page at a tab; the Office's Team panel outside Studio. */
+    openTeam,
     focusSearch() { search.focus(); search.select(); },
     /** An Office sidebar panel on its own over Studio ('#sb-panel-team', '.sb-accounts', …); false when it is not there. */
     showPanel,

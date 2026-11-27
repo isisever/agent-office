@@ -1029,13 +1029,13 @@ export function mountSidebar(el, on) {
       },
     };
   }
-  function editMember(m, initialPreset = '') {
+  function editMember(m, initialPreset = '', cls = '') {
     const personal = personalSettings(m);
     badFields.clear();   // the member popup's own Save guards the custom model field (not a project popup's button)
     openMemberEditor({
       bindSave: (btn) => { saveButton = btn; syncSave(); }, hasBadFields: () => badFields.size > 0, reload: () => on.team?.reload?.(),
       h, t, lang: locale(), member: m, staff: team.staff, presets: team.presets, projects, accounts, labelOf, closeModal, personal,
-      openModal: (...a) => { openModal(...a); draft = personal.map; },   // after openModal: its closeModal clears the previous draft
+      openModal: (title, body, buttons, c2 = '') => { openModal(title, body, buttons, [c2, cls].filter(Boolean).join(' ')); draft = personal.map; },   // after openModal: its closeModal clears the previous draft
       save: (form) => on.team?.save(form), remove: (id) => on.team?.remove(id),
       listPacks, listTools: () => Promise.resolve(on.team?.tools?.() || []), openWizard: () => openWizard(),
       removeRole: (id) => on.team?.removeRole(id), initialPreset, mailAccounts: mail ? mail.accounts() : [],
@@ -1454,6 +1454,8 @@ export function mountSidebar(el, on) {
     teamData: () => ({ teamMode: team.teamMode, staff: team.staff, presets: team.presets, desks, projects, lang: locale() }),
     /** v3.122 Studio's "+ Add member": the Office's role wizard (a saved role goes on to the member editor). */
     addMember: () => openWizard(),
+    /** v3.124 Studio's Team page → Edit: the Office's own member popup (its fields, save and checks), drawn as a side sheet. */
+    editMember: (m, initialPreset = '') => editMember(m, initialPreset, 'st-sheet-modal'),
     /** v3.122 the Skills packs (fresh rows, the same calls as the popup's). */
     skillsSection: () => skillsSection(),
     /** v3.122 the accounts (id, label, sign-in state) and the Office's own sign-in call. */

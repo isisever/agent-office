@@ -159,6 +159,16 @@
         "needs": "Sizi bekliyor",
         "asleep": "Uykuda"
       }
+    },
+    "teamPage": {
+      "title": "Ekip",
+      "open": "Ekip sayfasını aç",
+      "tabMembers": "Üyeler",
+      "tabRoles": "Roller",
+      "tabDepartments": "Departmanlar",
+      "offTitle": "Ekibinizi kurun",
+      "offText": "Ekip modu; rolleri, departmanları, kendi hesapları ve projeleri olan üyeler sunar. Hazır rollerden işe almak ya da kendi rolünüzü kurmak için açın.",
+      "turnOn": "Ekip modunu aç"
     }
   },
   "app": {

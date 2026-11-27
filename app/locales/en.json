@@ -159,6 +159,16 @@
         "needs": "Needs you",
         "asleep": "Asleep"
       }
+    },
+    "teamPage": {
+      "title": "Team",
+      "open": "Open the Team page",
+      "tabMembers": "Members",
+      "tabRoles": "Roles",
+      "tabDepartments": "Departments",
+      "offTitle": "Build your team",
+      "offText": "Team mode gives you members with roles, departments, their own accounts and projects. Turn it on to hire from ready-made roles or build your own.",
+      "turnOn": "Turn on team mode"
     }
   },
   "app": {

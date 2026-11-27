@@ -1426,6 +1426,11 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   activePty,
   hasSession: () => Boolean(activePty()),
   commands: (projectId) => studioCommands(projectId),
+  // v3.124 the Team page: the same calls as the member popup's (staff:save / staff:remove, then the list again)
+  saveMember: (form) => api.staff.save(form).then(async (r) => { await loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+  removeMember: (id) => api.staff.remove(id).then(async (r) => { await loadStaff(); return r; }).catch(() => ({ ok: false, error: 'failed' })),
+  reloadTeam: () => loadStaff(),
+  teamTools: () => (api.mcp?.apps ? api.mcp.apps().then((r) => r?.servers || []).catch(() => []) : Promise.resolve([])),
   startSession: (projectId, plan, text) => startStudioSession(projectId, plan, text),
   projectSettings: (projectId) => studioCommands(projectId).find((c) => c.id === 'projectSettings')?.run(),
   showAccounts: () => studioCommands(studio?.currentProject() || '').find((c) => c.id === 'accounts')?.run(),
@@ -1444,7 +1449,7 @@ function studioCommands(projectId) {
   const cmd = (id, run, when = true) => (when ? [{ id, label: t(`studio.cmd.${id}`), keywords: t(`studio.cmdKeys.${id}`), run }] : []);
   const panel = (sel, fallback) => () => { if (!studio?.showPanel(sel)) fallback?.(); };
   return [
-    ...cmd('team', panel('#sb-panel-team', () => studio?.openSettings('team'))),   // team mode off: Settings has its switch
+    ...cmd('team', () => studio?.openTeam()),   // v3.124 the Team page (team mode off: its own switch)
     ...cmd('worktree', () => { leaveBoard(); addTab(p.id, 'worktree'); }, Boolean(p)),
     ...cmd('newTab', () => { leaveBoard(); addTab(p.id); }, Boolean(p)),   // main's "+" menu: same folder, worktree, a desk, a shell
     ...cmd('closeTab', () => closeTab(act.id, n), Boolean(act) && act.id !== HQ_ROW.id && n !== MAIN_TAB),
@@ -1505,14 +1510,9 @@ const whatsNewActions = {
   'open-start-screen': () => { if (experience !== 'studio') setExperience('studio'); studio?.newSession(); return '.st-start-who'; },
   'open-palette': () => { if (experience !== 'studio') setExperience('studio'); window.setTimeout(() => studio?.openPalette(), 60); return ''; },
   'open-devices': () => whatsNewPanel('#sb-devices'),
-  // in Studio the sidebar's Team section (team mode on), else Settings → Team; in the Office the Team panel or the popup
+  // in Studio the Team page (v3.124; team mode off: its own switch); in the Office the Team panel or the popup
   'open-team': () => {
-    if (studioOn) {
-      const team = /** @type {HTMLElement | null} */ (document.querySelector('#studio-sidebar .st-team'));
-      if (team && team.getBoundingClientRect().height) { team.scrollIntoView?.({ block: 'nearest' }); return '#studio-sidebar .st-team'; }
-      studio?.openSettings('team');
-      return '#studio-settings .st-set-row[data-key="team"]';
-    }
+    if (studioOn) { studio?.openTeam(); return '#studio-team .st-set-top'; }   // v3.124 the Team page
     return whatsNewPanel('#sb-panel-team') || (sidebar?.openSettings(), '');
   },
   'focus-composer': () => { if (!studio?.focusStart()) focusActive(); return ''; },
