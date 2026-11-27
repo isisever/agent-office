@@ -149,10 +149,19 @@ const snapshot = () => ({
   activeId: state.activeId,
   status: state.projects.map((p) => ({
     id: p.id, isRunning: terms.has(p.id), isAsleep: asleep.has(p.id), attention: attention.get(p.id) || null,
-    isGui: Boolean(terms.get(p.id)?.gui),   // v3.120 its claude runs as a GUI chat (Studio shows the chat only then)
-    tabs: P.tabsOf(p).map((t) => ({ n: t.n, isRunning: terms.has(P.tabPtyId(p.id, t.n)), isAsleep: asleep.has(P.tabPtyId(p.id, t.n)), isGui: Boolean(terms.get(P.tabPtyId(p.id, t.n))?.gui) })),
+    isGui: guiMode(p.id),   // v3.120 the renderer shows the chat of a GUI tab (running, or stopped and starting as one)
+    tabs: P.tabsOf(p).map((t) => ({ n: t.n, isRunning: terms.has(P.tabPtyId(p.id, t.n)), isAsleep: asleep.has(P.tabPtyId(p.id, t.n)), isGui: guiMode(P.tabPtyId(p.id, t.n)) })),
   })),
 });
+/** v3.120 a running tab: does its claude run as a GUI chat; a stopped one: would it start as one (like guiInfo). */
+function guiMode(id) {
+  const t = terms.get(id);
+  if (t) return Boolean(t.gui);
+  try {
+    const r = P.resolvePty(state, id);
+    return Boolean(r && guiTab(id, r));
+  } catch { return false; }   // a snapshot before the tab sets below are set up
+}
 const broadcast = () => { send('projects:changed', snapshot()); try { hqWaitsPush(); } catch { /* before HQ is set up */ } };   // v3.46 amendment: a tab change refreshes why HQ tasks wait
 
 // --- waiting for you (see src/attention.js): notification, Dock badge, marker on the project row
@@ -1234,8 +1243,9 @@ function keepTermTabs() {
   for (const id of cmdTabs) if (!ids.has(id)) cmdTabs.delete(id);   // v3.117 a closed tab's command terminal (never saved)
   state = { ...state, termTabs: keep.length ? keep : undefined };
 }
-const guiEnded = new Map();
-const studioStarted = new Set();   // v3.120 pty ids whose running claude is a GUI chat only because Studio was on at its start   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
+const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
+// v3.120 pty ids whose running claude is a GUI chat that ran in Studio: the Office keeps it a chat until its next start
+const studioStarted = new Set();
 /**
  * Does this tab start as a GUI chat? v3.120 Studio decides only how a tab starts (studio: false asks for the chat view
  * alone): a running tab never restarts or moves because the experience changed.
@@ -5578,7 +5588,7 @@ function switchMode(id, mode, { temp = false } = {}) {
   const waived = back && (activity.get(id)?.inputAt || 0) <= (cmdTyped.get(id) || 0);
   if (mode === 'terminal') choice.add(id); else { termTabs.delete(id); cmdTabs.delete(id); cmdPending.delete(id); }
   const t = terms.get(id);
-  if (!t || Boolean(t.gui) === guiTab(id, r)) { if (!temp) saveState(); return 'ok'; }   // stopped, or already in that mode (Windows: always a terminal); v3.110 kept
+  if (!t || Boolean(t.gui) === guiTab(id, r)) { if (!temp) saveState(); if (!t) broadcast(); return 'ok'; }   // v3.120 a stopped tab's isGui follows the choice   // stopped, or already in that mode (Windows: always a terminal); v3.110 kept
   const undo = () => { if (had) choice.add(id); else choice.delete(id); if (back) cmdTabs.add(id); };
   if (handoffLocked(id)) { undo(); lockedNotice(id); return 'locked'; }
   // the same test as restartIdle (no turn, agents, shells or draft; a session id to resume), plus an open card or turn

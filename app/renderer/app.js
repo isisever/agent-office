@@ -10,6 +10,7 @@ import { setLang, onLang, t } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
 import { mountStudio } from './studio.js';
 import { studioKey, otherExperience } from '../src/studio-keys.mjs';
+import { chatShownFor, chatButtonFor } from '../src/chat-view.mjs';
 import { themeChoices, effectiveTheme } from '../src/themes.mjs';
 import { normalizeLook, normalizeMode, effectiveMode, chromeFor, terminalTheme } from '../src/appearance.mjs';
 import { tildePath, windowTitle } from '../src/layout.mjs';
@@ -229,10 +230,10 @@ function isAsleep(id) {
 // ---- Chat view (contract v3.80, chat.js): with the setting on, a Claude Code tab shows its conversation; the
 // terminal stays mounted under it and is one click away. Off: nothing below runs and the pane is as before.
 let chatView = false;
-// v3.120 Studio shows a tab as a chat only when main started it as a GUI chat (status isGui), or when the person
-// switched it to its terminal from the chat (so the Chat button brings it back). A tab running in a terminal (started
-// before Studio was on, or on Windows, where GUI chat is off) shows its terminal in the main region: switching the
-// experience never restarts or moves a running session.
+// v3.120 a tab follows the mode main runs it in (status isGui; a stopped tab: the mode it would start in). A GUI chat
+// shows its chat in either experience (it has no terminal). In Studio a tab running in a terminal (started in the
+// Office, or on Windows, where GUI chat is off) shows its terminal in the main region, with the Chat button to move it:
+// switching the experience never restarts or moves a running session (src/chat-view.mjs).
 function guiRunning(id) {
   if (!id) return false;
   const [projectId, n] = String(id).split(':');
@@ -240,7 +241,9 @@ function guiRunning(id) {
   return Boolean(n ? st?.tabs?.find((x) => x.n === Number(n))?.isGui : st?.isGui);
 }
 /** @param {string | null | undefined} id */
-const chatShown = (id) => chatView || (studioOn && osPlatform !== 'win32' && Boolean(id) && (guiRunning(id) || chatOff.has(String(id))));
+const chatFacts = (id) => ({ chatView, studio: studioOn, win: osPlatform === 'win32', isGui: guiRunning(id), chatOff: Boolean(id) && chatOff.has(String(id)) });
+/** @param {string | null | undefined} id */
+const chatShown = (id) => Boolean(id) && chatShownFor(chatFacts(id));
 const chatOff = new Set();   // pty ids the person switched back to the terminal (v3.110 seeded from main's termTabs)
 let chatOffSeeded = false;
 let chatSwitch = null;       // the "chat" button over a terminal (made when first needed)
@@ -358,7 +361,7 @@ function syncChat() {
     if (want) { p.chat.setAttention(attn(id)); p.chat.show(); if (!was) requestAnimationFrame(() => p.term.fit()); } else p.chat?.hide();
     if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
   }
-  const canSwitch = chatShown(visible) && chatCapable(visible) && chatOff.has(visible);
+  const canSwitch = Boolean(visible) && chatButtonFor({ ...chatFacts(visible), capable: chatCapable(visible), hq: String(visible).split(':')[0] === HQ_ROW.id });
   if (canSwitch && !chatSwitch) {
     chatSwitch = document.createElement('button');
     chatSwitch.id = 'chat-switch';

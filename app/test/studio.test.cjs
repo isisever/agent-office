@@ -171,3 +171,28 @@ test('prefsPatch and idleMoveTarget: an experience change restarts or moves no r
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(src, /STU\.idleMoveTarget\(\{ gui: Boolean\(t\.gui\), studioStarted: studioStarted\.has\(pid\), chatTarget: guiTab\(pid, r, \{ studio: false \}\) \}\)/, 'guiSwitchIdle leaves the experience out');
 });
+
+test('chat view: a GUI tab always shows its chat; Studio offers the Chat button over a terminal tab', async () => {
+  const { chatShownFor, chatButtonFor } = await import('../src/chat-view.mjs');
+  const f = { chatView: false, studio: false, win: false, isGui: false, chatOff: false };
+  assert.equal(chatShownFor(f), false, 'Office, chat view off, a terminal tab');
+  assert.equal(chatShownFor({ ...f, isGui: true }), true, 'a GUI tab started in Studio, now in the Office: its chat, not an empty terminal');
+  assert.equal(chatShownFor({ ...f, isGui: true, chatView: true }), true, 'chat view on');
+  assert.equal(chatShownFor({ ...f, studio: true }), false, 'Studio: a tab running in a terminal shows it');
+  assert.equal(chatShownFor({ ...f, studio: true, chatOff: true }), true, 'switched from its chat: chat mode (the button brings it back)');
+  assert.equal(chatShownFor({ ...f, studio: true, win: true, chatOff: true }), false, 'Windows: terminals');
+  const b = { ...f, capable: true, hq: false };
+  assert.equal(chatButtonFor(b), false, 'Office, chat view off');
+  assert.equal(chatButtonFor({ ...b, chatView: true, chatOff: true }), true);
+  assert.equal(chatButtonFor({ ...b, studio: true }), true, 'Studio: a terminal tab can move on a click');
+  assert.equal(chatButtonFor({ ...b, studio: true, isGui: true }), false, 'already a GUI chat');
+  assert.equal(chatButtonFor({ ...b, studio: true, hq: true }), false, 'HQ switches the view only');
+  assert.equal(chatButtonFor({ ...b, studio: true, win: true }), false, 'Windows');
+  assert.equal(chatButtonFor({ ...b, studio: true, capable: false }), false, 'a shell or another engine');
+});
+
+test('status isGui: a stopped tab reports the mode it would start in (main.js wiring)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /function guiMode\(id\) \{\n {2}const t = terms\.get\(id\);\n {2}if \(t\) return Boolean\(t\.gui\);/);
+  assert.match(src, /isGui: guiMode\(P\.tabPtyId\(p\.id, t\.n\)\)/);
+});
