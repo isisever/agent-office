@@ -696,6 +696,52 @@ body.studio .sb-modal.st-sheet-modal {
   position: fixed; top: 0; right: 0; bottom: 0; left: auto; width: min(480px, 100vw); max-width: none; max-height: none; height: 100vh;
   margin: 0; border-radius: 0; transform: none;
 }
+/* v3.124 the role wizard as a chat sheet (renderer/role-wizard.js studioSheet): the wizard's messages as plain prose,
+   the person's in soft bubbles, the composer as the rounded box with a round send button; the Office popup is untouched */
+body.studio .rw-sheet-back { position: fixed; inset: 0; z-index: 1100; background: rgba(0, 0, 0, .18); }
+body.studio .rw-sheet {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 1101; width: min(520px, 100vw); display: flex; flex-direction: column;
+  background: var(--st-bg); color: var(--st-text); border-left: 1px solid var(--st-border); box-shadow: var(--st-shadow); font: 15px/1.6 var(--st-font);
+}
+body.studio .rw-sheet-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 14px 20px; border-bottom: 1px solid var(--st-border); }
+body.studio .rw-sheet-title { flex: 1; margin: 0; font: 500 14px/1.3 var(--st-font); color: var(--st-muted); letter-spacing: .01em; }
+body.studio .rw-sheet-close {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--st-radius-s);
+  background: none; color: var(--st-muted); font: 20px/1 var(--st-font); cursor: pointer;
+}
+body.studio .rw-sheet-close:hover { background: var(--st-hover); color: var(--st-text); }
+body.studio .rw-sheet-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 0 20px 16px; }
+body.studio .rw-sheet .rw-log { flex: 1; min-height: 0; max-height: none; gap: 16px; padding: 20px 0 8px; }
+body.studio .rw-sheet .rw-msg { max-width: 100%; padding: 0; border: 0; border-radius: 0; background: none; line-height: 1.65; }
+body.studio .rw-sheet .rw-msg.wizard { align-self: stretch; font: 15.5px/1.7 var(--st-serif); }
+body.studio .rw-sheet .rw-msg.user { align-self: flex-end; max-width: 85%; padding: 8px 14px; border-radius: var(--st-radius-l); background: var(--st-bubble); }
+body.studio .rw-sheet .rw-who { display: none; }
+body.studio .rw-sheet .rw-questions { margin: 8px 0 0; padding-left: 22px; }
+body.studio .rw-sheet .rw-card { margin: 0; padding: 12px 14px; gap: 6px; border: 1px solid var(--st-border-strong); border-radius: var(--st-radius); background: var(--st-raised); box-shadow: var(--st-shadow); max-height: 40vh; overflow-y: auto; }
+body.studio .rw-sheet .rw-card-head { color: var(--st-text); font: 400 18px/1.3 var(--st-serif); }
+body.studio .rw-sheet .rw-short { border: 0; border-radius: 999px; padding: 1px 8px; background: var(--st-select); color: var(--st-muted); font: 500 11px/1.6 var(--st-font); }
+body.studio .rw-sheet .rw-row { font-size: 13px; }
+body.studio .rw-sheet .rw-label { color: var(--st-muted); opacity: 1; }
+body.studio .rw-sheet .rw-brief summary { color: var(--st-muted); font-size: 13px; cursor: pointer; }
+body.studio .rw-sheet .rw-brief pre { font: 12.5px/1.55 var(--st-mono); }
+body.studio .rw-sheet .sb-btn { padding: 6px 12px; border: 1px solid var(--st-border-strong); border-radius: var(--st-radius-s); background: var(--st-raised); color: var(--st-text); font: 500 13px/1.3 var(--st-font); }
+body.studio .rw-sheet .sb-btn.primary { border-color: var(--st-accent); background: var(--st-accent); color: var(--st-on-accent); }
+body.studio .rw-sheet .rw-compose {
+  align-items: flex-end; gap: 6px; padding: 10px 10px 10px 14px; border: 1px solid var(--st-border-strong); border-radius: var(--st-radius-l);
+  background: var(--st-raised); box-shadow: var(--st-shadow); transition: border-color .15s;
+}
+body.studio .rw-sheet .rw-compose:focus-within { border-color: color-mix(in srgb, var(--st-accent) 45%, var(--st-border-strong)); }
+body.studio .rw-sheet .rw-input {
+  min-height: 48px; max-height: 30vh; padding: 4px 2px; border: 0; outline: 0; resize: none; background: none; color: var(--st-text); font: 15px/1.55 var(--st-font);
+}
+body.studio .rw-sheet .rw-input::placeholder { color: var(--st-faint); }
+body.studio .rw-sheet .rw-send {
+  flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
+  color: var(--st-on-accent); background: var(--st-accent); font: 600 17px/1 var(--st-font); cursor: pointer;
+}
+body.studio .rw-sheet .rw-send:hover { filter: brightness(1.07); }
+body.studio .rw-sheet .rw-send:disabled { opacity: .45; cursor: default; filter: none; }
+body.studio .rw-sheet .rw-status { color: var(--st-muted); font-size: 12.5px; }
 /* the Roles gallery */
 body.studio #studio-team .st-team-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 body.studio #studio-team .st-team-searchbox {
