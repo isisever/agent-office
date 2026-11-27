@@ -85,6 +85,69 @@ function dueToClose(since, now, closable) {
   return out;
 }
 
+/**
+ * One 24 h rule pass: outside Studio nothing is tracked (`since` is cleared, so time asleep in the Office never counts)
+ * and nothing closes; in Studio `since` follows the sessions asleep now and the closable ones past 24 h are returned.
+ * Mutates `since`.
+ * @param {Map<string, number>} since
+ * @param {Iterable<string>} asleepIds
+ * @param {number} now
+ * @param {unknown} experience
+ * @param {(id: string) => boolean} [closable]
+ * @returns {string[]}
+ */
+function sweepStep(since, asleepIds, now, experience, closable = () => true) {
+  if (normalizeExperience(experience) !== 'studio') { since.clear(); return []; }
+  trackAsleep(since, asleepIds, now);
+  return dueToClose(since, now, closable);
+}
+
+const sameDir = (a, b) => String(a || '').replace(/[\\/]+$/, '') === String(b || '').replace(/[\\/]+$/, '');
+
+/**
+ * May the 24 h rule close this tab? Only an extra Claude Code tab with a session to resume, in the project's own folder
+ * (a Recent session always opens again there), with no handoff lock and no task waiting for its report. Never a
+ * project's main tab, HQ, a desk, a worktree or a shell.
+ * @param {{ project: any, tab?: any } | null | undefined} r the tab as P.resolvePty gives it
+ * @param {{ sid?: string, handoffLocked?: boolean, guiTaskOpen?: boolean }} o
+ */
+function closable(r, { sid = '', handoffLocked = false, guiTaskOpen = false } = {}) {
+  if (!r?.tab || !r.project) return false;
+  const { project, tab } = r;
+  if (project.hq || (project.engine || 'claude') !== 'claude') return false;
+  if (tab.shell || tab.staffId || tab.worktree) return false;
+  if (tab.dir && !sameDir(tab.dir, project.dir)) return false;
+  return Boolean(validSessionId(sid)) && !handoffLocked && !guiTaskOpen;
+}
+
+/**
+ * What prefs:set does for the chat view and the experience. A chat view change moves idle tabs (v3.108); an experience
+ * change only saves the setting and restarts the 24 h clocks: it never restarts or moves a running tab (Studio decides
+ * only how a new tab starts).
+ * @param {{ chatView?: boolean, experience?: string }} prev the prefs before
+ * @param {any} p the patch from the renderer
+ * @returns {{ patch: { chatView?: boolean, experience?: string }, switchIdle: boolean, clearSince: boolean }}
+ */
+function prefsPatch(prev, p) {
+  const out = { patch: {}, switchIdle: false, clearSince: false };
+  if (!p || typeof p !== 'object') return out;
+  if (typeof p.chatView === 'boolean' && p.chatView !== prev.chatView) { out.patch.chatView = p.chatView; out.switchIdle = true; }
+  if (EXPERIENCES.includes(p.experience) && p.experience !== normalizeExperience(prev.experience)) { out.patch.experience = p.experience; out.clearSince = true; }
+  return out;
+}
+
+/**
+ * The mode an idle running Claude Code tab moves to when the chat view changes (v3.108), or null to keep it. The
+ * experience is not an input: a tab whose mode Studio chose keeps it until its next start, and the others follow the
+ * chat view alone.
+ * @param {{ gui: boolean, studioStarted: boolean, chatTarget: boolean }} o chatTarget: guiEligible without Studio
+ * @returns {boolean | null}
+ */
+function idleMoveTarget({ gui, studioStarted, chatTarget }) {
+  if (studioStarted || Boolean(gui) === Boolean(chatTarget)) return null;
+  return Boolean(chatTarget);
+}
+
 const baseName = (d) => String(d || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
 
 /** A tab's title in the sidebar: the staff member, the worktree branch or the folder's name. */
@@ -129,5 +192,5 @@ function accountDisplayName(json) {
 
 module.exports = {
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
-  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, tabTitle, listSessions, accountDisplayName,
+  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName,
 };

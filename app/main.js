@@ -149,7 +149,8 @@ const snapshot = () => ({
   activeId: state.activeId,
   status: state.projects.map((p) => ({
     id: p.id, isRunning: terms.has(p.id), isAsleep: asleep.has(p.id), attention: attention.get(p.id) || null,
-    tabs: P.tabsOf(p).map((t) => ({ n: t.n, isRunning: terms.has(P.tabPtyId(p.id, t.n)), isAsleep: asleep.has(P.tabPtyId(p.id, t.n)) })),
+    isGui: Boolean(terms.get(p.id)?.gui),   // v3.120 its claude runs as a GUI chat (Studio shows the chat only then)
+    tabs: P.tabsOf(p).map((t) => ({ n: t.n, isRunning: terms.has(P.tabPtyId(p.id, t.n)), isAsleep: asleep.has(P.tabPtyId(p.id, t.n)), isGui: Boolean(terms.get(P.tabPtyId(p.id, t.n))?.gui) })),
   })),
 });
 const broadcast = () => { send('projects:changed', snapshot()); try { hqWaitsPush(); } catch { /* before HQ is set up */ } };   // v3.46 amendment: a tab change refreshes why HQ tasks wait
@@ -1233,10 +1234,14 @@ function keepTermTabs() {
   for (const id of cmdTabs) if (!ids.has(id)) cmdTabs.delete(id);   // v3.117 a closed tab's command terminal (never saved)
   state = { ...state, termTabs: keep.length ? keep : undefined };
 }
-const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
-/** Does this tab start as a GUI chat? */
-function guiTab(id, r) {
-  return GS.guiEligible({ chatView: state.chatView === true, studio: state.experience === 'studio', terminal: termTabs.has(id) || cmdTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
+const guiEnded = new Map();
+const studioStarted = new Set();   // v3.120 pty ids whose running claude is a GUI chat only because Studio was on at its start   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
+/**
+ * Does this tab start as a GUI chat? v3.120 Studio decides only how a tab starts (studio: false asks for the chat view
+ * alone): a running tab never restarts or moves because the experience changed.
+ */
+function guiTab(id, r, { studio = state.experience === 'studio' } = {}) {
+  return GS.guiEligible({ chatView: state.chatView === true, studio, terminal: termTabs.has(id) || cmdTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
 }
 /** A GUI tab's permission request: true when the app answers it (Auto-approve, v3.71 rules); else it waits for the person. */
 function guiAsk(id, ask, input, { autoApprove, mailGuard }) {
@@ -1416,6 +1421,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     return broadcast();
   }
   terms.set(id, t);
+  if (gui && !guiTab(id, r, { studio: false })) studioStarted.add(id); else studioStarted.delete(id);   // v3.120 kept until its next start
   if (!project.hq && (P.skipPermissionsOf(project) || P.autoApproveOf(project))) promptless.add(id); else promptless.delete(id);
   if (P.skipPermissionsArgs(project).length > 0) skipStarted.add(id); else skipStarted.delete(id);
   // v3.116 inputAt: when something was last typed into the tab (a start prompt counts), for guiRecent
@@ -4786,14 +4792,15 @@ function restartIdle(p) {
   return restarted;
 }
 /** v3.108 the chat view setting changed: idle Claude Code tabs continue their session in the other mode at once; busy
- * ones (and drafts) keep their mode until their next start. */
+ * ones (and drafts) keep their mode until their next start. v3.120 the experience is not part of it: a tab Studio
+ * started as a chat keeps that mode, and the others follow the chat view alone (STU.idleMoveTarget). */
 function guiSwitchIdle() {
   for (const p of state.projects) {
     if (p.hq || P.engineOf(p) !== 'claude') continue;
     for (const pid of P.ptyIdsOf(p)) {
       const t = terms.get(pid);
       const r = P.resolvePty(state, pid);
-      if (!t || !r || Boolean(t.gui) === guiTab(pid, r) || handoffLocked(pid) || guiHolds(pid)) continue;
+      if (!t || !r || STU.idleMoveTarget({ gui: Boolean(t.gui), studioStarted: studioStarted.has(pid), chatTarget: guiTab(pid, r, { studio: false }) }) === null || handoffLocked(pid) || guiHolds(pid)) continue;
       const sid = idleSession(pid);
       if (!sid || (t.gui && (t.asks().length > 0 || t.live().busy))) continue;
       startPty(pid, { sessionId: sid, resume: true });
@@ -6080,18 +6087,17 @@ ipcMain.handle('studio:open', (e, projectId, ref) => {
 });
 /** The session a sleeping tab continues when it wakes, or ''. */
 const studioSid = (id, r) => STU.validSessionId(asleep.get(id)?.sessionId) || STU.validSessionId(r?.tab?.sessionId) || STU.validSessionId(lastSid.get(id));
-/** Only an extra Claude Code tab with a session closes (never a main tab, HQ, a desk, a worktree or a shell). */
+/** Only an extra Claude Code tab with a session, in the project's folder, not locked and with no open task (STU.closable). */
 function studioClosable(id) {
   const r = P.resolvePty(state, id);
-  return Boolean(r?.tab && !r.project.hq && P.engineOf(r.project) === 'claude' && !r.tab.shell && !r.tab.staffId && !r.tab.worktree && studioSid(id, r));
+  return STU.closable(r, { sid: r ? studioSid(id, r) : '', handoffLocked: handoffLocked(id), guiTaskOpen: guiTaskOpen(id) });
 }
-// The 24 h rule: in Studio, a session asleep for more than 24 h closes and is kept under Recent (it opens again from there).
+// The 24 h rule: in Studio, a session asleep for more than 24 h closes and is kept under Recent (it opens again from
+// there). Only time asleep in Studio counts: outside it the clocks are cleared (STU.sweepStep).
 function studioSweep() {
   if (!state) return;
   const now = Date.now();
-  STU.trackAsleep(studioSince, asleep.keys(), now);
-  if (STU.normalizeExperience(state.experience) !== 'studio') return;
-  for (const id of STU.dueToClose(studioSince, now, studioClosable)) {
+  for (const id of STU.sweepStep(studioSince, asleep.keys(), now, state.experience, studioClosable)) {
     const r = P.resolvePty(state, id);
     if (!r?.tab) continue;
     const entry = { projectId: r.project.id, sessionId: studioSid(id, r), title: STU.tabTitle(r.project, r.tab, state.staff), dir: r.tab.dir || r.project.dir, at: now };
@@ -6109,9 +6115,12 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp });
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
-  if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) { commit({ ...state, chatView: p.chatView }); guiSwitchIdle(); }   // v3.80 chat view (the renderer switches); v3.108 idle tabs move to / from the GUI chat
-  // v3.120 the experience (Office / Studio): Studio shows Claude Code tabs as a chat, so idle tabs move like above
-  if (p && STU.EXPERIENCES.includes(p.experience) && p.experience !== prefs().experience) { commit({ ...state, experience: p.experience }); guiSwitchIdle(); }
+  // v3.80 chat view (the renderer switches); v3.108 idle tabs move to / from the GUI chat. v3.120 the experience (Office /
+  // Studio) only decides how new tabs start: a change never restarts or moves a running tab, it restarts the 24 h clocks
+  const vx = STU.prefsPatch(prefs(), p);
+  if (Object.keys(vx.patch).length) commit({ ...state, ...vx.patch });
+  if (vx.clearSince) studioSince.clear();
+  if (vx.switchIdle) guiSwitchIdle();
   if (p && typeof p.office3d === 'boolean' && p.office3d !== prefs().office3d) commit({ ...state, office3d: p.office3d });   // v3.81 3D office (the renderer switches)
   if (p && typeof p.teamMode === 'boolean' && p.teamMode !== prefs().teamMode) commit({ ...state, teamMode: p.teamMode });   // v3.83 the TEAM panel
   for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (p && typeof p[k] === 'boolean' && p[k] !== prefs()[k]) commit({ ...state, [k]: p[k] });

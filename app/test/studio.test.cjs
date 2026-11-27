@@ -14,7 +14,9 @@ test('experience is persisted in state.json and read back (main.js wiring)', () 
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   assert.match(src, /experience: STU\.normalizeExperience\(state\.experience\)/, 'prefs() reports it');
   assert.match(src, /raw\.experience === 'studio' \? \{ experience: 'studio' \} : \{\}/, 'loaded only when studio');
-  assert.match(src, /STU\.EXPERIENCES\.includes\(p\.experience\)/, 'prefs:set accepts only the two values');
+  assert.match(src, /const vx = STU\.prefsPatch\(prefs\(\), p\);/, 'prefs:set goes through prefsPatch');
+  assert.match(src, /if \(vx\.clearSince\) studioSince\.clear\(\);/, 'an experience change restarts the 24 h clocks');
+  assert.doesNotMatch(src, /experience: p\.experience \}\); guiSwitchIdle\(\)/, 'an experience change moves no tab');
 });
 
 test('recent list: valid, unique, newest first, capped', () => {
@@ -117,4 +119,55 @@ test('studio IPC validates the sender and its arguments (main.js wiring)', () =>
   const pre = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
   assert.match(pre, /ipcRenderer\.invoke\('studio:sessions'\)/);
   assert.match(pre, /ipcRenderer\.invoke\('studio:open', projectId, ref\)/);
+});
+
+test('closable: only a plain extra Claude Code tab in the project folder, unlocked, with no open task', () => {
+  const project = { id: 'p', name: 'P', dir: '/w/p' };
+  const ok = { sid: 'abc-1', handoffLocked: false, guiTaskOpen: false };
+  const tab = { n: 2 };
+  assert.equal(S.closable({ project, tab }, ok), true, 'a plain extra Claude tab');
+  assert.equal(S.closable({ project, tab: { n: 2, dir: '/w/p/' } }, ok), true, 'its dir is the project dir');
+  assert.equal(S.closable({ project }, ok), false, 'the main tab');
+  assert.equal(S.closable(null, ok), false);
+  assert.equal(S.closable({ project: { ...project, hq: true }, tab }, ok), false, 'HQ');
+  assert.equal(S.closable({ project: { ...project, engine: 'agy' }, tab }, ok), false, 'another engine');
+  assert.equal(S.closable({ project, tab: { n: 2, staffId: 'm1' } }, ok), false, 'a desk');
+  assert.equal(S.closable({ project, tab: { n: 2, worktree: { branch: 'b' } } }, ok), false, 'a worktree');
+  assert.equal(S.closable({ project, tab: { n: 2, shell: true } }, ok), false, 'a shell');
+  assert.equal(S.closable({ project, tab }, { ...ok, handoffLocked: true }), false, 'handoff locked');
+  assert.equal(S.closable({ project, tab }, { ...ok, guiTaskOpen: true }), false, 'a task is open');
+  assert.equal(S.closable({ project, tab: { n: 2, dir: '/w/other' } }, ok), false, 'its own dir (Recent resumes in the project folder)');
+  assert.equal(S.closable({ project, tab }, { ...ok, sid: '' }), false, 'no session to resume');
+});
+
+test('sweepStep: only time asleep in Studio counts', () => {
+  const H = 60 * 60 * 1000;
+  const since = new Map();
+  assert.deepEqual(S.sweepStep(since, ['p:2'], 0, 'office'), []);
+  assert.equal(since.size, 0, 'nothing tracked in the Office');
+  S.sweepStep(since, ['p:2'], 1 * H, 'studio');
+  since.set('p:3', 0);
+  assert.deepEqual(S.sweepStep(since, ['p:2', 'p:3'], 30 * H, 'office'), [], 'nothing closes in the Office');
+  assert.equal(since.size, 0, 'the Office clears the clocks');
+  assert.deepEqual(S.sweepStep(since, ['p:2', 'p:3'], 40 * H, 'studio'), [], 'back in Studio: the clock starts again');
+  assert.equal(since.get('p:2'), 40 * H);
+  assert.deepEqual(S.sweepStep(since, ['p:2', 'p:3'], 64 * H + 1, 'studio', (id) => id === 'p:2'), ['p:2']);
+});
+
+test('prefsPatch and idleMoveTarget: an experience change restarts or moves no running tab', () => {
+  const v = S.prefsPatch({ chatView: false, experience: 'office' }, { experience: 'studio' });
+  assert.deepEqual(v, { patch: { experience: 'studio' }, switchIdle: false, clearSince: true });
+  assert.deepEqual(S.prefsPatch({ chatView: false, experience: 'studio' }, { experience: 'office' }).switchIdle, false);
+  assert.deepEqual(S.prefsPatch({ experience: 'studio' }, { experience: 'studio' }), { patch: {}, switchIdle: false, clearSince: false });
+  assert.deepEqual(S.prefsPatch({ experience: 'office' }, { experience: 'nope' }).patch, {});
+  assert.deepEqual(S.prefsPatch({ chatView: false }, { chatView: true }), { patch: { chatView: true }, switchIdle: true, clearSince: false });
+  assert.deepEqual(S.prefsPatch({}, null), { patch: {}, switchIdle: false, clearSince: false });
+  // the idle move takes no experience: a tab Studio started as a chat stays one; others follow the chat view alone
+  assert.equal(S.idleMoveTarget({ gui: true, studioStarted: true, chatTarget: false }), null);
+  assert.equal(S.idleMoveTarget({ gui: false, studioStarted: false, chatTarget: false }), null, 'an Office terminal stays in Studio');
+  assert.equal(S.idleMoveTarget({ gui: true, studioStarted: false, chatTarget: true }), null);
+  assert.equal(S.idleMoveTarget({ gui: false, studioStarted: false, chatTarget: true }), true, 'the chat view turned on');
+  assert.equal(S.idleMoveTarget({ gui: true, studioStarted: false, chatTarget: false }), false, 'the chat view turned off');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /STU\.idleMoveTarget\(\{ gui: Boolean\(t\.gui\), studioStarted: studioStarted\.has\(pid\), chatTarget: guiTab\(pid, r, \{ studio: false \}\) \}\)/, 'guiSwitchIdle leaves the experience out');
 });
