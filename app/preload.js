@@ -175,6 +175,12 @@ contextBridge.exposeInMainWorld('agentOffice', {
     nativePaste: () => ipcRenderer.send('edit:nativePaste'), // outside the terminal: normal paste
   },
   pathForFile: (file) => webUtils.getPathForFile(file),
+  // v3.123 What's new after an update: [{ version, items }] newest first (items as in app/whats-new/<version>.json)
+  whatsNew: {
+    pending: () => ipcRenderer.invoke('whatsNew:pending'),   // what this start shows, once; [] afterwards
+    all: () => ipcRenderer.invoke('whatsNew:all'),           // every version up to the running one
+    onOpen: listen('whatsNew:open'),                         // Help → What's new
+  },
   update: {
     state: () => ipcRenderer.invoke('update:state'),   // { version, ready }
     onReady: listen('update:ready'),                    // downloaded version number

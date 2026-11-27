@@ -68,6 +68,7 @@ const VC = require('./src/voice-core.js');   // v3.119 voice input
 const { createVoice } = require('./src/voice.js');
 const PTY = require('./src/pty-attach.js');
 const STU = require('./src/studio.js');   // v3.120 Studio experience
+const WN = require('./src/whats-new.js');   // v3.123 What's new after an update
 const ATT = require('./src/attached.js');   // v3.121 the files a person attached in a chat composer
 // dev only: a throwaway profile (two instances side by side for the device link, v3.28); never in the packaged app
 if (!app.isPackaged && process.env.AGENT_OFFICE_USER_DATA) {
@@ -6215,6 +6216,19 @@ async function checkUpdatesNow() {
   dialog.showMessageBox(win, { type: 'warning', message: T('main.updateFailed'), detail: T('main.updateNoAnswer', { version: m.version }) });
 }
 ipcMain.handle('update:state', () => ({ version: app.getVersion(), ready: updateReady }));
+
+// --- v3.123 What's new (src/whats-new.js): the manifests in app/whats-new (inside app.asar when packaged).
+// whatsNew:pending gives what this start should show once (then nothing); whatsNew:all every manifest up to the
+// running version, newest first (Help → What's new, ⌘K, Settings → About).
+const whatsNewDir = () => path.join(__dirname, 'whats-new');
+/** @type {string[]} */
+let whatsNewPending = [];
+ipcMain.handle('whatsNew:pending', () => {
+  const versions = whatsNewPending;
+  whatsNewPending = [];
+  return WN.entriesFor(whatsNewDir(), versions);
+});
+ipcMain.handle('whatsNew:all', () => WN.entriesFor(whatsNewDir(), WN.versionsBetween('0.0.0-0', app.getVersion(), WN.listVersions(whatsNewDir()))));
 ipcMain.on('update:install', () => {
   if (!updateReady || !updater) return;
   killAll();
@@ -6246,6 +6260,7 @@ function buildMenu() {
     ] },
     { label: T('main.view'), submenu: [{ label: sceneHidden ? T('main.showOffice') : T('main.hideOffice'), accelerator: 'CmdOrCtrl+Alt+O', click: () => send('scene:toggle') }, { type: 'separator' }, { role: 'reload', label: T('main.reload') }, { role: 'toggleDevTools', label: T('main.devTools') }, { type: 'separator' }, { role: 'togglefullscreen', label: T('main.fullscreen') }] },
     { role: 'windowMenu', label: T('main.window') },
+    { role: 'help', label: T('main.helpMenu'), submenu: [{ label: T('main.whatsNew'), click: () => send('whatsNew:open') }] },   // v3.123
   ]));
 }
 
@@ -6519,6 +6534,11 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   const settled = MS.settleTokens(state.mcpServers, oldTokens(), tokens(), { sweep: SF.trusted(read, statePath()) });
   if (settled.failed) console.error(`mcp: ${settled.failed} connection token(s) could not be moved (not readable now, or not saved); kept, retried at the next start`);
   if (settled.dropped) console.error(`mcp: ${settled.dropped} connection token(s) were stored empty; dropped`);
+  // v3.123 What's new: decided once per start, before the first save (a fresh install has no state.json yet)
+  const wn = WN.decide({ lastSeen: raw.lastSeenVersion, current: app.getVersion(), fresh: !read.ok && !read.corrupt && !read.unreadable,
+    packaged: app.isPackaged, force: process.env.AGENT_OFFICE_WHATS_NEW === '1', available: WN.listVersions(whatsNewDir()) });
+  whatsNewPending = wn.show;
+  if (wn.save) state = { ...state, lastSeenVersion: wn.save };
   app.setAboutPanelOptions({ applicationName: app.getName(), applicationVersion: app.getVersion() });
   buildMenu();
   setupUpdates();
