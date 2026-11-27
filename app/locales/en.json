@@ -107,6 +107,7 @@
         "not-running": "the chat did not start in time",
         "bad": "this choice is not offered for this account",
         "gone": "the session is gone",
+        "unsupported": "this session cannot take chat messages",
         "error": "Claude refused it",
         "other": "something went wrong"
       }
@@ -148,6 +149,8 @@
       "member": "Team member",
       "noDesks": "No open desks",
       "deskFailed": "The desk could not start; the prompt is kept.",
+      "deskPromptFailed": "The desk started, but the message was not sent ({why}). Your message is still here.",
+      "whoStale": "This team member can no longer work on this project. Pick someone else; your message is still here.",
       "state": {
         "idle": "Idle",
         "working": "Working",

@@ -107,6 +107,7 @@
         "not-running": "sohbet zamanında başlamadı",
         "bad": "bu seçim bu hesapta sunulmuyor",
         "gone": "oturum kapandı",
+        "unsupported": "bu oturum sohbet mesajı alamıyor",
         "error": "Claude bunu reddetti",
         "other": "bir şeyler ters gitti"
       }
@@ -148,6 +149,8 @@
       "member": "Ekip üyesi",
       "noDesks": "Açık masa yok",
       "deskFailed": "Masa başlatılamadı; mesaj korunuyor.",
+      "deskPromptFailed": "Masa açıldı ama mesaj gönderilemedi ({why}). Mesajınız korunuyor.",
+      "whoStale": "Bu ekip üyesi artık bu projede çalışamıyor. Başka birini seçin; mesajınız korunuyor.",
       "state": {
         "idle": "Boşta",
         "working": "Çalışıyor",

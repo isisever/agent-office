@@ -38,7 +38,7 @@ function el(tag, props = {}, ...kids) {
  *     selectProject: (projectId: string) => void, selectHq: () => void, openBoard: () => void,
  *     openOfficeSettings: () => void, sidebar: () => any, showPanel: (selector: string) => boolean,
  *     appInfo: () => { version: string | null, ready: string | null }, installUpdate: () => void, toggle: () => void,
- *     openDesk: (projectId: string, staffId: string) => Promise<void>, startDesk: (projectId: string, staffId: string, text: string) => Promise<{ ok: boolean }>, activePty: () => string | null, hasSession: () => boolean,
+ *     openDesk: (projectId: string, staffId: string) => Promise<string | null>, startDesk: (projectId: string, staffId: string, text: string) => Promise<{ ok: boolean, failed?: { step: string, why: string, detail: string } }>, activePty: () => string | null, hasSession: () => boolean,
  *     startSession: (projectId: string, plan: { tabMode: 'same' | 'worktree', settings: [string, string][], reuseN?: number }, text: string) => Promise<{ ok: boolean, n: number, failed?: { step: string, why: string, detail: string } }>,
  *     projectSettings: (projectId: string) => void, showAccounts: () => void, isMac: boolean,
  *     commands: (projectId: string) => StudioCommand[],
@@ -151,12 +151,27 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startNote.textContent = t('studio.start.starting');
     const td = teamInfo();
     const who = whoPlan(startWho.value, id, td?.staff || [], td?.projects || []);
-    if (who.kind === 'desk') {
-      let ok = false;
-      try { ok = (await hooks.startDesk(who.projectId, who.staffId, text)).ok; } catch (e) { console.error(e); }
+    if (who.kind === 'stale') {   // the picked member is gone or no longer allowed here: never run it as Me
       startBusy = false;
       startSend.disabled = false;
-      if (ok) { startText.value = ''; startNote.textContent = ''; starting = false; picked = id; refresh(); } else startNote.textContent = t('studio.team.deskFailed');
+      startNote.textContent = t('studio.team.whoStale');
+      draw();
+      startText.focus();
+      return;
+    }
+    if (who.kind === 'desk') {
+      /** @type {{ ok: boolean, failed?: { step: string, why: string, detail: string } }} */
+      let r = { ok: false };
+      try { r = await hooks.startDesk(who.projectId, who.staffId, text); } catch (e) { console.error(e); }
+      startBusy = false;
+      startSend.disabled = false;
+      if (r.ok) { startText.value = ''; startNote.textContent = ''; starting = false; picked = id; refresh(); return; }
+      // the prompt was not sent: it stays in the box, and the note names why
+      if (!startText.value.trim()) startText.value = text;
+      const f = r.failed;
+      const why = f && (f.detail || t(`studio.start.why.${f.why}`));
+      startNote.textContent = f && f.step === 'prompt' ? t('studio.team.deskPromptFailed', { why }) : t('studio.team.deskFailed');
+      startText.focus();
       return;
     }
     const plan = startPlan({ worktree: startWorktree.checked, model: startModel.value, mode: startMode.value }, [...startModel.options].filter((o) => !o.disabled).map((o) => o.value), startLists.get(id)?.caps || null);
@@ -318,9 +333,12 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const td = teamInfo();
     const whoList = td?.teamMode ? whoOptions(td.staff, startProject.value, td.projects) : [];
     const keepWho = startWho.value;
-    startWho.replaceChildren(...whoList.map((o) => el('option', { value: o.value }, o.value === 'me' ? t('studio.team.me') : o.name)));
-    startWho.value = whoList.some((o) => o.value === keepWho) ? keepWho : 'me';
-    startWho.hidden = whoList.length < 2;
+    // a picked member who is no longer valid stays picked (sending refuses with a note), never silently Me
+    const staleName = keepWho && keepWho !== 'me' && !whoList.some((o) => o.value === keepWho) ? (startWho.selectedOptions[0]?.textContent || keepWho) : '';
+    startWho.replaceChildren(...whoList.map((o) => el('option', { value: o.value }, o.value === 'me' ? t('studio.team.me') : o.name)),
+      ...(staleName ? [el('option', { value: keepWho }, staleName)] : []));
+    startWho.value = staleName || whoList.some((o) => o.value === keepWho) ? keepWho : 'me';
+    startWho.hidden = whoList.length < 2 && !staleName;
     startWho.title = t('studio.team.who');
     drawStartModels(proj?.id || '');
     startModel.title = t('chat.pick.modelTitle');

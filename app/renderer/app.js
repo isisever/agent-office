@@ -11,6 +11,7 @@ import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './plat
 import { mountStudio } from './studio.js';
 import { mountKeepAwake } from './keep-awake-button.js';
 import { startStep, startFailure } from '../src/studio-ux.mjs';
+import { deskTarget, deskSend } from '../src/studio-team.mjs';
 import { studioKey, otherExperience, experienceSwitch } from '../src/studio-keys.mjs';
 import { chatShownFor, chatButtonFor } from '../src/chat-view.mjs';
 import { themeChoices, effectiveTheme } from '../src/themes.mjs';
@@ -656,15 +657,19 @@ function withStaff(d) {
     return { id: m.id, name: m.name, busy: at.length > 0, projects: at };
   }) };
 }
-/** v3.83 opens a member's desk in a project and shows it. */
+/**
+ * v3.83 opens a member's desk in a project and shows it.
+ * @returns {Promise<string | null>} the desk's pty id, or null when the desk did not open
+ */
 async function openDesk(projectId, staffId) {
   const r = await (projectId ? api.staff?.desk(projectId, staffId) : api.staff?.personal?.(staffId))?.catch(() => null);
-  if (!r?.ok) { if (r?.error) alert(t(`staff.deskError.${['staff-not-allowed', 'engine', 'git'].includes(r.error) ? r.error : 'failed'}`)); return; }
+  if (!r?.ok || !r.id) { if (r?.error) alert(t(`staff.deskError.${['staff-not-allowed', 'engine', 'git'].includes(r.error) ? r.error : 'failed'}`)); return null; }
   applyProjects(await api.projects.list());
   const [pid, n] = String(r.id).split(':');
   selectProject(pid);
   if (n) selectTab(pid, Number(n));
   setTimeout(focusActive, 50);   // v3.90: the desk's input is ready to type in
+  return tabPtyId(pid, n ? Number(n) : MAIN_TAB);
 }
 async function addProject() {
   try {
@@ -1405,17 +1410,12 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   showPanel: (sel) => Boolean(studio?.showPanel(sel)),
   appInfo: () => ({ version: appVersion, ready: updateVersion }),
   openDesk: (projectId, staffId) => { leaveBoard(); return openDesk(projectId, staffId); },
-  // v3.122 the start screen's Who?: the Office's desk-start path, then the prompt in that desk's session
+  // v3.122 the start screen's Who?: the Office's desk-start path, then the prompt in exactly that desk's session
+  // (never the active one): a bounded retry while its chat starts, 'ok' required, any other answer is a failure
   startDesk: async (projectId, staffId, text) => {
     leaveBoard();
-    await openDesk(projectId, staffId);
-    const pty = activePty();
-    if (!pty || !pty.startsWith(`${projectId}:`)) return { ok: false };
-    if (!text) return { ok: true };
-    for (let i = 0; i < 20; i++) {   // the desk's chat may still be starting
-      try { await api.chat.send(pty, text); return { ok: true }; } catch { await new Promise((r) => setTimeout(r, 500)); }
-    }
-    return { ok: false };
+    const pty = deskTarget(await openDesk(projectId, staffId), projectId);
+    return deskSend({ pty, text, send: (id, x) => api.chat.send(id, x), wait: () => new Promise((r) => setTimeout(r, 400)) });
   },
   installUpdate: () => { if (confirm(t('app.updateConfirm'))) api.update?.install(); },
   toggle: () => setExperience(otherExperience(experience)),
