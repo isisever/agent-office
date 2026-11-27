@@ -2,11 +2,15 @@
 // limits and trust checks. No Electron, no network; src/link.js does the networking, main.js the glue.
 'use strict';
 const crypto = require('crypto');
+// v3.121 the wire and pairing protocol live in link-wire.js (shared with the iPhone worklet); crypto is injected here
+const W = require('./link-wire.js');
+const { PAIR_TTL_MS, MAX_FRAME, MAX_COMMAND, MAX_NAME, CODE_WORDS, WORDS, ESCAPES, CONTROLS, cleanLine, deviceName, isStr, isInt, isId, hex, isHex, normalizeCode, LineReader, encode, validatePair } = W;
+const { makeCode, pairSecrets, pairProof, proofOk, pairTopic } = W.createWire(crypto);
 
 // v3.31: 2 = hello carries the app version and capabilities; a v1 peer gets no message type it does not know
 const PROTOCOL = 2;
 // what a peer may say it understands (hello.caps); unknown names are dropped
-const CAPS = ['res', 'catalog', 'manage', 'accounts', 'report', 'task-status', 'report2', 'revive', 'sess'];
+const CAPS = ['res', 'catalog', 'manage', 'accounts', 'report', 'task-status', 'report2', 'revive', 'sess', 'ctl'];   // v3.121 'ctl': a phone controller
 // what this build sends and understands (v3.32: res and catalog)
 const OUR_CAPS = ['res', 'catalog', 'report', 'manage', 'accounts', 'task-status', 'report2', 'revive', 'sess'];   // v3.48 'task-status' (task-status/task-query/task-cancel, cmd.ttl), 'report2' (larger reports, prs/artifacts/transcriptRef); v3.35 adds 'report', v3.33 'manage' (proj-op), v3.34 'accounts' (login relay)
 // v3.33 what a device allowed to manage may do to a project's boss tab here (proj-op), and why it may be refused
@@ -16,11 +20,6 @@ const PROJ_OP_REASONS = ['not-allowed', 'unknown-project', 'engine', 'busy', 'lo
 // (a quit or crash may never close the stream: UDX alone took ~17 s to notice)
 const HEARTBEAT_MS = 5000;
 const HEARTBEAT_MISSES = 3;
-const PAIR_TTL_MS = 10 * 60 * 1000;      // a pairing code lives 10 minutes
-const MAX_FRAME = 64 * 1024;              // one message on the wire (bytes); a longer line closes the connection
-const MAX_COMMAND = 8 * 1024;             // a remote command's text (UTF-8 bytes)
-const MAX_NAME = 40;                      // device names
-const CODE_WORDS = 5;                     // 5 words of 256 = 40 bits, stretched by scrypt (see pairSecrets)
 // project handoff (contract v3.29)
 const MAX_BUNDLE = 200 * 1024 * 1024;     // a git bundle sent over the link
 const MAX_PACK = 100 * 1024 * 1024;       // the session data (transcripts, memory, facts, settings)
@@ -29,75 +28,7 @@ const HANDOFF_REASONS = ['declined', 'not-allowed', 'busy', 'engine', 'not-git',
 const APPLIED = ['restored', 'branch-only'];
 const HANDOFF_STATUS = ['applied', 'not-applied', 'unknown'];
 
-// 256 short, distinct, easy-to-type English words: a code word is one byte.
-const WORDS = (
-  'acid aged also area army away baby back bake ball band bank barn base bath bead beam bean bear beef bell belt ' +
-  'bend best bike bird bite blue boat body bold bone book boot bowl brew bulb bush cake calm camp card care cart ' +
-  'case cash cave cell chef chin city clay clip club coal coat code coin cold cook cool copy cord corn cost crab ' +
-  'crew crop cube cure dark dart dash data dawn deal deck deep deer desk dial dice dish dock door dove draw drum ' +
-  'duck dune dust easy edge epic exit face fact fair farm fast fern film fire fish flag flat flow foam fold folk ' +
-  'food fork form fort frog fuel game gate gear gift glow glue goat gold golf good gown grid grin gulf hair half ' +
-  'hall hand harp hawk heat herb hero hill hint hive hold hole home hood hook horn host hour huge icon idea inch ' +
-  'iron item jade jazz join joke jump keen kelp kept kick kind king kite knee knot lace lady lake lamb lamp land ' +
-  'lane lark lava lawn leaf lens life lime line link lion list loaf loft logo loop lord luck lung mail main malt ' +
-  'mane mask meal meat menu mild milk mill mint mist mode moon moss moth mule nail navy neck nest news nice node ' +
-  'note oath oven pack page palm park path peak pear pine pink pipe plan plum poem pond pony pool port pull pump ' +
-  'quiz raft rail rain ramp reed reef rice ring road robe rock roof room rope rose ruby sage sail salt sand seal ' +
-  'seed ship silk sink snow soap sock sofa soil song soup star stem swan tail tank team tent tide tile toad tree'
-).split(' ').slice(0, 256);
-if (WORDS.length !== 256 || new Set(WORDS).size !== 256) throw new Error('link-core: word list must have 256 distinct words');
-
-/** A fresh one-time pairing code: `word-word-word-word-word`. */
-function makeCode(rand = crypto.randomBytes) {
-  return [...rand(CODE_WORDS)].map((b) => WORDS[b]).join('-');
-}
-
-/** A typed code in canonical form, or null when it is not a valid code (any separator, any case). */
-function normalizeCode(text) {
-  const words = String(text ?? '').toLowerCase().split(/[^a-z]+/).filter(Boolean);
-  if (words.length !== CODE_WORDS || !words.every((w) => WORDS.includes(w))) return null;
-  return words.join('-');
-}
-
-/**
- * The pairing topic and proof key from a code. scrypt makes guessing a code from the (public) DHT topic
- * cost about 2^40 slow hashes, far longer than the code's 10 minutes.
- */
-function pairSecrets(code) {
-  const out = crypto.scryptSync(code, 'agent-office/link/pair/v1', 64, { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
-  return { topic: out.subarray(0, 32), key: out.subarray(32) };
-}
-
-/** Proves knowledge of the code, bound to both Noise keys of this connection (so it cannot be replayed elsewhere). */
-function pairProof(key, role, fromPub, toPub) {
-  return crypto.createHmac('sha256', key).update(`${role}\n${hex(fromPub)}\n${hex(toPub)}`).digest('hex');
-}
-function proofOk(key, role, fromPub, toPub, proof) {
-  if (typeof proof !== 'string' || !/^[0-9a-f]{64}$/.test(proof)) return false;
-  return crypto.timingSafeEqual(Buffer.from(pairProof(key, role, fromPub, toPub), 'hex'), Buffer.from(proof, 'hex'));
-}
-
-/** The discovery topic of one pair: from the secret only the two devices hold. */
-function pairTopic(secretHex) {
-  return crypto.createHash('sha256').update('agent-office/link/topic/v1\n').update(Buffer.from(secretHex, 'hex')).digest();
-}
-
-const hex = (b) => (typeof b === 'string' ? b : Buffer.from(b).toString('hex'));
-const isHex = (s, bytes) => typeof s === 'string' && s.length === bytes * 2 && /^[0-9a-f]+$/.test(s);
-
 // --- text hygiene
-
-// ESC sequences (CSI, OSC, DCS/APC/PM/SOS strings, two-byte escapes) and C1 CSI, then every other control char
-// eslint-disable-next-line no-control-regex
-const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]PX^_][\s\S]*?(?:\x07|\x1b\\|$)|\x1b[@-Z\\-_]|\x9b[0-?]*[ -/]*[@-~]/g;
-// eslint-disable-next-line no-control-regex
-const CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
-
-/** One display line: no escapes or control characters, collapsed spaces, at most `max` characters. */
-function cleanLine(s, max) {
-  const t = String(s ?? '').replace(ESCAPES, '').replace(CONTROLS, '').replace(/\s+/g, ' ').trim();
-  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
-}
 
 /**
  * A remote command's text, made safe to type into the claude prompt: escapes and control characters removed (tabs
@@ -160,9 +91,6 @@ const TASK_TTL_MAX = 4 * 3600 * 1000;   // a remote HQ task may wait this long i
 const cleanWhy = (w) => (w && typeof w === 'object' && WAIT_STATES.includes(w.state) && isInt(w.pos, 99) && isInt(w.len, 99) && isInt(w.expiresIn, TASK_TTL_MAX)
   ? { state: w.state, pos: w.pos, len: w.len, expiresIn: w.expiresIn } : null);
 
-/** A device name: one clean line, 1-40 chars, else the fallback. */
-const deviceName = (s, fallback = 'Device') => cleanLine(s, MAX_NAME) || fallback;
-
 // --- rate limit: a token bucket per device (burst 3, one more every 10 s: about 6 a minute)
 
 class RateLimiter {
@@ -184,9 +112,6 @@ class RateLimiter {
 const STATUS = ['working', 'idle', 'approval'];
 const CMD_STATUS = ['queued', 'delivered', 'rejected'];
 const REASONS = ['cancelled', 'not-allowed', 'unknown-project', 'engine', 'not-running', 'too-large', 'empty', 'not-text', 'rate-limited', 'queue-full', 'expired', 'removed', 'logged-out', 'offline', 'no-report', 'locked', 'stopped-here'];   // v3.35 reasons go only to peers with cap 'report'
-const isStr = (v, max) => typeof v === 'string' && v.length <= max;
-const isInt = (v, max = Number.MAX_SAFE_INTEGER) => Number.isInteger(v) && v >= 0 && v <= max;
-const isId = (v) => typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(v);
 
 /** A received snapshot reduced to the known fields (strings cleaned and cut); null when malformed. */
 function cleanSnapshot(s) {
@@ -527,36 +452,6 @@ function validateMessage(m) {
   }
 }
 
-function validatePair(m) {
-  if (!m || typeof m !== 'object') return null;
-  if (m.t === 'pair-hello' && isStr(m.name, 200) && typeof m.proof === 'string') return { t: 'pair-hello', name: deviceName(m.name), proof: m.proof };
-  if (m.t === 'pair-ok' && isStr(m.name, 200) && typeof m.proof === 'string' && isHex(m.secret, 32)) return { t: 'pair-ok', name: deviceName(m.name), proof: m.proof, secret: m.secret };
-  return null;
-}
-
-/** Splits a byte stream into lines; a line longer than MAX_FRAME makes `push` return false (close the stream). */
-class LineReader {
-  constructor(onLine, max = MAX_FRAME) { this.buf = ''; this.onLine = onLine; this.max = max; }
-  push(chunk) {
-    this.buf += chunk.toString('utf8');
-    let i;
-    while ((i = this.buf.indexOf('\n')) >= 0) {
-      const line = this.buf.slice(0, i);
-      this.buf = this.buf.slice(i + 1);
-      if (Buffer.byteLength(line) > this.max) return false;
-      let m;
-      try { m = JSON.parse(line); } catch { continue; }
-      this.onLine(m);
-    }
-    return Buffer.byteLength(this.buf) <= this.max;
-  }
-}
-/** One message as a wire line, or null when it would exceed MAX_FRAME. */
-function encode(m) {
-  const s = `${JSON.stringify(m)}\n`;
-  return Buffer.byteLength(s) > MAX_FRAME ? null : s;
-}
-
 // --- the trust list (devices.json; the secrets live apart, encrypted)
 
 /** @typedef {{ pub: string, name: string, addedAt: number, own: boolean, allowHandoff: boolean, allowAccounts: boolean }} Device */
@@ -568,31 +463,41 @@ function normalizeDevices(raw) {
   for (const d of Array.isArray(raw) ? raw : []) {
     if (!d || !isHex(d.pub, 32) || out.some((o) => o.pub === d.pub)) continue;
     out.push({ pub: d.pub, name: deviceName(d.name), addedAt: isInt(d.addedAt) ? d.addedAt : 0, own: d.own !== false,
-      allowHandoff: d.allowHandoff === true, allowAccounts: d.allowAccounts === true });   // their own opt-ins, both OFF by default
+      allowHandoff: d.allowHandoff === true, allowAccounts: d.allowAccounts === true,   // their own opt-ins, both OFF by default
+      // v3.121 a phone controller is never `own` (never a remote office); `ctl` is its sealed state (see sealOwn)
+      ...(d.kind === 'controller' ? { kind: 'controller', own: false, allowHandoff: false, allowAccounts: false, ctl: d.ctl !== false } : {}) });
   }
   return out;
 }
 const OWN_VERSION = 1;   // the marker the host seals with the own set: the migration of older pairings ran
 const PAIR_CONFIRM_MS = 2 * 60 * 1000;   // v3.101 a pairing connection waits this long for the two people to confirm
 /** v3.101 The keys of the devices that are `own` (paired and not paused): what the host seals inside the keychain-encrypted keys file. */
-const ownKeys = (devices) => devices.filter((d) => d.own === true).map((d) => d.pub);
+const ownKeys = (devices) => devices.filter((d) => d.own === true && d.kind !== 'controller').map((d) => d.pub);
 /**
  * v3.101 (the v3.97 sealing) The trust list as read from disk. devices.json is a plain file that anything running as
  * this user can edit, so a device is `own` only when its key is also in the sealed set (kept in the encrypted keys
  * file, written only by the app: at pairing, at resume, and once by the migration). Anything else, and a sealed set
  * that is missing or malformed, reads as paused.
  */
-function sealOwn(raw, sealed) {
+function sealOwn(raw, sealed, sealedCtl = []) {
   const ok = new Set(Array.isArray(sealed) ? sealed.filter((k) => isHex(k, 32)) : []);
-  return normalizeDevices(raw).map((d) => ({ ...d, own: d.own && ok.has(d.pub) }));
+  const ctl = new Set(Array.isArray(sealedCtl) ? sealedCtl.filter((k) => isHex(k, 32)) : []);
+  // v3.121 a controller is sealed the same way, in its own set: an entry devices.json alone claims is inert
+  return normalizeDevices(raw).map((d) => (d.kind === 'controller' ? { ...d, ctl: d.ctl && ctl.has(d.pub) } : { ...d, own: d.own && ok.has(d.pub) }));
 }
+/** v3.121 The keys of the paired phone controllers (sealed next to the own set). */
+const ctlKeys = (devices) => devices.filter((d) => d.kind === 'controller' && d.ctl === true).map((d) => d.pub);
+/** v3.121 May this device act as a phone controller here (read the controller view, type HQ turns)? */
+const isController = (devices, secrets, remotePub) => { const d = trusted(devices, secrets, remotePub); return Boolean(d && d.kind === 'controller' && d.ctl === true); };
+/** v3.121 Desktops only: controllers never appear among the remote offices, office_machines or HQ targets. */
+const offices = (devices) => devices.filter((d) => d.kind !== 'controller');
 /**
  * v3.101 The one-time migration (a keys file without the OWN_VERSION marker): every device paired before this version
  * becomes `own`, whatever its old switches said. → { devices, names } (names: the ones that really are paired, i.e.
  * have a stored secret; the notice lists them).
  */
 function migrateOwn(raw, secrets) {
-  const devices = normalizeDevices(raw).map((d) => ({ ...d, own: true }));
+  const devices = normalizeDevices(raw).map((d) => (d.kind === 'controller' ? d : { ...d, own: true }));
   return { devices, names: devices.filter((d) => secrets && isHex(secrets[d.pub], 32)).map((d) => d.name) };
 }
 /** The trusted device for a remote Noise key, or null. A device without a stored secret is not trusted. */
@@ -603,7 +508,7 @@ function trusted(devices, secrets, remotePub) {
 /** v3.101 The one effective state: paired (a stored secret) and not paused. */
 const isOwn = (devices, secrets, remotePub) => trusted(devices, secrets, remotePub)?.own === true;
 /** v3.101 Is this device in the list and paused? (What it still has queued here is refused when the queue is pumped.) */
-const isPaused = (devices, remotePub) => devices.some((d) => d.pub === hex(remotePub || '') && d.own === false);
+const isPaused = (devices, remotePub) => devices.some((d) => d.pub === hex(remotePub || '') && d.own === false && d.kind !== 'controller');
 /** May this device type into our tabs (commands and tasks)? Paired and not paused. */
 const mayCommand = (devices, secrets, remotePub) => isOwn(devices, secrets, remotePub);
 /** v3.97 May a task from this device run in a project that answers or skips its permission prompts? Paired and not paused. */
@@ -648,10 +553,10 @@ const logEntry = (at, device, project, text, outcome) => ({ at: new Date(at).toI
 module.exports = {
   PROTOCOL, CAPS, OUR_CAPS, HEARTBEAT_MS, HEARTBEAT_MISSES, PAIR_TTL_MS, MAX_FRAME, MAX_COMMAND, WORDS, CODE_WORDS, REASONS,
   MAX_BUNDLE, MAX_PACK, CHUNK, HANDOFF_REASONS, HANDOFF_STATUS, PROJ_OPS, PROJ_OP_REASONS,
-  makeCode, normalizeCode, pairSecrets, pairProof, proofOk, pairTopic, hex, isHex,
+  makeCode, normalizeCode, pairSecrets, pairProof, proofOk, pairTopic, hex, isHex, MAX_NAME,
   cleanLine, sanitizeCommand, markedCommand, markedTask, cleanReport, fitReport, REPORT_MAX, REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK, TASK_STATES, WAIT_STATES, TASK_TTL_MAX, deviceName, RateLimiter,
   cleanSnapshot, validateMessage, validatePair, LineReader, encode,
-  normalizeDevices, ownKeys, sealOwn, migrateOwn, isOwn, isPaused, OWN_VERSION, PAIR_CONFIRM_MS, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, maySessions,
+  normalizeDevices, ownKeys, sealOwn, ctlKeys, isController, offices, migrateOwn, isOwn, isPaused, OWN_VERSION, PAIR_CONFIRM_MS, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, maySessions,
   SESS_REASONS, SESS_BACKFILL_ITEMS, SESS_BACKFILL_BYTES, SESS_FRAME_BYTES, SESS_FRAME_ITEMS, SESS_FRAMES_PER_SEC, SESS_PER_DEVICE, SESS_IDLE_MS, SESS_QUEUE_MAX, SESS_OPENS_PER_MIN,
   cleanSessItem, fitSessItem, sessFrames, sessBackfill, snapshotOf, snapshotFor, logEntry,
   cleanRes, cleanCatalog, resOf, resChanged, typingReady,
