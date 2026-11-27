@@ -49,17 +49,30 @@ function findFile(dir, base) {
   return null;
 }
 
-/** Copies whisper-server and the libraries next to it (the Windows and Linux assets ship .dll / .so files). */
-function copyBinDir(serverPath, dest) {
+const LIB_RE = /\.(dll|so(\.\d+)*|dylib)$/;
+
+/**
+ * Copies whisper-server and the libraries next to it into `dest` (one flat folder). The Linux asset names its libraries
+ * through symlinks (libwhisper.so.1 → libwhisper.so.1.9.6) and whisper-server loads them by the link name from its own
+ * folder ($ORIGIN), so a link is copied as the file it points to under the link's name. The Windows asset keeps the
+ * DLLs next to whisper-server.exe in Release/; any library elsewhere in the extracted tree is collected too.
+ */
+export function copyBinDir(serverPath, dest, root = path.dirname(serverPath)) {
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
-  const dir = path.dirname(serverPath);
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (!e.isFile()) continue;
-    if (e.name === path.basename(serverPath) || /\.(dll|so(\.\d+)*|dylib)$/.test(e.name)) {
-      fs.copyFileSync(path.join(dir, e.name), path.join(dest, e.name));
+  const want = (name) => name === path.basename(serverPath) || LIB_RE.test(name);
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!want(e.name) || fs.existsSync(path.join(dest, e.name))) continue;
+      let st;
+      try { st = fs.statSync(p); } catch { continue; }   // a dangling link
+      if (st.isFile()) fs.copyFileSync(fs.realpathSync(p), path.join(dest, e.name));
     }
-  }
+  };
+  walk(path.dirname(serverPath));
+  if (path.resolve(root) !== path.resolve(path.dirname(serverPath))) walk(root);
   fs.chmodSync(path.join(dest, path.basename(serverPath)), 0o755);
 }
 
@@ -82,7 +95,7 @@ async function fetchAsset(key, dest) {
     const exe = key.startsWith('win') ? 'whisper-server.exe' : 'whisper-server';
     const server = findFile(out, exe);
     if (!server) throw new Error(`${exe} is not in ${a.name}`);
-    copyBinDir(server, dest);
+    copyBinDir(server, dest, out);
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }

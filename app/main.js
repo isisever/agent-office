@@ -5854,7 +5854,7 @@ async function createWindow() {
   win.once('ready-to-show', () => win.show());
   win.on('focus', onFocus);
   if (IS_WIN) win.on('focus', () => win?.flashFrame(false));
-  win.on('closed', () => { killAll(); asleep.clear(); clearInterval(poll); clearInterval(usagePoll); clearInterval(sleepPoll); clearInterval(turnPoll); isLoaded = false; win = null; });
+  win.on('closed', () => { killAll(); asleep.clear(); clearInterval(poll); clearInterval(usagePoll); clearInterval(sleepPoll); clearInterval(turnPoll); isLoaded = false; win = null; voice?.stop(); });
 
   // The folder from the command line is added/activated; if there are no projects, ask for a folder.
   const arg = argProject();
@@ -5995,27 +5995,31 @@ function voiceApi() {
   });
   return voice;
 }
-ipcMain.handle('voice:settings', () => ({ ...voiceSettings(), status: voiceApi().status() }));
-ipcMain.handle('voice:setSettings', (_e, p) => {
+/** voice:* is accepted only from the app's own window (contract v3.119). */
+const fromWin = (e) => Boolean(win && !win.isDestroyed() && e?.sender === win.webContents);
+ipcMain.handle('voice:settings', async (e) => (fromWin(e) ? { ...voiceSettings(), status: await voiceApi().status() } : null));
+ipcMain.handle('voice:setSettings', async (e, p) => {
+  if (!fromWin(e)) return null;
   const next = VC.normalizeSettings({ ...voiceSettings(), ...(p && typeof p === 'object' ? p : {}) });
   commit({ ...state, voice: next });
   if (!next.enabled) voice?.stop();
-  return { ...next, status: voiceApi().status() };
+  return { ...next, status: await voiceApi().status() };
 });
-ipcMain.handle('voice:start', async () => {
+ipcMain.handle('voice:start', async (e) => {
+  if (!fromWin(e)) return { ok: false, error: 'failed' };
   if (!voiceSettings().enabled) return { ok: false, error: 'off' };
   if (IS_MAC && systemPreferences.getMediaAccessStatus('microphone') !== 'granted') {
     const ok = await systemPreferences.askForMediaAccess('microphone').catch(() => false);
     if (!ok) return { ok: false, error: 'mic-denied' };
   }
-  return { ok: true, id: voiceApi().begin() };
+  return { ok: true, id: voiceApi().begin() };   // replaces any recording still open
 });
-ipcMain.on('voice:chunk', (_e, id, data) => { if (typeof id === 'string') voice?.chunk(id, data); });
-ipcMain.on('voice:cancel', (_e, id) => { if (typeof id === 'string') voice?.cancel(id); });
-ipcMain.handle('voice:stop', (_e, id) => (typeof id === 'string' ? voiceApi().finish(id) : { ok: false, error: 'unknown' }));
-ipcMain.handle('voice:downloadModel', async (_e, id) => {
-  if (!Object.hasOwn(VC.MODELS, id)) return { ok: false, error: 'model' };
-  try { await voiceApi().ensureModel(id); return { ok: true }; } catch (e) { return { ok: false, error: String(e?.message) === 'checksum' ? 'checksum' : 'failed' }; }
+ipcMain.on('voice:chunk', (e, id, data) => { if (fromWin(e) && typeof id === 'string') voice?.chunk(id, data); });
+ipcMain.on('voice:cancel', (e, id) => { if (fromWin(e) && typeof id === 'string') voice?.cancel(id); });
+ipcMain.handle('voice:stop', (e, id) => (fromWin(e) && typeof id === 'string' ? voiceApi().finish(id) : { ok: false, error: 'unknown' }));
+ipcMain.handle('voice:downloadModel', async (e, id) => {
+  if (!fromWin(e) || !Object.hasOwn(VC.MODELS, id)) return { ok: false, error: 'model' };
+  try { await voiceApi().ensureModel(id); return { ok: true }; } catch (err) { return { ok: false, error: String(err?.message) === 'checksum' ? 'checksum' : 'failed' }; }
 });
 
 ipcMain.handle('prefs:get', () => prefs());

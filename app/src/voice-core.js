@@ -9,6 +9,8 @@ const path = require('node:path');
 const SAMPLE_RATE = 16000;
 /** At most this much audio is kept for one recording (5 minutes of 16 kHz PCM16); the rest is dropped. */
 const MAX_PCM_BYTES = SAMPLE_RATE * 2 * 300;
+/** One chunk from the renderer is ~100 ms (3.2 KB); anything over 1 s of audio in one message is refused. */
+const MAX_CHUNK_BYTES = SAMPLE_RATE * 2;
 /** whisper-server is stopped after this long without a transcription. */
 const IDLE_MS = 5 * 60 * 1000;
 
@@ -131,7 +133,7 @@ function binaryPath({ packaged, resourcesPath, appDir, platform, arch }) {
 }
 
 module.exports = {
-  SAMPLE_RATE, MAX_PCM_BYTES, IDLE_MS, HF_REVISION, MODELS, LANGUAGES, SHORTCUTS, DEFAULTS,
+  SAMPLE_RATE, MAX_PCM_BYTES, MAX_CHUNK_BYTES, IDLE_MS, HF_REVISION, MODELS, LANGUAGES, SHORTCUTS, DEFAULTS,
   modelUrl, normalizeSettings, wavHeader, toWav, serverArgs, requestLanguage, retryLanguage, transcriptOf,
   sha256File, modelOk, mediaDecision, binaryPath,
 };

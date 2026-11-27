@@ -13,9 +13,10 @@ let settings = { enabled: true, language: 'auto', model: 'large-v3-turbo-q5_0', 
 const composers = new WeakMap();
 /** 'idle' | 'starting' | 'rec' | 'busy' */
 let phase = 'idle';
-/** @type {{ id: string, target: HTMLElement | null, stream: MediaStream, ctx: AudioContext, byKey: boolean } | null} */
+/** @type {{ id: string, target: HTMLElement | null, stream: MediaStream, ctx: AudioContext, node: AudioWorkletNode, flushed: (() => void) | null, byKey: boolean } | null} */
 let rec = null;
 let stopWanted = false;
+let startingByKey = false;
 let cancelWanted = false;
 const buttons = new Set();
 let hud = null;
@@ -81,7 +82,7 @@ async function start(target, byKey) {
   const v = api();
   if (!v || phase !== 'idle' || !settings.enabled) return;
   setPhase('starting');
-  stopWanted = false; cancelWanted = false;
+  stopWanted = false; cancelWanted = false; startingByKey = byKey;
   const r = await v.start().catch(() => ({ ok: false, error: 'failed' }));
   if (!r?.ok) { setPhase('idle'); showHud(t(`voice.err.${r?.error || 'failed'}`), { ms: 6000 }); return; }
   try {
@@ -89,12 +90,15 @@ async function start(target, byKey) {
     const ctx = new AudioContext();
     await ctx.audioWorklet.addModule(new URL('./voice-worklet.js', import.meta.url).href);
     const node = new AudioWorkletNode(ctx, 'voice-capture');
-    node.port.onmessage = (e) => { if (rec?.id === r.id) v.chunk(r.id, e.data); };
+    node.port.onmessage = (e) => {
+      if (e.data === 'flushed') { rec?.flushed?.(); return; }
+      if (e.data instanceof ArrayBuffer) v.chunk(r.id, e.data);
+    };
     const mute = ctx.createGain();
     mute.gain.value = 0;   // the worklet must be pulled by the graph; nothing is heard
     ctx.createMediaStreamSource(stream).connect(node);
     node.connect(mute).connect(ctx.destination);
-    rec = { id: r.id, target, stream, ctx, byKey };
+    rec = { id: r.id, target, stream, ctx, node, flushed: null, byKey };
   } catch (e) {
     console.error(e);
     v.cancel(r.id);
@@ -120,10 +124,14 @@ function cancel() {
 async function stop() {
   if (phase === 'starting') { stopWanted = true; return; }
   if (phase !== 'rec' || !rec) return;
-  const { id, target } = rec;
+  const cur = rec;
+  const { id, target } = cur;
+  setPhase('busy');
+  // the worklet's last partial block: ask for it and wait briefly before the audio is closed
+  for (const tr of cur.stream.getTracks()) tr.stop();
+  await new Promise((res) => { const tm = setTimeout(res, 300); cur.flushed = () => { clearTimeout(tm); res(undefined); }; cur.node.port.postMessage('flush'); });
   teardown();
   rec = null;
-  setPhase('busy');
   showHud(t('voice.transcribing'));
   const r = await api().stop(id).catch(() => ({ ok: false, error: 'failed' }));
   setPhase('idle');
@@ -144,9 +152,7 @@ function insert(el, text) {
   try { el.setSelectionRange(caret, caret); } catch {}
   el.dispatchEvent(new Event('input', { bubbles: true }));
   if (!settings.sendAfter) return;
-  const send = composers.get(el);
-  if (send) send();
-  else el.form?.requestSubmit();
+  composers.get(el)?.();   // only a registered composer is ever sent
 }
 
 /** Registers a composer's own send, used when "Send after speaking" is on. */
@@ -200,7 +206,7 @@ export function initVoice() {
   }, true);
   window.addEventListener('keyup', (e) => {
     if (phase !== 'rec' && phase !== 'starting') return;
-    if (!(rec?.byKey ?? true)) return;
+    if (!(rec ? rec.byKey : startingByKey)) return;   // only a recording the key started ends on its release
     if (e.code === 'Space' || ['Control', 'Alt', 'Shift'].includes(e.key)) { e.preventDefault(); e.stopPropagation(); stop(); }
   }, true);
   window.addEventListener('blur', () => { if (rec?.byKey) stop(); });
@@ -223,7 +229,7 @@ function renderModelStatus(p) {
     return;
   }
   const st = settings.status?.models?.[settings.model];
-  rows.modelState.textContent = !settings.status?.binary ? t('voice.err.no-binary') : st?.present ? t('voice.settings.modelReady') : t('voice.settings.modelMissing', { mb: Math.round((st?.size || 0) / 1e6) });
+  rows.modelState.textContent = !settings.status?.binary ? t(`voice.err.${settings.status?.binaryState === 'broken-binary' ? 'broken-binary' : 'no-binary'}`) : st?.present ? t('voice.settings.modelReady') : t('voice.settings.modelMissing', { mb: Math.round((st?.size || 0) / 1e6) });
   rows.download.hidden = Boolean(st?.present) || !settings.status?.binary;
 }
 

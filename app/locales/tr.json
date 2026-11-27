@@ -1592,6 +1592,8 @@
       "off": "Sesli giriş kapalı (Ayarlar).",
       "mic-denied": "Agent Office mikrofonu kullanamıyor. Sistem Ayarları → Gizlilik ve Güvenlik → Mikrofon'dan izin ver.",
       "mic": "Mikrofon açılamadı.",
+      "broken-binary": "Konuşma tanıma var ama bu bilgisayarda çalışmıyor.",
+      "cancelled": "İptal edildi.",
       "no-binary": "Bu sürümde konuşma tanıma yok.",
       "checksum": "Konuşma modeli bozuk indi; yeniden dene.",
       "failed": "Konuşma tanıma başarısız oldu.",

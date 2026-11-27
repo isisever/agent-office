@@ -1620,6 +1620,8 @@
       "off": "Voice input is off (Settings).",
       "mic-denied": "Agent Office may not use the microphone. Allow it in System Settings → Privacy & Security → Microphone.",
       "mic": "The microphone could not be opened.",
+      "broken-binary": "Speech recognition is included but does not run on this computer.",
+      "cancelled": "Cancelled.",
       "no-binary": "Speech recognition is not included in this build.",
       "checksum": "The speech model download was damaged; try again.",
       "failed": "Speech recognition failed.",

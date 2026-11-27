@@ -319,7 +319,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
         drafts.delete(r.key);
         api.link.send(pub, r.id, input.value).then(() => renderRemote()).catch((err) => console.error(err));
         input.value = '';
-      } }, input, micButton(input), el('button', { class: 'sb-btn', type: 'submit' }, t('devices.send'))),   // v3.119 mic
+      } }, input, micButton(input, () => input.form?.requestSubmit()), el('button', { class: 'sb-btn', type: 'submit' }, t('devices.send'))),   // v3.119 mic
       ...out.map((o) => el('div', { class: `sb-note cmd-${o.status}` },
         `${o.firstLine} — ${o.status === 'rejected' ? t('devices.cmd.rejected', { reason: t(`devices.reason.${o.reason}`) }) : t(`devices.cmd.${o.status}`)}`)));
   }
