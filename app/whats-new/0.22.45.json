@@ -1,0 +1,37 @@
+{
+  "version": "0.22.45",
+  "_note": "Placeholder: these features are on another branch and arrive in 0.22.45. Review the texts and targets when that branch merges.",
+  "items": [
+    {
+      "id": "studio-settings",
+      "experience": "studio",
+      "title": { "en": "Settings, the Studio way", "tr": "Studio'ya özel Ayarlar" },
+      "body": {
+        "en": "Studio now has its own Settings page, with every Office setting grouped and searchable.",
+        "tr": "Studio'nun artık kendi Ayarlar sayfası var; Ofis'in tüm ayarları gruplanmış ve aranabilir halde."
+      },
+      "try": { "label": { "en": "Open Settings", "tr": "Ayarları aç" }, "action": "open-settings" }
+    },
+    {
+      "id": "keep-awake-title-bar",
+      "experience": "both",
+      "title": { "en": "Keep awake from the title bar", "tr": "Başlık çubuğundan uyanık tutun" },
+      "body": {
+        "en": "Keep the Mac awake while agents work, straight from the title bar, without opening Settings.",
+        "tr": "Ajanlar çalışırken Mac'i uyanık tutmayı Ayarlar'ı açmadan doğrudan başlık çubuğundan yönetin."
+      },
+      "try": { "label": { "en": "Show the setting", "tr": "Ayarı göster" }, "action": "open-settings:keep-awake" },
+      "target": "[data-settings-section=\"keep-awake\"]"
+    },
+    {
+      "id": "team-in-studio",
+      "experience": "studio",
+      "title": { "en": "Your team in Studio", "tr": "Ekibiniz Studio'da" },
+      "body": {
+        "en": "The Team panel now opens in Studio too, so you can see and manage your staff without switching back to the Office.",
+        "tr": "Ekip paneli artık Studio'da da açılıyor; ekibinizi Ofis'e geri dönmeden görüp yönetebilirsiniz."
+      },
+      "try": { "label": { "en": "Open Team", "tr": "Ekibi aç" }, "action": "open-team" }
+    }
+  ]
+}
