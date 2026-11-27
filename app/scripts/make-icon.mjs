@@ -28,7 +28,7 @@ const opt = name => {
   return i >= 0 ? argv[i + 1] : undefined
 }
 const flag = name => argv.includes(name)
-const variant = opt('--variant') ?? 'legacy'
+const variant = opt('--variant') ?? 'B'
 const outDir = resolve(opt('--out') ?? join(root, 'build'))
 
 // ---------- colours ----------
