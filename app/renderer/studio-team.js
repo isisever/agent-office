@@ -7,6 +7,7 @@ import { icon } from './studio-icons.js';
 import { TEAM_TABS } from '../src/studio-team-page.mjs';
 import { deptLabel } from '../src/staff-view.mjs';
 import { drawRoles } from './studio-team-roles.js';
+import { drawMembers } from './studio-team-members.js';
 
 const SYNC_MS = 2000;   // live states (working, needs you) and changes made elsewhere follow within 2 s
 
@@ -29,7 +30,7 @@ const SYNC_MS = 2000;   // live states (working, needs you) and changes made els
  */
 
 /** @type {Record<string, TabDraw>} the tabs' views (renderer/studio-team-*.js) */
-const views = { roles: drawRoles };
+const views = { members: drawMembers, roles: drawRoles };
 
 /**
  * @param {{ el: TeamView['el'], t: TeamView['t'], host: HTMLElement, hooks: TeamHooks }} o

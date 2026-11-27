@@ -185,7 +185,22 @@
       "hireTitle": "İşe al: {role}",
       "hireText": "Yeni bir {role}. Bir ad, bir departman, bir hesap ve çalışabileceği projeleri seçin.",
       "hireSave": "Ekibe ekle",
-      "hireHint": "Rolün beceri paketleri açık; her şey sonradan Düzenle ile değiştirilebilir."
+      "hireHint": "Rolün beceri paketleri açık; her şey sonradan Düzenle ile değiştirilebilir.",
+      "count": "Ekip üyeleri: {n}",
+      "addMember": "Üye ekle",
+      "noMembersTitle": "Ekipte henüz kimse yok",
+      "noMembersText": "Hazır rollerden işe alın ya da bir işi anlatıp rol sihirbazının rol yazmasını sağlayın.",
+      "browseRoles": "Rollere göz at",
+      "noProjects": "Proje yok",
+      "openDesk": "Masayı aç",
+      "pickProject": "Masayı şu projede aç:",
+      "edit": "Düzenle",
+      "remove": "Çıkar",
+      "removeGone": "Bu üye artık ekipte değil.",
+      "stateIdle": "Boşta",
+      "stateWorking": "Çalışıyor",
+      "stateNeeds": "Sizi bekliyor",
+      "stateAsleep": "Uykuda"
     }
   },
   "app": {
