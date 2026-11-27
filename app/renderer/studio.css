@@ -518,3 +518,25 @@ body.studio .chat-ctx { display: inline-grid; place-items: center; width: 22px; 
 body.studio .chat-ctx-bg { fill: none; stroke: var(--st-border-strong); stroke-width: 2.5; }
 body.studio .chat-ctx-fg { fill: none; stroke: var(--st-muted); stroke-width: 2.5; stroke-linecap: round; }
 body.studio .chat-ctx.high .chat-ctx-fg { stroke: var(--st-accent); }
+
+/* ---- v3.123 What's new card in Studio: Studio's raised card, radius, shadow and fonts ---- */
+body.studio .wn-card {
+  background: var(--st-raised); color: var(--st-text);
+  border: 1px solid var(--st-border); border-radius: var(--st-radius-l);
+  box-shadow: var(--st-shadow); font-family: var(--st-font); font-size: 13.5px;
+  padding: 22px 24px 16px; gap: 10px;
+}
+body.studio .wn-eyebrow { color: var(--st-muted); font-weight: 500; letter-spacing: 0; font-size: 12px; }
+body.studio .wn-title { font-family: var(--st-serif); font-weight: 500; font-size: 22px; }
+body.studio .wn-body { color: var(--st-muted); opacity: 1; }
+body.studio .wn-foot { border-top: 1px solid var(--st-border); }
+body.studio .wn-dot.on { background: var(--st-accent); }
+body.studio .wn-btn { border: 1px solid var(--st-border-strong); border-radius: var(--st-radius-s); padding: 6px 12px; }
+body.studio .wn-btn:hover { background: var(--st-hover); }
+body.studio .wn-btn.primary { background: var(--st-accent); color: var(--st-on-accent); border-color: var(--st-accent); }
+body.studio .wn-btn.wn-skip { border-color: transparent; color: var(--st-muted); }
+body.studio .wn-spot { border-color: var(--st-accent); border-radius: var(--st-radius-s); }
+body.studio .wn-tip {
+  background: var(--st-raised); color: var(--st-text); border: 1px solid var(--st-border);
+  border-radius: var(--st-radius-s); box-shadow: var(--st-shadow); font-family: var(--st-font);
+}

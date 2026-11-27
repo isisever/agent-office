@@ -48,7 +48,8 @@
       "removeProject": "Remove project from the list",
       "projects": "Edit projects (Office list)",
       "settings": "Settings",
-      "office": "Go to the Office"
+      "office": "Go to the Office",
+      "whatsNew": "What's new"
     },
     "cmdKeys": {
       "team": "staff members desks roles wizard",
@@ -68,7 +69,8 @@
       "removeProject": "delete remove project",
       "projects": "edit rename group usage",
       "settings": "preferences language theme",
-      "office": "experience switch back"
+      "office": "experience switch back",
+      "whatsNew": "whats new release notes changes update tour features"
     },
     "untitled": "New session",
     "now": "now",
@@ -546,7 +548,9 @@
     "group": "Group",
     "groupPh": "none (e.g. Customers, ERP)",
     "groupTitle": "The PROJECTS list shows the project under this group. Leave empty for none.",
-    "groupToggle": "Open / close the group"
+    "groupToggle": "Open / close the group",
+    "about": "Agent Office {version}",
+    "whatsNew": "What's new"
   },
   "panel": {
     "types": {
@@ -1214,7 +1218,9 @@
     "personalFolder": "{name} - personal",
     "moveToGroup": "Move to group",
     "newGroupHint": "A new group: name it in the project's settings (⚙)",
-    "removeFromGroup": "Take out of “{group}”"
+    "removeFromGroup": "Take out of “{group}”",
+    "helpMenu": "Help",
+    "whatsNew": "What's New"
   },
   "auth": {
     "unreadable": "could not read the login status",
@@ -1833,5 +1839,14 @@
       "ctrl-shift-space": "Ctrl+Shift+Space",
       "off": "Off"
     }
+  },
+  "whatsNew": {
+    "title": "What's new in {version}",
+    "back": "Back",
+    "next": "Next",
+    "done": "Done",
+    "tryIt": "Try it",
+    "skipAll": "Skip all",
+    "page": "{n} of {total}"
   }
 }

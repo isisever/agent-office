@@ -6,7 +6,7 @@ import { shownOrder } from '../src/project-groups.mjs';
 import { mountHq } from './hq-board.js';
 import { mountLogin } from './login.js';
 import { mountDevices, mergeRemote } from './devices.js';
-import { setLang, onLang, t } from './i18n.js';
+import { setLang, onLang, t, getLang } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
 import { mountStudio } from './studio.js';
 import { startStep, startFailure } from '../src/studio-ux.mjs';
@@ -17,6 +17,7 @@ import { normalizeLook, normalizeMode, effectiveMode, chromeFor, terminalTheme }
 import { tildePath, windowTitle } from '../src/layout.mjs';
 import { promptReady } from '../src/tui-menu.mjs';
 import { initVoice } from './voice.js';
+import { mountWhatsNew, splitAction } from './whats-new.js';
 
 // Fake window.agentOffice to see the layout in a plain browser (outside Electron).
 if (!window.agentOffice) await import('./dev-mock.js');
@@ -890,6 +891,8 @@ async function removeAccount(a) {
 // ---- Sidebar ----
 sidebar = mountSidebar($('sidebar'), {
   select: selectProject,
+  openWhatsNew: () => openWhatsNew(),   // v3.123 Settings → About
+  appVersion: () => appVersion,
   addProject,
   setBotColor,
   removeProject,
@@ -1130,7 +1133,7 @@ if (api.mail) {
   api.mail.onAccounts?.((v) => { sidebar?.setMailAccounts(v); loadStaff(); });
   api.mail.onOutbox?.((v) => sidebar?.setMailOutbox(v));
 }
-api.prefs?.get().then((p) => {
+const prefsReady = api.prefs?.get().then((p) => {
   sidebar.setResume(p?.resume);
   sidebar.setResumeWork(p?.resumeWork);
   sidebar.setManager(p?.manager);
@@ -1437,6 +1440,43 @@ function studioCommands(projectId) {
     ...cmd('projects', panel('#sb-panel-projects')),
     ...cmd('settings', () => sidebar?.openSettings()),
     ...cmd('office', () => setExperience('office')),
+    ...cmd('whatsNew', () => openWhatsNew()),   // v3.123
   ];
 }
 studio?.setOn(studioOn);
+
+// ---- v3.123 What's new (renderer/whats-new.js): once after an update, and from Help → What's new, ⌘K and
+// Settings → About. "Try it" runs one of these fixed actions (src/whats-new.js ACTIONS); each returns the selector to
+// spotlight when the item names none.
+/** An Office sidebar panel opened (in Studio: shown on its own over Studio); its selector, or '' when it is not there. */
+function whatsNewPanel(/** @type {string} */ sel) {
+  if (studioOn) return studio?.showPanel(sel) ? sel : '';
+  const panel = /** @type {HTMLElement | null} */ (document.querySelector(sel));
+  if (!panel || panel.hidden) return '';
+  if (panel.tagName === 'DETAILS') /** @type {HTMLDetailsElement} */ (panel).open = true;
+  return sel;
+}
+/** @type {Record<string, (arg: string) => string>} */
+const whatsNewActions = {
+  'open-studio': () => { setExperience('studio'); return '#experience-switch'; },
+  'open-office': () => { setExperience('office'); return '#experience-switch'; },
+  'open-settings': (arg) => { sidebar?.openSettings(); return arg ? `[data-settings-section="${arg}"]` : ''; },
+  'open-palette': () => { if (experience !== 'studio') setExperience('studio'); window.setTimeout(() => studio?.openPalette(), 60); return ''; },
+  'open-devices': () => whatsNewPanel('#sb-devices'),
+  'open-team': () => whatsNewPanel('#sb-panel-team') || (sidebar?.openSettings(), ''),
+  'focus-composer': () => { if (!studio?.focusStart()) focusActive(); return ''; },
+};
+const whatsNew = mountWhatsNew({
+  t,
+  lang: getLang,
+  experience: () => (experience === 'studio' ? 'studio' : 'office'),
+  run: (action) => { const { id, arg } = splitAction(action); return whatsNewActions[id]?.(arg) || ''; },
+});
+function openWhatsNew() {
+  api.whatsNew?.all().then((entries) => whatsNew.show(entries)).catch((e) => console.error(e));
+}
+api.whatsNew?.onOpen(() => openWhatsNew());
+// after the experience is known, so the card has its look and its items
+Promise.resolve(prefsReady).catch(() => {}).then(() => window.setTimeout(() => {
+  api.whatsNew?.pending().then((entries) => { if (Array.isArray(entries) && entries.length) whatsNew.show(entries); }).catch((e) => console.error(e));
+}, 600));

@@ -48,7 +48,8 @@
       "removeProject": "Projeyi listeden kaldır",
       "projects": "Projeleri düzenle (Ofis listesi)",
       "settings": "Ayarlar",
-      "office": "Ofis'e dön"
+      "office": "Ofis'e dön",
+      "whatsNew": "Neler yeni"
     },
     "cmdKeys": {
       "team": "ekip personel masa rol sihirbaz team desk",
@@ -68,7 +69,8 @@
       "removeProject": "sil kaldır proje remove",
       "projects": "düzenle grup kullanım projects edit",
       "settings": "tercihler dil tema settings",
-      "office": "ofis deneyim geri office"
+      "office": "ofis deneyim geri office",
+      "whatsNew": "neler yeni sürüm notları değişiklikler güncelleme tur özellikler whats new"
     },
     "untitled": "Yeni oturum",
     "now": "şimdi",
@@ -545,7 +547,9 @@
     "group": "Grup",
     "groupPh": "yok (ör. Müşteriler, ERP)",
     "groupTitle": "PROJELER listesinde proje bu grubun altında görünür. Boş bırakırsanız grupsuz kalır.",
-    "groupToggle": "Grubu aç / kapat"
+    "groupToggle": "Grubu aç / kapat",
+    "about": "Agent Office {version}",
+    "whatsNew": "Neler yeni"
   },
   "panel": {
     "types": {
@@ -1195,7 +1199,9 @@
     "personalFolder": "{name} - kişisel",
     "moveToGroup": "Gruba taşı",
     "newGroupHint": "Yeni grup: adını projenin ayarlarında (⚙) yazın",
-    "removeFromGroup": "“{group}” grubundan çıkar"
+    "removeFromGroup": "“{group}” grubundan çıkar",
+    "helpMenu": "Yardım",
+    "whatsNew": "Neler Yeni"
   },
   "auth": {
     "unreadable": "giriş durumu okunamadı",
@@ -1805,5 +1811,14 @@
       "ctrl-shift-space": "Ctrl+Shift+Space",
       "off": "Kapalı"
     }
+  },
+  "whatsNew": {
+    "title": "{version} sürümünde neler yeni",
+    "back": "Geri",
+    "next": "İleri",
+    "done": "Tamam",
+    "tryIt": "Dene",
+    "skipAll": "Hepsini geç",
+    "page": "{n} / {total}"
   }
 }

@@ -91,7 +91,7 @@ export function mountSidebar(el, on) {
   // language: Automatic (system) and the languages in locales/; language names in their own language (the file's "_name")
   const langLabel = h('span', {});
   const langSelect = h('select', { class: 'sb-acct sb-lang', onchange: (e) => on.setLanguage?.(e.target.value) });
-  const langRow = h('div', { class: 'sb-botcolor sb-langrow' }, langLabel, langSelect);
+  const langRow = h('div', { class: 'sb-botcolor sb-langrow', 'data-settings-section': 'language' }, langLabel, langSelect);
   // theme (v3.1): Auto (per project) or one theme for the whole office; each option's tooltip is its description
   let themeSetting = 'auto';
   /** @type {{ name: string, description: string, isBuiltin: boolean }[]} */
@@ -161,7 +161,7 @@ export function mountSidebar(el, on) {
   let experienceValue = 'office';
   const experienceLabel = h('span', {});
   const experienceSelect = h('select', { class: 'sb-acct sb-lang', onchange: (e) => on.setExperience?.(e.target.value) });
-  const experienceRow = h('label', { class: 'sb-botcolor sb-langrow' }, experienceLabel, experienceSelect);
+  const experienceRow = h('label', { class: 'sb-botcolor sb-langrow', 'data-settings-section': 'experience' }, experienceLabel, experienceSelect);
   const chatViewLabel = h('span', {});
   const chatViewBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setChatView?.(e.target.checked) });
   const chatViewRow = h('label', { class: 'sb-botcolor sb-langrow' }, chatViewLabel, chatViewBox);
@@ -184,7 +184,11 @@ export function mountSidebar(el, on) {
   let keepAwake = 'working';
   const keepAwakeLabel = h('span', {});
   const keepAwakeSelect = h('select', { class: 'sb-acct sb-lang', id: 'sb-keepawake', onchange: (e) => on.setKeepAwake?.(e.target.value) });
-  const keepAwakeRow = h('div', { class: 'sb-botcolor sb-langrow' }, keepAwakeLabel, keepAwakeSelect);
+  const keepAwakeRow = h('div', { class: 'sb-botcolor sb-langrow', 'data-settings-section': 'keep-awake' }, keepAwakeLabel, keepAwakeSelect);
+  // v3.123 About: the running version and the way back to What's new
+  const aboutLabel = h('span', {});
+  const whatsNewBtn = h('button', { class: 'sb-btn', onclick: () => { closeModal(); on.openWhatsNew?.(); } });
+  const aboutRow = h('div', { class: 'sb-botcolor sb-langrow', 'data-settings-section': 'about' }, aboutLabel, whatsNewBtn);
   const projHead = h('span', {});
   const acctHead = h('span', {});
   const addProjectBtn = h('button', { class: 'sb-add', id: 'sb-add-project', onclick: () => on.addProject() });
@@ -252,6 +256,8 @@ export function mountSidebar(el, on) {
     reloadMcpLabel.textContent = t('sidebar.reloadMcp');
     reloadMcpRow.title = t('sidebar.reloadMcpTitle');
     experienceLabel.textContent = t('sidebar.experience');
+    aboutLabel.textContent = t('sidebar.about', { version: on.appVersion?.() || '' });
+    whatsNewBtn.textContent = t('sidebar.whatsNew');
     experienceRow.title = t('sidebar.experienceTitle');
     experienceSelect.replaceChildren(...['office', 'studio'].map((v) => h('option', { value: v }, t(v === 'studio' ? 'sidebar.experienceStudio' : 'sidebar.experienceOffice'))));
     experienceSelect.value = experienceValue;
@@ -1044,8 +1050,9 @@ export function mountSidebar(el, on) {
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, ...voiceSettingsRows(), langRow, lookRow, modeRow, office3dRow, experienceRow, chatViewRow, themeRow, botRow, skillsSection()],
+      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, ...voiceSettingsRows(), langRow, lookRow, modeRow, office3dRow, experienceRow, chatViewRow, themeRow, botRow, skillsSection(), aboutRow],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
+    aboutLabel.textContent = t('sidebar.about', { version: on.appVersion?.() || '' });
   }
 
   /** @type {Set<string>} */
