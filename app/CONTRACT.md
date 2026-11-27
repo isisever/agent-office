@@ -3156,8 +3156,15 @@ chat:read gui += { modes: string[], autoApprove: boolean }   // the account's pi
    each ask). Any other mode changes only that session and never turns Auto-approve off; while Auto-approve is on the
    chat shows a small "Manager answers" note next to the picker (`pickerState().managerNote`) and the start screen's
    mode tooltip says so. The picker shows Auto selected when the session reports `auto`. Desk and guarded sessions
-   ('desk') and skip-permissions sessions ('bypass') keep the mode picker locked and show no note. Limit: a session
-   of an Auto-approve project still starts in claude's default mode; Auto is set by the picker or the start screen.
+   ('desk') and skip-permissions sessions ('bypass') keep the mode picker locked and show no note. **Start in auto**
+   (manager decision): a GUI chat of an Auto-approve project starts with `--permission-mode auto` after the GUI flags
+   (`STU.guiStartModeArgs`, main's GUI spawn only), matching the "auto mode on" the person sees in the terminal; never
+   the HQ session, a desk or guarded session (modeLock 'desk': its own rules), a skip-permissions project (stays
+   bypass) or an account whose modes lack `auto`. Office terminal tabs are unchanged. gui-proc records a start's
+   `--permission-mode` as the session's mode, so the picker shows Auto from the first read. **Manager off**: when the
+   project's Auto-approve is turned off in the Office while a GUI chat runs in auto, the chat shows "Auto mode, manager
+   off" next to the picker (`composer.mjs` `managerOffNote`, from chat:read's current `autoApprove`); the session's
+   mode is never changed for it, the person picks another mode to change it.
 5. **Message actions** (Studio only): Copy on every message (as before), a copy button in each code block's corner,
    Edit on the person's messages (puts the text back in the input to send again; the conversation is not rewound),
    "Jump to latest" while the list is scrolled more than 120 px up, and animated dots on the live line while a turn runs.

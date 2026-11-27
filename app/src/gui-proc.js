@@ -34,7 +34,9 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup 
   let ended = false;
   let seq = 0;
   let stderr = '';
-  const settings = { model: '', mode: '' };   // v3.121 what Studio's pickers set in this run
+  // v3.121 what Studio's pickers set in this run; v3.120 a start with --permission-mode (an Auto-approve project's auto) counts
+  const startMode = args.indexOf('--permission-mode');
+  const settings = { model: '', mode: startMode >= 0 ? String(args[startMode + 1] || '') : '' };
   /** @type {{ model: string, usage: null | { input_tokens: number, cache_read_input_tokens: number, cache_creation_input_tokens: number }, models: import('./model-list.js').ModelOption[] }} */
   const info = { model: '', usage: null, models: [] };   // v3.120 Studio UX: the running model and the last answer's usage
   /** @type {Map<string, { key: string, value: string, done: (r: string) => void, timer: any }>} */

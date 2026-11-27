@@ -898,7 +898,9 @@
         "other": "Could not change it."
       },
       "managerNote": "Manager answers",
-      "managerNoteTitle": "This project's Auto-approve is on: the manager still answers its prompts"
+      "managerNoteTitle": "This project's Auto-approve is on: the manager still answers its prompts",
+      "managerOffNote": "Auto mode, manager off",
+      "managerOffNoteTitle": "This session still runs in auto mode, but the project's Auto-approve was turned off in the Office: the manager no longer answers what auto mode asks. Pick another mode to change it."
     },
     "revealMac": "Show in Finder",
     "revealOutside": "This file is not inside the project folder (or is gone): it cannot be shown here.",

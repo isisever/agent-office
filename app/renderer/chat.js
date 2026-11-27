@@ -11,7 +11,7 @@ import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } fr
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
-import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, modelChoices, modeChoices } from '../src/composer.mjs';
+import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, managerOffNote, modelChoices, modeChoices } from '../src/composer.mjs';
 import { icon } from './studio-icons.js';
 import { modelName, contextUsage, shortTokens } from '../src/studio-ux.mjs';
 
@@ -916,8 +916,12 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       ctxRing.setAttribute('aria-label', ctxRing.title);
     }
     modeSel.title = `${t('chat.pick.modeTitle')}${st.lock ? ` · ${t(`chat.pick.why.${st.lock}`)}` : why}`;
-    modeNote.hidden = !st.managerNote;
+    // v3.120 Auto-approve turned off in the Office while this chat runs in auto: say so, never change the mode
+    const off = managerOffNote(gui, gui?.settings || picks);
+    modeNote.hidden = !st.managerNote && !off;
+    modeNote.classList.toggle('off', off);
     if (st.managerNote) { modeNote.textContent = t('chat.pick.managerNote'); modeNote.title = t('chat.pick.managerNoteTitle'); }
+    else if (off) { modeNote.textContent = t('chat.pick.managerOffNote'); modeNote.title = t('chat.pick.managerOffNoteTitle'); }
   }
   async function setting(/** @type {'model' | 'mode'} */ key, /** @type {string} */ value) {
     let r = 'error';

@@ -888,7 +888,9 @@
         "other": "Değiştirilemedi."
       },
       "managerNote": "Yönetici yanıtlıyor",
-      "managerNoteTitle": "Bu projede Otomatik onay açık: izin sorularını yine yönetici yanıtlıyor"
+      "managerNoteTitle": "Bu projede Otomatik onay açık: izin sorularını yine yönetici yanıtlıyor",
+      "managerOffNote": "Otomatik mod, yönetici kapalı",
+      "managerOffNoteTitle": "Bu oturum hâlâ otomatik modda, ama projenin Otomatik onayı Office'te kapatıldı: otomatik modun sorduklarını artık yönetici yanıtlamıyor. Değiştirmek için başka bir mod seçin."
     },
     "revealMac": "Finder'da göster",
     "revealOutside": "Bu dosya proje klasörünün içinde değil (ya da silinmiş): burada gösterilemez.",

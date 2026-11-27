@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatSize, fileKind, chipInfo, baseName, withMentions, splitMentions, pickerState, modelChoices, mention } from '../src/composer.mjs';
+import { formatSize, fileKind, chipInfo, baseName, withMentions, splitMentions, pickerState, managerOffNote, modelChoices, mention } from '../src/composer.mjs';
 import * as C from '../src/composer.mjs';
 import fs from 'node:fs';
 
@@ -121,4 +121,18 @@ test('v3.120 mode picker: the account\'s modes, Auto selected when the session r
   st = pickerState({ ...gui, modeLock: 'desk' }, {});
   assert.equal(st.modeEnabled, false);
   assert.equal(st.managerNote, false);
+});
+
+test('v3.120 managerOffNote: auto mode while the project's Auto-approve is off, never a lock or a terminal tab', () => {
+  const gui = { live: { busy: false }, asks: [], modes: ['auto', 'default', 'acceptEdits', 'plan'], autoApprove: false };
+  assert.equal(managerOffNote(gui, { mode: 'auto' }), true);
+  assert.equal(managerOffNote({ ...gui, autoApprove: true }, { mode: 'auto' }), false, 'Auto-approve on: the manager answers');
+  assert.equal(managerOffNote(gui, { mode: 'default' }), false);
+  assert.equal(managerOffNote({ ...gui, modeLock: 'desk' }, { mode: 'auto' }), false);
+  assert.equal(managerOffNote({ ...gui, modeLock: 'bypass' }, { mode: 'auto' }), false);
+  assert.equal(managerOffNote({ ...gui, ended: true }, { mode: 'auto' }), false);
+  assert.equal(managerOffNote(null, { mode: 'auto' }), false);
+  assert.equal(managerOffNote({ ...gui, autoApprove: undefined }, { mode: 'auto' }), false, 'unknown is not off');
+  // the picker itself is untouched: the mode stays auto
+  assert.equal(pickerState(gui, { mode: 'auto' }).mode, 'auto');
 });

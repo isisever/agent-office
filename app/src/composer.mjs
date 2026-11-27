@@ -128,6 +128,17 @@ export function modelChoices(gui) {
 }
 
 /**
+ * v3.120 the session runs in claude's auto mode but the project's Auto-approve was turned off in the Office afterwards:
+ * the manager no longer answers what auto mode still asks. Shown as a note ("Auto mode, manager off"); the session's
+ * mode is never changed for it. gui: the chat's GUI info, settings: what this chat last set (or started with).
+ */
+export function managerOffNote(gui, settings = {}) {
+  if (!gui || gui.ended || gui.autoApprove !== false) return false;
+  if (['bypass', 'desk'].includes(gui.modeLock)) return false;
+  return settings?.mode === 'auto' && modeChoices(gui).includes('auto');
+}
+
+/**
  * The pickers' state for a tab. gui: the chat's GUI info (null: a terminal tab), settings: what this chat last set.
  * → { enabled, model, mode, why, lock, modeEnabled, managerNote } — why: '' | 'terminal' (a terminal tab: /model there) | 'busy' (a
  * turn runs: wait). lock (gui.modeLock): 'bypass' (started with skip permissions: the mode shows bypassPermissions and

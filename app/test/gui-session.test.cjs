@@ -394,3 +394,11 @@ test('v3.120 renameCommand: the /rename message for a GUI chat, one clean line o
   assert.equal(GS.renameCommand('  '), '');
   assert.equal(GS.renameCommand(null), '');
 });
+
+test('v3.120 GUI chat: a start with --permission-mode auto is the session mode the picker shows', () => {
+  const { spawn } = fakeSpawn();
+  const t = spawnGui(spawn, 'sh', ['-c', 'exec claude', 'claude', '--input-format', 'stream-json', '--permission-mode', 'auto'], { cwd: '/', env: {} }, { killGroup: () => {} });
+  assert.deepEqual(t.settings(), { model: '', mode: 'auto' });
+  const plain = spawnGui(spawn, 'sh', ['-c', 'exec claude'], { cwd: '/', env: {} }, { killGroup: () => {} });
+  assert.deepEqual(plain.settings(), { model: '', mode: '' });
+});

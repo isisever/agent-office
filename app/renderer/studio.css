@@ -359,6 +359,8 @@ body.studio .chat-row .voice-mic.busy { opacity: .55; }
 /* pickers: quiet text selects */
 body.studio .chat-picks { display: inline-flex; gap: 2px; align-items: center; }
 body.studio .chat-pick-note { font-size: 11px; color: var(--st-muted, #8a8a8a); padding: 0 4px; white-space: nowrap; }
+/* v3.120 auto mode while the project's Auto-approve is off: the manager no longer answers */
+body.studio .chat-pick-note.off { color: var(--st-warn, #b7791f); }
 body.studio .chat-pick {
   -webkit-appearance: none; appearance: none; height: 30px; padding: 0 22px 0 10px; border: 0; border-radius: var(--st-radius-s);
   color: var(--st-muted); font: 500 12.5px/1 var(--st-font); cursor: pointer; max-width: 170px; text-overflow: ellipsis;
