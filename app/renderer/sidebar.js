@@ -529,6 +529,16 @@ export function mountSidebar(el, on) {
     return control(p, 'autoApprove', t('sidebar.autoApprove'), box);
   }
 
+  // "Use my shared MCP servers" (contract v3.128): off by default; Claude Code only. The title says what it costs.
+  function shareMcpToggle(p) {
+    const box = h('input', {
+      type: 'checkbox', class: 'sb-files', checked: p.shareMcp === true, title: t('sidebar.projectShareMcpTitle'),
+      onclick: (e) => e.stopPropagation(),
+      onchange: (e) => queue('shareMcp', () => on.setProjectShareMcp?.(p.id, e.target.checked)),
+    });
+    return control(p, 'appMcp', t('sidebar.projectShareMcp'), box);
+  }
+
   // "Skip permissions" (contract v3.72): off by default; Claude Code only. The title says nothing asks anymore.
   function skipPermissionsToggle(p) {
     const box = h('input', {
@@ -814,7 +824,7 @@ export function mountSidebar(el, on) {
     badFields.clear();
     const body = [
       groupInput(p), accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p), parallelToggle(p),
-      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), backupSelect(p), limitModelSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
+      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), shareMcpToggle(p), backupSelect(p), limitModelSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
     ];
     const save = h('button', {
       class: 'sb-btn primary', onclick: async () => {
@@ -1485,7 +1495,7 @@ export function mountSidebar(el, on) {
       if (!p) return null;
       const map = new Map();
       badFields.clear();
-      const body = h('div', { class: 'st-set-project' }, accountSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), contextCapSelect(p));
+      const body = h('div', { class: 'st-set-project' }, accountSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), shareMcpToggle(p), contextCapSelect(p));
       // the controls queue into `draft`: point it at this map before their own change handlers run (capture phase)
       for (const type of ['change', 'input']) body.addEventListener(type, () => { draft = map; }, true);
       return {

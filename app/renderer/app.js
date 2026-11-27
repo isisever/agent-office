@@ -755,6 +755,15 @@ async function setSkipPermissions(projectId, value) {
   } catch (e) { console.error(e); }
 }
 
+/** Use my shared MCP servers (v3.128): true | false; main restarts the idle tabs. */
+async function setProjectShareMcp(projectId, value) {
+  try {
+    const r = await api.projects.setShareMcp?.(projectId, value);
+    for (const id of r?.restarted || []) panes.get(id)?.term.reset({ restarting: true });
+    applyProjects(await api.projects.list());
+  } catch (e) { console.error(e); }
+}
+
 /** Auto-approve permission prompts (v3.71): true | false; main restarts the idle tabs. */
 async function setAutoApprove(projectId, value) {
   try {
@@ -913,6 +922,7 @@ sidebar = mountSidebar($('sidebar'), {
   setAgentModel,
   setProjectFiles,
   setAutoApprove,
+  setProjectShareMcp,
   setSkipPermissions,
   setContextCap,
   setSavings,

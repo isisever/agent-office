@@ -27,6 +27,7 @@ const GP = require('./src/gui-proc.js');
 const ML = require('./src/model-list.js');   // v3.120 Studio UX: the models each account can use
 const TW = require('./src/task-watch.js');
 const SC = require('./src/shared-config.js');
+const LEAN = require('./src/mcp-lean.js');
 const PF = require('./src/project-files.js');
 const OD = require('./src/office-directory.js');
 const ST = require('./src/staff.js');
@@ -541,7 +542,7 @@ function mcpInputsKey() {
     configDirs: state.accounts.map((a) => a.configDir),
     dirs: P.projectPlaces(state.projects).map((p) => p.dir),
   });
-  const office = [state.shareMcp !== false, state.projects.map((p) => [p.dir, p.accountId]), state.accounts.map((a) => [a.id, a.shareDefault !== false, a.label])];
+  const office = [state.shareMcp === true, state.projects.map((p) => [p.dir, p.accountId, p.shareMcp === true]), state.accounts.map((a) => [a.id, a.shareDefault !== false, a.label])];
   return `${MR.statKey(files, statOrNull)}#${JSON.stringify(office)}`;
 }
 function refreshMcpPrints() {
@@ -1162,8 +1163,9 @@ function projectMemoryDir(cwd, configDir) {
 // Default's plugins, skills, MCP servers and CLAUDE.md for an account's session, and the other office projects' MCP
 // servers for every session (see src/shared-config.js, contract v3.6 and v3.9): links in the account folder, plugin
 // stages in userData/shared-plugins, the tab's MCP file in userData/mcp/<tab>.json.
+// v3.128 the office share is off unless the person turned it on, globally or for this project (LEAN.officeShareOn)
 const officeInput = (project) => ({
-  share: state.shareMcp !== false,
+  share: LEAN.officeShareOn({ global: state.shareMcp, project }),
   current: project.dir,
   projects: state.projects.map((p) => {
     const a = A.accountOf(state, p);
@@ -1172,13 +1174,15 @@ const officeInput = (project) => ({
   // v3.114 every other account's user servers too (SC.otherAccounts drops Default, the session's own, gone folders)
   accounts: state.accounts.filter((a) => a.configDir).map((a) => ({ id: a.id, label: a.label, configDir: a.configDir, share: SC.shareEnabled(a) })),
 });
-function sharedConfig(account, project, cwd, key, extra = null, appMcp = null) {
+function sharedConfig(account, project, cwd, key, extra = null, appMcp = null, { desk = false } = {}) {
   const office = officeInput(project);
   try {
     return SC.prepareShared({
       account, home: app.getPath('home'), cwd: isDir(cwd) ? cwd : null, office,
       stageRoot: path.join(app.getPath('userData'), 'shared-plugins'),
       mcpFile: path.join(mcpDir(), SC.mcpFileName(key)), extra, app: appMcp,
+      // v3.128 a desk: no shared set, the project's own servers from its folder (not the worktree), strict
+      ...(desk ? { desk: true, ownDir: isDir(project.dir) ? project.dir : null } : {}),
     });
   } catch (e) {
     console.error('varsayılan hesabın ayarları paylaşılamadı:', e.message);
@@ -1330,8 +1334,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // v3.44 servers added in Agent Office, Claude Code only: into this tab's 0600 MCP file, unless the name is taken
   // v3.46 HQ: none of these (no Default/other projects' servers, no app servers, no skill packs): its own MCP file
   // holds only the agent-office server and it runs with --strict-mcp-config (HQ.launchArgs)
-  const appMcp = project.hq ? null : MS.sessionServers(P.engineOf(project), MS.withTools(appServers(), project.id, project.staffTools), project.id, (sid) => tokens().load(sid));
-  const prepared = project.hq ? hqMcpConfig(usageKey(id), bossMcp) : sharedConfig(account, project, cwd, usageKey(id), bossMcp, appMcp);
+  // v3.128 a desk (a staff member's tab, HQ-started ones too) gets only its member's tools and the project's own
+  // servers, never the shared set or app servers attached to every project; it runs with --strict-mcp-config
+  const desk = !project.hq && Boolean(tab?.staffId);
+  const withTools = MS.withTools(appServers(), project.id, project.staffTools);
+  const appMcp = project.hq ? null : MS.sessionServers(P.engineOf(project), desk ? LEAN.deskAppServers(withTools, project.staffTools) : withTools, project.id, (sid) => tokens().load(sid));
+  const prepared = project.hq ? hqMcpConfig(usageKey(id), bossMcp) : sharedConfig(account, project, cwd, usageKey(id), bossMcp, appMcp, { desk });
   const shared = project.hq ? [] : SC.sharedArgs(prepared);
   const directory = officeDirectoryFile(project, usageKey(id), prepared.mcpNames, prepared.accountNames);
   const print = mcpFingerprintOf(account, project, cwd);
@@ -1355,7 +1363,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     if (!settingsArg && guarded.length <= DR.MAX_ARG_CHARS) settingsArg = guarded;
     else if (!settingsArg) console.error('desk starts without the extra account rules: the oversize settings file could not be written');
   }
-  const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(mailMcp ? ['--strict-mcp-config'] : []), ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
+  const args = R.claudeArgs([...P.bossModelArgs(project), ...P.skipPermissionsArgs(project), ...hqArgs, ...(dir ? ['--plugin-dir', dir] : []), ...packs, ...shared, ...(mailMcp || prepared.strict ? ['--strict-mcp-config'] : []), ...(settingsArg ? ['--settings', settingsArg] : [])], resumeArgs, prompt, { always: forcePrompt });
   // v3.108 GUI chat: claude on the SDK protocol (no terminal); a start prompt goes in as its first message instead of
   // the positional argument, always the last one claudeArgs adds (stream-json input takes no prompt argument)
   // keepGui: a restart by a backup-account move keeps a running chat a chat (GS.keepsGui), whatever the Office setting
@@ -4830,6 +4838,15 @@ ipcMain.handle('projects:setProjectFiles', (_e, id, value) => {
 function personalSetting(id, set) {
   return ST.routePersonalSetting(state, id, set);
 }
+// v3.128 "Use my shared MCP servers" for one project: true gives its tabs the office share even with the global
+// setting off. claude reads its MCP config at its start: next start, idle Claude Code tabs at once.
+ipcMain.handle('projects:setShareMcp', (_e, target, value) => {
+  const { next, id } = personalSetting(target, (s, pid) => P.setProjectShareMcp(s, pid, value === true));
+  if (next === state) return { restarted: [] };
+  commit(next);
+  const p = P.findProject(state, id);
+  return { restarted: p && P.engineOf(p) === 'claude' ? restartIdle(p) : [] };
+});
 ipcMain.handle('projects:setAutoApprove', (_e, target, value) => {
   const { next, id } = personalSetting(target, (s, pid) => P.setProjectAutoApprove(s, pid, value === true));
   if (next === state) return { restarted: [] };
@@ -6316,7 +6333,7 @@ function buildMenu() {
 // office3d = the office drawn in 3D (contract v3.81); off unless set, and unset is not written
 // teamMode = the TEAM panel (contract v3.83); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, experience: STU.normalizeExperience(state.experience), termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp === true, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, experience: STU.normalizeExperience(state.experience), termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
 // --- voice input (contract v3.119): audio stays in memory in src/voice.js and never leaves the machine
 /** @type {ReturnType<typeof createVoice> | null} */
 let voice = null;
@@ -6472,7 +6489,7 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
   if (p && typeof p.resumeWork === 'boolean' && p.resumeWork !== prefs().resumeWork) commit({ ...state, resumeWork: p.resumeWork });
   if (p && typeof p.manager === 'boolean' && p.manager !== prefs().manager) commit({ ...state, manager: p.manager });
-  if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp });
+  if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp, shareMcpChosen: true });   // v3.128 an explicit choice
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
   // v3.80 chat view (the renderer switches); v3.108 idle tabs move to / from the GUI chat. v3.120 entering Studio moves
@@ -6561,7 +6578,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(raw.experience === 'studio' ? { experience: 'studio' } : {}), ...studioRecentOf(raw, base), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: LEAN.shareMcpFromFile(raw), ...(raw.shareMcpChosen === true ? { shareMcpChosen: true } : {}), reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(raw.experience === 'studio' ? { experience: 'studio' } : {}), ...studioRecentOf(raw, base), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
   state = { ...state, voice: VC.normalizeSettings(raw.voice) };   // v3.119 voice input settings
   for (const id of GS.cleanTermTabs(raw.termTabs, state.projects.flatMap((p) => P.ptyIdsOf(p)))) termTabs.add(id);   // v3.110
   // v3.83 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)

@@ -3464,3 +3464,27 @@ Opus subagents (a forced per-project pin). The defaults now favour short context
   "sonnet" for coding, "opus" only for review or design. A session that sets FORCE itself still gets the pinned line.
 - Tests: `test/main.test.cjs` (effective cap mapping, subagent env), `test/engine-caps.test.mjs`, plugin
   `tests/office.test.tsx`. **Not verified live** in a running app.
+
+## Lean MCP per session (v3.128)
+
+Every MCP server a session gets puts its tool names and its server instructions into that session and into each of
+its sub-agents. Agent Office passes only what a session needs (src/mcp-lean.js, used by shared-config.js prepareShared):
+
+- **"Share MCP servers between projects" is off by default.** state.json keeps it only as an explicit choice
+  (`shareMcp` with `shareMcpChosen: true`, written by Settings); an absent value, and the `shareMcp: true` that
+  earlier versions wrote for everyone, read as off. A project opts in on its own with `Project.shareMcp: true`
+  ("Use my shared MCP servers" in the project's settings and in Studio Settings → Projects, IPC
+  `projects:setShareMcp`, which restarts the project's idle Claude Code tabs). Absent = off; never written for off.
+- **Boss tabs** (a project's own tabs): the shared set (Default's servers for another account; the other projects'
+  and accounts' servers only when the share is on for the project) minus every entry that is the same server
+  (transport, URL or command, args, headers, env) as one the session already has: the account's own user, local and
+  approved project servers, the servers the app adds (agent-office, mail) and the app servers in scope. An app server
+  attached to the project is never dropped by the dedupe. The dropped names come back as `mcpDeduped`.
+- **Desks** (a staff member's tab, also one HQ started): never the shared set. The tab's MCP file holds the project's
+  own servers (local and approved .mcp.json of the project folder, not the worktree), the member's tools, the app
+  servers scoped to the project (not the ones attached to every project, unless a member tool) and the servers the
+  app adds; the desk runs with `--strict-mcp-config`, so the account's user servers and claude.ai connectors do not
+  load.
+- **HQ**: unchanged (v3.46): only the agent-office server, strict.
+- No health state for MCP servers exists in the app, so a failing server is not skipped automatically; turning the
+  share off removes the failing shared ones.
