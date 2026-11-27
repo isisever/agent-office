@@ -1422,7 +1422,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       t = guiProc = GP.spawnGui(spawn, shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args)], {
         cwd: isDir(cwd) ? cwd : app.getPath('home'),
         env,
-      }, { onAsk: (ask, input) => guiAsk(id, ask, input, { autoApprove: !project.hq && P.autoApproveOf(project), mailGuard: Boolean(mailMcp) }),
+      }, { onAsk: (ask, input) => guiAsk(id, ask, input, { autoApprove: !project.hq && P.autoApproveOf(P.findProject(state, project.id) || project), mailGuard: Boolean(mailMcp) }),
         onModels: (models) => noteModels(configDir, models) });
       if (!t.pid) throw new Error('claude did not start');
     } else t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', cmd, 'claude', ...args], {
@@ -5646,6 +5646,17 @@ function noteModels(configDir, models) {
   modelCache = cache;
   try { SF.writeAtomic(modelCachePath(), JSON.stringify(cache)); } catch (e) { console.error('model cache:', e.message); }
 }
+/** v3.120 the probe found the account's permission modes (model-list.js parseModes) */
+function noteModes(configDir, modes) {
+  const { cache, changed } = ML.mergeModes(readModelCache(), ML.accountKey(configDir), modes);
+  if (!changed) return;
+  modelCache = cache;
+  try { SF.writeAtomic(modelCachePath(), JSON.stringify(cache)); } catch (e) { console.error('model cache:', e.message); }
+}
+/** v3.120 the modes the pickers offer for a project's account: the probed list, else ML.FALLBACK_MODES */
+const modesOf = (project) => ML.pickerModes(project ? ML.cachedModes(readModelCache(), ML.accountKey(A.accountOf(state, project).configDir)) : null);
+// v3.120 the probe: initialize (the models), then set_permission_mode with an unknown value, whose error lists the
+// modes (initialize does not). Only this throwaway session in an empty temp folder gets it, never a real session.
 function probeModels(configDir) {
   const key = ML.accountKey(configDir);
   if (IS_WIN || modelProbes.has(key)) return;   // Windows: no probe (a session of the account fills the cache)
@@ -5671,10 +5682,20 @@ function probeModels(configDir) {
   const lines = GS.createLines();
   child.stdout?.on('data', (chunk) => {
     for (const msg of lines.push(chunk)) {
-      if (msg.type !== 'control_response' || msg.response?.request_id !== 'ao-probe') continue;
-      const models = msg.response.subtype === 'success' ? ML.parseModels(msg.response.response) : [];
-      if (models.length) { found = true; noteModels(configDir, models); }
-      end();
+      if (msg.type !== 'control_response') continue;
+      if (msg.response?.request_id === 'ao-probe') {
+        const res = msg.response.subtype === 'success' ? msg.response.response : null;
+        const models = res ? ML.parseModels(res) : [];
+        if (models.length) { found = true; noteModels(configDir, models); }
+        // a claude that lists its modes in initialize needs no second request
+        const listed = ML.parseModes(res?.permission_modes || res?.available_permission_modes || res?.permissionModes);
+        if (listed.length) { noteModes(configDir, listed); end(); continue; }
+        try { child.stdin.write(ML.modeProbeLine('ao-probe-mode')); } catch { end(); }
+      } else if (msg.response?.request_id === 'ao-probe-mode') {
+        const modes = msg.response.subtype === 'error' ? ML.parseModes(String(msg.response.error || '')) : [];
+        if (modes.length) noteModes(configDir, modes);
+        end();
+      }
     }
   });
   child.stdin?.on('error', () => {});
@@ -5692,14 +5713,18 @@ ipcMain.handle('studio:models', (_e, projectId) => {
   if (!p || P.engineOf(p) !== 'claude') return { models: ML.FALLBACK, loading: false, gui: false, modeLock: '' };
   const { configDir } = A.accountOf(state, p);
   const key = ML.accountKey(configDir);
-  if (!ML.cachedModels(readModelCache(), key)) probeModels(configDir);
+  if (!ML.cachedModels(readModelCache(), key) || !ML.cachedModes(readModelCache(), key)) probeModels(configDir);
   const gui = guiTab('', { project: p, tab: null }, { studio: true });
   const modeLock = STU.modeLock({ skip: P.skipPermissionsArgs(p).length > 0 });
-  return { ...ML.startModels(readModelCache(), key, modelProbes.has(key)), gui, modeLock };
+  return { ...ML.startModels(readModelCache(), key, modelProbes.has(key)), gui, modeLock, modes: modesOf(p), autoApprove: !p.hq && P.autoApproveOf(p) };
 });
 function guiInfo(id) {
   const t = terms.get(id);
-  if (t?.gui) return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, models: ML.pickerModels(t.models?.()), modeLock: guiModeLock.get(id) || '', info: t.info?.() || { model: '', usage: null }, contextCap: P.resolvePty(state, id)?.project?.contextCap || 0 };
+  if (t?.gui) {
+    const project = P.resolvePty(state, id)?.project || null;
+    return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, models: ML.pickerModels(t.models?.()), modeLock: guiModeLock.get(id) || '', info: t.info?.() || { model: '', usage: null }, contextCap: project?.contextCap || 0,
+      modes: modesOf(project), autoApprove: Boolean(project) && !project.hq && P.autoApproveOf(project) };   // v3.120 auto mode
+  }
   const r = P.resolvePty(state, id);
   if (!r || terms.has(id) || !guiTab(id, r)) return null;
   const ended = guiEnded.get(id);
@@ -5726,8 +5751,31 @@ ipcMain.handle('chat:setting', async (e, id, key, value) => {
   if (t.live().busy || t.asks().length) return 'busy';
   // v3.120 Studio UX: a model only from the list this session reported (the fallback aliases when it reported none)
   if (String(key) === 'model' && !ML.allowedModel(t.models?.(), String(value ?? ''))) return 'bad';
-  return t.setting(String(key), String(value ?? ''));
+  // v3.120 a mode only from the account's reported list (FALLBACK_MODES when none); never bypassPermissions
+  const project = P.resolvePty(state, String(id))?.project || null;
+  const modes = modesOf(project);
+  if (String(key) === 'mode' && !ML.allowedMode(modes, String(value ?? ''))) return 'bad';
+  const r = await t.setting(String(key), String(value ?? ''), modes);
+  // v3.120 Auto = claude's auto mode AND the manager answers what it still asks: the project's own Auto-approve, the
+  // one setting the Office uses. Another mode changes only this session; the project setting is never turned off here.
+  if (r === 'ok' && String(key) === 'mode' && STU.turnsAutoApproveOn(String(value)) && project && !project.hq) autoApproveOn(project.id);
+  return r;
 });
+/** v3.120 turns a project's Auto-approve on from Studio's Auto: as projects:setAutoApprove, but its GUI chats keep
+ * running (guiAsk reads the setting at each ask); idle terminal tabs restart to read it, busy ones at their next start. */
+function autoApproveOn(projectId) {
+  const next = P.setProjectAutoApprove(state, projectId, true);
+  if (next === state) return;
+  commit(next);
+  const p = P.findProject(state, projectId);
+  if (!p || P.engineOf(p) !== 'claude') return;
+  for (const pid of P.ptyIdsOf(p)) {
+    const t = terms.get(pid);
+    if (t?.gui) { promptless.add(pid); continue; }
+    const sid = idleSession(pid);
+    if (sid) startPty(pid, { sessionId: sid, resume: true });
+  }
+}
 ipcMain.handle('chat:interrupt', (_e, id) => {
   const t = terms.get(String(id));
   if (!t?.gui) return 'not-running';

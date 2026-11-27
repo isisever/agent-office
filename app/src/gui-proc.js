@@ -139,9 +139,9 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup 
      * a known key/value), 'busy' (one is already waiting), 'gone' (claude ended), 'error:<claude's message>' (an error
      * reply, or no reply within SETTING_WAIT). Never during a turn (main checks); never a restart.
      */
-    setting(key, value) {
+    setting(key, value, modes = GS.SET_MODES) {
       const id = `setting-${++seq}`;
-      const out = GS.settingLine(id, key, value, ML.modelValues(info.models));
+      const out = GS.settingLine(id, key, value, ML.modelValues(info.models), modes);
       if (!out) return Promise.resolve('bad');
       if (pending.size) return Promise.resolve('busy');
       return new Promise((done) => {

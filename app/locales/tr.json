@@ -867,10 +867,12 @@
         "haiku": "Haiku"
       },
       "mode": {
+        "auto": "Otomatik",
         "default": "İzin sor",
         "acceptEdits": "Düzenlemeleri kabul et",
         "plan": "Plan modu",
-        "bypassPermissions": "İzinleri atla"
+        "bypassPermissions": "İzinleri atla",
+        "dontAsk": "Sorma"
       },
       "why": {
         "terminal": "yalnızca çalışan bir GUI sohbetinde (terminalde /model kullanın)",
@@ -882,7 +884,9 @@
         "busy": "Bir tur çalışıyor: bitince değiştirin.",
         "not-running": "Bu oturum sohbet olarak çalışmıyor.",
         "other": "Değiştirilemedi."
-      }
+      },
+      "managerNote": "Yönetici yanıtlıyor",
+      "managerNoteTitle": "Bu projede Otomatik onay açık: izin sorularını yine yönetici yanıtlıyor"
     },
     "revealMac": "Finder'da göster",
     "revealOutside": "Bu dosya proje klasörünün içinde değil (ya da silinmiş): burada gösterilemez.",

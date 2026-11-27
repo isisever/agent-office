@@ -88,16 +88,16 @@ const userLine = (text, images = []) => line({ type: 'user', message: { role: 'u
 /** v3.121 Studio's pickers: the permission modes a running GUI chat may switch to, and the fallback models ('' model: the
  * start's) when the session reported none (v3.120 Studio UX: model-list.js, from claude's initialize answer). */
 const SET_MODELS = ['', 'opus', 'sonnet', 'haiku'];
-const SET_MODES = ['default', 'acceptEdits', 'plan'];
+const SET_MODES = ['auto', 'default', 'acceptEdits', 'plan'];   // v3.120 the fallback; main passes the account's list
 /**
  * A control request that changes the running session's model or permission mode (the SDK protocol's set_model /
  * set_permission_mode); null for any other key or value. `models`: the values the session reported (model-list.js). No restart: the next turn uses it.
  */
-function settingLine(requestId, key, value, models = SET_MODELS) {
+function settingLine(requestId, key, value, models = SET_MODELS, modes = SET_MODES) {
   if (key === 'model' && typeof value === 'string' && models.includes(value)) {
     return line({ type: 'control_request', request_id: String(requestId), request: value ? { subtype: 'set_model', model: value } : { subtype: 'set_model' } });
   }
-  if (key === 'mode' && SET_MODES.includes(value)) return line({ type: 'control_request', request_id: String(requestId), request: { subtype: 'set_permission_mode', mode: value } });
+  if (key === 'mode' && typeof value === 'string' && value !== 'bypassPermissions' && modes.includes(value)) return line({ type: 'control_request', request_id: String(requestId), request: { subtype: 'set_permission_mode', mode: value } });
   return null;
 }
 const interruptLine = (requestId) => line({ type: 'control_request', request_id: String(requestId), request: { subtype: 'interrupt' } });

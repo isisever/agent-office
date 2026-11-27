@@ -6,7 +6,7 @@ import { pickerState } from './composer.mjs';
 
 /** The models and permission modes a start screen may choose ('' = the project's own default). */
 export const START_MODELS = ['', 'opus', 'sonnet', 'haiku'];
-export const START_MODES = ['', 'default', 'acceptEdits', 'plan'];
+export const START_MODES = ['', 'auto', 'default', 'acceptEdits', 'plan'];   // v3.120 fallback: caps.modes is the account's list
 
 const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
@@ -59,7 +59,8 @@ export function relativeTime(at, now, lang = 'en', nowLabel = '') {
  * mode; only values that differ from '' and are offered are kept).
  * @param {{ worktree?: boolean, model?: string, mode?: string } | null | undefined} choice
  * @param {string[]} [models] the model values offered (v3.120 the account's reported list; START_MODELS by default)
- * @param {{ gui?: boolean, modeLock?: string } | null} [caps] what a new tab can apply (startPickers)
+ * @param {{ gui?: boolean, modeLock?: string, modes?: string[] } | null} [caps] what a new tab can apply (startPickers);
+ *   modes: the account's reported permission modes (START_MODES when none)
  * @returns {{ tabMode: 'same' | 'worktree', settings: [ 'model' | 'mode', string ][] }}
  */
 export function startPlan(choice, models = START_MODELS, caps = null) {
@@ -68,7 +69,8 @@ export function startPlan(choice, models = START_MODELS, caps = null) {
   /** @type {[ 'model' | 'mode', string ][]} */
   const settings = [];
   if (can.model && typeof c.model === 'string' && c.model && models.includes(c.model)) settings.push(['model', c.model]);
-  if (can.mode && typeof c.mode === 'string' && c.mode && START_MODES.includes(c.mode)) settings.push(['mode', c.mode]);
+  const modes = Array.isArray(caps?.modes) && caps.modes.length ? caps.modes.filter((m) => m !== 'bypassPermissions') : START_MODES;
+  if (can.mode && typeof c.mode === 'string' && c.mode && modes.includes(c.mode)) settings.push(['mode', c.mode]);
   return { tabMode: c.worktree === true ? 'worktree' : 'same', settings };
 }
 

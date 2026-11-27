@@ -7,6 +7,7 @@
 
 import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
 import { icon } from './studio-icons.js';
+import { hasText } from './i18n.js';
 import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText } from '../src/studio-ux.mjs';
 
 const REFRESH_MS = 5000;   // v3.120 Studio UX: the rows' live state (working, waiting) and the header follow within 5 s
@@ -287,12 +288,16 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const can = startPickers(startLists.get(proj?.id || '')?.caps || null);
     startModel.hidden = !can.model;
     const dv = can.mode ? startMode.value : '';
-    const modeLabel = (/** @type {string} */ m) => (m ? t(`chat.pick.mode.${m}`) : can.shownMode ? t(`chat.pick.mode.${can.shownMode}`) : t('studio.start.modeDefault'));
-    startMode.replaceChildren(...(can.mode ? START_MODES : ['']).map((m) => el('option', { value: m }, modeLabel(m))));
+    const caps = startLists.get(proj?.id || '')?.caps || null;
+    const modeText = (/** @type {string} */ m) => (hasText(`chat.pick.mode.${m}`) ? t(`chat.pick.mode.${m}`) : m);
+    const modeLabel = (/** @type {string} */ m) => (m ? modeText(m) : can.shownMode ? modeText(can.shownMode) : t('studio.start.modeDefault'));
+    // v3.120 the account's reported modes (studio:models caps.modes), else START_MODES; Auto also turns on the project's Auto-approve
+    const modes = Array.isArray(caps?.modes) && caps.modes.length ? ['', ...caps.modes.filter((/** @type {string} */ m) => m !== 'bypassPermissions')] : START_MODES;
+    startMode.replaceChildren(...(can.mode ? modes : ['']).map((m) => el('option', { value: m }, modeLabel(m))));
     startMode.value = dv;
     startMode.disabled = !can.mode;
     startMode.hidden = !can.model && !can.lock;
-    startMode.title = `${t('chat.pick.modeTitle')}${can.lock ? ` · ${t(`chat.pick.why.${can.lock}`)}` : ''}`;
+    startMode.title = `${t('chat.pick.modeTitle')}${can.lock ? ` · ${t(`chat.pick.why.${can.lock}`)}` : caps?.autoApprove ? ` · ${t('chat.pick.managerNoteTitle')}` : ''}`;
     startText.placeholder = t('studio.start.placeholder');
     startSend.title = `${t('studio.start.send')} (Enter)`;
     startSend.setAttribute('aria-label', t('studio.start.send'));
@@ -302,7 +307,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
    * v3.120 Studio UX: the start screen's models are the selected project's account's (main's per-account cache, filled
    * by a session or a short probe). Until the probe answers: only the default option and a loading line.
    */
-  /** @type {Map<string, { models: any[], loading: boolean, at: number, caps?: { gui: boolean, modeLock: string } | null }>} */
+  /** @type {Map<string, { models: any[], loading: boolean, at: number, caps?: { gui: boolean, modeLock: string, modes?: string[], autoApprove?: boolean } | null }>} */
   const startLists = new Map();
   let startModelsAsked = '';
   let startModelsTimer = /** @type {any} */ (null);
@@ -320,7 +325,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     startModelsAsked = projectId;
     api.chat.startModels(projectId).then((/** @type {any} */ r) => {
       startModelsAsked = '';
-      const caps = r && typeof r.gui === 'boolean' ? { gui: r.gui, modeLock: typeof r.modeLock === 'string' ? r.modeLock : '' } : null;
+      const caps = r && typeof r.gui === 'boolean' ? { gui: r.gui, modeLock: typeof r.modeLock === 'string' ? r.modeLock : '', modes: Array.isArray(r.modes) ? r.modes.filter((/** @type {any} */ m) => typeof m === 'string') : [], autoApprove: r.autoApprove === true } : null;
       const had = JSON.stringify(startLists.get(projectId)?.caps || null);
       startLists.set(projectId, { models: Array.isArray(r?.models) ? r.models : [], loading: Boolean(r?.loading), at: Date.now(), caps });
       if (startProject.value === projectId) { if (had !== JSON.stringify(caps)) drawStart(current()); else drawStartModels(projectId); }

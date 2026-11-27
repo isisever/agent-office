@@ -221,6 +221,12 @@ function modeLock({ skip = false, desk = false } = {}) {
   if (desk) return 'desk';
   return skip ? 'bypass' : '';
 }
+/**
+ * v3.120 Studio's Auto: picking the `auto` mode also turns the project's Auto-approve on (one source of truth with the
+ * Office: the manager answers what auto mode still asks). Any other mode changes only the session and never turns it off.
+ */
+const turnsAutoApproveOn = (mode) => mode === 'auto';
+
 /** May chat:setting change `key` in a chat whose mode is held by `lock` (modeLock)? */
 function settingAllowed(lock, key) {
   return key !== 'mode' || !lock;
@@ -228,5 +234,5 @@ function settingAllowed(lock, key) {
 
 module.exports = {
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
-  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed,
+  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn,
 };

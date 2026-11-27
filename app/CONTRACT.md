@@ -3074,7 +3074,9 @@ StudioProject.running[] += { label: string,   // the tab's own label (staff memb
   busy: boolean, waiting: boolean }           // a turn runs (GUI chat) / an approval or a question is open
 chat:read gui += { info: { model: string, usage: null | { input_tokens, cache_read_input_tokens, cache_creation_input_tokens } }, contextCap: number,
                   models: [{ value, label, description, resolved }] }
-chat.startModels(projectId) → studio:models → { models: [{ value, label, description, resolved }], loading: boolean }
+chat.startModels(projectId) → studio:models → { models: [{ value, label, description, resolved }], loading: boolean,
+                  gui: boolean, modeLock: '' | 'bypass', modes: string[], autoApprove: boolean }
+chat:read gui += { modes: string[], autoApprove: boolean }   // the account's picker modes (never bypassPermissions); the project's Auto-approve
 ```
 
 1. **Header**: in Studio the title bar's Office items (≡, ⚙, AGENT OFFICE, the project, the counts) are hidden by CSS and
@@ -3128,6 +3130,28 @@ chat.startModels(projectId) → studio:models → { models: [{ value, label, des
    Windows, where the fallback shows until a session reports). Until the probe answers the start picker shows only the
    project default and a disabled "Loading this account's models…" line, asking again every 1.5 s; a loaded list is
    asked again after a minute. `startPlan(choice, models)` keeps a model only from the offered list.
+   **Permission modes and Auto**: the mode pickers list the modes the account's claude takes, not a fixed list.
+   `initialize` does not list them (claude 2.1.332), so the same probe, after `initialize`, sends
+   `set_permission_mode` with the value `__ao_probe__` (request_id `ao-probe-mode`) and parses its error
+   "Cannot set permission mode: must be one of acceptEdits, auto, bypassPermissions, default, dontAsk, plan"
+   (`parseModes`; an initialize field `permission_modes`, if a claude ever sends one, is used instead and the second
+   request is skipped). Only this throwaway probe sends it, never a real session. The list is cached with the models
+   (`mergeModes`, `cachedModes`; a models update keeps it, an empty report never wipes it); an account whose cache
+   has no modes is probed again. `pickerModes`: every reported mode except `bypassPermissions` (shown only as a
+   skip-permissions session's locked display), in the order Auto, Ask permissions, Accept edits, Plan mode, then the
+   rest (dontAsk: "Don't ask"; a mode with no text shows its name); no report → `FALLBACK_MODES` (auto, default,
+   acceptEdits, plan). `chat:setting` 'mode' answers 'bad' for a value not in that list (`allowedMode`) and gui-proc's
+   `settingLine` takes only the list main passes. **Auto** in Agent Office means two things together: claude runs in
+   `auto` mode, and what auto mode still asks is answered by the manager (`guiAsk` → `GS.autoAllows` with the
+   project's Auto-approve and the plugin's `canAutoApprove`: the same rules as the Office, never wider). So picking
+   Auto (a chat picker or the start screen) sets the session to `auto` and, once claude answers ok, turns the
+   project's Auto-approve on (`STU.turnsAutoApproveOn`, main `autoApproveOn`: the Office's one setting; its idle
+   terminal tabs restart to read it, GUI chats keep running because `guiAsk` reads the project's current setting at
+   each ask). Any other mode changes only that session and never turns Auto-approve off; while Auto-approve is on the
+   chat shows a small "Manager answers" note next to the picker (`pickerState().managerNote`) and the start screen's
+   mode tooltip says so. The picker shows Auto selected when the session reports `auto`. Desk and guarded sessions
+   ('desk') and skip-permissions sessions ('bypass') keep the mode picker locked and show no note. Limit: a session
+   of an Auto-approve project still starts in claude's default mode; Auto is set by the picker or the start screen.
 5. **Message actions** (Studio only): Copy on every message (as before), a copy button in each code block's corner,
    Edit on the person's messages (puts the text back in the input to send again; the conversation is not rewound),
    "Jump to latest" while the list is scrolled more than 120 px up, and animated dots on the live line while a turn runs.

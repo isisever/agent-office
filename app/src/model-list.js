@@ -68,7 +68,7 @@ function mergeCache(cache, key, models, now = Date.now()) {
   const base = cache && typeof cache === 'object' && !Array.isArray(cache) ? cache : {};
   if (!Array.isArray(models) || !models.length) return { cache: base, changed: false };
   if (sameModels(base[key]?.models, models)) return { cache: base, changed: false };
-  const next = { ...base, [key]: { models: models.slice(0, MAX_MODELS), at: now } };
+  const next = { ...base, [key]: { ...(base[key] && typeof base[key] === 'object' ? base[key] : {}), models: models.slice(0, MAX_MODELS), at: now } };
   const keys = Object.keys(next);
   if (keys.length > MAX_ACCOUNTS) {
     keys.sort((x, y) => (Number(next[x]?.at) || 0) - (Number(next[y]?.at) || 0));
@@ -98,4 +98,72 @@ function startModels(cache, key, probing) {
 /** The initialize control request (stream-json); it sends no prompt. */
 const initLine = (requestId) => `${JSON.stringify({ type: 'control_request', request_id: String(requestId), request: { subtype: 'initialize' } })}\n`;
 
-module.exports = { FALLBACK, parseModels, pickerModels, allowedModel, modelValues, sameModels, accountKey, mergeCache, cachedModels, startModels, initLine, MAX_MODELS, MAX_ACCOUNTS };
+
+// v3.120 Studio UX: the permission modes an account's claude takes. initialize does not list them (checked on
+// 2.1.332); a set_permission_mode with an unknown value answers "Cannot set permission mode: must be one of acceptEdits,
+// auto, bypassPermissions, default, dontAsk, plan". Only the model probe (a throwaway session) sends it, never a real one.
+const MODE_RE = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
+const MAX_MODES = 20;
+/** What a session may pick when its account reported no list: the old list plus auto. */
+const FALLBACK_MODES = Object.freeze(['auto', 'default', 'acceptEdits', 'plan']);
+/** The pickers' order; a reported mode not named here follows in the reported order. */
+const MODE_ORDER = ['auto', 'default', 'acceptEdits', 'plan'];
+/** Never offered: it only shows (locked) the mode of a session started with skip permissions. */
+const LOCKED_MODE = 'bypassPermissions';
+const PROBE_MODE = '__ao_probe__';
+
+/**
+ * The modes claude reports → string[] ([] when none): an array (an initialize field, if a claude ever lists them) or
+ * the error text of a set_permission_mode with an unknown value. Bad or repeated names are skipped.
+ * @param {any} src
+ */
+function parseModes(src) {
+  let list = [];
+  if (Array.isArray(src)) list = src;
+  else if (typeof src === 'string') {
+    const m = /must be one of\s*:?\s*(.+)$/i.exec(src.trim());
+    list = m ? m[1].replace(/[.\s]+$/, '').split(/\s*,\s*|\s+or\s+/) : [];
+  }
+  /** @type {string[]} */
+  const out = [];
+  for (const v of list) {
+    const name = typeof v === 'string' ? v.trim().replace(/^['"`]|['"`]$/g, '') : '';
+    if (MODE_RE.test(name) && name !== PROBE_MODE && !out.includes(name)) out.push(name);
+    if (out.length >= MAX_MODES) break;
+  }
+  return out;
+}
+
+/** The modes a picker offers: the reported list (or FALLBACK_MODES) without bypassPermissions, in MODE_ORDER first. */
+function pickerModes(reported) {
+  const list = Array.isArray(reported) && reported.length ? reported : FALLBACK_MODES;
+  const shown = list.filter((m) => typeof m === 'string' && m !== LOCKED_MODE);
+  const rank = (/** @type {string} */ m) => (MODE_ORDER.includes(m) ? MODE_ORDER.indexOf(m) : MODE_ORDER.length);
+  return shown.map((m, i) => ({ m, i })).sort((a, b) => rank(a.m) - rank(b.m) || a.i - b.i).map((x) => x.m);
+}
+
+/** May the picker (and chat:setting) set this mode? Against the account's reported list, else FALLBACK_MODES. */
+const allowedMode = (reported, value) => typeof value === 'string' && pickerModes(reported).includes(value);
+
+/** The account's modes after a probe reported `modes` → { cache, changed }; an empty list never wipes a good one. */
+function mergeModes(cache, key, modes, now = Date.now()) {
+  const base = cache && typeof cache === 'object' && !Array.isArray(cache) ? cache : {};
+  const clean = parseModes(modes);
+  if (!clean.length) return { cache: base, changed: false };
+  const old = base[key] && typeof base[key] === 'object' ? base[key] : {};
+  if (Array.isArray(old.modes) && old.modes.join(',') === clean.join(',')) return { cache: base, changed: false };
+  return { cache: { ...base, [key]: { ...old, modes: clean, at: Number(old.at) || now } }, changed: true };
+}
+
+/** The cached modes of an account (re-checked), or null when none are cached. */
+function cachedModes(cache, key) {
+  const e = cache && typeof cache === 'object' ? cache[key] : null;
+  const modes = e && Array.isArray(e.modes) ? parseModes(e.modes) : [];
+  return modes.length ? modes : null;
+}
+
+/** The probe's second request: set_permission_mode with a value no claude takes, so its error lists the modes. */
+const modeProbeLine = (requestId) => `${JSON.stringify({ type: 'control_request', request_id: String(requestId), request: { subtype: 'set_permission_mode', mode: PROBE_MODE } })}\n`;
+
+module.exports = { FALLBACK, parseModels, pickerModels, allowedModel, modelValues, sameModels, accountKey, mergeCache, cachedModels, startModels, initLine, MAX_MODELS, MAX_ACCOUNTS,
+  FALLBACK_MODES, LOCKED_MODE, parseModes, pickerModes, allowedMode, mergeModes, cachedModes, modeProbeLine };

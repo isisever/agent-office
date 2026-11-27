@@ -4,7 +4,14 @@
 /** The models a GUI chat can switch to mid-session ('' = the one the session started with). */
 export const MODEL_OPTIONS = ['', 'opus', 'sonnet', 'haiku'];
 /** Claude Code's permission modes a GUI chat can switch to; bypass is left out (it needs a start flag). */
-export const MODE_OPTIONS = ['default', 'acceptEdits', 'plan'];
+// v3.120 the fallback when the account reported no list (main's gui.modes: model-list.js pickerModes, never bypassPermissions)
+export const MODE_OPTIONS = ['auto', 'default', 'acceptEdits', 'plan'];
+
+/** v3.120 the permission modes a chat's picker offers: the account's reported list (gui.modes), else MODE_OPTIONS. */
+export function modeChoices(gui) {
+  const list = Array.isArray(gui?.modes) ? gui.modes.filter((m) => typeof m === 'string' && m && m !== 'bypassPermissions') : [];
+  return list.length ? list : MODE_OPTIONS;
+}
 
 /** A byte count as people read it: "812 B", "4.2 KB", "13 MB" (1024-based, one decimal under 10). '' when unknown. */
 export function formatSize(bytes) {
@@ -122,16 +129,18 @@ export function modelChoices(gui) {
 
 /**
  * The pickers' state for a tab. gui: the chat's GUI info (null: a terminal tab), settings: what this chat last set.
- * → { enabled, model, mode, why, lock, modeEnabled } — why: '' | 'terminal' (a terminal tab: /model there) | 'busy' (a
+ * → { enabled, model, mode, why, lock, modeEnabled, managerNote } — why: '' | 'terminal' (a terminal tab: /model there) | 'busy' (a
  * turn runs: wait). lock (gui.modeLock): 'bypass' (started with skip permissions: the mode shows bypassPermissions and
  * cannot change) | 'desk' (a desk's own permission rules: the mode cannot change) | ''. The model picker is never locked.
  */
 export function pickerState(gui, settings = {}) {
   const model = modelChoices(gui).some((m) => m.value === settings?.model) ? settings.model : '';
   const lock = gui && ['bypass', 'desk'].includes(gui.modeLock) ? gui.modeLock : '';
-  const set = MODE_OPTIONS.includes(settings?.mode) ? settings.mode : 'default';
+  const set = modeChoices(gui).includes(settings?.mode) ? settings.mode : 'default';
   const mode = lock === 'bypass' ? 'bypassPermissions' : set;
-  if (!gui || gui.ended) return { enabled: false, model, mode, why: 'terminal', lock, modeEnabled: false };
-  if (gui.live?.busy || (gui.asks || []).length) return { enabled: false, model, mode, why: 'busy', lock, modeEnabled: false };
-  return { enabled: true, model, mode, why: '', lock, modeEnabled: !lock };
+  // v3.120 the project's Auto-approve is on but this session runs another mode: the manager still answers its prompts
+  const managerNote = Boolean(gui) && gui.autoApprove === true && !lock && mode !== 'auto';
+  if (!gui || gui.ended) return { enabled: false, model, mode, why: 'terminal', lock, modeEnabled: false, managerNote: false };
+  if (gui.live?.busy || (gui.asks || []).length) return { enabled: false, model, mode, why: 'busy', lock, modeEnabled: false, managerNote };
+  return { enabled: true, model, mode, why: '', lock, modeEnabled: !lock, managerNote };
 }

@@ -51,19 +51,19 @@ test('splitMentions leaves ordinary text alone', () => {
 });
 
 test('pickerState: terminal tabs and busy chats cannot switch; values are checked', () => {
-  const base = { lock: '', modeEnabled: false };
+  const base = { lock: '', modeEnabled: false, managerNote: false };
   assert.deepEqual(pickerState(null), { enabled: false, model: '', mode: 'default', why: 'terminal', ...base });
   assert.equal(pickerState({ live: { busy: false }, asks: [], ended: { code: 0 } }).why, 'terminal');
   assert.deepEqual(pickerState({ live: { busy: true }, asks: [] }, { model: 'opus' }), { enabled: false, model: 'opus', mode: 'default', why: 'busy', ...base });
   assert.equal(pickerState({ live: { busy: false }, asks: [{ id: 'a' }] }).why, 'busy');
-  assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'gpt', mode: 'bypassPermissions' }), { enabled: true, model: '', mode: 'default', why: '', lock: '', modeEnabled: true });
-  assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'haiku', mode: 'plan' }), { enabled: true, model: 'haiku', mode: 'plan', why: '', lock: '', modeEnabled: true });
+  assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'gpt', mode: 'bypassPermissions' }), { enabled: true, model: '', mode: 'default', why: '', lock: '', modeEnabled: true, managerNote: false });
+  assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'haiku', mode: 'plan' }), { enabled: true, model: 'haiku', mode: 'plan', why: '', lock: '', modeEnabled: true, managerNote: false });
 });
 
 test('v3.121 pickerState: a skip-permissions session shows bypassPermissions and a desk keeps its mode; the model stays free', () => {
   const idle = { live: { busy: false }, asks: [] };
-  assert.deepEqual(pickerState({ ...idle, modeLock: 'bypass' }, { model: 'opus', mode: 'plan' }), { enabled: true, model: 'opus', mode: 'bypassPermissions', why: '', lock: 'bypass', modeEnabled: false });
-  assert.deepEqual(pickerState({ ...idle, modeLock: 'desk' }, { mode: 'acceptEdits' }), { enabled: true, model: '', mode: 'acceptEdits', why: '', lock: 'desk', modeEnabled: false });
+  assert.deepEqual(pickerState({ ...idle, modeLock: 'bypass' }, { model: 'opus', mode: 'plan' }), { enabled: true, model: 'opus', mode: 'bypassPermissions', why: '', lock: 'bypass', modeEnabled: false, managerNote: false });
+  assert.deepEqual(pickerState({ ...idle, modeLock: 'desk' }, { mode: 'acceptEdits' }), { enabled: true, model: '', mode: 'acceptEdits', why: '', lock: 'desk', modeEnabled: false, managerNote: false });
   assert.equal(pickerState({ ...idle, modeLock: 'other' }).modeEnabled, true, 'an unknown lock is ignored');
   assert.equal(pickerState({ live: { busy: true }, asks: [], modeLock: 'bypass' }).mode, 'bypassPermissions', 'shown while busy too');
   const R = fs.readFileSync(new URL('../renderer/chat.js', import.meta.url), 'utf8');
@@ -100,4 +100,25 @@ test('modelChoices: the session reported models, else the fixed aliases; pickerS
   assert.deepEqual(modelChoices(gui), [{ value: '', label: 'Default (recommended)', description: 'd' }, { value: 'fable', label: 'Fable 5.2', description: '' }]);
   assert.equal(pickerState(gui, { model: 'fable' }).model, 'fable');
   assert.equal(pickerState(gui, { model: 'haiku' }).model, '', 'not reported for this account');
+});
+
+test('v3.120 mode picker: the account\'s modes, Auto selected when the session reports it, the manager note otherwise', () => {
+  const gui = { live: { busy: false }, asks: [], modes: ['auto', 'default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'], autoApprove: true };
+  assert.deepEqual(C.modeChoices(gui), ['auto', 'default', 'acceptEdits', 'plan', 'dontAsk']);
+  assert.deepEqual(C.modeChoices({}), ['auto', 'default', 'acceptEdits', 'plan']);
+  let st = pickerState(gui, { mode: 'auto' });
+  assert.equal(st.mode, 'auto');
+  assert.equal(st.managerNote, false);
+  st = pickerState(gui, { mode: 'plan' });
+  assert.equal(st.mode, 'plan');
+  assert.equal(st.managerNote, true, 'Auto-approve on, another mode: the manager still answers');
+  assert.equal(pickerState({ ...gui, autoApprove: false }, { mode: 'plan' }).managerNote, false);
+  // a skip-permissions or desk session stays locked and shows no note
+  st = pickerState({ ...gui, modeLock: 'bypass' }, { mode: 'auto' });
+  assert.equal(st.mode, 'bypassPermissions');
+  assert.equal(st.modeEnabled, false);
+  assert.equal(st.managerNote, false);
+  st = pickerState({ ...gui, modeLock: 'desk' }, {});
+  assert.equal(st.modeEnabled, false);
+  assert.equal(st.managerNote, false);
 });

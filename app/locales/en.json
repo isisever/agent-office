@@ -877,10 +877,12 @@
         "haiku": "Haiku"
       },
       "mode": {
+        "auto": "Auto",
         "default": "Ask permissions",
         "acceptEdits": "Accept edits",
         "plan": "Plan mode",
-        "bypassPermissions": "Bypass permissions"
+        "bypassPermissions": "Bypass permissions",
+        "dontAsk": "Don't ask"
       },
       "why": {
         "terminal": "only in a running GUI chat (use /model in the terminal)",
@@ -892,7 +894,9 @@
         "busy": "A turn is running: change it when it is done.",
         "not-running": "This session is not running as a chat.",
         "other": "Could not change it."
-      }
+      },
+      "managerNote": "Manager answers",
+      "managerNoteTitle": "This project's Auto-approve is on: the manager still answers its prompts"
     },
     "revealMac": "Show in Finder",
     "revealOutside": "This file is not inside the project folder (or is gone): it cannot be shown here.",

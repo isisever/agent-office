@@ -5,13 +5,13 @@
 // one off the hidden terminal's screen (src/tui-menu.mjs) and shows it as buttons that type the option's number.
 // v3.108 GUI chat: a tab that runs claude on its SDK protocol (chat:read returns `gui`) has no terminal to read: its
 // permission requests, questions and plans come as data and are answered with chat:answer; Stop is chat:interrupt.
-import { t } from './i18n.js';
+import { t, hasText } from './i18n.js';
 import { micButton } from './voice.js';
 import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
-import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, modelChoices, MODE_OPTIONS } from '../src/composer.mjs';
+import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, modelChoices, modeChoices } from '../src/composer.mjs';
 import { icon } from './studio-icons.js';
 import { modelName, contextUsage, shortTokens } from '../src/studio-ux.mjs';
 
@@ -145,7 +145,10 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   // v3.120 Studio UX: the context the session uses (the last answer's input tokens) as a small ring
   const ctxRing = h('span', { class: 'chat-ctx', role: 'img' });
   ctxRing.hidden = true;
-  const pickers = h('span', { class: 'chat-picks chat-studio-only' }, ctxRing, modelSel, modeSel);
+  // v3.120 the project's Auto-approve is on while this session runs another mode: the manager still answers
+  const modeNote = h('span', { class: 'chat-pick-note' });
+  modeNote.hidden = true;
+  const pickers = h('span', { class: 'chat-picks chat-studio-only' }, ctxRing, modelSel, modeSel, modeNote);
   const moreTerm = h('button', { class: 'chat-more-item', type: 'button', role: 'menuitem', onclick: () => { moreMenu.hidden = true; onTerminal(); } }, icon('terminal'), h('span', {}));
   const moreMenu = h('div', { class: 'chat-more-menu', role: 'menu' }, moreTerm);
   moreMenu.hidden = true;
@@ -863,10 +866,19 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   }
   function drawPickOptions() {
     drawModelOptions(true);
-    // bypassPermissions is never offered: it only shows the mode of a session started with skip permissions
-    modeSel.replaceChildren(...MODE_OPTIONS.map((m) => h('option', { value: m }, t(`chat.pick.mode.${m}`))),
-      h('option', { value: 'bypassPermissions', disabled: true, hidden: true }, t('chat.pick.mode.bypassPermissions')));
+    drawModeOptions(true);
     drawPicks();
+  }
+  /** v3.120 the account's reported modes (modeChoices); bypassPermissions is never offered: it only shows the mode of a
+   * session started with skip permissions. A mode with no text of its own shows its name. */
+  function drawModeOptions(force = false) {
+    const list = modeChoices(gui);
+    const sig = list.join(',');
+    if (!force && modeSel.dataset.sig === sig) return;
+    modeSel.dataset.sig = sig;
+    const label = (/** @type {string} */ m) => (hasText(`chat.pick.mode.${m}`) ? t(`chat.pick.mode.${m}`) : m);
+    modeSel.replaceChildren(...list.map((m) => h('option', { value: m }, label(m))),
+      h('option', { value: 'bypassPermissions', disabled: true, hidden: true }, t('chat.pick.mode.bypassPermissions')));
   }
   /** v3.120 Studio UX: the model options are the models the session reported (modelChoices); redrawn when they change. */
   function drawModelOptions(force = false) {
@@ -878,6 +890,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   }
   function drawPicks() {
     drawModelOptions();
+    drawModeOptions();
     const st = pickerState(gui, gui?.settings || picks);
     if (modelSel.value !== st.model) modelSel.value = st.model;
     if (modeSel.value !== st.mode) modeSel.value = st.mode;
@@ -903,6 +916,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       ctxRing.setAttribute('aria-label', ctxRing.title);
     }
     modeSel.title = `${t('chat.pick.modeTitle')}${st.lock ? ` · ${t(`chat.pick.why.${st.lock}`)}` : why}`;
+    modeNote.hidden = !st.managerNote;
+    if (st.managerNote) { modeNote.textContent = t('chat.pick.managerNote'); modeNote.title = t('chat.pick.managerNoteTitle'); }
   }
   async function setting(/** @type {'model' | 'mode'} */ key, /** @type {string} */ value) {
     let r = 'error';

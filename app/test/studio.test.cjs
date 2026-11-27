@@ -220,3 +220,8 @@ test('status isGui: a stopped tab reports the mode it would start in (main.js wi
   assert.match(src, /function guiMode\(id\) \{\n {2}const t = terms\.get\(id\);\n {2}if \(t\) return Boolean\(t\.gui\);/);
   assert.match(src, /isGui: guiMode\(P\.tabPtyId\(p\.id, t\.n\)\)/);
 });
+
+test('v3.120 Auto turns the project\'s Auto-approve on; no other mode does (and none turns it off)', () => {
+  assert.equal(S.turnsAutoApproveOn('auto'), true);
+  for (const m of ['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions', '']) assert.equal(S.turnsAutoApproveOn(m), false, m);
+});

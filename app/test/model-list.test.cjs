@@ -120,3 +120,79 @@ test('GUI chat: an error or empty initialize answer keeps the fallback and repor
   assert.deepEqual(t.models(), []);
   assert.equal(reported.length, 0);
 });
+
+// v3.120 auto mode and the account's permission-mode list
+const PROBE_ERROR = 'Cannot set permission mode: must be one of acceptEdits, auto, bypassPermissions, default, dontAsk, plan';
+
+test('v3.120 modes: the probe error and an initialize list parse; bad, repeated and the probe value are skipped', () => {
+  assert.deepEqual(ML.parseModes(PROBE_ERROR), ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan']);
+  assert.deepEqual(ML.parseModes('Cannot set permission mode: must be one of "default", plan or auto.'), ['default', 'plan', 'auto']);
+  assert.deepEqual(ML.parseModes(['default', 'default', 'bad mode', '', 7, '__ao_probe__', 'plan']), ['default', 'plan']);
+  assert.deepEqual(ML.parseModes('something else went wrong'), []);
+  assert.deepEqual(ML.parseModes(null), []);
+});
+
+test('v3.120 modes: the picker shows every reported mode except bypassPermissions, Auto first; fallback = old list + auto', () => {
+  const reported = ML.parseModes(PROBE_ERROR);
+  assert.deepEqual(ML.pickerModes(reported), ['auto', 'default', 'acceptEdits', 'plan', 'dontAsk']);
+  assert.deepEqual(ML.pickerModes(null), ['auto', 'default', 'acceptEdits', 'plan']);
+  assert.deepEqual(ML.pickerModes([]), ML.pickerModes(undefined));
+  assert.ok(ML.allowedMode(reported, 'dontAsk'));
+  assert.ok(!ML.allowedMode(reported, 'bypassPermissions'), 'never chosen in a picker');
+  assert.ok(!ML.allowedMode(null, 'dontAsk'), 'the fallback does not know it');
+  assert.ok(ML.allowedMode(null, 'auto'));
+  assert.ok(!ML.allowedMode(reported, 'nope'));
+});
+
+test('v3.120 modes: cached per account next to the models; a models update keeps them, an empty report never wipes them', () => {
+  let { cache, changed } = ML.mergeCache({}, '', [{ value: 'opus', label: 'Opus', description: '', resolved: '' }], 1);
+  ({ cache, changed } = ML.mergeModes(cache, '', ML.parseModes(PROBE_ERROR), 2));
+  assert.ok(changed);
+  assert.deepEqual(ML.cachedModes(cache, ''), ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan']);
+  assert.equal(ML.mergeModes(cache, '', [], 3).changed, false);
+  assert.equal(ML.mergeModes(cache, '', ML.parseModes(PROBE_ERROR), 3).changed, false);
+  ({ cache } = ML.mergeCache(cache, '', [{ value: 'sonnet', label: 'Sonnet', description: '', resolved: '' }], 4));
+  assert.ok(ML.cachedModes(cache, ''), 'a new model list keeps the modes');
+  assert.equal(ML.cachedModes(cache, '/other'), null);
+  assert.equal(ML.cachedModes({ '': { modes: ['bad mode'] } }, ''), null);
+  const line = JSON.parse(ML.modeProbeLine('ao-probe-mode'));
+  assert.deepEqual(line.request, { subtype: 'set_permission_mode', mode: '__ao_probe__' });
+});
+
+test('v3.120 modes: settingLine takes a mode from the list main passes, never bypassPermissions', () => {
+  const modes = ML.pickerModes(ML.parseModes(PROBE_ERROR));
+  assert.equal(JSON.parse(GS.settingLine('s1', 'mode', 'auto', undefined, modes)).request.mode, 'auto');
+  assert.equal(JSON.parse(GS.settingLine('s1', 'mode', 'dontAsk', undefined, modes)).request.mode, 'dontAsk');
+  assert.equal(GS.settingLine('s1', 'mode', 'dontAsk'), null, 'not in the fallback');
+  assert.equal(GS.settingLine('s1', 'mode', 'bypassPermissions', undefined, ['bypassPermissions']), null);
+  assert.ok(GS.settingLine('s1', 'mode', 'auto'), 'auto is in the fallback');
+});
+
+test('v3.120 modes: main probes only a throwaway session and wires Auto to the project\'s Auto-approve', () => {
+  const MAIN = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'main.js'), 'utf8');
+  const fnBody = (name) => { const i = MAIN.indexOf(`function ${name}(`); assert.ok(i >= 0, name); return MAIN.slice(i, MAIN.indexOf('\n}\n', i)); };
+  // the mode probe line is written only by probeModels (its temp-folder session), never to a real tab
+  assert.equal(MAIN.split('ML.modeProbeLine(').length - 1, 1);
+  assert.match(fnBody('probeModels'), /ML\.modeProbeLine\('ao-probe-mode'\)/);
+  assert.match(fnBody('probeModels'), /mkdtempSync/);
+  // chat:setting checks the reported list, and only an ok auto turns Auto-approve on (never off)
+  const i = MAIN.indexOf("ipcMain.handle('chat:setting'");
+  const body = MAIN.slice(i, MAIN.indexOf('\n});\n', i));
+  assert.match(body, /ML\.allowedMode\(modes, /);
+  assert.match(body, /r === 'ok' && String\(key\) === 'mode' && STU\.turnsAutoApproveOn\(String\(value\)\) && project && !project\.hq\) autoApproveOn\(project\.id\)/);
+  assert.match(fnBody('autoApproveOn'), /P\.setProjectAutoApprove\(state, projectId, true\)/);
+  assert.doesNotMatch(fnBody('autoApproveOn'), /false/);
+  // a GUI ask reads the project's current Auto-approve and goes through the same rules as the Office (GS.autoAllows)
+  assert.match(MAIN, /onAsk: \(ask, input\) => guiAsk\(id, ask, input, \{ autoApprove: !project\.hq && P\.autoApproveOf\(P\.findProject\(state, project\.id\) \|\| project\)/);
+  assert.match(fnBody('guiAsk'), /GS\.autoAllows\(\{ tool: ask\.tool, input, autoApprove, mailGuard, canAutoApprove: AA \? AA\.canAutoApprove : null \}\)/);
+});
+
+test('v3.120 GUI asks: Auto-approve answers only what the manager\'s rules allow', () => {
+  const allow = (tool) => tool === 'Read';
+  assert.equal(GS.autoAllows({ tool: 'Read', input: {}, autoApprove: true, mailGuard: false, canAutoApprove: allow }), true);
+  assert.equal(GS.autoAllows({ tool: 'Bash', input: {}, autoApprove: true, mailGuard: false, canAutoApprove: allow }), false, 'the rules say no');
+  assert.equal(GS.autoAllows({ tool: 'Read', input: {}, autoApprove: false, mailGuard: false, canAutoApprove: allow }), false, 'Auto-approve off');
+  assert.equal(GS.autoAllows({ tool: 'Read', input: {}, autoApprove: true, mailGuard: true, canAutoApprove: allow }), false, 'a mail desk');
+  assert.equal(GS.autoAllows({ tool: 'AskUserQuestion', input: {}, autoApprove: true, mailGuard: false, canAutoApprove: () => true }), false, 'a question is the person\'s');
+  assert.equal(GS.autoAllows({ tool: 'Read', input: {}, autoApprove: true, mailGuard: false, canAutoApprove: null }), false, 'no rules: no answer');
+});

@@ -133,3 +133,12 @@ test('v3.120 Studio renames a GUI session with chat:rename, never with chat:comm
   assert.match(h, /if \(!t\.gui\) return 'terminal';\n {2}return typePrompt\(id, cmd\)/);
   assert.doesNotMatch(h, /switchMode|startPty/);
 });
+
+test('v3.120 start screen: a mode from the account\'s list (Auto included), never bypassPermissions', () => {
+  const caps = { gui: true, modeLock: '', modes: ['auto', 'default', 'dontAsk', 'bypassPermissions'] };
+  assert.deepEqual(startPlan({ mode: 'auto' }, undefined, caps).settings, [['mode', 'auto']]);
+  assert.deepEqual(startPlan({ mode: 'dontAsk' }, undefined, caps).settings, [['mode', 'dontAsk']]);
+  assert.deepEqual(startPlan({ mode: 'bypassPermissions' }, undefined, caps).settings, []);
+  assert.deepEqual(startPlan({ mode: 'auto' }, undefined, { gui: true, modeLock: '' }).settings, [['mode', 'auto']], 'fallback has auto');
+  assert.deepEqual(startPlan({ mode: 'auto' }, undefined, { ...caps, modeLock: 'desk' }).settings, [], 'a desk keeps its mode');
+});
