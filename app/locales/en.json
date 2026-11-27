@@ -200,7 +200,13 @@
       "stateIdle": "Idle",
       "stateWorking": "Working",
       "stateNeeds": "Needs you",
-      "stateAsleep": "Asleep"
+      "stateAsleep": "Asleep",
+      "noDepartments": "No members yet, so no departments.",
+      "departmentsHint": "A department is a label on its members. Renaming one renames it for every member in it.",
+      "memberCount": "Members: {n}",
+      "rename": "Rename",
+      "renameEmpty": "A department needs a name.",
+      "renameFailed": "Some members kept the old name:"
     }
   },
   "app": {

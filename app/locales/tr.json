@@ -200,7 +200,13 @@
       "stateIdle": "Boşta",
       "stateWorking": "Çalışıyor",
       "stateNeeds": "Sizi bekliyor",
-      "stateAsleep": "Uykuda"
+      "stateAsleep": "Uykuda",
+      "noDepartments": "Henüz üye yok, bu yüzden departman da yok.",
+      "departmentsHint": "Departman, üyelerin üzerindeki bir etikettir. Yeniden adlandırmak, içindeki tüm üyeler için adı değiştirir.",
+      "memberCount": "Üye: {n}",
+      "rename": "Yeniden adlandır",
+      "renameEmpty": "Departmanın bir adı olmalı.",
+      "renameFailed": "Bazı üyelerde eski ad kaldı:"
     }
   },
   "app": {

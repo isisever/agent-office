@@ -766,3 +766,10 @@ body.studio #studio-sidebar .st-team-open { display: flex; align-items: center; 
 body.studio #studio-sidebar .st-team-open .st-title { flex: 1; }
 body.studio #studio-sidebar .st-team-open .st-icon { transform: rotate(-90deg); opacity: .6; }
 body.studio #studio-sidebar .st-team-open:hover { color: var(--st-text); }
+/* the Departments tab */
+body.studio #studio-team .st-team-depts { max-width: 640px; margin-top: 12px; border: 1px solid var(--st-border); border-radius: var(--st-radius); background: var(--st-raised); overflow: hidden; }
+body.studio #studio-team .st-team-dept-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+body.studio #studio-team .st-team-dept-row + .st-team-dept-row { border-top: 1px solid var(--st-border); }
+body.studio #studio-team .st-team-dept-name { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.studio #studio-team .st-team-dept-row.editing .st-team-input { flex: 1; min-width: 0; }
+body.studio #studio-team .st-team-depts + .st-team-error { max-width: 640px; margin-top: 10px; }
