@@ -663,6 +663,37 @@ test('notices that arrive in a burst are submitted as one prompt once the inbox 
   expect(submitted.length).toBe(1)
 })
 
+test('a notice the plugin submits does not reset the verify block: one "ran no test" block per turn sequence', async ($, on) => {
+  const files: Record<string, string> = {}
+  const { clock } = setUpTicking(on, { HOME: '/home/tester', AGENT_OFFICE_VERIFY: '1' }, files)
+  const notices: string[] = []
+  on('prompt.submit', (_$, e) => {
+    if (e.origin?.kind === 'plugin') notices.push(e.text)
+    return { text: e.text }
+  })
+  on('tool.call', () => ({ result: 'ok' }) as never)
+  on('classic.Stop', () => ({}))
+  on('model.classify', () => ({ value: undefined }))
+  const stop = () => $.classic.Stop({ stop_hook_active: false, last_assistant_message: 'Renamed it.', background_tasks: [], session_crons: [] } as never)
+  const edit = () => $.tool.call({ tool: 'Edit', file_path: '/work/my-app/a.ts', old_string: 'a', new_string: 'b' } as never)
+  await $.session.start(start)
+  await $.prompt.submit({ text: 'rename the helper', origin: { kind: 'composer' } } as never)
+  await edit()
+  expect((await stop()).block).toContain('ran no test')
+  // a finished remote task wakes the boss; it edits again and stops: no second block
+  files['/home/tester/.claude/agent-office/inbox/session-1.jsonl'] = JSON.stringify({ at: Date.now() + 1_000, kind: 'report-ready', id: 'a1', project: 'shop', machine: 'Mac' }) + '\n'
+  await clock.advance(TICK_MS * 3)
+  expect(notices).toHaveLength(1)
+  // the engine runs every hook on the plugin's prompt, the plugin's own included (origin plugin, asUser)
+  await $.prompt.submit({ text: notices[0] ?? '', origin: { kind: 'plugin', name: 'agent-office', asUser: true } } as never)
+  await edit()
+  expect((await stop()).block).toBeUndefined()
+  // the person's own next prompt opens a new sequence
+  await $.prompt.submit({ text: 'and the other one', origin: { kind: 'composer' } } as never)
+  await edit()
+  expect((await stop()).block).toContain('ran no test')
+})
+
 test('a single notice keeps its own wording; a steady trickle is still sent within NOTICE_MAX_TICKS', async ($, on) => {
   const files: Record<string, string> = {}
   const { clock } = setUpTicking(on, { HOME: '/home/tester' }, files)

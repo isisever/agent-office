@@ -8,7 +8,9 @@
 // stands. One block per change set: a new change after the block opens a new set. No block when nothing changed or
 // when the final message says in so many words why no check applies. Only a change to code counts: a file that is
 // not a doc (*.md, *.txt, ...), not in a temp folder outside the project (the session scratchpad), not in ~/.claude*
-// or the office data folder (facts, memory). A loop is blocked at most once per prompt of the person's.
+// or the office data folder (facts, memory), and not in a docs/ folder or a project's own .claude/ folder (memory,
+// settings; a worktree under .claude/worktrees is code). A loop is blocked at most once per prompt of the person's:
+// a notice the plugin submits to wake the boss (v3.129) does not open a new count, so a turn sequence gets one block.
 
 export const VERIFY_REASON =
   "Agent Office: you changed files but ran no test/build/lint since. Run the project's check, or say in one line why none applies."
@@ -93,6 +95,8 @@ export type VerifyPlace = { cwd: string; roots: string[]; home: string; dataDir?
 
 const DOC_FILE = /\.(?:md|mdx|markdown|txt|text|rst|adoc|asciidoc)$/i
 const TEMP_DIR = /^(?:\/private)?\/(?:tmp|var\/folders|var\/tmp)(?:\/|$)|^[A-Za-z]:\/(?:Windows\/Temp|Users\/[^/]+\/AppData\/Local\/Temp)(?:\/|$)/i
+// inside a project, these folders hold docs or Claude's memory and settings, never code (v3.129)
+const NON_CODE_DIR = /(?:^|\/)(?:docs?\/|\.claude\/(?!worktrees\/))/
 // a Claude Code session's own temp folder (its scratchpad and task outputs): never project code
 const SESSION_TEMP = /\/claude-\d+\//
 
@@ -129,11 +133,10 @@ export function isCodePath(path: string, place: VerifyPlace) {
   if (DOC_FILE.test(at)) return false
   const home = place.home ? resolvePath(place.home, '/', '') : ''
   // inside a project folder (not the home folder itself): counts, even under ~/.claude or a temp folder
-  const inRoot = place.roots.some(root => {
-    const dir = root ? resolvePath(root, place.cwd, place.home) : ''
-    return Boolean(dir) && dir !== home && dir !== '/' && isUnder(at, dir)
-  })
-  if (inRoot && !SESSION_TEMP.test(at)) return true
+  const rootDir = place.roots
+    .map(root => (root ? resolvePath(root, place.cwd, place.home) : ''))
+    .find(dir => Boolean(dir) && dir !== home && dir !== '/' && isUnder(at, dir))
+  if (rootDir && !SESSION_TEMP.test(at)) return !NON_CODE_DIR.test(at.slice(rootDir.length + 1))
   if (home && home !== '/' && isUnder(at, home) && /^\.claude/.test(at.slice(home.length + 1))) return false
   if (place.dataDir && isUnder(at, resolvePath(place.dataDir, place.cwd, place.home))) return false
   // a temp folder counts only when the project itself lives there (above)

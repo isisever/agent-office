@@ -204,6 +204,24 @@ test('at most one block per prompt, even after a new change; the next prompt can
   expect((await stop($, DONE)).block).toBe(VERIFY_REASON)
 })
 
+test('fewer wakes (v3.129): a docs/ folder or the project\'s .claude/ folder is no code change; a worktree under .claude is', () => {
+  for (const path of ['/work/my-app/docs/diagram.svg', '/work/my-app/doc/api.html', '/work/my-app/.claude/settings.json', '/work/my-app/.claude/memory/notes.json', '/work/my-app/.claude/worktrees/x/.claude/settings.local.json'])
+    expect([path, isCodePath(path, PLACE)]).toEqual([path, false])
+  for (const path of ['/work/my-app/.claude/worktrees/x/src/a.ts', '/work/my-app/src/docsify.ts', '/work/my-app/src/claude/a.ts'])
+    expect([path, isCodePath(path, PLACE)]).toEqual([path, true])
+})
+
+test('fewer wakes (v3.129): only docs or memory changed since the last check: no block', async ($, on) => {
+  setUp(on, VERIFY)
+  await $.session.start(start)
+  await prompt($, 'rename the helper')
+  await edit($)
+  await bash($, 'npm test')
+  await $.tool.call({ tool: 'Write', file_path: '/work/my-app/docs/notes.html', content: 'x' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: '/work/my-app/.claude/memory/MEMORY.json', old_string: 'a', new_string: 'b' } as never)
+  expect((await stop($, DONE)).block).toBeUndefined()
+})
+
 test('errors are normalized: paths, numbers, times and hex do not tell two runs apart', () => {
   const a = normalizeError('Error: ENOENT: no such file /tmp/run-1234/out.json\n    at 12:01:02 (0xdeadbeef)\nExit code 1')
   const b = normalizeError('Error: ENOENT: no such file /var/run-9/out.json\n    at 09:11:42 (0xabc123)\nExit code 2')
