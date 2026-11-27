@@ -2978,6 +2978,7 @@ type VoiceSettings = { enabled: boolean, language: 'auto' | 'tr' | 'en', model: 
   HQ is never started from the phone); an approval prompt open in HQ → `busy`; HQ busy → `busy`; ready → typed; cold →
   started with the turn as its first prompt.
 - **No "the person typed it" authority.** A phone's HQ turn mints no request id (`hqMinter.mint()` is not called; the
-  person's live one is cleared), so HQ cannot dispatch to paired machines on it without the normal card, exactly as for
-  an HQ turn that was not typed at this machine. Face-ID-signed approvals from the phone come in P2.
+  person's live one is cleared). Its dispatches get the same consent as any HQ turn the person did not type at this
+  machine (`HQ.consentFor`, src/hq.js): the normal card, or `follow` where that rule allows it for such a turn. It never
+  gets the consent of a typed turn. Face-ID-signed approvals from the phone come in P2.
 - **Not in P1.** Approve/deny and stop come in P2.
