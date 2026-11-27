@@ -632,6 +632,61 @@ test('a task typed into the office inbox is submitted to Claude once; old and ma
   ])
 })
 
+// fewer boss wakes (app contract v3.129): notices read in a burst become one prompt, after a quiet spell
+test('notices that arrive in a burst are submitted as one prompt once the inbox is quiet; each row is kept and sent once', async ($, on) => {
+  const files: Record<string, string> = {}
+  const { clock } = setUpTicking(on, { HOME: '/home/tester' }, files)
+  const submitted: string[] = []
+  on('prompt.submit', (_$, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
+  await $.session.start(start)
+  const inbox = '/home/tester/.claude/agent-office/inbox/session-1.jsonl'
+  const at = Date.now() + 1_000
+  const ready = (id: string, project: string, extra = {}) => JSON.stringify({ at: at + id.length, kind: 'report-ready', id, project, machine: 'Mac', ...extra })
+  files[inbox] = [ready('a1', 'shop'), ready('b22', 'blog', { personPrompted: true })].join('\n') + '\n'
+  await clock.advance(TICK_MS)
+  expect(submitted).toEqual([]) // waits: more may follow
+  // one more arrives a tick later, with a request-done row
+  files[inbox] += [ready('c333', 'shop'), JSON.stringify({ at: at + 10, kind: 'request-done', request: 'r1abc', n: 3 })].join('\n') + '\n'
+  await clock.advance(TICK_MS)
+  expect(submitted).toEqual([])
+  await clock.advance(TICK_MS * 2)
+  expect(submitted.length).toBe(1)
+  const [text = ''] = submitted
+  expect(text).toContain('3 remote tasks finished: #a1 (shop@Mac), #b22 (blog@Mac), #c333 (shop@Mac); read them with office_reports.')
+  expect(text).toContain('The person typed in the session of #b22')
+  expect(text).toContain('Request #r1abc finished (3 tasks)')
+  // the rows stay in the file (the move failed): dedupe keeps them from being sent again
+  await clock.advance(TICK_MS * 8)
+  expect(submitted.length).toBe(1)
+})
+
+test('a single notice keeps its own wording; a steady trickle is still sent within NOTICE_MAX_TICKS', async ($, on) => {
+  const files: Record<string, string> = {}
+  const { clock } = setUpTicking(on, { HOME: '/home/tester' }, files)
+  const submitted: string[] = []
+  on('prompt.submit', (_$, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
+  await $.session.start(start)
+  const inbox = '/home/tester/.claude/agent-office/inbox/session-1.jsonl'
+  const at = Date.now() + 1_000
+  files[inbox] = JSON.stringify({ at, kind: 'report-ready', id: 'a1', project: 'shop', machine: 'Mac' }) + '\n'
+  await clock.advance(TICK_MS * 3)
+  expect(submitted).toEqual(['Remote task #a1 on shop@Mac finished; read it with office_reports.'])
+  // a new stage-blocked row every tick: no quiet spell, yet one prompt goes out after at most 6 ticks
+  for (let i = 1; i <= 7; i++) {
+    files[inbox] += JSON.stringify({ at: at + i, kind: 'stage-blocked', id: `s${i}`, reason: 'after-partial' }) + '\n'
+    await clock.advance(TICK_MS)
+  }
+  expect(submitted.length).toBe(2)
+  expect(submitted[1]?.split('\n').length).toBeGreaterThan(1)
+  expect(submitted[1]).toContain('Stage #s1 will not start')
+})
+
 // agent details (contract v2.2)
 
 // a session with ticking clock, agents spawned as agent-1, agent-2… and tool calls answered
