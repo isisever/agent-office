@@ -352,3 +352,12 @@ test('settingLine: set_model / set_permission_mode control requests, only known 
   assert.equal(GS2.settingLine('s5', 'model', 'gpt-4'), null);
   assert.equal(GS2.settingLine('s6', 'effort', 'high'), null);
 });
+
+test('nextLive: a user or assistant message outside a turn does not make a fresh session busy', () => {
+  const GS3 = require('../src/gui-session.js');
+  const idle = { busy: false, text: '', tool: '' };
+  assert.deepEqual(GS3.nextLive(idle, { type: 'user', parent_tool_use_id: null, message: { content: 'replayed' } }), idle);
+  assert.deepEqual(GS3.nextLive(idle, { type: 'assistant', parent_tool_use_id: null, message: { content: [] } }), idle);
+  assert.equal(GS3.nextLive(idle, { type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start' } }).busy, true);
+  assert.equal(GS3.nextLive({ busy: true, text: 'x', tool: 'Read' }, { type: 'user', parent_tool_use_id: null }).busy, true);
+});

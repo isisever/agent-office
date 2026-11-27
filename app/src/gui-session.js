@@ -207,8 +207,10 @@ function nextLive(live, msg) {
     }
     return live;
   }
-  if (msg.type === 'assistant' && msg.parent_tool_use_id == null) return { ...live, busy: true, text: '' };
-  if (msg.type === 'user' && msg.parent_tool_use_id == null) return { ...live, busy: true, tool: '' };
+  // a whole message only updates a turn that runs (a sent message or message_start made it busy): claude also writes
+  // user / assistant messages outside a turn (replayed at a start or a resume), which must not read as working forever
+  if (msg.type === 'assistant' && msg.parent_tool_use_id == null) return live.busy ? { ...live, text: '' } : live;
+  if (msg.type === 'user' && msg.parent_tool_use_id == null) return live.busy ? { ...live, tool: '' } : live;
   return live;
 }
 
