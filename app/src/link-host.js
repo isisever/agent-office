@@ -26,7 +26,16 @@ const REVIVE_STALE_MS = 10 * 60 * 1000;  // a budget untouched this long starts 
 const REVIVE_GAP_MS = 60 * 1000;          // between the start tries of one budget (and the first one after the person's own stop, see pump)
 const REVIVE_SETTLE_MS = 3000;            // v3.104 a stopped (not asleep) tab may still be shutting down: its first start waits this long
 const PUMP_MS = 1500;
-const STARTING_MS = 20 * 1000;              // v3.83 amendment: a tab 'starting' this long gets HQ's task as its first prompt
+const STARTING_MS = 20 * 1000;
+/**
+ * v3.126 a tab that is 'starting' (no first prompt yet) while HQ's task waits for it → 'restart' (main restarts it with
+ * the task as its first prompt) or 'wait'. A desk HQ started itself restarts at once; any other tab after STARTING_MS.
+ * A desk that waits on its project's lock (`locked`) never restarts: the lock holds on every path.
+ */
+function startingAction({ since, now, hqDesk = false, locked = false }) {
+  if (locked) return 'wait';
+  return now - since >= (hqDesk ? 0 : STARTING_MS) ? 'restart' : 'wait';
+}              // v3.83 amendment: a tab 'starting' this long gets HQ's task as its first prompt
 const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks between gone-sightings = a new gone spell
 
 /**
@@ -624,7 +633,7 @@ function setupLink(d) {
         // v3.99 never for another device's task: a tab the person here just opened is not restarted for it
         if (s === 'starting' && c.revive && c.device.pub === SELF && d.startWith) {
           if (!startingSince.has(project)) startingSince.set(project, now);
-          if (now - startingSince.get(project) >= STARTING_MS) {
+          if (startingAction({ since: startingSince.get(project), now, hqDesk: Boolean(d.hqDesk?.(project)), locked: Boolean(d.deskLock?.(project)) }) === 'restart') {
             let ok; try { ok = deliver(c, project, (text) => d.startWith(project, text)); } catch { ok = false; }
             startingSince.delete(project);
             if (ok) { q.shift(); break; }
@@ -954,4 +963,4 @@ function taskOpenIn(queue, link, localInto, tab, now) {
   return false;
 }
 
-module.exports = { setupLink, loadTaskIds, saveTaskIds, ttlOf, remoteTaskOpen, taskOpenIn, LOCAL_OPEN_MS, QUEUE_TTL_MS };
+module.exports = { setupLink, startingAction, STARTING_MS, loadTaskIds, saveTaskIds, ttlOf, remoteTaskOpen, taskOpenIn, LOCAL_OPEN_MS, QUEUE_TTL_MS };

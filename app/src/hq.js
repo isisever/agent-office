@@ -441,6 +441,10 @@ const waitState = (tab, isAsleep) => (tab === 'ready' || tab === 'busy' || tab =
  *  the person can clear the wait (WAIT_BLOCKS: a permission prompt in that tab, unsent text in its input) and one
  *  sentence. `w` is an entry of main's hqWaits(); an entry without `tab` (a task on a paired device) or none → {}. */
 const WAIT_BLOCKS = ['permission', 'draft'];
+/** v3.126 does hqDispatch start the target itself before queueing the task? Never a desk: the queue starts it once,
+ *  with the task as its first prompt (a fresh session takes no typed text, so a desk started without one would sit in
+ *  'starting'). A running target is left as it is; a stopped or sleeping boss tab starts first, as before. */
+const preStartTarget = ({ running, desk }) => !running && !desk;
 /** v3.93 the wait state plus, when busy, what only the person can clear (permission first). Pure; `tab` is the pump's view. */
 const waitEntry = (tab, isAsleep, permission, draft) => {
   const state = waitState(tab, isAsleep);
@@ -700,7 +704,7 @@ module.exports = {
   PERSON_PROMPTED_NOTE,
   TASK_OPS, taskOpPlan, removeTask, retitleTask, closeByHq, removedOf,
   hqBossModel, boardOfRemote, remoteOpen,
-  waitState, waitEntry, WAIT_STATES, WAIT_BLOCKS, waitFields,
+  waitState, waitEntry, WAIT_STATES, WAIT_BLOCKS, waitFields, preStartTarget,
   HQ_ID, MAX_PER_REQUEST, MAX_OPEN, MAX_INITIATIVE, INITIATIVE_MS, HQ_TTL_MS, RETAIN_TASKS, RETAIN_MS, STATUSES, TERMINAL, HQ_TOOLS, HQ_DISALLOWED, HQ_READ_TOOLS, HQ_OFFICE_TOOLS, ADHOC,
   ROUTINE_MINT_MS, HELD_MS, takeHeld, expireHeld,
   createRestarter, renameTask, resolveRequest, writeMcpFile, REMOTE_ACTIONS, MANAGE_ACTIONS, HQ_CLAUDE_MD,

@@ -1903,6 +1903,9 @@ let linkHost = null;
 // v3.83 amendment: tabs started with a queued task as their first prompt (the pty object), so one is never restarted twice
 const stoppedHere = new Map();   // v3.99 tab id -> when its claude ended by itself (the person quit it in the tab; never an app or remote stop: those go through killPty)
 const startedWith = new Map();
+/** v3.126 desks HQ started (not running when its task was dispatched): one left 'starting' with no prompt is restarted
+ *  with the task at once, not after the queue's STARTING_MS (link-host startingAction). */
+const hqDesks = new Set();
 /** The queue's way into a tab that takes no typing: starts it (gone) or restarts it (running, but never had a prompt and
  *  the person is not typing in it) with `text` as its first prompt. Claude Code tabs of a project or desk only, never
  *  HQ; → false when refused (the queue keeps waiting). */
@@ -2521,7 +2524,10 @@ async function hqDispatch(args, { approved = false, excludeId = '', waitingId = 
   if (!remote) {
     const p = byName(state.projects, args.project);
     const startId = args.desk || p?.id;   // v3.83 a staff member's desk, else the project's boss tab
-    if (startId && !terms.has(startId)) projectOp('start', startId);   // a stopped or sleeping target starts first; pump waits for 'starting'
+    // v3.126 a desk is never started here: the queue starts it once with the task as its first prompt (no 'starting'
+    // spell, no restart). A desk HQ starts is marked, so a start without a prompt is restarted with it at once.
+    if (args.desk) { if (terms.has(args.desk)) hqDesks.delete(args.desk); else hqDesks.add(args.desk); }
+    if (startId && HQ.preStartTarget({ running: terms.has(startId), desk: Boolean(args.desk) })) projectOp('start', startId);   // a stopped or sleeping boss starts first; pump waits for 'starting'
     const r = officeDispatch(HQ.HQ_ID, { ...args, task }, { ttl: HQ.HQ_TTL_MS, revive: true });   // pump wakes/starts it again if it went away
     // review fix: a target of the person's own typed turn (main memory, hqMinter): later follow-ups may go back there
     if (p && !approved && consent === 'none' && /** @type {any} */ (r).id && /** @type {any} */ (r).status !== 'rejected') hqMinter.addTarget(request, hqLocalKey(p, staffId));
@@ -3322,6 +3328,7 @@ function startLink() {
     },
     tabState: linkTabState,
     asleep: (id) => asleep.has(id), attentionOf: (id) => attention.get(id) || '',   // v3.48 task-status for a device's task
+    hqDesk: (id) => hqDesks.has(String(id)),   // v3.126
     startWith: startWithPrompt,   // v3.83 amendment: a tab that takes no typing yet gets the task as its first prompt
     type: typePrompt,
     answersPrompts,   // v3.71/v3.72 such a project refuses commands from other devices
