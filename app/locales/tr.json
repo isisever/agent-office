@@ -1217,7 +1217,16 @@
     "trustsUsOn": "Gönderdiğiniz görevler orada, Otomatik onay ya da İzinleri atla açık projelerde gözetimsiz çalışabilir.",
     "trustsUsOff": "O bilgisayar görevlerinizi başında kimse olmadan çalıştırmıyor: bu bilgisayar orada duraklatılmış ya da orada eski bir Agent Office çalışıyor.",
     "updateThere": "Makinesini ve projelerini görmek için {device} cihazında Agent Office'i güncelleyin",
-    "machines": "Makineler"
+    "machines": "Makineler",
+    "phones": {
+      "title": "Telefonlar",
+      "add": "+ Telefon ekle",
+      "hint": "Telefonundaki Agent Office uygulamasıyla bunu tara ({min} dk içinde geçersiz olur)",
+      "none": "Eşleşmiş telefon yok",
+      "forget": "Unut",
+      "forgetConfirm": "{name} unutulsun mu? Artık bağlanamaz.",
+      "qrLabel": "Telefon eşleştirme QR kodu"
+    }
   },
   "machines": {
     "title": "Makineler",

@@ -1245,7 +1245,16 @@
     "trustsUsOn": "Tasks you send can run unattended there, in projects with Auto-approve or Skip permissions on.",
     "trustsUsOff": "That computer does not run your tasks unattended: this computer is paused there, or an older Agent Office runs there.",
     "updateThere": "Update Agent Office on {device} to see its machine and projects",
-    "machines": "Machines"
+    "machines": "Machines",
+    "phones": {
+      "title": "Phones",
+      "add": "+ Add phone",
+      "hint": "Scan this with the Agent Office app on your phone (expires in {min} min)",
+      "none": "No paired phones",
+      "forget": "Forget",
+      "forgetConfirm": "Forget {name}? It can no longer connect.",
+      "qrLabel": "Phone pairing QR code"
+    }
   },
   "machines": {
     "title": "Machines",

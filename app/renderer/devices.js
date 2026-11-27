@@ -1,6 +1,7 @@
 // Device link UI (contract v3.28): the "Devices" section under Accounts and the remote desks merged into the office
 // data. Remote projects are rows in PROJECTS (renderer/hq-board.js). Kept apart from sidebar.js on purpose.
 import { onLang, t } from './i18n.js';
+import { encodeText, toSvg } from '../src/qrcodegen/qrcodegen.mjs';
 
 /** @param {string} tag @param {Record<string, any>} [attrs] @param {...any} children @returns {HTMLElement} */
 function h(tag, attrs = {}, ...children) {
@@ -19,6 +20,24 @@ function h(tag, attrs = {}, ...children) {
 const val = (e) => /** @type {HTMLInputElement} */ (e.target).value;
 /** Incoming handoff ids already answered from this window (a second click must not open a second folder picker). */
 const hoClicked = new Set();
+
+/**
+ * The phone pairing link the QR carries (ios-ctl): the 5-word code joined by '-', this desktop's name and its Noise
+ * public key (64 hex). Every value is percent-encoded, so URLSearchParams and URLComponents read it the same way.
+ * @param {string} code @param {string} name @param {string} pub
+ */
+export function phonePairUrl(code, name, pub) {
+  const words = String(code || '').trim().split(/[\s-]+/).filter(Boolean).join('-');
+  const q = [['v', '1'], ['c', words], ['n', String(name || '')], ['k', String(pub || '')], ['caps', 'ctl']];
+  return `agentoffice://pair?${q.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')}`;
+}
+
+/** The QR of a text as an element (an inline SVG made from the module matrix only). @param {string} text */
+function qrElement(text) {
+  const el = h('div', { class: 'sb-qr', role: 'img', 'aria-label': t('devices.phones.qrLabel') });
+  try { el.innerHTML = toSvg(encodeText(text).modules, { border: 4 }); } catch (e) { console.error(e); }
+  return el;
+}
 
 /** A small popup (the .sb-modal look of sidebar.js): title, body, one Close button; Escape or a click outside closes. */
 function popup(/** @type {string} */ title, /** @type {HTMLElement[]} */ body) {
@@ -135,7 +154,8 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
           h('button', { class: 'sb-x', onclick: () => apply(api.link.handoffKeep(o.dir)) }, t('devices.handoff.keepHere'))))
       : h('div', { class: 'sb-note', title: o.dir }, t('devices.handedOff', { project: o.project, device: o.deviceName })));
     const p = view.pairing;
-    const pairing = p?.code
+    const phonePairing = p?.kind === 'controller';   // ios-ctl: a phone's code shows as a QR under Phones, not here
+    const pairing = p?.code && !phonePairing
       ? h('div', { class: 'sb-pair' },
         h('div', { class: 'sb-pair-code', id: 'sb-pair-code' }, p.code),
         h('div', { class: 'sb-note' }, t('devices.codeHint', { min: Math.max(0, Math.ceil((p.expiresAt - Date.now()) / 60000)) })),
@@ -171,11 +191,40 @@ export function mountDevices(sidebarEl, api, { onMachines = () => {} } = {}) {
       view.devices.length ? h('button', { class: 'sb-add sb-machines', id: 'sb-machines', onclick: () => onMachines() }, t('devices.machines')) : null,
       ...incoming, ...outgoing,
       owners.length ? h('div', { class: 'sb-sub' }, t('devices.handedOffTitle')) : null, ...owners,
-      h('div', { class: 'sb-dev-pair' }, pairing, p?.code ? null : join),
+      h('div', { class: 'sb-dev-pair' }, pairing, p?.code && !phonePairing ? null : join),
       joinState.error ? h('div', { class: 'sb-note warn' }, t('devices.pairFailed', { error: joinState.error })) : null,
+      ...phonesPart(p, phonePairing),
     ].filter((c) => c != null));                   // replaceChildren would show a null as the text "null"
     section.replaceChildren(summary, body);
     /** @type {HTMLDetailsElement} */ (section).open = wasOpen || Boolean(p) || joinState.busy || ho.in.length > 0;
+  }
+
+  /**
+   * ios-ctl Phones: the paired phones (view.phones) with Forget, and + Add phone → a QR to scan while the phone's
+   * code is open.
+   * @param {any} p view.pairing @param {boolean} phonePairing
+   */
+  function phonesPart(p, phonePairing) {
+    const phones = /** @type {any[]} */ (view.phones || []);
+    const forget = (/** @type {any} */ ph) => { if (confirm(t('devices.phones.forgetConfirm', { name: ph.name }))) apply(api.link.remove(ph.id)); };
+    const rows = phones.map((ph) => h('li', { class: 'sb-dev sb-phone' + (ph.online ? ' online' : '') },
+      h('div', { class: 'sb-dev-top' },
+        h('span', { class: 'sb-adot', title: t(ph.online ? 'devices.online' : 'devices.offline') }),
+        h('span', { class: 'sb-name', title: `${t(ph.online ? 'devices.online' : 'devices.offline')} · ${new Date(ph.addedAt).toLocaleDateString()}` }, ph.name),
+        h('button', { class: 'sb-x sb-phone-forget', onclick: () => forget(ph) }, t('devices.phones.forget')))));
+    const canInvite = typeof api.link?.invitePhone === 'function';
+    const pair = phonePairing && p.code
+      ? h('div', { class: 'sb-pair sb-phone-pair' },
+        qrElement(phonePairUrl(p.code, view.name, p.pub)),
+        h('div', { class: 'sb-pair-code', id: 'sb-phone-code' }, p.code),
+        h('div', { class: 'sb-note' }, t('devices.phones.hint', { min: Math.max(0, Math.ceil((p.expiresAt - Date.now()) / 60000)) })),
+        h('button', { class: 'sb-x', onclick: () => apply(api.link.cancel()) }, t('devices.cancel')))
+      : h('button', { class: 'sb-add', id: 'sb-phone-add', disabled: !canInvite || Boolean(p) || Boolean(view.error && view.error !== 'off'), onclick: () => apply(api.link.invitePhone()) }, t('devices.phones.add'));
+    return [
+      h('div', { class: 'sb-sub' }, t('devices.phones.title')),
+      phones.length ? h('ul', { class: 'sb-list' }, rows) : h('div', { class: 'sb-note' }, t('devices.phones.none')),
+      pair,
+    ];
   }
 
   /**
