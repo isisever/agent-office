@@ -66,6 +66,8 @@ const KA = require('./src/keep-awake.js');
 const VC = require('./src/voice-core.js');   // v3.119 voice input
 const { createVoice } = require('./src/voice.js');
 const PTY = require('./src/pty-attach.js');
+const STU = require('./src/studio.js');   // v3.120 Studio experience
+const ATT = require('./src/attached.js');   // v3.121 the files a person attached in a chat composer
 // dev only: a throwaway profile (two instances side by side for the device link, v3.28); never in the packaged app
 if (!app.isPackaged && process.env.AGENT_OFFICE_USER_DATA) {
   app.setPath('userData', path.resolve(process.env.AGENT_OFFICE_USER_DATA));
@@ -137,15 +139,30 @@ function saveState() {
   try { SF.writeAtomic(statePath(), JSON.stringify(P.stateFile(loadState(), state), null, 2)); } catch {}
 }
 
+// v3.120 Studio's recent sessions as loaded from state.json: only when there are any (unset is not written)
+function studioRecentOf(raw, base) {
+  const list = STU.normalizeRecent(raw.studioRecent, base.projects.map((p) => p.id));
+  return list.length ? { studioRecent: list } : {};
+}
 const send = (ch, ...args) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(ch, ...args); };
 const snapshot = () => ({
   projects: P.forRenderer(state.projects),
   activeId: state.activeId,
   status: state.projects.map((p) => ({
     id: p.id, isRunning: terms.has(p.id), isAsleep: asleep.has(p.id), attention: attention.get(p.id) || null,
-    tabs: P.tabsOf(p).map((t) => ({ n: t.n, isRunning: terms.has(P.tabPtyId(p.id, t.n)), isAsleep: asleep.has(P.tabPtyId(p.id, t.n)) })),
+    isGui: guiMode(p.id),   // v3.120 the renderer shows the chat of a GUI tab (running, or stopped and starting as one)
+    tabs: P.tabsOf(p).map((t) => ({ n: t.n, isRunning: terms.has(P.tabPtyId(p.id, t.n)), isAsleep: asleep.has(P.tabPtyId(p.id, t.n)), isGui: guiMode(P.tabPtyId(p.id, t.n)) })),
   })),
 });
+/** v3.120 a running tab: does its claude run as a GUI chat; a stopped one: would it start as one (like guiInfo). */
+function guiMode(id) {
+  const t = terms.get(id);
+  if (t) return Boolean(t.gui);
+  try {
+    const r = P.resolvePty(state, id);
+    return Boolean(r && guiTab(id, r));
+  } catch { return false; }   // a snapshot before the tab sets below are set up
+}
 const broadcast = () => { send('projects:changed', snapshot()); try { hqWaitsPush(); } catch { /* before HQ is set up */ } };   // v3.46 amendment: a tab change refreshes why HQ tasks wait
 
 // --- waiting for you (see src/attention.js): notification, Dock badge, marker on the project row
@@ -1228,9 +1245,17 @@ function keepTermTabs() {
   state = { ...state, termTabs: keep.length ? keep : undefined };
 }
 const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's claude ended by itself (shown in the chat)
-/** Does this tab start as a GUI chat? */
-function guiTab(id, r) {
-  return GS.guiEligible({ chatView: state.chatView === true, terminal: termTabs.has(id) || cmdTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
+// v3.120 pty ids whose running claude is a GUI chat that ran in Studio: the Office keeps it a chat until its next start
+const studioStarted = new Set();
+// v3.121 pty id → what holds a running GUI chat's permission mode ('bypass' | 'desk' | ''; STU.modeLock)
+const guiModeLock = new Map();
+/**
+ * Does this tab start as a GUI chat? (studio: false asks for the chat view alone.) v3.120 entering Studio also moves
+ * running terminal Claude tabs to the GUI chat with --resume: an idle one at once, a busy one once it is idle (the
+ * idle sweep, STU.idleMoveTarget); a chat that ran in Studio stays a chat in the Office until its next start.
+ */
+function guiTab(id, r, { studio = state.experience === 'studio' } = {}) {
+  return GS.guiEligible({ chatView: state.chatView === true, studio, terminal: termTabs.has(id) || cmdTabs.has(id), engine: P.engineOf(r.project), hq: Boolean(r.project.hq), shell: Boolean(r.tab?.shell), platform: process.platform });
 }
 /** A GUI tab's permission request: true when the app answers it (Auto-approve, v3.71 rules); else it waits for the person. */
 function guiAsk(id, ask, input, { autoApprove, mailGuard }) {
@@ -1410,8 +1435,11 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     return broadcast();
   }
   terms.set(id, t);
+  if (gui && STU.normalizeExperience(state.experience) === 'studio') studioStarted.add(id); else studioStarted.delete(id);   // v3.120 until its next start
   if (!project.hq && (P.skipPermissionsOf(project) || P.autoApproveOf(project))) promptless.add(id); else promptless.delete(id);
   if (P.skipPermissionsArgs(project).length > 0) skipStarted.add(id); else skipStarted.delete(id);
+  // v3.121 a mail desk, a staff desk or a session with extra permission rules keeps its mode; skip permissions is shown
+  guiModeLock.set(id, STU.modeLock({ skip: P.skipPermissionsArgs(project).length > 0, desk: Boolean(mailMcp) || Boolean(r.tab?.staffId) || guarded !== settings }));
   // v3.116 inputAt: when something was last typed into the tab (a start prompt counts), for guiRecent
   activity.set(id, { at: startedAt, draft: false, inputAt: prompt ? startedAt : 0 });
   mcpPrint.set(id, { started: print, current: print });
@@ -4790,14 +4818,18 @@ function restartIdle(p) {
   return restarted;
 }
 /** v3.108 the chat view setting changed: idle Claude Code tabs continue their session in the other mode at once; busy
- * ones (and drafts) keep their mode until their next start. */
+ * ones (and drafts) keep their mode until their next start. v3.120 in Studio (the tick runs this too) idle tabs move to
+ * the GUI chat, busy ones once idle; back in the Office a tab that ran as a chat in Studio keeps it (STU.idleMoveTarget). */
 function guiSwitchIdle() {
+  const studio = STU.normalizeExperience(state.experience) === 'studio';
   for (const p of state.projects) {
     if (p.hq || P.engineOf(p) !== 'claude') continue;
     for (const pid of P.ptyIdsOf(p)) {
       const t = terms.get(pid);
       const r = P.resolvePty(state, pid);
-      if (!t || !r || Boolean(t.gui) === guiTab(pid, r) || handoffLocked(pid) || guiHolds(pid)) continue;
+      if (!t || !r) continue;
+      if (studio && t.gui) studioStarted.add(pid);   // v3.120 ran as a chat in Studio: the Office keeps it a chat
+      if (STU.idleMoveTarget({ gui: Boolean(t.gui), studio, studioStarted: studioStarted.has(pid), chatTarget: guiTab(pid, r, { studio: false }), studioTarget: guiTab(pid, r, { studio: true }) }) === null || handoffLocked(pid) || guiHolds(pid)) continue;
       const sid = idleSession(pid);
       if (!sid || (t.gui && (t.asks().length > 0 || t.live().busy))) continue;
       startPty(pid, { sessionId: sid, resume: true });
@@ -4979,6 +5011,7 @@ function dropTab(project, n) {
   killPty(id);
   asleep.delete(id);
   sizes.delete(id);
+  attachedFiles.forget(id);   // v3.121 a closed tab's attached paths go with it
   try { fs.rmSync(path.join(usageRoot(), project.accountId, `${usageKey(id)}.json`), { force: true }); } catch {}
   commit(P.removeTab(state, project.id, n));
 }
@@ -5484,13 +5517,39 @@ ipcMain.handle('chat:files', async (_e, id, query) => {
 });
 // v3.113 the tab's folder, then the project's folder (a worktree or desk tab runs in a folder of its own); a file that is
 // gone shows its nearest existing folder ('gone'); the path is shown in its folder, never opened
-ipcMain.handle('chat:reveal', (_e, id, p) => {
-  const r = P.resolvePty(state, String(id || ''));
+ipcMain.handle('chat:reveal', (_e, id, p) => revealInside(String(id || ''), p));
+/** Shows a path in Finder only when it is inside the tab's or the project's folder → 'ok' | 'gone' | 'outside'. */
+function revealInside(id, p) {
+  const r = P.resolvePty(state, id);
   const target = r && isDir(r.dir) ? FM.revealTarget([r.dir, r.project?.dir], p) : null;
   if (!target) return 'outside';
   // showItemInFolder(root) would open the root's parent: open the folder itself instead
   if (target.root) eShell.openPath(target.path); else eShell.showItemInFolder(target.path);
   return target.gone ? 'gone' : 'ok';
+}
+// v3.121 per tab the paths the person attached in its composer (picked, dropped, pasted, or @path in a message they
+// sent): only these open from a chip; any other chip (transcript text from HQ, a delegated task, a paired device)
+// is at most shown in Finder, and only inside the tab's or project's folder (revealInside)
+const attachedFiles = ATT.createAttached();
+// v3.121 files dropped or pasted into the composer (the picker's own are added by chat:pick) → how many were taken
+ipcMain.handle('chat:attach', (e, id, paths) => {
+  if (!fromWin(e)) return 0;
+  const r = P.resolvePty(state, String(id || ''));
+  if (!r || r.tab?.shell) return 0;
+  return attachedFiles.add(String(id), Array.isArray(paths) ? paths.slice(0, 50) : []);
+});
+// v3.121 a composer or sent-message chip: open it in its default app ('open') or show it in Finder ('reveal'). Only a path
+// the person attached in this tab (attachedFiles); what would run code is only shown (FM.openTarget) → 'ok' | 'shown' |
+// 'gone' | 'refused' (not attached here: never opened) | 'outside' (not attached and not inside the project: not shown)
+ipcMain.handle('chat:openFile', async (e, id, p, how) => {
+  if (!fromWin(e)) return 'gone';
+  id = String(id || '');
+  if (!attachedFiles.has(id, p)) return how === 'reveal' ? revealInside(id, p) : 'refused';
+  const target = FM.openTarget(p);
+  if (!target) return 'gone';
+  if (how === 'reveal' || target.action === 'reveal') { eShell.showItemInFolder(target.path); return how === 'reveal' ? 'ok' : 'shown'; }
+  const err = await eShell.openPath(target.path);
+  return err ? 'gone' : 'ok';
 });
 // v3.113 the attach button: the native file picker in the tab's folder. Images (a GUI tab only, up to 10 MB) come back as bytes for
 // the image bar; every other file (and every image in a terminal tab) as its full path for @path.
@@ -5499,7 +5558,8 @@ ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
   if (!r || r.tab?.shell) return null;
   const res = await dialog.showOpenDialog(win, {
     title: T('main.chatPickFiles'),
-    properties: ['openFile', 'multiSelections'],
+    // v3.121 several at once; on macOS folders too (elsewhere a folder picker could not pick files)
+    properties: process.platform === 'darwin' ? ['openFile', 'openDirectory', 'multiSelections'] : ['openFile', 'multiSelections'],
     ...(isDir(r.dir) ? { defaultPath: r.dir } : {}),
   });
   if (res.canceled || !res.filePaths.length) return null;
@@ -5507,7 +5567,10 @@ ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
   const paths = [];
   /** @type {{ type: string, data: Buffer, path: string }[]} */
   const images = [];
+  /** @type {string[]} */
+  const dirs = [];
   for (const p of res.filePaths.slice(0, 50)) {
+    if (isDir(p)) { dirs.push(p); paths.push(p); continue; }
     const type = wantImages ? FM.imageType(p) : '';
     if (type && images.length < 5) {
       try {
@@ -5517,7 +5580,8 @@ ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
     }
     paths.push(p);
   }
-  return { paths, images };
+  attachedFiles.add(String(id), [...paths, ...images.map((i) => i.path)]);   // v3.121 picked here: its chips may open
+  return { paths, images, dirs };
 });
 // The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).
 ipcMain.handle('chat:send', (_e, id, text, images) => {
@@ -5532,6 +5596,7 @@ ipcMain.handle('chat:send', (_e, id, text, images) => {
   const gui = Boolean(terms.get(id)?.gui);
   const why = CHAT.sendRefused({ text: body || (img.images.length ? 'image' : ''), running: terms.has(id), locked: handoffLocked(id), draft: !gui && Boolean(activity.get(id)?.draft), permission: !gui && attention.get(r.project.id) === 'permission' });
   if (why) { if (why === 'locked') lockedNotice(id); return why; }
+  attachedFiles.add(id, ATT.sentPaths(body));   // v3.121 the @paths the person sent from this composer may open as chips
   if (P.isHqId(id)) { hqLastKey = Date.now(); hqMinter.mint(); }
   if (gui || !img.images.length) return typePrompt(id, body, { images: img.images }) ? 'ok' : 'not-running';
   // a terminal tab: each image goes to a file of the app's (0600) and in as @path, which Claude Code attaches
@@ -5559,7 +5624,7 @@ function saveChatImages(images) {
 /** null for a terminal tab; else { asks, live, gui: true } (the tab may be stopped: then nothing is open). */
 function guiInfo(id) {
   const t = terms.get(id);
-  if (t?.gui) return { asks: t.asks(), live: t.live() };
+  if (t?.gui) return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, modeLock: guiModeLock.get(id) || '' };
   const r = P.resolvePty(state, id);
   if (!r || terms.has(id) || !guiTab(id, r)) return null;
   const ended = guiEnded.get(id);
@@ -5573,6 +5638,18 @@ ipcMain.handle('chat:answer', (_e, id, askId, answer) => {
   const r = t.answer(String(askId || ''), answer && typeof answer === 'object' ? answer : {});
   if (r === 'ok') { const a = activity.get(id); if (a) a.at = Date.now(); setImmediate(() => { if (lastOffice) updateAttention(); }); }
   return r;
+});
+// v3.121 Studio's model / permission pickers: a running GUI chat switches for its next turns, never mid-turn and never
+// by a restart → 'ok' | 'not-running' (no GUI chat runs) | 'busy' (a turn, an open request or a waiting setting) |
+// 'bad' | 'gone' | 'error:<claude's message>' (claude answered with an error: nothing changed)
+// v3.121 'locked': the permission mode of a session started with skip permissions or of a desk is never changed here
+ipcMain.handle('chat:setting', async (e, id, key, value) => {
+  if (!fromWin(e)) return 'bad';
+  const t = terms.get(String(id));
+  if (!t?.gui || typeof t.setting !== 'function') return 'not-running';
+  if (!STU.settingAllowed(guiModeLock.get(String(id)) || '', String(key))) return 'locked';
+  if (t.live().busy || t.asks().length) return 'busy';
+  return t.setting(String(key), String(value ?? ''));
 });
 ipcMain.handle('chat:interrupt', (_e, id) => {
   const t = terms.get(String(id));
@@ -5596,7 +5673,7 @@ function switchMode(id, mode, { temp = false } = {}) {
   const waived = back && (activity.get(id)?.inputAt || 0) <= (cmdTyped.get(id) || 0);
   if (mode === 'terminal') choice.add(id); else { termTabs.delete(id); cmdTabs.delete(id); cmdPending.delete(id); }
   const t = terms.get(id);
-  if (!t || Boolean(t.gui) === guiTab(id, r)) { if (!temp) saveState(); return 'ok'; }   // stopped, or already in that mode (Windows: always a terminal); v3.110 kept
+  if (!t || Boolean(t.gui) === guiTab(id, r)) { if (!temp) saveState(); if (!t) broadcast(); return 'ok'; }   // v3.120 a stopped tab's isGui follows the choice   // stopped, or already in that mode (Windows: always a terminal); v3.110 kept
   const undo = () => { if (had) choice.add(id); else choice.delete(id); if (back) cmdTabs.add(id); };
   if (handoffLocked(id)) { undo(); lockedNotice(id); return 'locked'; }
   // the same test as restartIdle (no turn, agents, shells or draft; a session id to resume), plus an open card or turn
@@ -6011,7 +6088,7 @@ function buildMenu() {
 // office3d = the office drawn in 3D (contract v3.81); off unless set, and unset is not written
 // teamMode = the TEAM panel (contract v3.83); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
-const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
+const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, experience: STU.normalizeExperience(state.experience), termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
 // --- voice input (contract v3.119): audio stays in memory in src/voice.js and never leaves the machine
 /** @type {ReturnType<typeof createVoice> | null} */
 let voice = null;
@@ -6047,6 +6124,7 @@ ipcMain.handle('voice:start', async (e) => {
 });
 ipcMain.on('voice:chunk', (e, id, data) => { if (fromWin(e) && typeof id === 'string') voice?.chunk(id, data); });
 ipcMain.on('voice:cancel', (e, id) => { if (fromWin(e) && typeof id === 'string') voice?.cancel(id); });
+
 ipcMain.handle('voice:stop', (e, id) => (fromWin(e) && typeof id === 'string' ? voiceApi().finish(id) : { ok: false, error: 'unknown' }));
 ipcMain.handle('voice:downloadModel', async (e, id) => {
   if (!fromWin(e) || !Object.hasOwn(VC.MODELS, id)) return { ok: false, error: 'model' };
@@ -6054,6 +6132,83 @@ ipcMain.handle('voice:downloadModel', async (e, id) => {
 });
 
 ipcMain.handle('prefs:get', () => prefs());
+
+// --- v3.120 Studio experience (src/studio.js): its sidebar's session list, opening a session, the 24 h rule.
+// Every studio:* call is accepted only from the app's own window, like voice:*.
+const studioSince = new Map();   // pty id → when it was first seen asleep (the 24 h rule; starts again after a restart)
+const studioIds = () => state.projects.map((p) => p.id);
+const studioRecent = () => STU.normalizeRecent(state.studioRecent, studioIds());
+let studioNameCache = { file: '', mtimeMs: -1, name: '' };
+/** The display name of the Claude account a project runs on (its .claude.json, re-read only when it changes), or ''. */
+function studioUser(p) {
+  const a = p ? A.accountOf(state, p) : state.accounts.find((x) => x.id === A.DEFAULT_ID);
+  if (!a) return { name: '', email: '', account: '' };
+  const email = auths.get(a.id)?.email || '';
+  let name = '';
+  try {
+    const file = a.id === A.DEFAULT_ID ? path.join(app.getPath('home'), '.claude.json') : path.join(a.configDir, '.claude.json');
+    const { mtimeMs } = fs.statSync(file);
+    if (studioNameCache.file !== file || studioNameCache.mtimeMs !== mtimeMs) studioNameCache = { file, mtimeMs, name: STU.accountDisplayName(readJson(file)) };
+    name = studioNameCache.name;
+  } catch { /* no .claude.json: no name */ }
+  return { name, email, account: accountName(a) };
+}
+/** The label of the Claude account a project runs on (the Office's account name), never a token or folder. */
+function studioAccountLabel(sp) {
+  const p = P.findProject(state, sp.id);
+  const a = p ? A.accountOf(state, p) : null;
+  return a ? accountName(a) || '' : '';
+}
+ipcMain.handle('studio:sessions', (e) => {
+  if (!fromWin(e)) return null;
+  const projects = state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: p.name, dir: p.dir, engine: P.engineOf(p), tabs: P.tabsOf(p) }));
+  return {
+    experience: STU.normalizeExperience(state.experience),
+    user: studioUser(P.findProject(state, state.activeId)),
+    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel }),
+  };
+});
+// ref: { n } a running session (the main tab is 1), { sessionId } a recent one, which opens again as a new tab of its
+// project and continues that conversation. → { ok, projectId, n } | { ok: false, error: 'invalid' | 'gone' }
+ipcMain.handle('studio:open', (e, projectId, ref) => {
+  if (!fromWin(e) || typeof projectId !== 'string' || !ref || typeof ref !== 'object') return { ok: false, error: 'invalid' };
+  const p = P.findProject(state, projectId);
+  if (!p) return { ok: false, error: 'gone' };
+  if (ref.n !== undefined) {
+    if (!Number.isInteger(ref.n)) return { ok: false, error: 'invalid' };
+    if (ref.n !== P.MAIN_TAB && !P.tabsOf(p).some((t) => t.n === ref.n)) return { ok: false, error: 'gone' };
+    return { ok: true, projectId: p.id, n: ref.n };
+  }
+  const sid = STU.validSessionId(ref.sessionId);
+  if (!sid || !studioRecent().some((r) => r.projectId === p.id && r.sessionId === sid)) return { ok: false, error: 'invalid' };
+  const n = P.nextTabNumber(p);
+  commit({ ...P.addTab(state, p.id, { n }), studioRecent: STU.dropRecent(studioRecent(), p.id, sid) });
+  startPty(P.tabPtyId(p.id, n), { sessionId: sid });
+  return { ok: true, projectId: p.id, n };
+});
+/** The session a sleeping tab continues when it wakes, or ''. */
+const studioSid = (id, r) => STU.validSessionId(asleep.get(id)?.sessionId) || STU.validSessionId(r?.tab?.sessionId) || STU.validSessionId(lastSid.get(id));
+/** Only an extra Claude Code tab with a session, in the project's folder, not locked and with no open task (STU.closable). */
+function studioClosable(id) {
+  const r = P.resolvePty(state, id);
+  return STU.closable(r, { sid: r ? studioSid(id, r) : '', handoffLocked: handoffLocked(id), guiTaskOpen: guiTaskOpen(id) });
+}
+// The 24 h rule: in Studio, a session asleep for more than 24 h closes and is kept under Recent (it opens again from
+// there). Only time asleep in Studio counts: outside it the clocks are cleared (STU.sweepStep).
+function studioSweep() {
+  if (!state) return;
+  const now = Date.now();
+  for (const id of STU.sweepStep(studioSince, asleep.keys(), now, state.experience, studioClosable)) {
+    const r = P.resolvePty(state, id);
+    if (!r?.tab) continue;
+    const entry = { projectId: r.project.id, sessionId: studioSid(id, r), title: STU.tabTitle(r.project, r.tab, state.staff), dir: r.tab.dir || r.project.dir, at: now };
+    state = { ...state, studioRecent: STU.addRecent(studioRecent(), entry, studioIds()) };
+    studioSince.delete(id);
+    dropTab(r.project, r.tab.n);   // commits (saves and broadcasts) with the entry above
+  }
+}
+setInterval(studioSweep, 5 * 60 * 1000).unref?.();
+
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
   if (p && typeof p.resumeWork === 'boolean' && p.resumeWork !== prefs().resumeWork) commit({ ...state, resumeWork: p.resumeWork });
@@ -6061,7 +6216,13 @@ ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.shareMcp === 'boolean' && p.shareMcp !== prefs().shareMcp) commit({ ...state, shareMcp: p.shareMcp });
   if (p && typeof p.reloadMcp === 'boolean' && p.reloadMcp !== prefs().reloadMcp) commit({ ...state, reloadMcp: p.reloadMcp });
   if (p && typeof p.fallback === 'boolean' && p.fallback !== prefs().fallback) commit({ ...state, fallback: p.fallback });
-  if (p && typeof p.chatView === 'boolean' && p.chatView !== prefs().chatView) { commit({ ...state, chatView: p.chatView }); guiSwitchIdle(); }   // v3.80 chat view (the renderer switches); v3.108 idle tabs move to / from the GUI chat
+  // v3.80 chat view (the renderer switches); v3.108 idle tabs move to / from the GUI chat. v3.120 entering Studio moves
+  // idle Claude Code tabs to the GUI chat (busy ones when idle); leaving moves nothing back; both restart the 24 h clocks
+  const vx = STU.prefsPatch(prefs(), p);
+  if (Object.keys(vx.patch).length) commit({ ...state, ...vx.patch });
+  if (vx.clearSince) studioSince.clear();
+  if (vx.leftStudio) for (const [pid, t] of terms) if (t.gui) studioStarted.add(pid);   // leaving Studio moves nothing back
+  if (vx.switchIdle) guiSwitchIdle();
   if (p && typeof p.office3d === 'boolean' && p.office3d !== prefs().office3d) commit({ ...state, office3d: p.office3d });   // v3.81 3D office (the renderer switches)
   if (p && typeof p.teamMode === 'boolean' && p.teamMode !== prefs().teamMode) commit({ ...state, teamMode: p.teamMode });   // v3.83 the TEAM panel
   for (const k of ['showAgyAccount', 'showCmdAccount', 'showOcAccount']) if (p && typeof p[k] === 'boolean' && p[k] !== prefs()[k]) commit({ ...state, [k]: p[k] });
@@ -6141,7 +6302,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   // in Agent Office for that project, and its token moves to the new store (the old file goes once the new one is saved)
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
-  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(raw.experience === 'studio' ? { experience: 'studio' } : {}), ...studioRecentOf(raw, base), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
   state = { ...state, voice: VC.normalizeSettings(raw.voice) };   // v3.119 voice input settings
   for (const id of GS.cleanTermTabs(raw.termTabs, state.projects.flatMap((p) => P.ptyIdsOf(p)))) termTabs.add(id);   // v3.110
   // v3.83 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)

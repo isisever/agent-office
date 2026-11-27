@@ -1,5 +1,74 @@
 {
   "_name": "Türkçe",
+  "studio": {
+    "newSession": "Yeni oturum",
+    "search": "Ara",
+    "hq": "HQ",
+    "reports": "Raporlar",
+    "routines": "Rutinler",
+    "project": "Proje",
+    "running": "Çalışan",
+    "recent": "Son",
+    "none": "Henüz bir şey yok",
+    "machines": "Eşlenmiş makineler",
+    "online": "Çevrimiçi",
+    "offline": "Çevrimdışı",
+    "settings": "Ayarlar",
+    "toOffice": "Ofis",
+    "greeting": "Sırada ne var?",
+    "greetingName": "Sırada ne var, {name}?",
+    "commands": "Komutlar",
+    "projects": "Projeler",
+    "account": "Claude hesabı",
+    "paletteHint": "Komut, oturum ya da proje yazın",
+    "noResults": "Eşleşme yok",
+    "kind": {
+      "command": "Komut",
+      "session": "Oturum",
+      "recent": "Son",
+      "project": "Proje"
+    },
+    "cmd": {
+      "team": "Ekip ve masalar",
+      "worktree": "Yeni worktree oturumu",
+      "newTab": "Yeni sekme… (kabuk, worktree, masa)",
+      "closeTab": "Bu oturumun sekmesini kapat",
+      "accounts": "Hesaplar: giriş, ekleme, değiştirme",
+      "projectAccount": "Bu projenin hesabını değiştir",
+      "mcp": "MCP sunucuları",
+      "skills": "Beceriler",
+      "voice": "Ses ayarları",
+      "pair": "Cihaz eşle",
+      "remoteTask": "Görev gönder (HQ, uzak makineler)",
+      "addProject": "Proje ekle",
+      "projectSettings": "Proje ayarları",
+      "openFolder": "Proje klasörünü aç",
+      "removeProject": "Projeyi listeden kaldır",
+      "projects": "Projeleri düzenle (Ofis listesi)",
+      "settings": "Ayarlar",
+      "office": "Ofis'e dön"
+    },
+    "cmdKeys": {
+      "team": "ekip personel masa rol sihirbaz team desk",
+      "worktree": "git dal sekme worktree",
+      "newTab": "terminal kabuk sekme masa shell",
+      "closeTab": "kapat sekme close",
+      "accounts": "giriş çıkış oturum hesap değiştir limit login account",
+      "projectAccount": "hesap değiştir giriş account",
+      "mcp": "araçlar sunucu mcp tools",
+      "skills": "beceri paket skills",
+      "voice": "mikrofon dikte ses konuşma voice",
+      "pair": "cihaz makine eşle bağla uzak pair device",
+      "remoteTask": "uzak makine görev hq pano rutin rapor remote task",
+      "addProject": "yeni proje klasör add project",
+      "projectSettings": "proje düzenle model yönetici grup izin settings",
+      "openFolder": "finder dosya klasör folder",
+      "removeProject": "sil kaldır proje remove",
+      "projects": "düzenle grup kullanım projects edit",
+      "settings": "tercihler dil tema settings",
+      "office": "ofis deneyim geri office"
+    }
+  },
   "app": {
     "appTitle": "AGENT OFİS",
     "appTitlePlain": "Agent Ofis",
@@ -41,6 +110,10 @@
     "asleep": " (uykuda: açınca başlar)"
   },
   "sidebar": {
+    "experience": "Deneyim",
+    "experienceTitle": "Ofis: piksel ofis, projeler ve sekmeler. Stüdyo: oturum kenar çubuklu bir Claude Code görünümü. ⌘⇧E (Ctrl+Shift+E) geçiş yapar.",
+    "experienceOffice": "Ofis",
+    "experienceStudio": "Stüdyo",
     "idle": "boşta",
     "working": "{n} çalışan",
     "delivered": "{n} teslim",
@@ -624,7 +697,7 @@
     "resetRole": "↺ Hazır role dön",
     "resetRoleTitle": "Rolün alanlarını hazır rolün metniyle yeniden doldur",
     "applyNote": "Değişiklikler personelin masalarına gider: boştaki masalar konuşmasını koruyarak yeniden başlar, çalışanlar bir sonraki başlangıçta alır.",
-    "personal": "Kişisel çalışma alanı",
+    "personal": "Kişisel",
     "personalHint": "Bu personelin kişisel çalışma alanının (proje dışı işler için kendi klasörü) ayarları. Bir projenin ayarları gibi çalışır ve kaydettiğinizde uygulanır.",
     "personalHintNew": "Kişisel çalışma alanı, personel ilk kez proje dışı bir iş aldığında oluşturulur; bu iki anahtar o zaman uygulanır. Model ve diğer oturum ayarları alan oluştuktan sonra buradan yapılabilir.",
     "personalMailHint": "Bu personelin maili var: mail koruması, Otomatik onay ne derse desin masalarının komut, düzenleme ve internet erişiminden önce size sormasını sağlar. İzinleri atla ise o masadan maili kaldırır.",
@@ -678,7 +751,6 @@
     "mail": "Mail erişimi",
     "mailHint": "Okuyup taslak hazırlayabileceği hesaplar. Mail göndermez: taslaklar MAİL panelinde onayınıza gelir. Mail okuyan masalarda her işlem (dosya, komut, internet, diğer araçlar) onayınızı bekler; \"İzinleri atla\" açık projelerde mail verilmez.",
     "mailNone": "Bağlı mail hesabı yok; MAİL panelinden ekleyin.",
-    "personal": "Kişisel",
     "talk": "Konuş",
     "talkTitle": "{name} ile doğrudan konuş: personelin masasını ve giriş alanını açar. Panoda görev açmaz.",
     "personalTitle": "Personelin proje dışı işler için kendi çalışma alanı (ilk kullanımda Belgeler/Agent Office altında açılır)"
@@ -732,6 +804,41 @@
     "reveal": "Klasörde göster",
     "imageAlt": "Yapıştırılan görsel",
     "imageRemove": "Bu görseli kaldır",
+    "more": "Diğer",
+    "fileOpen": "Aç",
+    "fileClear": "Tümünü çıkar",
+    "fileGone": "Bu dosya artık yok.",
+    "fileShown": "Bu dosya açılınca kod çalıştırabilir; bu yüzden klasöründe gösterildi.",
+    "fileNotAttached": "Bu dosya bu sohbette eklenmedi; buradan açılamaz. Proje klasöründeki dosyalar Finder'da gösterilebilir.",
+    "drop": { "any": "Dosyaları buraya bırakın", "one": "1 dosyayı bırakın", "many": "{count} dosyayı bırakın" },
+    "fileRemove": "Bu dosyayı çıkar",
+    "pick": {
+      "modelTitle": "Sonraki turlar için model",
+      "modeTitle": "Sonraki turlar için izin modu",
+      "model": {
+        "start": "Başlangıçtaki model",
+        "opus": "Opus",
+        "sonnet": "Sonnet",
+        "haiku": "Haiku"
+      },
+      "mode": {
+        "default": "İzin sor",
+        "acceptEdits": "Düzenlemeleri kabul et",
+        "plan": "Plan modu",
+        "bypassPermissions": "İzinleri atla"
+      },
+      "why": {
+        "terminal": "yalnızca çalışan bir GUI sohbetinde (terminalde /model kullanın)",
+        "busy": "tur bitene kadar bekleyin",
+        "bypass": "izinleri atlayarak başladı: mod başladığı gibi kalır",
+        "desk": "masa kendi izin kurallarını korur: mod başladığı gibi kalır"
+      },
+      "failed": {
+        "busy": "Bir tur çalışıyor: bitince değiştirin.",
+        "not-running": "Bu oturum sohbet olarak çalışmıyor.",
+        "other": "Değiştirilemedi."
+      }
+    },
     "revealMac": "Finder'da göster",
     "revealOutside": "Bu dosya proje klasörünün içinde değil (ya da silinmiş): burada gösterilemez.",
     "revealGone": "Bu dosya artık yok: yerine klasörü gösterildi.",
@@ -1280,7 +1387,10 @@
     "settings": "Müdür ayarları",
     "askBeforeDispatch": "Müdür görev vermeden önce bana sor",
     "askBeforeDispatchHint": "Bu kapalıyken Müdür, yazdığınız bir isteğin görevlerini size sormadan verir. Yazdığınız turda buna İzinleri atla ya da Otomatik onay açık projeler de dahildir. Sonraki devam görevleri (bir rapor geldikten sonra) sınırlıdır: istek başına en çok 4, isteminizden sonraki 2 saat içinde, İzinleri atla açık bir projeye asla, Otomatik onay açık bir projeye ise yalnızca o isteği kendi turunuzda oraya gönderdiyseniz. Her zaman istek başına en çok 8 ve aynı anda en çok 12 açık görev; başka bir bilgisayar kendi kurallarını uygulamayı sürdürür. Zamanlanmış rutinler de bu ayara uyar: kapalıyken bir rutinin görevleri, eşleştirilmiş bir bilgisayara gidenler de dahil, onay kartı olmadan gider; açıkken rutin, kendi kutusu aksini demedikçe Pano'da sorar (başka bir bilgisayar için olan rutin o zaman her zaman sorar).",
-    "reason": { "stage-changed": "Gönderilmedi: aşamanın kayıtlı hedefi ya da metni kabul edildikten sonra değiştirilmiş", "new-unattended-target": "Gönderilmedi: bir devam görevi kendiliğinden onaylayan bir projeye yalnızca isteği oraya kendiniz gönderdiyseniz gidebilir" },
+    "reason": {
+      "stage-changed": "Gönderilmedi: aşamanın kayıtlı hedefi ya da metni kabul edildikten sonra değiştirilmiş",
+      "new-unattended-target": "Gönderilmedi: bir devam görevi kendiliğinden onaylayan bir projeye yalnızca isteği oraya kendiniz gönderdiyseniz gidebilir"
+    },
     "byInitiative": "Müdür bunu kendiliğinden gönderdi",
     "openFolder": "Müdür klasörünü aç",
     "board": "Müdür panosu",

@@ -18,13 +18,13 @@ const ASKS_MAX = 20;                 // open requests kept per tab (claude asks 
 const QUESTION_TOOLS = ['AskUserQuestion', 'ExitPlanMode'];
 
 /**
- * Does this tab run as a GUI chat? The chat view is on, the person has not switched it to the terminal, Claude Code,
+ * Does this tab run as a GUI chat? The chat view is on (or the Studio experience, v3.120), the person has not switched it to the terminal, Claude Code,
  * not a plain shell tab and not HQ (HQ keeps its terminal: its keys are held and minted, v3.46/v3.47). Not on Windows
  * yet: claude is a `.cmd` shim there and its pipes are untested.
- * @param {{ chatView: boolean, terminal: boolean, engine: string, hq: boolean, shell: boolean, platform: string }} o
+ * @param {{ chatView: boolean, studio?: boolean, terminal: boolean, engine: string, hq: boolean, shell: boolean, platform: string }} o
  */
-function guiEligible({ chatView, terminal, engine, hq, shell, platform }) {
-  return chatView === true && !terminal && engine === 'claude' && !hq && !shell && platform !== 'win32';
+function guiEligible({ chatView, studio = false, terminal, engine, hq, shell, platform }) {
+  return (chatView === true || studio === true) && !terminal && engine === 'claude' && !hq && !shell && platform !== 'win32';
 }
 
 /**
@@ -85,6 +85,20 @@ const userLine = (text, images = []) => line({ type: 'user', message: { role: 'u
   ? [...(String(text).trim() ? [{ type: 'text', text: String(text) }] : []), ...images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.type, data: i.data } }))]
   : String(text) } });
 /** Stop the running turn (Esc in the terminal). */
+/** v3.121 Studio's pickers: the models and permission modes a running GUI chat may switch to ('' model: the start's). */
+const SET_MODELS = ['', 'opus', 'sonnet', 'haiku'];
+const SET_MODES = ['default', 'acceptEdits', 'plan'];
+/**
+ * A control request that changes the running session's model or permission mode (the SDK protocol's set_model /
+ * set_permission_mode); null for any other key or value. No restart: the next turn uses it.
+ */
+function settingLine(requestId, key, value) {
+  if (key === 'model' && SET_MODELS.includes(value)) {
+    return line({ type: 'control_request', request_id: String(requestId), request: value ? { subtype: 'set_model', model: value } : { subtype: 'set_model' } });
+  }
+  if (key === 'mode' && SET_MODES.includes(value)) return line({ type: 'control_request', request_id: String(requestId), request: { subtype: 'set_permission_mode', mode: value } });
+  return null;
+}
 const interruptLine = (requestId) => line({ type: 'control_request', request_id: String(requestId), request: { subtype: 'interrupt' } });
 const allowLine = (requestId, input) => line({ type: 'control_response', response: { subtype: 'success', request_id: String(requestId), response: { behavior: 'allow', updatedInput: input && typeof input === 'object' ? input : {} } } });
 const denyLine = (requestId, message) => line({ type: 'control_response', response: { subtype: 'success', request_id: String(requestId), response: { behavior: 'deny', message: String(message || 'The person declined this.') } } });
@@ -193,8 +207,10 @@ function nextLive(live, msg) {
     }
     return live;
   }
-  if (msg.type === 'assistant' && msg.parent_tool_use_id == null) return { ...live, busy: true, text: '' };
-  if (msg.type === 'user' && msg.parent_tool_use_id == null) return { ...live, busy: true, tool: '' };
+  // a whole message only updates a turn that runs (a sent message or message_start made it busy): claude also writes
+  // user / assistant messages outside a turn (replayed at a start or a resume), which must not read as working forever
+  if (msg.type === 'assistant' && msg.parent_tool_use_id == null) return live.busy ? { ...live, text: '' } : live;
+  if (msg.type === 'user' && msg.parent_tool_use_id == null) return live.busy ? { ...live, tool: '' } : live;
   return live;
 }
 
@@ -222,4 +238,4 @@ function endNote(stderr) {
   return lines.join('\n').slice(-END_NOTE_MAX);
 }
 
-module.exports = { isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+module.exports = { settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };

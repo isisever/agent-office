@@ -7,7 +7,10 @@ import { mountHq } from './hq-board.js';
 import { mountLogin } from './login.js';
 import { mountDevices, mergeRemote } from './devices.js';
 import { setLang, onLang, t } from './i18n.js';
-import { modLabel, isModKey, keyOf, isMac } from './platform.js';
+import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
+import { mountStudio } from './studio.js';
+import { studioKey, otherExperience } from '../src/studio-keys.mjs';
+import { chatShownFor, chatButtonFor } from '../src/chat-view.mjs';
 import { themeChoices, effectiveTheme } from '../src/themes.mjs';
 import { normalizeLook, normalizeMode, effectiveMode, chromeFor, terminalTheme } from '../src/appearance.mjs';
 import { tildePath, windowTitle } from '../src/layout.mjs';
@@ -58,6 +61,11 @@ function tabOf(p) {
 // v3.46 HQ: selected in this window only (main's activeId stays a project); its pane is pty 'hq'
 const HQ_ROW = { id: 'hq', name: 'HQ', hq: true };
 let hqSelected = false;
+// v3.120 the experience (Office / Studio, renderer/studio.js); main keeps the setting (prefs experience)
+let experience = 'office';
+let studioOn = false;   // Studio has its own design (renderer/studio.css); light/dark follow the system there
+/** @type {ReturnType<typeof mountStudio>} */
+let studio = null;
 let hqUi = null;
 const activeProject = () => (hqSelected ? HQ_ROW : projects.find((p) => p.id === activeId) || null);
 /** pty id of the visible terminal. */
@@ -73,25 +81,27 @@ let login = null; // login overlay (login.js)
 // they are; light: derived, src/appearance.mjs); the Claude look's colours are fixed in style.css, so they are unset.
 let look = 'pixel';
 let modeSetting = 'system';
+const lookNow = () => look;   // Studio keeps the person's look underneath; body.studio's own tokens cover it
 const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
-const shownMode = () => effectiveMode(modeSetting, systemDark.matches);
-const termTheme = () => terminalTheme(look, shownMode(), theme);
+const shownMode = () => effectiveMode(studioOn ? 'system' : modeSetting, systemDark.matches);
+const termTheme = () => terminalTheme(lookNow(), shownMode(), theme);
 const FRAME_VARS = { '--frame': 'frame', '--accent': 'accent', '--status-bg': 'statusBg', '--status-text': 'statusText' };
 function applyAppearance() {
   const mode = shownMode();
-  root.dataset.look = look;
+  const shown = lookNow();
+  root.dataset.look = shown;
   root.dataset.mode = mode;
   root.style.colorScheme = mode;
-  const chrome = chromeFor(look, mode, theme);
+  const chrome = chromeFor(shown, mode, theme);
   for (const [name, key] of Object.entries(FRAME_VARS)) {
-    if (look === 'claude') root.style.removeProperty(name);
+    if (shown === 'claude') root.style.removeProperty(name);
     else root.style.setProperty(name, chrome[key]);
   }
   // the 8-bit colours of this mode, for appearance-boot.js at the next start (once the office theme is known)
-  if (themeKnown) store.set('chrome', look === 'claude' ? '' : JSON.stringify({ mode, ...chrome }));
+  if (themeKnown && !studioOn) store.set('chrome', shown === 'claude' ? '' : JSON.stringify({ mode, ...chrome }));
   for (const p of panes.values()) p.term.setTheme(termTheme());
   login?.setTheme(termTheme());
-  $('title').textContent = (look === 'claude' ? t('app.appTitlePlain') : t('app.appTitle'));
+  $('title').textContent = (shown === 'claude' ? t('app.appTitlePlain') : t('app.appTitle'));
 }
 systemDark.addEventListener('change', () => applyAppearance());
 let themeKnown = false;
@@ -220,6 +230,20 @@ function isAsleep(id) {
 // ---- Chat view (contract v3.80, chat.js): with the setting on, a Claude Code tab shows its conversation; the
 // terminal stays mounted under it and is one click away. Off: nothing below runs and the pane is as before.
 let chatView = false;
+// v3.120 a tab follows the mode main runs it in (status isGui; a stopped tab: the mode it would start in). A GUI chat
+// shows its chat in either experience (it has no terminal). In Studio a tab running in a terminal (started in the
+// Office, or on Windows, where GUI chat is off) shows its terminal in the main region, with the Chat button to move it:
+// switching the experience never restarts or moves a running session (src/chat-view.mjs).
+function guiRunning(id) {
+  if (!id) return false;
+  const [projectId, n] = String(id).split(':');
+  const st = status.find((x) => x.id === projectId);
+  return Boolean(n ? st?.tabs?.find((x) => x.n === Number(n))?.isGui : st?.isGui);
+}
+/** @param {string | null | undefined} id */
+const chatFacts = (id) => ({ chatView, studio: studioOn, win: osPlatform === 'win32', isGui: guiRunning(id), chatOff: Boolean(id) && chatOff.has(String(id)), hq: String(id || '').split(':')[0] === HQ_ROW.id });
+/** @param {string | null | undefined} id */
+const chatShown = (id) => Boolean(id) && chatShownFor(chatFacts(id));
 const chatOff = new Set();   // pty ids the person switched back to the terminal (v3.110 seeded from main's termTabs)
 let chatOffSeeded = false;
 let chatSwitch = null;       // the "chat" button over a terminal (made when first needed)
@@ -287,7 +311,7 @@ function watchCommands() {
   for (const [id, w] of cmdRuns) {
     const p = panes.get(id);
     // the person went back to the chat (or the tab is gone): nothing to watch
-    if (!p || !chatOff.has(id) || !chatView) { endCommand(id); continue; }
+    if (!p || !chatOff.has(id) || !chatShown(id)) { endCommand(id); continue; }
     let lines = [];
     try { lines = p.term.screen(); } catch (e) { console.error(e); }
     if (!w.typedAt) {
@@ -322,7 +346,7 @@ function syncChat() {
   const visible = activePty();
   const attn = (id) => status.find((x) => x.id === String(id).split(':')[0])?.attention || null;
   for (const [id, p] of panes) {
-    const want = chatView && id === visible && chatCapable(id) && !chatOff.has(id);
+    const want = chatShown(id) && id === visible && chatCapable(id) && !chatOff.has(id);
     if (want && !p.chat) {
       const host = document.createElement('div');
       host.className = 'chat-host';
@@ -337,7 +361,7 @@ function syncChat() {
     if (want) { p.chat.setAttention(attn(id)); p.chat.show(); if (!was) requestAnimationFrame(() => p.term.fit()); } else p.chat?.hide();
     if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
   }
-  const canSwitch = chatView && chatCapable(visible) && chatOff.has(visible);
+  const canSwitch = Boolean(visible) && chatButtonFor({ ...chatFacts(visible), capable: chatCapable(visible) });
   if (canSwitch && !chatSwitch) {
     chatSwitch = document.createElement('button');
     chatSwitch.id = 'chat-switch';
@@ -359,6 +383,22 @@ function applyChatView(p) {
   sidebar?.setChatView?.(chatView);
   syncChat();
   focusActive();
+}
+
+/** v3.120 the experience from main's prefs (startup, the settings, ⌘⇧E): body.studio and Studio's sidebar; the Office's
+ * panes, tabs and sessions stay as they are, so switching back shows the Office exactly as it was. */
+function applyExperience(p) {
+  experience = p?.experience === 'studio' ? 'studio' : 'office';
+  studioOn = experience === 'studio';
+  studio?.setOn(studioOn);
+  sidebar?.setExperience?.(experience);
+  applyAppearance();
+  render();
+  focusActive();
+}
+function setExperience(value) {
+  applyExperience({ experience: value });
+  api.prefs?.set({ experience: value }).then((r) => { if (r && r.experience !== experience) applyExperience(r); }).catch((e) => console.error(e));
 }
 
 let shownId; // visible terminal; focus/resize only when it changes
@@ -506,6 +546,7 @@ function applyOffice3d(p) {
 let sidebar = null;
 
 function render() {
+  studio?.changed();   // v3.120 Studio's sidebar follows the projects, tabs and the active session
   if (!projects.some((p) => p.id === activeId)) activeId = shownOrder(projects)[0]?.id ?? projects[0]?.id ?? null;
   syncPanes();
   showActive();
@@ -843,6 +884,7 @@ sidebar = mountSidebar($('sidebar'), {
   setManager: (on) => api.prefs?.set({ manager: on }).then((p) => sidebar.setManager(p?.manager)).catch((e) => console.error(e)),
   setShareMcp: (on) => api.prefs?.set({ shareMcp: on }).then((p) => sidebar.setShareMcp(p?.shareMcp)).catch((e) => console.error(e)),
   setReloadMcp: (on) => api.prefs?.set({ reloadMcp: on }).then((p) => sidebar.setReloadMcp(p?.reloadMcp)).catch((e) => console.error(e)),
+  setExperience: (v) => setExperience(v === 'studio' ? 'studio' : 'office'),   // v3.120
   setChatView: (on) => api.prefs?.set({ chatView: on }).then(applyChatView).catch((e) => console.error(e)),   // v3.80
   setOffice3d: (on) => api.prefs?.set({ office3d: on }).then(applyOffice3d).catch((e) => console.error(e)),   // v3.81
   // v3.83 team: the setting and the member popup's calls; every change reloads the list from main
@@ -1041,6 +1083,7 @@ api.prefs?.get().then((p) => {
   sidebar.setShareMcp(p?.shareMcp);
   sidebar.setReloadMcp(p?.reloadMcp);
   applyChatView(p);
+  applyExperience(p);
   applyOffice3d(p);
   loadStaff();
   api.staff?.desks?.().then((d) => { deskList = Array.isArray(d) ? d : []; sidebar.setDesks?.(d); }).catch(() => {});
@@ -1063,6 +1106,19 @@ api.clipboard.onPaste?.(async () => {
   if (chat && await chat.paste().catch(() => false)) return;
   if (!(await pasteIntoFocused())) api.clipboard.nativePaste();
 });
+
+// v3.120 Studio keys (src/studio-keys.mjs): ⌘⇧E (Ctrl+Shift+E) switches Office / Studio; in Studio only, ⌘N new
+// session, ⌘K the command palette and ⌘1…9 its sessions (the Office's ⌘1…9 below stays as it is). Registered first, so it wins.
+window.addEventListener('keydown', (e) => {
+  const k = studioKey({ mac: isMac, meta: e.metaKey, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, code: e.code }, experience);
+  if (!k || (k.type !== 'toggle' && !studio)) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (k.type === 'toggle') setExperience(otherExperience(experience));
+  else if (k.type === 'new') studio?.newSession();
+  else if (k.type === 'search') studio?.openPalette();   // ⌘K: the command palette (renderer/studio.js)
+  else studio?.selectIndex(k.index);
+}, true);
 
 // ⌘O / ⌘1…9 (Ctrl+Shift+O / Ctrl+Shift+1…9 on Linux). A captured key does not reach the terminal (xterm).
 window.addEventListener('keydown', (e) => {
@@ -1276,3 +1332,51 @@ for (const ev of ['dragover', 'drop']) document.addEventListener(ev, (e) => e.pr
 
 // v3.46 HQ: the pinned row above PROJECTS, the Board in place of the office, paired devices' projects in the list
 hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: () => selectProject(HQ_ROW.id), isMac, link: devices });
+
+// v3.120 Studio: its sidebar and start screen (renderer/studio.js); the main region is the Office's own #terminal
+const leaveBoard = () => document.body.classList.remove('studio-board');
+studio = mountStudio({ api, t, modLabel, hooks: {
+  selectSession: (projectId, n) => { leaveBoard(); selectProject(projectId); selectTab(projectId, n); },
+  newSession: (projectId) => { leaveBoard(); selectProject(projectId); addTab(projectId, 'same'); },
+  selectProject: (projectId) => { leaveBoard(); selectProject(projectId); },
+  selectHq: () => { leaveBoard(); selectProject(HQ_ROW.id); },
+  openBoard: () => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); },   // HQ's board: reports, routines
+  openSettings: () => sidebar?.openSettings(),
+  toggle: () => setExperience(otherExperience(experience)),
+  activePty,
+  hasSession: () => Boolean(activePty()),
+  commands: (projectId) => studioCommands(projectId),
+} });
+/**
+ * v3.120 Studio's ⌘K palette: every Office feature Studio has no button for. Each one calls the Office's own handler
+ * or shows the Office's own panel (studio.showPanel: the sidebar panel on its own over Studio), never a copy.
+ * @param {string} projectId the project Studio acts on (src/studio-view.mjs currentProjectId)
+ */
+function studioCommands(projectId) {
+  const p = projects.find((x) => x.id === projectId) || null;
+  const act = activeProject();
+  const n = act && act.id !== HQ_ROW.id ? tabOf(act) : MAIN_TAB;
+  const cmd = (id, run, when = true) => (when ? [{ id, label: t(`studio.cmd.${id}`), keywords: t(`studio.cmdKeys.${id}`), run }] : []);
+  const panel = (sel, fallback) => () => { if (!studio?.showPanel(sel)) fallback?.(); };
+  return [
+    ...cmd('team', panel('#sb-panel-team', () => sidebar?.openSettings())),   // team mode off: Settings has its switch
+    ...cmd('worktree', () => { leaveBoard(); addTab(p.id, 'worktree'); }, Boolean(p)),
+    ...cmd('newTab', () => { leaveBoard(); addTab(p.id); }, Boolean(p)),   // main's "+" menu: same folder, worktree, a desk, a shell
+    ...cmd('closeTab', () => closeTab(act.id, n), Boolean(act) && act.id !== HQ_ROW.id && n !== MAIN_TAB),
+    ...cmd('accounts', panel('.sb-accounts')),
+    ...cmd('projectAccount', () => sidebar?.openProjectSettings(p.id), Boolean(p)),
+    ...cmd('mcp', panel('#sb-panel-mcp')),
+    ...cmd('skills', () => sidebar?.openSkills()),
+    ...cmd('voice', () => { if (!sidebar?.openVoice()) sidebar?.openSettings(); }),
+    ...cmd('pair', panel('#sb-devices')),
+    ...cmd('remoteTask', () => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); }),   // HQ's board: send-as-task to any target
+    ...cmd('addProject', () => addProject()),
+    ...cmd('projectSettings', () => sidebar?.openProjectSettings(p.id), Boolean(p)),
+    ...cmd('openFolder', () => api.projects.openFolder?.(p.id).catch((e) => console.error(e)), Boolean(p)),
+    ...cmd('removeProject', () => removeProject(p), Boolean(p)),
+    ...cmd('projects', panel('#sb-panel-projects')),
+    ...cmd('settings', () => sidebar?.openSettings()),
+    ...cmd('office', () => setExperience('office')),
+  ];
+}
+studio?.setOn(studioOn);

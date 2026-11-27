@@ -140,12 +140,15 @@ contextBridge.exposeInMainWorld('agentOffice', {
     keys: (id, steps, expect) => ipcRenderer.invoke('chat:keys', id, steps, expect),     // expect: the key of the menu the card shows; a menu answer: ['2'] | ['3', { text }, '\r'] | ['\x1b'] …; → 'ok' | why not
     commands: (id) => ipcRenderer.invoke('chat:commands', id),           // the "/" list → [{ name, description, source, ui? }]
     files: (id, query) => ipcRenderer.invoke('chat:files', id, query),   // v3.109 the "@" list → [{ path, insert }] (the tab's project files)
-    reveal: (id, path) => ipcRenderer.invoke('chat:reveal', id, path),   // v3.109 Show in Finder → 'ok' | 'gone' (v3.113 its nearest folder shown) | 'outside' (only inside the tab's or project's folder)
+    reveal: (id, path) => ipcRenderer.invoke('chat:reveal', id, path),
+    openFile: (id, path, how) => ipcRenderer.invoke('chat:openFile', id, path, how),   // v3.121 a chip: how 'open' | 'reveal' → 'ok' | 'shown' (would run code: shown instead) | 'gone' | 'refused' (not attached in this tab) | 'outside'
+    attach: (id, paths) => ipcRenderer.invoke('chat:attach', id, paths),   // v3.121 files dropped or pasted into the composer: their chips may open → count   // v3.109 Show in Finder → 'ok' | 'gone' (v3.113 its nearest folder shown) | 'outside' (only inside the tab's or project's folder)
     pick: (id, wantImages) => ipcRenderer.invoke('chat:pick', id, wantImages),   // v3.113 attach button: native file picker → null | { paths: string[], images: [{ type, data (base64), path }] }
     // v3.108 GUI chat: read also returns gui: null | { asks: [{ id, kind, tool, name, detail, questions?, plan?, since }], live: { busy, text, tool } }
     answer: (id, askId, answer) => ipcRenderer.invoke('chat:answer', id, askId, answer),   // answer: { allow, message?, answers? } → 'ok' | 'gone' | 'bad-answer' | 'locked' | 'not-running'
     agents: (id) => ipcRenderer.invoke('chat:agents', id),               // v3.115 the tab's sub-agents → [{ id, toolUseId, description, type, state: 'running' | 'done' | 'stopped', tool, detail, toolCount, at }]
     agent: (id, agentId, cursor) => ipcRenderer.invoke('chat:agent', id, agentId, cursor),   // v3.115 one sub-agent's conversation → readChat's result | { gone }
+    setting: (id, key, value) => ipcRenderer.invoke('chat:setting', id, key, value),   // v3.121 key 'model' | 'mode' → 'ok' | 'not-running' | 'busy' | 'bad' | 'gone' | 'locked' (mode of a skip-permissions or desk session) | 'error:<message>'
     interrupt: (id) => ipcRenderer.invoke('chat:interrupt', id),         // stop the running turn → 'ok' | 'not-running'
     sessions: (id) => ipcRenderer.invoke('chat:sessions', id),           // v3.118 /resume in a GUI chat tab: the project's sessions → [{ id, title, prompt, branch, at, size }]
     resume: (id, sid) => ipcRenderer.invoke('chat:resume', id, sid),     // v3.118 continue one of them in this tab → 'moved' | 'busy:<why>' | 'gone' | 'locked' | 'not-running' | 'unsupported'
@@ -200,6 +203,11 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onBrief: listen('tokens:brief'),                    // the same, about once a minute
   },
   // v3.28: this user's other Agent Offices (src/link-host.js); every call returns the LinkView
+  // v3.120 Studio experience: its sidebar's sessions (running and recent per project) and opening one
+  studio: {
+    sessions: () => ipcRenderer.invoke('studio:sessions'),                        // { experience, user: { name, email, account }, projects: StudioProject[] } | null
+    open: (projectId, ref) => ipcRenderer.invoke('studio:open', projectId, ref),   // ref { n } | { sessionId } → { ok, projectId, n } | { ok: false, error }
+  },
   link: {
     get: () => ipcRenderer.invoke('link:get'),
     invite: (o) => ipcRenderer.invoke('link:invite', o),            // v3.106 o: { reset: true } after the reset confirm

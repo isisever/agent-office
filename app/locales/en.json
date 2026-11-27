@@ -1,5 +1,74 @@
 {
   "_name": "English",
+  "studio": {
+    "newSession": "New session",
+    "search": "Search",
+    "hq": "HQ",
+    "reports": "Reports",
+    "routines": "Routines",
+    "project": "Project",
+    "running": "Running",
+    "recent": "Recent",
+    "none": "Nothing here yet",
+    "machines": "Paired machines",
+    "online": "Online",
+    "offline": "Offline",
+    "settings": "Settings",
+    "toOffice": "Office",
+    "greeting": "What's next?",
+    "greetingName": "What's next, {name}?",
+    "commands": "Commands",
+    "projects": "Projects",
+    "account": "Claude account",
+    "paletteHint": "Type a command, session or project",
+    "noResults": "No matches",
+    "kind": {
+      "command": "Command",
+      "session": "Session",
+      "recent": "Recent",
+      "project": "Project"
+    },
+    "cmd": {
+      "team": "Team and desks",
+      "worktree": "New worktree session",
+      "newTab": "New tab… (shell, worktree, desk)",
+      "closeTab": "Close this session's tab",
+      "accounts": "Accounts: log in, add, switch",
+      "projectAccount": "Change this project's account",
+      "mcp": "MCP servers",
+      "skills": "Skills",
+      "voice": "Voice settings",
+      "pair": "Pair a device",
+      "remoteTask": "Send a task (HQ, remote machines)",
+      "addProject": "Add project",
+      "projectSettings": "Project settings",
+      "openFolder": "Open project folder",
+      "removeProject": "Remove project from the list",
+      "projects": "Edit projects (Office list)",
+      "settings": "Settings",
+      "office": "Go to the Office"
+    },
+    "cmdKeys": {
+      "team": "staff members desks roles wizard",
+      "worktree": "git branch tab",
+      "newTab": "terminal shell plain tab staff desk",
+      "closeTab": "close end tab",
+      "accounts": "login logout sign in switch account usage limits",
+      "projectAccount": "switch account login",
+      "mcp": "tools servers",
+      "skills": "skill packs",
+      "voice": "microphone dictation speech talk",
+      "pair": "device machine link remote code",
+      "remoteTask": "remote machine dispatch task hq board routines reports",
+      "addProject": "new project folder",
+      "projectSettings": "edit project model manager group permissions",
+      "openFolder": "finder files reveal",
+      "removeProject": "delete remove project",
+      "projects": "edit rename group usage",
+      "settings": "preferences language theme",
+      "office": "experience switch back"
+    }
+  },
   "app": {
     "appTitle": "AGENT OFFICE",
     "appTitlePlain": "Agent Office",
@@ -41,6 +110,10 @@
     "asleep": " (asleep: starts when opened)"
   },
   "sidebar": {
+    "experience": "Experience",
+    "experienceTitle": "Office: the pixel office, projects and tabs. Studio: a Claude Code view with a session sidebar. ⌘⇧E (Ctrl+Shift+E) switches.",
+    "experienceOffice": "Office",
+    "experienceStudio": "Studio",
     "idle": "idle",
     "working": "{n} working",
     "delivered": "{n} delivered",
@@ -634,7 +707,7 @@
     "resetRole": "↺ Back to the preset",
     "resetRoleTitle": "Refill the role's fields from the preset",
     "applyNote": "Changes reach the member's desks: idle ones restart in their conversation, busy ones get them at their next start.",
-    "personal": "Personal workspace",
+    "personal": "Personal",
     "personalHint": "Settings of this member's personal workspace (its own folder for work outside any project). They work like a project's settings and are applied when you save.",
     "personalHintNew": "The personal workspace is made the first time this member works outside a project; these two switches are applied then. Its model and other session settings can be set here once it exists.",
     "personalMailHint": "This member has mail: the mail guard makes its desks ask before commands, edits and web access, whatever Auto-approve says. Skip permissions removes mail from that desk instead.",
@@ -688,7 +761,6 @@
     "mail": "Mail access",
     "mailHint": "Accounts it may read and draft from. It never sends: drafts come to you in the MAIL panel. Every action of a desk that reads mail (files, commands, web, other tools) waits for you; projects with \"Skip permissions\" get no mail.",
     "mailNone": "No mail account connected; add one in the MAIL panel.",
-    "personal": "Personal",
     "talk": "Talk",
     "talkTitle": "Talk to {name} directly: opens the member's desk and its input. This opens no task on the board.",
     "personalTitle": "The member's own workspace, for work outside any project (made on first use in Documents/Agent Office)"
@@ -742,6 +814,41 @@
     "reveal": "Show in folder",
     "imageAlt": "Pasted image",
     "imageRemove": "Remove this image",
+    "more": "More",
+    "fileOpen": "Open",
+    "fileClear": "Remove all",
+    "fileGone": "This file is no longer there.",
+    "fileShown": "This file could run code when opened, so it is shown in its folder instead.",
+    "fileNotAttached": "This file was not attached in this chat, so it cannot be opened from here. Show in Finder works for files inside the project.",
+    "drop": { "any": "Drop files here", "one": "Drop 1 file", "many": "Drop {count} files" },
+    "fileRemove": "Remove this file",
+    "pick": {
+      "modelTitle": "Model for the next turns",
+      "modeTitle": "Permission mode for the next turns",
+      "model": {
+        "start": "Model as started",
+        "opus": "Opus",
+        "sonnet": "Sonnet",
+        "haiku": "Haiku"
+      },
+      "mode": {
+        "default": "Ask permissions",
+        "acceptEdits": "Accept edits",
+        "plan": "Plan mode",
+        "bypassPermissions": "Bypass permissions"
+      },
+      "why": {
+        "terminal": "only in a running GUI chat (use /model in the terminal)",
+        "busy": "wait until the turn is done",
+        "bypass": "started with skip permissions: the mode stays as started",
+        "desk": "a desk keeps its own permission rules: the mode stays as started"
+      },
+      "failed": {
+        "busy": "A turn is running: change it when it is done.",
+        "not-running": "This session is not running as a chat.",
+        "other": "Could not change it."
+      }
+    },
     "revealMac": "Show in Finder",
     "revealOutside": "This file is not inside the project folder (or is gone): it cannot be shown here.",
     "revealGone": "This file is gone: its folder is shown instead.",
@@ -1308,7 +1415,10 @@
     "settings": "HQ settings",
     "askBeforeDispatch": "Ask me before the manager hands out a task",
     "askBeforeDispatchHint": "With this off, the manager hands out the tasks of a request you typed without asking you. In the turn you type, that includes projects with Skip permissions or Auto-approve on. Later follow-ups (after a report came in) are bounded: at most 4 per request, within 2 hours of your prompt, never into a project with Skip permissions, and into a project with Auto-approve only where you sent that request in your own turn. Always at most 8 tasks per request and 12 open; another computer still applies its own rules. Scheduled routines follow this setting too: with it off, a routine's tasks go without an approval card, also to a paired computer; with it on, a routine asks on the Board unless its own box says otherwise (a routine for another computer always asks then).",
-    "reason": { "stage-changed": "Not sent: the stage's saved target or text was changed after it was accepted", "new-unattended-target": "Not sent: a follow-up may go into a project that approves by itself only if you sent the request there yourself" },
+    "reason": {
+      "stage-changed": "Not sent: the stage's saved target or text was changed after it was accepted",
+      "new-unattended-target": "Not sent: a follow-up may go into a project that approves by itself only if you sent the request there yourself"
+    },
     "byInitiative": "HQ sent this on its own",
     "openFolder": "Open HQ folder",
     "board": "HQ board",

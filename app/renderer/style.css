@@ -651,10 +651,11 @@ body.dragging #terminal, body.dragging #office, body.dragging .chat-host, body.d
 .chat-agent-title { font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-agent-state { font-size: 11px; white-space: nowrap; }
 .chat-in-agent > .chat-list, .chat-in-agent > .chat-empty, .chat-in-agent > .chat-live, .chat-in-agent > .chat-form,
-.chat-in-agent > .chat-reply, .chat-in-agent > .chat-images-bar { display: none; }
+.chat-in-agent > .chat-reply, .chat-in-agent > .chat-images-bar, .chat-in-agent > .chat-composer { display: none; }
 /* v3.118 /resume in the chat: the project's sessions in place of the conversation */
 .chat-in-picker > .chat-list, .chat-in-picker > .chat-empty, .chat-in-picker > .chat-live, .chat-in-picker > .chat-form,
-.chat-in-picker > .chat-reply, .chat-in-picker > .chat-images-bar, .chat-in-picker > .chat-agent-view:not(.chat-picker) { display: none; }
+.chat-in-picker > .chat-reply, .chat-in-picker > .chat-images-bar, .chat-in-picker > .chat-agent-view:not(.chat-picker),
+.chat-in-picker > .chat-composer { display: none; }
 .chat-pick-search { flex: 0 0 auto; }
 .chat-pick-row { display: flex; flex-direction: column; gap: 2px; text-align: left; cursor: pointer; font: inherit; padding: 6px 10px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .chat-pick-row:hover, .chat-pick-row.on { border-color: var(--line-strong); background: var(--hover); }
@@ -1658,8 +1659,88 @@ select option.rt-off { color: #888; }
 /* v3.119 voice input: the mic button and the status line while listening / transcribing */
 .voice-mic.on { background: var(--danger, #c0392b); color: #fff; border-color: transparent; }
 .voice-mic.busy { opacity: 0.6; }
+.voice-mic .st-icon { display: none; }   /* the stroke icon is for Studio's composer only (studio.css) */
 #voice-hud { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1000; display: flex; gap: 10px; align-items: center; max-width: min(640px, 90vw); padding: 8px 14px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--raised); color: var(--text); font-size: 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); }
 #voice-hud[hidden] { display: none; }
 #voice-hud > span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 body.voice-recording #voice-hud { border-color: var(--danger, #c0392b); }
 .voice-model-state { font-size: 11px; }
+
+/* ---- Studio experience (contract v3.120, renderer/studio.js) ----
+   body.studio hides the Office (scene, left panel, tab strip, side panels) and shows Studio's sidebar; the main region
+   is the Office's own #terminal, filling the window. Removing the class shows the Office exactly as it was. Studio's
+   own design (tokens, fonts, sidebar, chat, composer) is in studio.css, scoped under body.studio. */
+#studio-sidebar { display: none; }
+body.studio #sidebar, body.studio #office, body.studio #divider, body.studio #tabs, body.studio #tab-add,
+body.studio #agent-panel, body.studio #usage-panel, body.studio #machines-panel, body.studio #hq-board,
+body.studio #chat-switch { display: none !important; }
+body.studio #terminal { flex: 1 1 0; max-height: none; }
+body.studio #terminal #empty { display: none; }
+/* the HQ board (reports, routines) in place of the chat, opened from Studio's pinned entries */
+body.studio.studio-board #hq-board { display: block !important; flex: 1 1 0; overflow: auto; }
+body.studio.studio-board #terminal { display: none; }
+body.studio #studio-sidebar {
+  flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  overflow-y: auto; background: var(--status-bg); border: var(--line-w) solid var(--line); border-radius: var(--radius);
+  color: var(--text);
+}
+#studio-sidebar .st-new { text-align: left; padding: 6px 8px; font-weight: 600; }
+#studio-sidebar .st-search { width: 100%; box-sizing: border-box; padding: 4px 6px; font: inherit; }
+#studio-sidebar .st-pins { display: flex; flex-direction: column; }
+#studio-sidebar .st-head { margin-top: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.65; }
+#studio-sidebar .st-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--radius); cursor: pointer; }
+#studio-sidebar .st-row:hover, #studio-sidebar .st-row.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+#studio-sidebar .st-device { cursor: default; }
+#studio-sidebar .st-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#studio-sidebar .st-key, #studio-sidebar .st-email, #studio-sidebar .st-none { font-size: 11px; opacity: 0.6; }
+#studio-sidebar .st-machines { margin-top: auto; }
+#studio-sidebar .st-account { display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+#studio-sidebar .st-user { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+/* the project groups: every project, collapsible, with its account badge, Running and Recent sessions */
+#studio-sidebar .st-group { display: flex; flex-direction: column; margin-top: 2px; }
+#studio-sidebar .st-group-head { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: var(--radius); font-weight: 600; }
+#studio-sidebar .st-group-head.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+#studio-sidebar .st-group-head .st-project { cursor: pointer; }
+#studio-sidebar .st-caret, #studio-sidebar .st-add { background: none; border: 0; padding: 0 4px; color: inherit; cursor: pointer; opacity: 0.7; font: inherit; }
+#studio-sidebar .st-add { opacity: 0; }
+#studio-sidebar .st-group-head:hover .st-add, #studio-sidebar .st-add:focus-visible { opacity: 0.8; }
+#studio-sidebar .st-badge {
+  flex: 0 1 auto; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 400;
+  padding: 0 5px; border: 1px solid var(--line); border-radius: 8px; opacity: 0.75;
+}
+#studio-sidebar .st-session { padding-left: 22px; }
+#studio-sidebar .st-sub { padding-left: 22px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.5; margin-top: 2px; }
+#studio-sidebar .st-group.current .st-session.active { font-weight: 600; }
+/* ⌘K command palette */
+#studio-palette { position: fixed; inset: 0; z-index: 45; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; background: var(--overlay); }
+#studio-palette[hidden] { display: none; }
+#studio-palette .st-pal {
+  width: min(560px, calc(100vw - 32px)); max-height: 60vh; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--status-bg); color: var(--text); border: var(--line-w) solid var(--line); border-radius: var(--radius); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+#studio-palette .st-pal-input { margin: 8px; padding: 6px 8px; font: inherit; font-size: 14px; }
+#studio-palette .st-pal-list { overflow-y: auto; padding: 0 4px 6px; }
+#studio-palette .st-pal-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius); cursor: pointer; }
+#studio-palette .st-pal-row.active { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+#studio-palette .st-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#studio-palette .st-pal-kind, #studio-palette .st-none { font-size: 11px; opacity: 0.6; padding: 4px 8px; }
+/* an Office sidebar panel (team, accounts, MCP, devices, projects) shown on its own over Studio (studio.showPanel) */
+#studio-panel-back { position: fixed; inset: 0; z-index: 40; background: var(--overlay); }
+#studio-panel-back[hidden] { display: none; }
+body.studio.studio-panel #sidebar {
+  display: flex !important; flex-direction: column; position: fixed; z-index: 41; top: 48px; left: 50%; transform: translateX(-50%);
+  width: min(440px, calc(100vw - 32px)); max-width: none; max-height: calc(100vh - 96px); overflow-y: auto; padding: 8px;
+  background: var(--status-bg); border: var(--line-w) solid var(--line); border-radius: var(--radius);
+}
+body.studio.studio-panel #sidebar > :not(.studio-shown) { display: none !important; }
+#studio-start {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  background: var(--bg); z-index: 2;
+}
+#studio-start[hidden] { display: none; }
+#studio-start .st-greeting { font-size: 24px; margin: 0; }
+/* v3.121 the chat's composer wrappers (renderer/chat.js): Studio draws them as one box (studio.css); in the Office they
+   are transparent and the controls keep their one-line order: attach, mic, input, Stop, Send, Terminal */
+.chat-composer, .chat-row { display: contents; }
+.chat-row > .chat-attach, .chat-row > .voice-mic { order: -1; }
+.chat-studio-only, .chat-chips, .chat-form .st-icon { display: none; }
