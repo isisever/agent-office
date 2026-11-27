@@ -43,6 +43,7 @@ export const SETTINGS = Object.freeze([
   // Accounts
   { key: 'accountList', section: 'accounts', type: 'custom', studioOnly: true },
   { key: 'fallback', section: 'accounts', type: 'switch', office: 'fallback' },
+  { key: 'usage', section: 'accounts', type: 'custom', studioOnly: true },
   // Projects
   { key: 'projectSettings', section: 'projects', type: 'custom', studioOnly: true },
   // Team
@@ -61,6 +62,7 @@ export const SETTINGS = Object.freeze([
   { key: 'skills', section: 'mcp', type: 'custom', office: 'skills' },
   // Devices & phone
   { key: 'devices', section: 'devices', type: 'custom', studioOnly: true },
+  { key: 'machines', section: 'devices', type: 'custom', studioOnly: true },
   // HQ & routines
   { key: 'hq', section: 'hq', type: 'custom', studioOnly: true },
   { key: 'routines', section: 'hq', type: 'custom', studioOnly: true },
