@@ -36,7 +36,8 @@ test('filterRoles: every shipped preset, sorted, search and the writes-code filt
   assert.ok(code.length > 0 && noCode.length > 0)
   assert.equal(code.length + noCode.length, 19)
   assert.ok(code.every((r) => r.writesCode) && noCode.every((r) => !r.writesCode))
-  assert.deepEqual(filterRoles(presets, { query: 'QA' }).map((r) => r.id), ['qa'])
+  assert.deepEqual(filterRoles(presets, { query: 'QA Engineer' }).map((r) => r.id), ['qa'])
+  assert.ok(filterRoles(presets, { query: 'qa' }).some((r) => r.id === 'qa'))
   // by the department's label in the UI language, and case-insensitively in Turkish
   const deptName = (d) => (d === 'rnd' ? 'Ar-Ge' : d)
   assert.ok(filterRoles(presets, { query: 'ar-ge', deptName }).some((r) => r.id === 'software-developer'))

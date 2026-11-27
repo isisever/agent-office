@@ -168,7 +168,24 @@
       "tabDepartments": "Departmanlar",
       "offTitle": "Ekibinizi kurun",
       "offText": "Ekip modu; rolleri, departmanları, kendi hesapları ve projeleri olan üyeler sunar. Hazır rollerden işe almak ya da kendi rolünüzü kurmak için açın.",
-      "turnOn": "Ekip modunu aç"
+      "turnOn": "Ekip modunu aç",
+      "rolesSearch": "Rollerde ara",
+      "filterAll": "Tümü",
+      "filterCode": "Kod yazar",
+      "filterNoCode": "Kod yazmaz",
+      "writesCode": "Kod yazar",
+      "noCode": "Kod yazmaz",
+      "customRole": "Özel rol",
+      "customRoleText": "İşi bir sohbette anlatın; rol sihirbazı rolü sizin için yazar.",
+      "noRoles": "Eşleşen rol yok.",
+      "packs": "Beceri paketleri",
+      "tools": "En iyi çalıştığı araçlar",
+      "brief": "Talimat (üyeye söylenen)",
+      "hire": "Ekibe ekle",
+      "hireTitle": "İşe al: {role}",
+      "hireText": "Yeni bir {role}. Bir ad, bir departman, bir hesap ve çalışabileceği projeleri seçin.",
+      "hireSave": "Ekibe ekle",
+      "hireHint": "Rolün beceri paketleri açık; her şey sonradan Düzenle ile değiştirilebilir."
     }
   },
   "app": {

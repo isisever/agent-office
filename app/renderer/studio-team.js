@@ -6,6 +6,7 @@
 import { icon } from './studio-icons.js';
 import { TEAM_TABS } from '../src/studio-team-page.mjs';
 import { deptLabel } from '../src/staff-view.mjs';
+import { drawRoles } from './studio-team-roles.js';
 
 const SYNC_MS = 2000;   // live states (working, needs you) and changes made elsewhere follow within 2 s
 
@@ -28,7 +29,7 @@ const SYNC_MS = 2000;   // live states (working, needs you) and changes made els
  */
 
 /** @type {Record<string, TabDraw>} the tabs' views (renderer/studio-team-*.js) */
-const views = {};
+const views = { roles: drawRoles };
 
 /**
  * @param {{ el: TeamView['el'], t: TeamView['t'], host: HTMLElement, hooks: TeamHooks }} o
@@ -105,8 +106,13 @@ export function mountTeamPage({ el, t, host, hooks }) {
     const typing = document.activeElement instanceof HTMLElement && content.contains(document.activeElement) && document.activeElement.matches('input, textarea, select');
     if (typing && content.childElementCount) return;
     const scroll = content.scrollTop;
-    content.replaceChildren(...(view ? view({ el, t, td, lang, hooks, dept: (d) => deptLabel(t, d), errorText, sheet, redraw: draw, go, close, state }) : []).filter((x) => x !== null));
+    content.replaceChildren(...(view ? view({ el, t, td, lang, hooks, dept: (d) => deptLabel(t, d), errorText, sheet, redraw: force, go, close, state }) : []).filter((x) => x !== null));
     content.scrollTop = scroll;
+  }
+  /** A redraw after the person's own action: a text box that kept the focus does not hold it back. */
+  function force() {
+    if (document.activeElement instanceof HTMLElement && content.contains(document.activeElement)) document.activeElement.blur();
+    draw();
   }
   function go(/** @type {string} */ to) {
     if (!TEAM_TABS.includes(to)) return;
