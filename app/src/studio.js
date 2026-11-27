@@ -227,6 +227,17 @@ function modeLock({ skip = false, desk = false } = {}) {
  */
 const turnsAutoApproveOn = (mode) => mode === 'auto';
 
+/**
+ * v3.120 manager decision: a GUI chat of an Auto-approve project starts in claude's auto mode, like the person's
+ * terminal shows "auto mode on". Never the HQ session, a desk or a guarded session (mail, staff, extra permission
+ * rules: modeLock 'desk'), never a skip-permissions project (it stays bypass), and only when the account offers `auto`.
+ * @param {{ gui?: boolean, autoApprove?: boolean, hq?: boolean, lock?: string, modes?: string[] }} o
+ * @returns {string[]} the extra launch arguments
+ */
+function guiStartModeArgs({ gui = false, autoApprove = false, hq = false, lock = '', modes = [] } = {}) {
+  if (!gui || autoApprove !== true || hq || lock || !Array.isArray(modes) || !modes.includes('auto')) return [];
+  return ['--permission-mode', 'auto'];
+}
 /** May chat:setting change `key` in a chat whose mode is held by `lock` (modeLock)? */
 function settingAllowed(lock, key) {
   return key !== 'mode' || !lock;
@@ -234,5 +245,5 @@ function settingAllowed(lock, key) {
 
 module.exports = {
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
-  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn,
+  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs,
 };

@@ -1419,7 +1419,10 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     const win32 = IS_WIN ? windowsClaude(args, env) : null;
     if (IS_WIN && !win32) { sendNoClaude(id); return broadcast(); }
     if (gui) {
-      t = guiProc = GP.spawnGui(spawn, shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args)], {
+      // v3.120 an Auto-approve project's GUI chat starts in auto mode (never HQ, a desk, a guarded or a skip session)
+      const startMode = STU.guiStartModeArgs({ gui: true, autoApprove: P.autoApproveOf(project), hq: Boolean(project.hq), modes: modesOf(project),
+        lock: STU.modeLock({ skip: P.skipPermissionsArgs(project).length > 0, desk: Boolean(mailMcp) || Boolean(r.tab?.staffId) || guarded !== settings }) });
+      t = guiProc = GP.spawnGui(spawn, shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args), ...startMode], {
         cwd: isDir(cwd) ? cwd : app.getPath('home'),
         env,
       }, { onAsk: (ask, input) => guiAsk(id, ask, input, { autoApprove: !project.hq && P.autoApproveOf(P.findProject(state, project.id) || project), mailGuard: Boolean(mailMcp) }),

@@ -247,3 +247,19 @@ test('v3.120 the title bar Studio switch: role=switch, no-drag, same toggle, hot
     assert.ok(s.switchLabel && s.switchTitle.includes('{key}'), lang);
   }
 });
+
+test('v3.120 a GUI chat of an Auto-approve project starts in auto mode, never a desk, guarded, skip or HQ session', () => {
+  const modes = ['auto', 'default', 'acceptEdits', 'plan'];
+  const auto = ['--permission-mode', 'auto'];
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes }), auto);
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: false, modes }), [], 'Auto-approve off: the default mode');
+  assert.deepEqual(S.guiStartModeArgs({ gui: false, autoApprove: true, modes }), [], 'the terminal path is unchanged');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, hq: true, modes }), [], 'never HQ');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, lock: S.modeLock({ desk: true }), modes }), [], 'a desk or guarded session keeps its rules');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, lock: S.modeLock({ skip: true }), modes }), [], 'skip permissions stays bypass');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes: ['default', 'plan'] }), [], 'the account has no auto mode');
+  assert.deepEqual(S.guiStartModeArgs(), []);
+  const main = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
+  assert.match(main, /const startMode = STU\.guiStartModeArgs\(\{ gui: true, autoApprove: P\.autoApproveOf\(project\), hq: Boolean\(project\.hq\)/);
+  assert.match(main, /GS\.guiArgs\(guiPrompt \? args\.slice\(0, -1\) : args\), \.\.\.startMode\]/, 'only the GUI spawn gets it');
+});
