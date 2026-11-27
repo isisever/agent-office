@@ -352,7 +352,7 @@ It sets the version in `app/package.json`, `app/package-lock.json` and `plugin/.
 }
 ```
 
-`experience` (`office`, `studio` or `both`, default both), `try` and `target` are optional. `action` is one of `open-studio`, `open-office`, `open-settings` (or `open-settings:experience|keep-awake|language|about`), `open-palette`, `open-devices`, `open-team`, `focus-composer`; `target` is a CSS selector that gets a short spotlight after "Try it". Check a file with `node scripts/check-whats-new.mjs 0.6.0`. Step 1 of `scripts/release.mjs` runs the same check and stops when the file is missing or invalid (English and Turkish texts, known actions); with `--dry-run` it only prints a warning. To see the card in a dev run (`npm start` never shows it otherwise), start with `AGENT_OFFICE_WHATS_NEW=1`.
+`experience` (`office`, `studio` or `both`, default both), `try` and `target` are optional. `action` is one of `open-studio`, `open-office`, `open-settings` (or `open-settings:experience|keep-awake|language|about`; Studio's Settings page when in Studio), `open-studio-settings`, `spotlight` (only points at `target`), `open-palette`, `open-start-screen`, `open-devices`, `open-team`, `focus-composer`; `target` is a CSS selector that gets a short spotlight after "Try it". Check a file with `node scripts/check-whats-new.mjs 0.6.0`. Step 1 of `scripts/release.mjs` runs the same check and stops when the file is missing or invalid (English and Turkish texts, known actions); with `--dry-run` it only prints a warning. To see the card in a dev run (`npm start` never shows it otherwise), start with `AGENT_OFFICE_WHATS_NEW=1`.
 
 By hand, if the script stops halfway:
 

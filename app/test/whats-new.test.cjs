@@ -43,9 +43,9 @@ test('v3.123 decide: update, fresh install, old state, downgrade, dev runs and t
   assert.deepEqual(WN.decide({ ...base, lastSeen: '0.22.45' }), { show: [], save: null });
   // fresh install: silent, but remembered
   assert.deepEqual(WN.decide({ ...base, fresh: true }), { show: [], save: '0.22.44' });
-  // a state.json from before the feature: the running version only
-  assert.deepEqual(WN.decide({ ...base, lastSeen: undefined }), { show: ['0.22.44'], save: '0.22.44' });
-  assert.deepEqual(WN.decide({ ...base, lastSeen: 42 }), { show: ['0.22.44'], save: '0.22.44' });
+  // a state.json from before the feature: every manifest up to the running version, newest first
+  assert.deepEqual(WN.decide({ ...base, lastSeen: undefined }), { show: ['0.22.44', '0.22.43', '0.22.42'], save: '0.22.44' });
+  assert.deepEqual(WN.decide({ ...base, lastSeen: 42 }), { show: ['0.22.44', '0.22.43', '0.22.42'], save: '0.22.44' });
   // dev runs: never shown, never stored
   assert.deepEqual(WN.decide({ ...base, packaged: false, lastSeen: '0.22.41' }), { show: [], save: null });
   assert.deepEqual(WN.decide({ ...base, packaged: false, fresh: true }), { show: [], save: null });
@@ -54,6 +54,14 @@ test('v3.123 decide: update, fresh install, old state, downgrade, dev runs and t
   assert.deepEqual(WN.decide({ ...base, packaged: false, force: true, lastSeen: '0.22.44' }), { show: ['0.22.44'], save: null });
   // no manifest for the versions in between: nothing to show, still remembered
   assert.deepEqual(WN.decide({ ...base, current: '0.22.50', lastSeen: '0.22.46' }), { show: [], save: '0.22.50' });
+});
+
+test("v3.123 upgrade from a version without What's new: 0.22.44 users updating to 0.22.45 see both manifests", () => {
+  const available = WN.listVersions(DIR);
+  assert.deepEqual(WN.decide({ lastSeen: undefined, current: '0.22.45', fresh: false, packaged: true, available }), { show: ['0.22.45', '0.22.44'], save: '0.22.45' });
+  // the fresh install of the same version stays silent
+  assert.deepEqual(WN.decide({ lastSeen: undefined, current: '0.22.45', fresh: true, packaged: true, available }), { show: [], save: '0.22.45' });
+  assert.deepEqual(WN.entriesFor(DIR, ['0.22.45', '0.22.44']).map((e) => e.version), ['0.22.45', '0.22.44']);
 });
 
 test('v3.123 isKnownAction: the fixed set, open-settings with a known section', () => {
@@ -80,6 +88,8 @@ test('v3.123 validateManifest: both languages, unique ids, known actions, experi
   has({ items: [item({ target: '<b>' })] }, /target/);
   has({ items: [item({ try: { label: { en: 'Go', tr: 'Git' }, action: 'run-shell' } })] }, /try\.action/);
   has({ items: [item({ try: { label: { en: 'Go' }, action: 'open-studio' } })] }, /try\.label\.tr/);
+  has({ items: [item({ try: { label: { en: 'Go', tr: 'Git' }, action: 'spotlight' } })] }, /spotlight needs a target/);
+  assert.deepEqual(WN.validateManifest({ items: [item({ target: '#keep-awake', try: { label: { en: 'Show', tr: 'Göster' }, action: 'spotlight' } })] }), []);
   has({ version: '1.0.1', items: [item()] }, /does not match/, '1.0.0');
 });
 
@@ -92,6 +102,20 @@ test('v3.123 the shipped manifests are valid, and the running version has one', 
   const entries = WN.entriesFor(DIR, [current, '0.0.1']);
   assert.equal(entries.length, 1);
   assert.equal(entries[0].version, current);
+});
+
+test('v3.123 every shipped target names ids and classes the renderer really has', () => {
+  const R = path.join(APP, 'renderer');
+  const code = fs.readdirSync(R).filter((f) => /\.(js|html)$/.test(f)).map((f) => fs.readFileSync(path.join(R, f), 'utf8')).join('\n');
+  for (const v of WN.listVersions(DIR)) {
+    for (const it of WN.readManifest(DIR, v).manifest.items) {
+      if (!it.target) continue;
+      for (const [, kind, name] of it.target.matchAll(/([#.])([A-Za-z][\w-]*)/g)) {
+        const re = kind === '#' ? new RegExp(`id(: |=)["']${name}["']`) : new RegExp(`class(: |=)["'][^"']*\\b${name}\\b`);
+        assert.match(code, re, `${v} ${it.id}: ${kind}${name}`);
+      }
+    }
+  }
 });
 
 test('v3.123 electron-builder packages app/whats-new', () => {

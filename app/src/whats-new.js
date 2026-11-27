@@ -7,7 +7,9 @@ const path = require('path');
 const LANGS = ['en', 'tr'];
 const EXPERIENCES = ['office', 'studio', 'both'];
 // "Try it" may only run one of these; each maps to an existing handler in the renderer (renderer/app.js whatsNewActions)
-const ACTIONS = ['open-studio', 'open-office', 'open-settings', 'open-palette', 'open-devices', 'open-team', 'focus-composer'];
+// v3.123 (with v3.122): open-studio-settings is Studio's Settings page, open-start-screen a new Studio session's start
+// screen; spotlight only points at the item's target (it needs one)
+const ACTIONS = ['spotlight', 'open-studio', 'open-office', 'open-settings', 'open-studio-settings', 'open-palette', 'open-start-screen', 'open-devices', 'open-team', 'focus-composer'];
 // open-settings:<section>: the Settings popup, then the row marked data-settings-section="<section>"
 const SETTINGS_SECTIONS = ['experience', 'keep-awake', 'language', 'about'];
 const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
@@ -48,7 +50,8 @@ function versionsBetween(after, upTo, available) {
  * - fresh install (no state.json yet): nothing; lastSeenVersion is set silently (first-run onboarding covers it)
  * - dev run (not packaged): nothing and nothing stored, unless `force` (AGENT_OFFICE_WHATS_NEW=1)
  * - an update: every manifest after lastSeenVersion up to the running version, newest first
- * - a state.json from before this feature (no lastSeenVersion): the running version's manifest only
+ * - a state.json from before this feature (no lastSeenVersion): every manifest up to the running version, newest
+ *   first (the first manifest is 0.22.44, so an update from it to 0.22.45 shows both)
  * - force with nothing pending: the newest manifest up to the running version (for trying the dialog)
  * `save` is the new lastSeenVersion, or null to leave it as it is (dev runs never write it; a downgrade keeps it).
  * @param {{ lastSeen?: unknown, current: string, fresh: boolean, packaged: boolean, force?: boolean, available: string[] }} o
@@ -59,7 +62,7 @@ function decide({ lastSeen, current, fresh, packaged, force = false, available }
   let show = [];
   let save = null;
   if (fresh && !seen) save = current;
-  else if (!seen) { show = available.filter((v) => compareVersions(v, current) === 0); save = current; }
+  else if (!seen) { show = versionsBetween('0.0.0-0', current, available); save = current; }
   else if (compareVersions(current, seen) > 0) { show = versionsBetween(seen, current, available); save = current; }
   if (!packaged) { save = null; if (!force) show = []; }
   if (force && !show.length) show = versionsBetween('0.0.0-0', current, available).slice(0, 1);
@@ -111,6 +114,7 @@ function validateManifest(m, version) {
       if (!it.try || typeof it.try !== 'object') errors.push(`${at}.try: must be an object with label and action`);
       else {
         checkLangs(it.try.label, `${at}.try.label`, errors);
+        if (it.try.action === 'spotlight' && it.target === undefined) errors.push(`${at}.try.action: spotlight needs a target`);
         if (!isKnownAction(it.try.action)) errors.push(`${at}.try.action: "${it.try.action}" is not one of ${ACTIONS.join(', ')} (open-settings:${SETTINGS_SECTIONS.join('|')})`);
       }
     }
