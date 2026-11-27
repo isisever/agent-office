@@ -1576,5 +1576,55 @@
     "certValid": "Bitiş",
     "certHint": "Parmak izini BT ekibinizle karşılaştırın. Güvenirseniz yalnızca bu sertifika kabul edilir; sertifika değişirse yeniden sorulur.",
     "certTrust": "Bu sertifikaya güven ve tekrar dene"
+  },
+  "voice": {
+    "mic": "Konuş (basılı tut ya da tıkla, bitirmek için yine tıkla). Sesin bu bilgisayarda yazıya çevrilir.",
+    "listening": "Dinliyorum… bitirmek için bırak ya da mikrofona tıkla, Esc iptal eder",
+    "listeningKey": "Dinliyorum… bitirmek için tuşu bırak, Esc iptal eder",
+    "transcribing": "Konuşma yazıya çevriliyor…",
+    "starting": "Konuşma tanıma başlatılıyor…",
+    "downloading": "Konuşma modeli indiriliyor… %{pct}",
+    "cancelled": "İptal edildi",
+    "nothing": "Bir şey duyulmadı",
+    "noTarget": "Odakta bir yazı alanı yoktu. Duyulan: {text}",
+    "copy": "Kopyala",
+    "err": {
+      "off": "Sesli giriş kapalı (Ayarlar).",
+      "mic-denied": "Agent Office mikrofonu kullanamıyor. Sistem Ayarları → Gizlilik ve Güvenlik → Mikrofon'dan izin ver.",
+      "mic": "Mikrofon açılamadı.",
+      "no-binary": "Bu sürümde konuşma tanıma yok.",
+      "checksum": "Konuşma modeli bozuk indi; yeniden dene.",
+      "failed": "Konuşma tanıma başarısız oldu.",
+      "unknown": "Konuşma tanıma başarısız oldu.",
+      "model": "Bilinmeyen model."
+    },
+    "settings": {
+      "enabled": "Sesli giriş",
+      "enabledTitle": "Sohbette ve HQ'da mikrofon düğmesi ve bir konuşma tuşu. Konuşma bu bilgisayarda yazıya çevrilir; ses hiçbir yere kaydedilmez ya da gönderilmez.",
+      "language": "Konuşma dili",
+      "model": "Konuşma modeli",
+      "modelReady": "İndirildi",
+      "modelMissing": "İlk kullanımda indirilir ({mb} MB)",
+      "download": "Şimdi indir",
+      "sendAfter": "Konuşunca gönder",
+      "sendAfterTitle": "Kapalı: yazı kontrol etmen için kutuya girer. Açık: hemen gönderilir.",
+      "shortcut": "Konuşma tuşu (basılı tut)",
+      "shortcutTitle": "Pencere odaktayken konuşmak için basılı tut; Esc iptal eder. Mac'te Ctrl+Space giriş kaynağı değiştirmeye ayrılmış olabilir."
+    },
+    "lang": {
+      "auto": "Otomatik (Türkçe / İngilizce)",
+      "tr": "Türkçe",
+      "en": "İngilizce"
+    },
+    "model": {
+      "large-v3-turbo-q5_0": "En iyi (large-v3-turbo, 574 MB)",
+      "small-q5_1": "Hafif (small, 190 MB)"
+    },
+    "key": {
+      "ctrl-space": "Ctrl+Space",
+      "alt-space": "Alt+Space",
+      "ctrl-shift-space": "Ctrl+Shift+Space",
+      "off": "Kapalı"
+    }
   }
 }

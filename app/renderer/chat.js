@@ -6,6 +6,7 @@
 // v3.108 GUI chat: a tab that runs claude on its SDK protocol (chat:read returns `gui`) has no terminal to read: its
 // permission requests, questions and plans come as data and are answered with chat:answer; Stop is chat:interrupt.
 import { t } from './i18n.js';
+import { micButton } from './voice.js';
 import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
@@ -121,7 +122,9 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   // once it is complete, so this is the live part
   const live = h('div', { class: 'chat-live' });
   live.hidden = true;
-  const form = h('div', { class: 'chat-form' }, slash, atList, attach, input, stop, send, term);
+  // v3.119 the mic: hold to talk (or click, click again); the text goes into the input
+  const mic = source ? null : micButton(input, () => submit());
+  const form = h('div', { class: 'chat-form' }, slash, atList, attach, mic, input, stop, send, term);
   form.hidden = Boolean(source);
   // v3.115 sub-agents: the running ones above the input (as the terminal lists them); one opens its own conversation
   // in place of the chat (read-only; ← Back returns). A paired device's chat has none (source).

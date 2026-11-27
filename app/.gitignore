@@ -4,3 +4,4 @@ release/
 .DS_Store
 release-signed/
 signed-build.log
+vendor/

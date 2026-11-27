@@ -98,7 +98,10 @@
       "icon": "build/icon.icns",
       "identity": "-",
       "artifactName": "AgentOffice-${version}-${arch}.${ext}",
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "12.0",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Agent Office uses the microphone only while you hold the talk key or the mic button, to turn your speech into text on this computer."
+      }
     },
     "dmg": {
       "title": "Agent Office"
@@ -184,6 +187,13 @@
         "to": "themes",
         "filter": [
           "*.json"
+        ]
+      },
+      {
+        "from": "vendor/whisper/${os}-${arch}",
+        "to": "whisper",
+        "filter": [
+          "**/*"
         ]
       }
     ],

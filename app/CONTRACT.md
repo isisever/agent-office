@@ -2857,3 +2857,60 @@ agentOffice.chat.resume(ptyId, sessionId)   // 'chat:resume' → 'moved' | 'busy
   checks by source text).
 - **Sleeping tabs** (review of PR #20): `liveSids` also holds every `asleep` entry's `sessionId`, so the picker never offers a
   session a sleeping tab will resume. A claude started outside the app on the same session cannot be detected.
+
+## Voice input (v3.119)
+
+Push-to-talk in the window: speech becomes text on this computer with whisper.cpp, goes into the text field that had
+focus and is sent only when the person asks for that. The audio stays in memory, is never written to disk and never
+leaves the machine; only the model download goes to the network.
+
+```ts
+agentOffice.voice.settings(): Promise<VoiceSettings & { status: { enabled, binary: boolean, models: { [id]: { present, size } } } }>   // 'voice:settings'
+agentOffice.voice.setSettings(p: Partial<VoiceSettings>)   // 'voice:setSettings' → the same as settings()
+agentOffice.voice.start()        // 'voice:start' → { ok, id } | { ok: false, error: 'off' | 'mic-denied' }
+agentOffice.voice.chunk(id, pcm) // 'voice:chunk' (send): ArrayBuffer of Int16, 16 kHz mono
+agentOffice.voice.stop(id)       // 'voice:stop' → { ok, text } | { ok: false, error: 'no-binary' | 'checksum' | 'failed' | 'unknown' }
+agentOffice.voice.cancel(id)     // 'voice:cancel' (send): the recording is dropped
+agentOffice.voice.downloadModel(id)   // 'voice:downloadModel' → { ok } | { ok: false, error: 'model' | 'checksum' | 'failed' }
+agentOffice.voice.onProgress(cb)      // 'voice:progress': { phase: 'download', model, got, total } | 'downloaded' | 'starting' | 'transcribing' | 'idle'
+type VoiceSettings = { enabled: boolean, language: 'auto' | 'tr' | 'en', model: 'large-v3-turbo-q5_0' | 'small-q5_1',
+  sendAfter: boolean, shortcut: 'ctrl+space' | 'alt+space' | 'ctrl+shift+space' | 'off' }   // state.json `voice`
+```
+
+- **Capture** (`renderer/voice.js`, `renderer/voice-worklet.js`): `getUserMedia` audio only (echo cancellation, noise
+  suppression), an AudioWorklet down-samples to 16 kHz mono PCM16 (`src/voice-input.mjs` `Downsampler`, a box filter
+  whose position carries across blocks) and posts ~100 ms blocks; the page sends them to main. Main keeps at most
+  5 minutes per recording (`MAX_PCM_BYTES`); under 0.3 s is "nothing heard". Cancel or an error drops the chunks.
+- **Where it starts**: a 🎙 button in the chat composer (not in a paired device's read-only chat) and in an HQ remote
+  row's command box: hold to talk, or click and click again. The talk key (default Ctrl+Space; Alt+Space,
+  Ctrl+Shift+Space or off) is held while the window has focus; releasing it (or the window losing focus) ends the
+  recording, Esc cancels. The key is caught before the terminal sees it.
+- **Where the text goes** (`spliceText`): into the textarea / text input that had focus when the recording started (the
+  button's own composer for the button), in place of the selection, a space before it after a word, then an `input`
+  event. Never into a terminal: xterm's key catcher is not a target, and nothing is written to a pty. Without a target
+  the text is shown in the status line with Copy. "Send after speaking" (off by default) then sends the composer
+  (the chat's own send, else the field's form).
+- **Speech to text** (`src/voice.js`, pure parts `src/voice-core.js`): `whisper-server` from Resources/whisper
+  (development: `app/vendor/whisper/<os>-<arch>/`), spawned without a shell with `-m <model> --host 127.0.0.1 --port
+  <free port> -t <n> -nt` on first use and killed after 5 minutes without a transcription (and at quit). The WAV is
+  built in memory and posted to `/inference` (`verbose_json`, temperature 0). Language: the setting; "Auto" lets
+  whisper detect it and, when it hears neither Turkish nor English, transcribes once more as the app's language
+  (Turkish when the app speaks Turkish, else English).
+- **Models**: downloaded on first use (or "Download now" in Settings) into `userData/voice/models` from the official
+  `ggerganov/whisper.cpp` Hugging Face repository at a pinned revision; size and sha256 are checked while streaming
+  to a `.part` file, which takes its name only when both match. Default `ggml-large-v3-turbo-q5_0` (574 MB), light
+  `ggml-small-q5_1` (190 MB). Progress shows in the status line and in Settings.
+- **The binary** (`app/scripts/fetch-whisper.mjs`, not in git: `app/vendor/` is ignored): pinned to whisper.cpp tag
+  `b5907` (commit `5eaee0c`). macOS arm64 / x64: the tag is cloned, its commit checked, and `whisper-server` built
+  static with Metal (embedded shaders), only system frameworks linked. Windows x64 and Linux x64: the official release
+  asset, sha256 checked. electron-builder copies `vendor/whisper/${os}-${arch}` to Resources/whisper
+  (`extraResources`); a build without it has no voice (`no-binary`).
+- **Permissions**: the window's permission handler allows `media` only for audio and only for the app's own page
+  (`mediaDecision`); other permissions keep Electron's default. macOS: `askForMediaAccess('microphone')` before the
+  first recording, `com.apple.security.device.audio-input` in the entitlements and `NSMicrophoneUsageDescription`
+  (`mac.extendInfo`). Release builds (`npm run dist:release`) are signed with the Developer ID identity and use the
+  same `build/entitlements.mac.plist`, so the microphone grant survives updates; the ad-hoc `-` identity is for local builds only.
+- **Settings** (the Settings popup): Voice input on/off, speech language (Auto / Turkish / English), speech model (with
+  its download state), Send after speaking, talk key. Locale keys `voice.*`.
+- **Tests**: `app/test/voice.test.cjs` (settings, model table, sha check, WAV header, server arguments, language
+  choice, permission rule, binary path, down-sampler, PCM16, talk key, text insertion; the wiring by source text).

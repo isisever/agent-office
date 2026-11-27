@@ -3,6 +3,7 @@
 // (so an open <select> or a name being typed is not disrupted by 500 ms data). A language change redraws everything.
 import { hasText, locale, onLang, t } from './i18n.js';
 import { modLabel, platform } from './platform.js';
+import { voiceSettingsRows } from './voice.js';
 import { isBossHere, projectStatus } from '../src/project-status.mjs';
 import { BOSS_MODEL_CHOICES, bossModelChoices, cap, isCustomModelId } from '../src/engine-caps.mjs';
 import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
@@ -1034,7 +1035,7 @@ export function mountSidebar(el, on) {
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   function openSettings() {
     openModal(t('sidebar.settings'),
-      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, langRow, lookRow, modeRow, office3dRow, chatViewRow, themeRow, botRow, skillsSection()],
+      [resumeRow, resumeWorkRow, managerRow, teamRow, shareMcpRow, reloadMcpRow, fallbackRow, sleepRow, keepAwakeRow, ...voiceSettingsRows(), langRow, lookRow, modeRow, office3dRow, chatViewRow, themeRow, botRow, skillsSection()],
       [h('button', { class: 'sb-btn primary', onclick: () => closeModal() }, t('sidebar.close'))], 'sb-modal-global');
   }
 

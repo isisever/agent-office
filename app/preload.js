@@ -174,6 +174,17 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onReady: listen('update:ready'),                    // downloaded version number
     install: () => ipcRenderer.send('update:install'),
   },
+  // contract v3.119 voice input: PCM16 16 kHz mono chunks go to main, stay in memory, are never written to disk
+  voice: {
+    settings: () => ipcRenderer.invoke('voice:settings'),          // { enabled, language: 'auto' | 'tr' | 'en', model, sendAfter, shortcut, status: { enabled, binary, models: { [id]: { present, size } } } }
+    setSettings: (p) => ipcRenderer.invoke('voice:setSettings', p),
+    start: () => ipcRenderer.invoke('voice:start'),                 // → { ok, id } | { ok: false, error: 'off' | 'mic-denied' }
+    chunk: (id, pcm) => ipcRenderer.send('voice:chunk', id, pcm),   // ArrayBuffer of Int16 samples
+    stop: (id) => ipcRenderer.invoke('voice:stop', id),             // → { ok, text } | { ok: false, error: 'no-binary' | 'checksum' | 'failed' | 'unknown' }
+    cancel: (id) => ipcRenderer.send('voice:cancel', id),
+    downloadModel: (id) => ipcRenderer.invoke('voice:downloadModel', id),   // → { ok } | { ok: false, error }
+    onProgress: listen('voice:progress'),                           // { phase: 'download', model, got, total } | 'downloaded' | 'starting' | 'transcribing' | 'idle'
+  },
   prefs: {
     get: () => ipcRenderer.invoke('prefs:get'),         // { resume: boolean, resumeWork: boolean, theme: 'auto' | name, look: 'pixel' | 'claude', mode: 'system' | 'light' | 'dark', manager: boolean, shareMcp: boolean, reloadMcp: boolean, fallback: boolean, sleepMinutes: 0 | 15 | 30 | 60, keepAwake: 'off' | 'working' | 'always', showAgyAccount: boolean | null, showCmdAccount: boolean | null, showOcAccount: boolean | null, office3d: boolean, teamMode: boolean } (theme: v3.1, manager: v3.2, sleepMinutes: v3.3, resumeWork: v3.7, shareMcp: v3.9, reloadMcp: v3.11, fallback: v3.17, showAgyAccount/showCmdAccount: v3.30, showOcAccount: v3.40, look/mode: v3.74, chatView: v3.80, office3d: v3.81, teamMode: v3.83, keepAwake: v3.78)
     set: (p) => ipcRenderer.invoke('prefs:set', p),
