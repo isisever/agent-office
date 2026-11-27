@@ -3080,19 +3080,34 @@ chat.startModels(projectId) → studio:models → { models: [{ value, label, des
 1. **Header**: in Studio the title bar's Office items (≡, ⚙, AGENT OFFICE, the project, the counts) are hidden by CSS and
    `#studio-header` shows the active session's name, chips for its project, git branch and account, and its state
    (Working with a spinner, or the waiting badge). A click (or Enter) on the name edits it in place; Enter sends
-   `/rename <name>` (`chat:command`, then `chat:send` when it answers 'terminal'), Escape or blur keeps it. The Office's
+   `/rename <name>` with `chat:rename` (`GS.renameCommand`: one line, at most 120 characters): a GUI chat takes it as a
+   message, which Claude Code's stream-json input runs locally (checked with claude 2.1.332 in a throwaway session: a
+   `system` `session_title_changed` event and a `custom-title` transcript line, no model turn); a terminal tab answers
+   'terminal' and the renderer types it with `chat:send`. A rename never goes through `chat:command` and never moves
+   or restarts a session. Escape or blur keeps it. The Office's
    elements are untouched and come back with `experience: 'office'`.
 2. **Session names**: main names a running session from its transcript like /resume (v3.118 `sessionInfo`): the /rename
    title, then Claude Code's title, then the first prompt (`studioTabInfo`, the transcript is read again only when its
-   size or time changed); none → "New session". A row shows a relative time (`relativeTime`, `Intl.RelativeTimeFormat`
+   size or time changed); none → "New session". `CHAT.sessionNames` remembers the last /rename and Claude Code title
+   per file with the byte offset read so far, and later reads only the lines appended since (up to 8 MB; split lines
+   wait for their end), so a rename that scrolls out of both 64 KB windows stays. Limit: the first look at a transcript
+   (and the /resume list, `sessionList`) reads only the two windows, so a rename in the middle of a long transcript
+   the app never saw growing is not found. A row shows a relative time (`relativeTime`, `Intl.RelativeTimeFormat`
    in the UI language), a spinner while working and a "Needs you" badge while waiting. A project with a single session
    and nothing recent is one compact row (the head opens that session). The sidebar refreshes every 5 s.
 3. **Start screen**: ⌘N, + New session, a group's + and a project with no session show it over the chat: a greeting
    with the account's first name (`firstName` of `studioUser`'s name), a centered composer, the project picker, the
    project's account (read-only, "change" opens project settings), New worktree, model and permission mode ('' = the
-   project's own). Sending: `startPlan(choice)` → `tabs:add` with 'same' or 'worktree', then each setting through
-   `chat:setting` once the GUI chat runs (retried while 'not-running' / 'busy', up to ~16 s), then the prompt with
-   `chat:send`. Tabs have no per-tab start flag for model or mode, so they are always applied right after the start.
+   project's own). `studio:models` also answers `gui` (a new tab runs as a GUI chat; false on Windows or for another
+   engine) and `modeLock` (`STU.modeLock`: 'bypass' for a skip-permissions project); `startPickers` applies the chat
+   pickers' rule (`pickerState`): no model or mode picker for a terminal tab, and a held mode is shown disabled
+   ("Bypass permissions" or the project default with the lock's reason) so it cannot be picked. Sending:
+   `startPlan(choice, models, caps)` → `tabs:add` with 'same' or 'worktree', then each setting through `chat:setting`
+   once the GUI chat runs, then the prompt with `chat:send`. Each step must answer 'ok' (`startStep`): only
+   'not-running' and 'busy' are tried again, for at most 30 s (`START_WAIT_MS`); 'locked', 'bad', 'gone',
+   'error:…', a rejected call or the time running out stop the start before the prompt is sent. The text stays in the
+   composer and a note names the step and why (`startFailure`). Sending again for the same project and tab mode uses
+   the tab the failed start created while it is open (`reuseN`), never a second one. Tabs have no per-tab start flag for model or mode, so they are always applied right after the start.
    Escape (with a session behind it) or picking a session leaves it.
 4. **Model label**: the model picker's first option names the model the session runs (`modelName` of the `system`
    `init` message's `model`, then each top-level answer's `message.model`), e.g. "Opus 5.5"; "Model as started" until known.
