@@ -32,6 +32,8 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
   let seq = 0;
   let stderr = '';
   const settings = { model: '', mode: '' };   // v3.121 what Studio's pickers set in this run
+  /** @type {{ model: string, usage: null | { input_tokens: number, cache_read_input_tokens: number, cache_creation_input_tokens: number } }} */
+  const info = { model: '', usage: null };   // v3.120 Studio UX: the running model and the last answer's usage
   /** @type {Map<string, { key: string, value: string, done: (r: string) => void, timer: any }>} */
   const pending = new Map();   // v3.121 setting requests waiting for claude's control_response
 
@@ -44,6 +46,13 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
   child.stdout?.on?.('data', (chunk) => {
     for (const msg of lines.push(chunk)) {
       if (msg.type === 'system' && msg.subtype === 'init' && typeof msg.session_id === 'string') sid = msg.session_id;
+      // v3.120 Studio UX: the model the session runs (init, then each answer) and the last answer's usage (context ring)
+      if (msg.type === 'system' && msg.subtype === 'init' && typeof msg.model === 'string') info.model = msg.model.slice(0, 100);
+      if (msg.type === 'assistant' && msg.parent_tool_use_id == null && msg.message && typeof msg.message === 'object') {
+        if (typeof msg.message.model === 'string' && msg.message.model && msg.message.model !== '<synthetic>') info.model = msg.message.model.slice(0, 100);
+        const u = msg.message.usage;
+        if (u && typeof u === 'object') info.usage = { input_tokens: Number(u.input_tokens) || 0, cache_read_input_tokens: Number(u.cache_read_input_tokens) || 0, cache_creation_input_tokens: Number(u.cache_creation_input_tokens) || 0 };
+      }
       if (msg.type === 'control_request' && msg.request?.subtype === 'can_use_tool') {
         const ask = GS.askOf(msg);
         if (!ask) { put(GS.denyLine(String(msg.request_id || ''), 'Agent Office could not read this request.')); continue; }
@@ -131,6 +140,7 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
       });
     },
     settings: () => ({ ...settings }),
+    info: () => ({ model: info.model, usage: info.usage ? { ...info.usage } : null }),
     /** Answers an open card; 'ok', 'gone' (no such request any more) or 'bad-answer'. */
     answer(askId, answer) {
       const open = asks.get(String(askId));

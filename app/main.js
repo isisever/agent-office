@@ -5624,7 +5624,7 @@ function saveChatImages(images) {
 /** null for a terminal tab; else { asks, live, gui: true } (the tab may be stopped: then nothing is open). */
 function guiInfo(id) {
   const t = terms.get(id);
-  if (t?.gui) return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, modeLock: guiModeLock.get(id) || '' };
+  if (t?.gui) return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, modeLock: guiModeLock.get(id) || '', info: t.info?.() || { model: '', usage: null }, contextCap: P.resolvePty(state, id)?.project?.contextCap || 0 };
   const r = P.resolvePty(state, id);
   if (!r || terms.has(id) || !guiTab(id, r)) return null;
   const ended = guiEnded.get(id);
@@ -6165,9 +6165,33 @@ ipcMain.handle('studio:sessions', (e) => {
   return {
     experience: STU.normalizeExperience(state.experience),
     user: studioUser(P.findProject(state, state.activeId)),
-    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel }),
+    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel, infoOf: studioTabInfo }),
   };
 });
+// v3.120 Studio UX: a running session's name, branch and last activity from its transcript (read again only when the
+// file changed) and its live state (GUI chat: a turn runs, an approval or a question is open).
+/** @type {Map<string, { key: string, info: { title: string, prompt: string, branch: string } }>} */
+const studioInfoCache = new Map();
+function studioTabInfo(ptyId) {
+  const tt = terms.get(ptyId);
+  const r = P.resolvePty(state, ptyId);
+  if (!tt || !r) return null;
+  const { configDir } = A.accountOf(state, r.project);
+  const sid = tt.gui ? validSid(tt.sessionId()) : validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), tt.pid))?.sessionId);
+  const live = tt.gui ? { busy: tt.live().busy === true, waiting: tt.asks().length > 0 } : { busy: false, waiting: attention.get(ptyId) === 'permission' };
+  if (!sid) return { title: '', prompt: '', branch: '', at: 0, ...live };
+  for (const dir of TIO.historyDirsOf(r.dir, configDir, app.getPath('home'))) {
+    const file = path.join(dir, `${sid}.jsonl`);
+    let st;
+    try { st = fs.statSync(file); } catch { continue; }
+    const key = `${st.size}:${st.mtimeMs}`;
+    let hit = studioInfoCache.get(file);
+    if (!hit || hit.key !== key) { hit = { key, info: CHAT.sessionInfo(file, st.size) }; studioInfoCache.set(file, hit); }
+    if (studioInfoCache.size > 200) studioInfoCache.delete(studioInfoCache.keys().next().value);
+    return { ...hit.info, at: Math.round(st.mtimeMs), ...live };
+  }
+  return { title: '', prompt: '', branch: '', at: 0, ...live };
+}
 // ref: { n } a running session (the main tab is 1), { sessionId } a recent one, which opens again as a new tab of its
 // project and continues that conversation. → { ok, projectId, n } | { ok: false, error: 'invalid' | 'gone' }
 ipcMain.handle('studio:open', (e, projectId, ref) => {

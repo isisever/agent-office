@@ -64,8 +64,14 @@ test('session listing: main tab first, tabs by number, no shells, recent newest 
   const status = [{ id: 'a', isRunning: true, isAsleep: false, attention: 'permission', tabs: [{ n: 2, isRunning: false, isAsleep: true }, { n: 3, isRunning: true, isAsleep: false }] }];
   const recent = [{ projectId: 'a', sessionId: 'old', title: '', dir: '/w/alpha', at: 1 }, { projectId: 'a', sessionId: 'new', title: 'Fix', dir: '', at: 5 }];
   const out = S.listSessions({ projects, status, recent, activeId: 'a', staff: [{ id: 'm1', name: 'Ada' }] });
-  assert.deepEqual(out[0].running.map((r) => [r.ptyId, r.title, r.isRunning, r.isAsleep]), [
+  assert.deepEqual(out[0].running.map((r) => [r.ptyId, r.label, r.isRunning, r.isAsleep]), [
     ['a', 'Alpha', true, false], ['a:2', 'agent-office/2', false, true], ['a:3', 'alpha', true, false], ['a:5', 'Ada', false, false]]);
+  assert.deepEqual(out[0].running.map((r) => r.title), ['', '', '', ''], 'no transcript info: no name (the renderer shows New session)');
+  // v3.120 Studio UX: a running session is named from its transcript (/rename or Claude's title, else the first prompt)
+  const infos = { a: { title: 'Renamed', prompt: 'p', branch: 'main', at: 7, busy: true }, 'a:3': { title: '', prompt: 'Fix the build', waiting: true }, 'a:2': { title: 'asleep' } };
+  const named = S.listSessions({ projects, status, recent, infoOf: (id) => infos[id] || null })[0].running;
+  assert.deepEqual(named.map((r) => [r.title, r.branch, r.at, r.busy, r.waiting]), [
+    ['Renamed', 'main', 7, true, false], ['', '', 0, false, false], ['Fix the build', '', 0, false, true], ['', '', 0, false, false]]);
   assert.deepEqual(out[0].recent.map((r) => [r.sessionId, r.title]), [['new', 'Fix'], ['old', 'alpha']]);
   assert.equal(out[0].active, true);
   assert.equal(out[0].attention, 'permission');

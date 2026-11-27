@@ -175,21 +175,28 @@ function tabTitle(project, tab, staff) {
  * running ones that will start again when shown.
  * accountOf(project) → the label of the Claude account the project runs on (A.accountOf, the Office's account name);
  * only the label is listed, never a token or a config folder.
- * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[], accountOf?: (p: any) => unknown }} o
+ * infoOf(ptyId) → the running session's transcript info { title, prompt, branch, at, busy, waiting } or null: its row
+ * is named like /resume (v3.118: /rename, Claude Code's title, the first prompt; '' when none, the renderer shows "New
+ * session"), with the git branch, the last activity and the live state (busy: a turn runs; waiting: an approval or a
+ * question is open). The tab's own label (staff member, worktree branch, folder) is kept as `label`.
+ * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[], accountOf?: (p: any) => unknown, infoOf?: (ptyId: string) => any }} o
  */
-function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '' }) {
+function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '', infoOf = () => null }) {
   const byId = new Map((status || []).map((s) => [s.id, s]));
   const rec = Array.isArray(recent) ? recent : [];
   return (projects || []).map((p) => {
     const st = byId.get(p.id) || {};
     const tabSt = new Map((st.tabs || []).map((t) => [t.n, t]));
     const tabs = (Array.isArray(p.tabs) ? p.tabs : []).filter((t) => !t.shell).slice().sort((a, b) => a.n - b.n);
+    const row = (ptyId, n, label, isRunning, isAsleep) => {
+      const info = (isRunning && infoOf(ptyId)) || null;
+      const name = info ? String(info.title || info.prompt || '').slice(0, 200) : '';
+      return { ptyId, n, title: name, label, branch: info?.branch || '', at: Number(info?.at) || 0,
+        busy: info?.busy === true, waiting: info?.waiting === true, isRunning, isAsleep };
+    };
     const running = [
-      { ptyId: p.id, n: MAIN_TAB, title: p.name, isRunning: st.isRunning === true, isAsleep: st.isAsleep === true },
-      ...tabs.map((t) => ({
-        ptyId: `${p.id}:${t.n}`, n: t.n, title: tabTitle(p, t, staff),
-        isRunning: tabSt.get(t.n)?.isRunning === true, isAsleep: tabSt.get(t.n)?.isAsleep === true,
-      })),
+      row(p.id, MAIN_TAB, p.name, st.isRunning === true, st.isAsleep === true),
+      ...tabs.map((t) => row(`${p.id}:${t.n}`, t.n, tabTitle(p, t, staff), tabSt.get(t.n)?.isRunning === true, tabSt.get(t.n)?.isAsleep === true)),
     ];
     const recentHere = rec.filter((r) => r.projectId === p.id).sort((a, b) => b.at - a.at).slice(0, RECENT_PER_PROJECT)
       .map((r) => ({ sessionId: r.sessionId, title: r.title || baseName(r.dir) || p.name, at: r.at }));
