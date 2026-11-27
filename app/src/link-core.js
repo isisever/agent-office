@@ -548,6 +548,21 @@ function snapshotOf(projects, office, attention = new Map()) {
 const snapshotFor = (snap, manage) => (manage || !snap?.workers ? snap : { ...snap, workers: snap.workers.map(({ description: _d, ...w }) => w) });
 
 /** One log line for a received command (first line only, never the whole text). */
+/**
+ * v3.121 What a controller sees of HQ: busy is ROUT.hqBusy's answer ('ready' | 'busy' | 'starting' | 'cold' | ...),
+ * attention the HQ tab's attention ('permission' = waiting for an approval).
+ */
+const ctlHqStatus = (busy, attention) => (attention === 'permission' ? 'approval' : busy === 'busy' || busy === 'starting' ? 'working' : 'idle');
+/**
+ * v3.121 One controller HQ turn, typed like a turn the person typed: ready → typed; cold (HQ not running) → started
+ * with it as the first prompt; anything else (the person is typing, a turn runs) → refused, never queued behind.
+ * @returns {boolean} typed or started
+ */
+function ctlTurn({ busy, type, start }) {
+  if (busy === 'ready') return type() !== false;
+  if (busy === 'cold') { start(); return true; }
+  return false;
+}
 const logEntry = (at, device, project, text, outcome) => ({ at: new Date(at).toISOString(), device, project, firstLine: cleanLine(String(text).split(/\r?\n/)[0], 120), outcome });
 
 module.exports = {
@@ -558,6 +573,7 @@ module.exports = {
   cleanSnapshot, validateMessage, validatePair, LineReader, encode,
   normalizeDevices, ownKeys, sealOwn, ctlKeys, isController, offices, migrateOwn, isOwn, isPaused, OWN_VERSION, PAIR_CONFIRM_MS, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, maySessions,
   SESS_REASONS, SESS_BACKFILL_ITEMS, SESS_BACKFILL_BYTES, SESS_FRAME_BYTES, SESS_FRAME_ITEMS, SESS_FRAMES_PER_SEC, SESS_PER_DEVICE, SESS_IDLE_MS, SESS_QUEUE_MAX, SESS_OPENS_PER_MIN,
+  ctlHqStatus, ctlTurn,
   cleanSessItem, fitSessItem, sessFrames, sessBackfill, snapshotOf, snapshotFor, logEntry,
   cleanRes, cleanCatalog, resOf, resChanged, typingReady,
   LOGIN_HOSTS, LOGIN_REDIRECT, LOGIN_CODE_RE, LOGIN_TIMEOUT_MS, LOGIN_REASONS, loginUrlOk, loginCodeOk, stripAnsi, parseLoginOutput, cleanAccounts,

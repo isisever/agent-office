@@ -91,3 +91,23 @@ test('integration: a phone pairs by QR URL, reads ctl-view and types an HQ turn'
   await desk.remove(desk.view().phones[0].id);
   assert.equal(desk.view().phones.length, 0);
 });
+
+test('a controller HQ turn is typed only when HQ is free, started when HQ is cold', () => {
+  const calls = [];
+  const type = () => { calls.push('type'); return true; };
+  const start = () => calls.push('start');
+  assert.equal(C.ctlTurn({ busy: 'ready', type, start }), true);
+  assert.equal(C.ctlTurn({ busy: 'cold', type, start }), true);
+  assert.equal(C.ctlTurn({ busy: 'busy', type, start }), false);   // the person is typing or a turn runs: refused
+  assert.equal(C.ctlTurn({ busy: 'starting', type, start }), false);
+  assert.equal(C.ctlTurn({ busy: 'ready', type: () => false, start }), false);   // not typed (handoff lock, no pty)
+  assert.deepEqual(calls, ['type', 'start']);
+  assert.equal(C.ctlHqStatus('busy', ''), 'working');
+  assert.equal(C.ctlHqStatus('ready', 'permission'), 'approval');
+  assert.equal(C.ctlHqStatus('cold', ''), 'idle');
+});
+
+test('link-host: only a controller may open the hq session (source gate; link-host needs Electron to run)', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/link-host.js'), 'utf8');
+  assert.match(src, /if \(project === 'hq' && !controller\) return refuse\('unknown-project'\)/);
+});

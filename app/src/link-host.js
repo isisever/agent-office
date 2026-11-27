@@ -36,6 +36,7 @@ const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks be
  *   tabState: (projectId: string) => 'ready' | 'busy' | 'starting' | 'gone', type: (projectId: string, text: string, o?: { taskId?: string }) => boolean | void,   // false: not typed
  *   loginOf?: (projectId: string) => 'in' | 'out' | 'unknown', reportsDir?: string,
  *   answersPrompts?: (projectId: string) => boolean, confirmPair?: (device: string) => Promise<boolean>,   // v3.101 the pairing dialog on this machine
+ *   hqSessionOf?: () => { file?: string, reason?: string },   // v3.121 the HQ transcript a controller reads
  *   ctlHq?: (text: string, o: { device: string, id: string }) => boolean | void | Promise<boolean | void>, ctlReports?: (limit: number) => any[] | Promise<any[]>,   // v3.121 phone controller
  *   onReport?: (r: { id: string, machine: string, pub: string, report: any }) => void,
  *   asleep?: (projectId: string) => boolean, attentionOf?: (projectId: string) => string,   // v3.48 why a device's task waits / needs approval
@@ -677,12 +678,15 @@ function setupLink(d) {
   }
   /** main's answer for a project id: { file } (its main tab's transcript) or { reason }. */
   function sessionOf(project) {
+    // v3.121 'hq' is opened only by a controller (onSessOpen): HQ's own transcript, read-only like any other
+    if (project === 'hq') { try { return (d.hqSessionOf && d.hqSessionOf()) || { reason: 'unknown-project' }; } catch { return { reason: 'no-session' }; } }
     try { return (d.sessionOf && d.sessionOf(project)) || { reason: 'unknown-project' }; } catch { return { reason: 'no-session' }; }
   }
   const SESS_NOTIFY_MS = 10 * 60 * 1000;
   const notified = new Map();   // device pub/project → when it was last announced
-  function onSessOpen({ key, device, project, refuse }) {
-    const p = d.projects().find((x) => x.id === project);
+  function onSessOpen({ key, device, project, refuse, controller = false }) {
+    if (project === 'hq' && !controller) return refuse('unknown-project');
+    const p = controller ? (project === 'hq' ? { id: 'hq', name: 'HQ', engine: 'claude' } : null) : d.projects().find((x) => x.id === project);
     if (!p) return refuse('unknown-project');
     if (p.engine !== 'claude') return refuse('engine');
     const s = sessionOf(project);
