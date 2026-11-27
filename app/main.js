@@ -6499,9 +6499,8 @@ function saveBoardStore(s) {
   try { fs.mkdirSync(hqDir(), { recursive: true, mode: 0o700 }); SF.writeAtomic(boardCardsFile(), JSON.stringify(s)); } catch (e) { console.error('board cards:', e.message); }
   return true;
 }
-// sessions that carried a dispatched task (HQ, a project boss or a paired device): already on the board as an order
-// or a remote task, never a chat card of their own (kept for this run of the app)
-const boardTaskSids = new Set();
+// sessions that carried a dispatched task (HQ, a project boss or a paired device) are already on the board as an order
+// or a remote task, never a chat card of their own; the store keeps them (taskSids, capped) across restarts
 let boardTickAt = 0;
 /** Every 15 s (from hqTick): each project tab's session creates or moves its chat card; Review cards close after 24 h. */
 function boardCardsTick(now = Date.now()) {
@@ -6515,8 +6514,8 @@ function boardCardsTick(now = Date.now()) {
     const info = studioTabInfo(pid);
     const sid = STU.validSessionId(info?.sessionId);
     if (!info || !sid) continue;
-    if (guiTaskOpen(pid)) boardTaskSids.add(sid);
-    if (boardTaskSids.has(sid)) continue;
+    if (guiTaskOpen(pid)) s = BM.markTaskSession(s, sid);
+    if (BM.isTaskSession(s, sid)) continue;
     const busy = info.busy === true || (!tt.gui && tabWorkRunning(pid));
     const tok = BM.tokensFromStatus(readJson(path.join(usageRoot(), A.accountOf(state, r.project).id, `${usageKey(pid)}.json`)), sid);
     const member = r.project.staffOwner ? (memberById(r.project.staffOwner)?.name || '') : '';

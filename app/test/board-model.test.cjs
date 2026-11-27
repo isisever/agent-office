@@ -216,3 +216,17 @@ test('release order: waiting stages and paced sends go bugfix, hotfix, feature',
   for (let i = 1; i <= 3; i++) { t = i * 1000; pacer.flush(); }
   assert.deepEqual(sent, ['first', 'bugfix', 'hotfix', 'feature']);
 });
+
+test('task sessions: remembered across a reload, deduped, invalid ids ignored, capped to the newest', () => {
+  let s = BM.markTaskSession(BM.emptyStore(), SID);
+  assert.ok(BM.isTaskSession(s, SID));
+  assert.equal(BM.markTaskSession(s, SID), s);
+  assert.equal(BM.markTaskSession(s, 'not-a-sid'), s);
+  const back = BM.loadStore(JSON.parse(JSON.stringify({ ...s, taskSids: [...s.taskSids, SID, 'bad', 7] })));
+  assert.deepEqual(back.taskSids, [SID]);
+  const many = [];
+  for (let i = 0; i < BM.MAX_TASK_SIDS + 5; i++) many.push(`00000000-0000-0000-0000-${String(i).padStart(12, '0')}`);
+  const capped = BM.loadStore({ taskSids: many });
+  assert.equal(capped.taskSids.length, BM.MAX_TASK_SIDS);
+  assert.equal(capped.taskSids[0], many[5]);   // the oldest dropped first
+});

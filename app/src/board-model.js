@@ -11,6 +11,7 @@ const GROUPS = Object.freeze(['project', 'type', 'member']);
 const MAX_CLOSED = 500;                       // closed chat cards kept
 const MAX_OPEN = 200;                         // open chat cards kept (oldest activity dropped first)
 const MAX_ORDER_META = 1000;                  // per-order choices kept
+const MAX_TASK_SIDS = 1000;                   // sessions that carried a dispatched or remote task (newest kept)
 const REVIEW_CLOSE_MS = 24 * 60 * 60 * 1000;  // a chat card idle in Review this long closes by itself
 const TITLE_MAX = 80;
 
@@ -130,7 +131,7 @@ function cardOf(x, ctx = {}) {
 // ---------- the store (board-cards.json) ----------
 const SID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ORDER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const emptyStore = () => ({ v: 1, chats: [], orders: {} });
+const emptyStore = () => ({ v: 1, chats: [], orders: {}, taskSids: [] });
 /** A stored record, cleaned (anything unknown or broken is dropped). */
 function cleanChat(c) {
   if (!isObj(c) || !isStr(c.sessionId) || !SID_RE.test(c.sessionId)) return null;
@@ -152,15 +153,26 @@ function loadStore(raw) {
     const o = { ...(typeOf(v.type) ? { type: typeOf(v.type) } : {}), ...(num(v.doneAt) ? { doneAt: num(v.doneAt) } : {}) };
     if (Object.keys(o).length) orders[k] = o;
   }
-  return capStore({ v: 1, chats, orders });
+  const taskSids = [...new Set((Array.isArray(s.taskSids) ? s.taskSids : []).filter((x) => isStr(x) && SID_RE.test(x)))];
+  return capStore({ v: 1, chats, orders, taskSids });
 }
-/** Keeps the newest MAX_CLOSED closed and MAX_OPEN open chat cards, and MAX_ORDER_META order entries. */
+/** Keeps the newest MAX_CLOSED closed and MAX_OPEN open chat cards, MAX_ORDER_META order entries and MAX_TASK_SIDS task sessions. */
 function capStore(store) {
   const open = store.chats.filter((c) => !c.closedAt).sort((a, b) => b.lastActive - a.lastActive).slice(0, MAX_OPEN);
   const closed = store.chats.filter((c) => c.closedAt).sort((a, b) => b.closedAt - a.closedAt).slice(0, MAX_CLOSED);
   const keys = Object.keys(store.orders);
   const orders = keys.length > MAX_ORDER_META ? Object.fromEntries(keys.slice(-MAX_ORDER_META).map((k) => [k, store.orders[k]])) : store.orders;
-  return { ...store, chats: [...open, ...closed], orders };
+  const sids = Array.isArray(store.taskSids) ? store.taskSids : [];
+  const taskSids = sids.length > MAX_TASK_SIDS ? sids.slice(-MAX_TASK_SIDS) : sids;
+  return { ...store, chats: [...open, ...closed], orders, taskSids };
+}
+
+/** True when this session carried a dispatched or remote task (it is an order on the board, never a chat card). */
+const isTaskSession = (store, sid) => Array.isArray(store.taskSids) && store.taskSids.includes(sid);
+/** Remembers a task session (newest last, capped). → the store (same object if already known or invalid). */
+function markTaskSession(store, sid) {
+  if (!isStr(sid) || !SID_RE.test(sid) || isTaskSession(store, sid)) return store;
+  return capStore({ ...store, taskSids: [...(store.taskSids || []), sid] });
 }
 
 /**
@@ -274,8 +286,8 @@ function tokensFromStatus(obj, sessionId) {
 }
 
 module.exports = {
-  TYPES, TYPE_RANK, COLUMNS, GROUPS, MAX_CLOSED, MAX_OPEN, REVIEW_CLOSE_MS,
+  TYPES, TYPE_RANK, COLUMNS, GROUPS, MAX_CLOSED, MAX_OPEN, MAX_TASK_SIDS, REVIEW_CLOSE_MS,
   typeOf, rankOf, classify, orderType, columnOf, chatColumn, compareCards, sortCards, byPriority,
-  orderCard, chatCard, cardOf, emptyStore, loadStore, capStore, touchSession, autoClose, markDone, setType, validCardId,
+  orderCard, chatCard, cardOf, emptyStore, loadStore, capStore, touchSession, autoClose, markDone, setType, validCardId, isTaskSession, markTaskSession,
   boardCards, report, tokensFromStatus,
 };
