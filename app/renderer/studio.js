@@ -7,8 +7,10 @@
 
 import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
 import { icon } from './studio-icons.js';
+import { relativeTime, firstName, START_MODELS, START_MODES, startPlan } from '../src/studio-ux.mjs';
 
-const REFRESH_MS = 10000;
+const REFRESH_MS = 5000;   // v3.120 Studio UX: the rows' live state (working, waiting) and the header follow within 5 s
+const THEME_KEY = 'ao.studio.theme';   // Studio's own light / dark choice ('system' | 'light' | 'dark', this window only)
 const CLOSED_KEY = 'ao.studio.closedProjects';   // the project groups the person collapsed (this window only)
 
 /** @param {string} tag @param {Record<string, any>} [props] @param {...(Node | string | null | false | undefined)} kids */
@@ -32,6 +34,8 @@ function el(tag, props = {}, ...kids) {
  *     selectSession: (projectId: string, n: number) => void, newSession: (projectId: string) => void,
  *     selectProject: (projectId: string) => void, selectHq: () => void, openBoard: () => void,
  *     openSettings: () => void, toggle: () => void, activePty: () => string | null, hasSession: () => boolean,
+ *     startSession: (projectId: string, plan: { tabMode: 'same' | 'worktree', settings: [string, string][] }, text: string) => Promise<boolean>,
+ *     projectSettings: (projectId: string) => void, showAccounts: () => void, isMac: boolean,
  *     commands: (projectId: string) => StudioCommand[],
  *   },
  * }} o
@@ -61,23 +65,101 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const searchBox = el('label', { class: 'st-searchbox' }, icon('search', 14), search);
   const bar = el('aside', { id: 'studio-sidebar', hidden: true }, newBtn, searchBox, pins, lists, machines, account);
   const greeting = el('p', { class: 'st-greeting' });
-  const startLabel = el('span', {});
-  const startNew = el('button', { class: 'st-new st-start-new', onclick: () => newSession() }, icon('plus', 14), startLabel);
-  const start = el('div', { id: 'studio-start', hidden: true }, greeting, startNew);
+  // v3.120 Studio UX start screen: a centered composer with the project, its account, branch or new worktree, model
+  // and permission mode; sending starts the session with those choices (tabs:add, then chat:setting, then the prompt)
+  const startText = /** @type {HTMLTextAreaElement} */ (el('textarea', { class: 'st-start-input', rows: '3' }));
+  const startProject = /** @type {HTMLSelectElement} */ (el('select', { class: 'st-start-pick', onchange: () => { picked = startProject.value; draw(); } }));
+  const startAccount = el('span', { class: 'st-start-account' });
+  const startWorktree = /** @type {HTMLInputElement} */ (el('input', { type: 'checkbox' }));
+  const startWtLabel = el('span', {});
+  const startModel = /** @type {HTMLSelectElement} */ (el('select', { class: 'st-start-pick' }));
+  const startMode = /** @type {HTMLSelectElement} */ (el('select', { class: 'st-start-pick' }));
+  const startSend = /** @type {HTMLButtonElement} */ (el('button', { class: 'st-start-send', type: 'submit' }, icon('send', 16)));
+  const startNote = el('div', { class: 'st-start-note', role: 'status' });
+  const startForm = el('form', { class: 'st-start-box', onsubmit: (/** @type {Event} */ e) => { e.preventDefault(); sendStart(); } },
+    startText,
+    el('div', { class: 'st-start-row' },
+      startProject, startAccount, el('label', { class: 'st-start-wt' }, startWorktree, startWtLabel),
+      el('span', { class: 'st-start-gap' }), startModel, startMode, startSend));
+  const start = el('div', { id: 'studio-start', hidden: true }, greeting, startForm, startNote);
+  startText.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendStart(); }
+    else if (e.key === 'Escape' && hooks.hasSession()) { e.preventDefault(); starting = false; draw(); }
+  });
+  let starting = false;   // ⌘N / + New session: the start screen over the current session until sent or left
+  let startBusy = false;
+  // v3.120 Studio UX header: in the title bar, the session's name (renamed in place with /rename), chips for the
+  // project, branch and account, and the session's state; the Office's own title bar items are only hidden (studio.css)
+  const headTitle = el('span', { class: 'st-head-title', tabindex: '0', role: 'button' });
+  const headChips = el('span', { class: 'st-head-chips' });
+  const headState = el('span', { class: 'st-head-state' });
+  const header = el('div', { id: 'studio-header', hidden: true }, headTitle, headChips, headState);
+  headTitle.addEventListener('click', () => renameStart());
+  headTitle.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); renameStart(); } });
+  document.getElementById('titlebar')?.append(header);
   document.getElementById('body')?.prepend(bar);
   document.getElementById('terminal')?.append(start);
+  /** @type {any} */
+  let shown = null;   // the active session's row (header)
 
   const currentId = () => currentProjectId(view.projects, picked);
   const current = () => view.projects.find((/** @type {any} */ p) => p.id === currentId()) || null;
   /** The current project's running sessions, in the order ⌘1…9 picks them (filtered by the search like the list). */
   const shownSessions = () => studioGroups(view.projects, { query, currentId: currentId() }).find((g) => g.current)?.running || [];
 
-  function newSession() {
-    const id = currentId();
-    if (id) hooks.newSession(id);
+  /** ⌘N, + New session (and ⌘⇧N with a new worktree): the start screen for the current project. */
+  function newSession(/** @type {{ worktree?: boolean, projectId?: string }} */ o = {}) {
+    if (o.projectId) picked = o.projectId;
+    if (!currentId()) return;
+    starting = true;
+    startWorktree.checked = o.worktree === true;
+    startNote.textContent = '';
+    draw();
+    startText.focus();
+  }
+  async function sendStart() {
+    const id = startProject.value || currentId();
+    const text = startText.value.trim();
+    if (!id || !text || startBusy) return;
+    startBusy = true;
+    startSend.disabled = true;
+    startNote.textContent = t('studio.start.starting');
+    let ok = false;
+    try { ok = await hooks.startSession(id, startPlan({ worktree: startWorktree.checked, model: startModel.value, mode: startMode.value }), text); } catch (e) { console.error(e); }
+    startBusy = false;
+    startSend.disabled = false;
+    if (ok) { startText.value = ''; startNote.textContent = ''; starting = false; picked = id; refresh(); } else startNote.textContent = t('studio.start.failed');
+  }
+  /** The header's title becomes a text box; Enter renames the session with /rename (v3.118 title order), Esc keeps it. */
+  function renameStart() {
+    const pty = hooks.activePty();
+    if (!shown || !pty || headTitle.querySelector('input')) return;
+    const box = /** @type {HTMLInputElement} */ (el('input', { class: 'st-head-input', value: shown.title || '', maxlength: '120' }));
+    const done = async (/** @type {boolean} */ save) => {
+      const name = box.value.replace(/\s+/g, ' ').trim();
+      box.remove();
+      draw();
+      if (!save || !name || name === shown?.title) return;
+      let r = 'error';
+      try { r = await api.chat.command(pty, `/rename ${name}`); if (r === 'terminal') r = await api.chat.send(pty, `/rename ${name}`); } catch (e) { console.error(e); }
+      setTimeout(refresh, 800);
+    };
+    box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); done(true); } else if (e.key === 'Escape') { e.preventDefault(); done(false); } });
+    box.addEventListener('blur', () => { if (box.isConnected) done(false); });
+    headTitle.replaceChildren(box);
+    box.focus();
+    box.select();
+  }
+  const rel = (/** @type {number} */ at) => relativeTime(at, Date.now(), document.documentElement.lang || navigator.language, t('studio.now'));
+  /** A session's live state: a spinner while a turn runs, a badge while an approval or a question waits. */
+  function stateEl(/** @type {any} */ s) {
+    if (s.waiting) return el('span', { class: 'st-wait', title: t('studio.waiting') }, t('studio.waitingShort'));
+    if (s.busy) return el('span', { class: 'st-spin', role: 'img', 'aria-label': t('studio.working'), title: t('studio.working') });
+    return null;
   }
   async function open(/** @type {string} */ projectId, /** @type {any} */ ref) {
     picked = projectId;
+    starting = false;
     const r = await api.studio.open(projectId, ref).catch(() => null);
     if (r?.ok) { picked = r.projectId; hooks.selectSession(r.projectId, r.n); }
     refresh();
@@ -86,14 +168,18 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   function sessionRow(/** @type {any} */ g, /** @type {any} */ s, /** @type {number} */ i) {
     const active = hooks.activePty() === s.ptyId;
     const state = s.isRunning ? 'live' : s.isAsleep ? 'asleep' : '';
-    return el('div', { class: `st-row st-session${active ? ' active' : ''}`, title: s.title, onclick: () => open(g.id, { n: s.n }) },
-      el('span', { class: `sb-dot ${state}` }),
-      el('span', { class: 'st-title' }, s.title),
+    const name = s.title || t('studio.untitled');
+    const live = stateEl(s);
+    return el('div', { class: `st-row st-session${active ? ' active' : ''}`, title: [name, s.label, s.branch].filter(Boolean).join(' · '), onclick: () => open(g.id, { n: s.n }) },
+      s.busy && !s.waiting ? live : el('span', { class: `sb-dot ${state}` }),
+      el('span', { class: 'st-title' }, name),
+      s.waiting ? live : null,
+      s.at ? el('span', { class: 'st-time' }, rel(s.at)) : null,
       g.current && i < 9 ? el('span', { class: 'st-key' }, `${modLabel}${i + 1}`) : null);
   }
   function recentRow(/** @type {any} */ g, /** @type {any} */ r) {
     return el('div', { class: 'st-row st-session st-recent', title: new Date(r.at).toLocaleString(), onclick: () => open(g.id, { sessionId: r.sessionId }) },
-      el('span', { class: 'sb-dot' }), el('span', { class: 'st-title' }, r.title));
+      el('span', { class: 'sb-dot' }), el('span', { class: 'st-title' }, r.title || t('studio.untitled')), r.at ? el('span', { class: 'st-time' }, rel(r.at)) : null);
   }
   function groupEl(/** @type {any} */ g) {
     const shut = !query && closed.has(g.id);
@@ -103,7 +189,19 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       el('span', { class: 'st-title st-project', onclick: () => { picked = g.id; hooks.selectProject(g.id); refresh(); } }, g.name),
       g.attention ? el('span', { class: `sb-attn ${g.attention}` }, '●') : null,
       g.account ? el('span', { class: 'st-badge', title: `${t('studio.account')}: ${g.account}` }, g.account) : null,
-      el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => { picked = g.id; hooks.newSession(g.id); } }, icon('plus', 14)));
+      el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => newSession({ projectId: g.id }) }, icon('plus', 14)));
+    // one session and nothing recent: the group stays compact (its head opens that session, the row is not repeated)
+    if (g.running.length === 1 && !g.recent.length && !query) {
+      const s = g.running[0];
+      const active = hooks.activePty() === s.ptyId;
+      return el('div', { class: `st-group compact${g.current ? ' current' : ''}` },
+        el('div', { class: `st-group-head${g.active ? ' active' : ''}${g.current ? ' current' : ''}${active ? ' on' : ''}`, title: [g.name, s.title].filter(Boolean).join(' · '), onclick: (/** @type {MouseEvent} */ e) => { if (!(e.target instanceof Element) || !e.target.closest('.st-add')) open(g.id, { n: s.n }); } },
+          stateEl(s) || el('span', { class: `sb-dot ${s.isRunning ? 'live' : s.isAsleep ? 'asleep' : ''}` }),
+          el('span', { class: 'st-title st-project' }, g.name, el('span', { class: 'st-sub-name' }, s.title || '')),
+          g.attention && !s.waiting ? el('span', { class: `sb-attn ${g.attention}` }, '●') : null,
+          g.account ? el('span', { class: 'st-badge', title: `${t('studio.account')}: ${g.account}` }, g.account) : null,
+          el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => newSession({ projectId: g.id }) }, icon('plus', 14))));
+    }
     const kids = shut ? [] : [
       ...g.running.map((/** @type {any} */ s, /** @type {number} */ i) => sessionRow(g, s, i)),
       ...(g.recent.length ? [el('div', { class: 'st-sub' }, t('studio.recent')), ...g.recent.map((/** @type {any} */ r) => recentRow(g, r))] : []),
@@ -114,8 +212,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   function draw() {
     if (!on) return;
     newLabel.textContent = t('studio.newSession');
-    newBtn.title = `${modLabel}N`;
-    startLabel.textContent = t('studio.newSession');
+    newBtn.title = `${t('studio.newSession')} (${modLabel}N · ${t('studio.worktreeKey')} ${hooks.isMac ? '⌘⇧N' : 'Ctrl+Shift+Alt+N'})`;
     search.placeholder = t('studio.search');
     pins.replaceChildren(
       el('div', { class: 'st-row st-pin', onclick: () => hooks.selectHq() }, icon('home'), el('span', { class: 'st-title' }, t('studio.hq'))),
@@ -135,16 +232,88 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const label = cur?.account || u.account || '';
     const sameAsActive = !cur || cur.active;
     const who = (sameAsActive && (u.name || u.email)) || label;
-    account.replaceChildren(
+    // v3.120 Studio UX: one account button with a menu (theme, Settings, accounts, back to the Office)
+    account.replaceChildren(el('button', { class: 'st-account-btn', type: 'button', 'aria-haspopup': 'menu', title: t('studio.accountMenu'), onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); toggleMenu(); } },
       el('span', { class: 'st-avatar', 'aria-hidden': 'true' }, (who.trim()[0] || '?').toLocaleUpperCase()),
       el('div', { class: 'st-user', title: `${t('studio.account')}: ${label}` },
         el('span', { class: 'st-title' }, (sameAsActive && (u.name || u.email)) || label),
         el('span', { class: 'st-email' }, [sameAsActive && u.name ? u.email : '', label].filter(Boolean).join(' · '))),
-      el('button', { class: 'sb-gear', title: t('studio.settings'), 'aria-label': t('studio.settings'), onclick: () => hooks.openSettings() }, icon('gear')),
-      el('button', { class: 'st-switch', title: `${t('studio.toOffice')} (${modLabel === '⌘' ? '⌘⇧E' : 'Ctrl+Shift+E'})`, 'aria-label': t('studio.toOffice'), onclick: () => hooks.toggle() }, icon('office')));
-    greeting.textContent = u.name ? t('studio.greetingName', { name: u.name }) : t('studio.greeting');
-    start.hidden = hooks.hasSession();
+      icon('chevron', 12)));
+    const fn = firstName(sameAsActive ? u.name : '');
+    greeting.textContent = fn ? t('studio.greetingName', { name: fn }) : t('studio.greeting');
+    drawStart(cur);
+    drawHeader();
   }
+  function drawStart(/** @type {any} */ cur) {
+    start.hidden = !(starting || !hooks.hasSession());
+    if (start.hidden) return;
+    const keep = startProject.value || cur?.id || '';
+    startProject.replaceChildren(...view.projects.map((/** @type {any} */ p) => el('option', { value: p.id }, p.name)));
+    startProject.value = view.projects.some((/** @type {any} */ p) => p.id === (cur?.id || keep)) ? (cur?.id || keep) : (view.projects[0]?.id || '');
+    startProject.title = t('studio.project');
+    const proj = view.projects.find((/** @type {any} */ p) => p.id === startProject.value);
+    startAccount.replaceChildren(el('span', { class: 'st-badge', title: t('studio.account') }, proj?.account || '—'),
+      el('button', { type: 'button', class: 'st-link', title: t('studio.start.changeAccountTitle'), onclick: () => proj && hooks.projectSettings(proj.id) }, t('studio.start.changeAccount')));
+    startWtLabel.textContent = t('studio.start.worktree');
+    const mv = startModel.value;
+    startModel.replaceChildren(...START_MODELS.map((m) => el('option', { value: m }, m ? t(`chat.pick.model.${m}`) : t('studio.start.modelDefault'))));
+    startModel.value = mv;
+    startModel.title = t('chat.pick.modelTitle');
+    const dv = startMode.value;
+    startMode.replaceChildren(...START_MODES.map((m) => el('option', { value: m }, m ? t(`chat.pick.mode.${m}`) : t('studio.start.modeDefault'))));
+    startMode.value = dv;
+    startMode.title = t('chat.pick.modeTitle');
+    startText.placeholder = t('studio.start.placeholder');
+    startSend.title = `${t('studio.start.send')} (Enter)`;
+    startSend.setAttribute('aria-label', t('studio.start.send'));
+    startForm.hidden = !view.projects.length;
+  }
+  function drawHeader() {
+    const pty = hooks.activePty();
+    shown = null;
+    let proj = null;
+    for (const p of view.projects) { const s = p.running.find((/** @type {any} */ x) => x.ptyId === pty); if (s) { shown = s; proj = p; break; } }
+    header.hidden = !on;
+    if (headTitle.querySelector('input')) return;
+    if (!shown || starting) {
+      headTitle.textContent = starting ? t('studio.newSession') : '';
+      headTitle.removeAttribute('title');
+      headChips.replaceChildren();
+      headState.replaceChildren();
+      return;
+    }
+    headTitle.textContent = shown.title || t('studio.untitled');
+    headTitle.title = t('studio.renameTitle');
+    const chip = (/** @type {string} */ ic, /** @type {string} */ text, /** @type {string} */ tip) => (text ? el('span', { class: 'st-chip', title: `${tip}: ${text}` }, icon(ic, 12), el('span', {}, text)) : null);
+    headChips.replaceChildren(...[chip('folder', proj?.name || '', t('studio.project')), chip('branch', shown.branch, t('studio.branch')), chip('user', proj?.account || '', t('studio.account'))].filter((x) => x !== null));
+    headState.replaceChildren(...(shown.waiting ? [el('span', { class: 'st-wait' }, t('studio.waiting'))] : shown.busy ? [el('span', { class: 'st-spin' }), el('span', {}, t('studio.working'))] : []));
+  }
+
+  // ---- the account menu (footer): Studio's theme, Settings, accounts, back to the Office ----
+  const menu = el('div', { class: 'st-menu', role: 'menu', hidden: true });
+  bar.append(menu);
+  const studioTheme = () => { try { const v = localStorage.getItem(THEME_KEY); return v === 'light' || v === 'dark' ? v : 'system'; } catch { return 'system'; } };
+  function applyTheme() { const v = studioTheme(); if (v === 'system') document.body.removeAttribute('data-studio-theme'); else document.body.setAttribute('data-studio-theme', v); }
+  applyTheme();
+  function toggleMenu(/** @type {boolean} */ force = menu.hidden) {
+    menu.hidden = !force;
+    if (menu.hidden) return;
+    const item = (/** @type {string} */ ic, /** @type {string} */ label, /** @type {string} */ key, /** @type {() => void} */ run, /** @type {boolean} */ checked = false) =>
+      el('button', { class: `st-menu-item${checked ? ' checked' : ''}`, role: 'menuitem', type: 'button', onclick: () => { menu.hidden = true; run(); } }, icon(ic, 14), el('span', { class: 'st-title' }, label), key ? el('span', { class: 'st-key' }, key) : null);
+    const theme = studioTheme();
+    const setTheme = (/** @type {string} */ v) => () => { try { if (v === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, v); } catch { /* storage off */ } applyTheme(); };
+    menu.replaceChildren(
+      el('div', { class: 'st-menu-head' }, t('studio.theme')),
+      item('monitor', t('studio.themeSystem'), '', setTheme('system'), theme === 'system'),
+      item('sun', t('studio.themeLight'), '', setTheme('light'), theme === 'light'),
+      item('moon', t('studio.themeDark'), '', setTheme('dark'), theme === 'dark'),
+      el('div', { class: 'st-menu-sep' }),
+      item('user', t('studio.accounts'), '', () => hooks.showAccounts()),
+      item('gear', t('studio.settings'), '', () => hooks.openSettings()),
+      item('office', t('studio.toOffice'), hooks.isMac ? '⌘⇧E' : 'Ctrl+Shift+E', () => hooks.toggle()));
+  }
+  document.addEventListener('mousedown', (e) => { if (!menu.hidden && e.target instanceof Node && !menu.contains(e.target) && !account.contains(e.target)) menu.hidden = true; });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) menu.hidden = true; });
 
   async function refresh() {
     if (!on) return;
@@ -272,6 +441,9 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       document.body.classList.toggle('studio', on);
       if (!on) { document.body.classList.remove('studio-board'); closePalette(); hidePanel(); }
       bar.hidden = !on;
+      header.hidden = !on;
+      menu.hidden = true;
+      starting = false;
       start.hidden = true;
       clearInterval(timer);
       if (on) { timer = window.setInterval(refresh, REFRESH_MS); refresh(); }
@@ -281,6 +453,10 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     changed() { if (!on) return; clearTimeout(soon); soon = window.setTimeout(refresh, 250); },
     /** ⌘N, ⌘K, ⌘1…9 (src/studio-keys.mjs) */
     newSession,
+    /** ⌘⇧N: the start screen with a new worktree */
+    newWorktreeSession: () => newSession({ worktree: true }),
+    /** ⌘L: the composer (the start screen's when it is shown) */
+    focusStart() { if (!start.hidden) { startText.focus(); return true; } return false; },
     openPalette,
     focusSearch() { search.focus(); search.select(); },
     /** An Office sidebar panel on its own over Studio ('#sb-panel-team', '.sb-accounts', …); false when it is not there. */

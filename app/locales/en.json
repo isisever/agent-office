@@ -67,6 +67,31 @@
       "projects": "edit rename group usage",
       "settings": "preferences language theme",
       "office": "experience switch back"
+    },
+    "untitled": "New session",
+    "now": "now",
+    "working": "Working",
+    "waiting": "Waiting for your approval",
+    "waitingShort": "Needs you",
+    "worktreeKey": "new worktree",
+    "renameTitle": "Click to rename this session",
+    "branch": "Branch",
+    "accountMenu": "Account, theme and settings",
+    "theme": "Studio theme",
+    "themeSystem": "System",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "accounts": "Accounts",
+    "start": {
+      "starting": "Starting the session…",
+      "failed": "The session could not start. Try again.",
+      "changeAccount": "change",
+      "changeAccountTitle": "Change the account in project settings",
+      "worktree": "New worktree",
+      "modelDefault": "Project default model",
+      "modeDefault": "Project default mode",
+      "placeholder": "What should we work on?",
+      "send": "Start session"
     }
   },
   "app": {
@@ -820,7 +845,11 @@
     "fileGone": "This file is no longer there.",
     "fileShown": "This file could run code when opened, so it is shown in its folder instead.",
     "fileNotAttached": "This file was not attached in this chat, so it cannot be opened from here. Show in Finder works for files inside the project.",
-    "drop": { "any": "Drop files here", "one": "Drop 1 file", "many": "Drop {count} files" },
+    "drop": {
+      "any": "Drop files here",
+      "one": "Drop 1 file",
+      "many": "Drop {count} files"
+    },
     "fileRemove": "Remove this file",
     "pick": {
       "modelTitle": "Model for the next turns",
@@ -905,7 +934,12 @@
       "ended": "The session ended (exit {code}). Start it again to go on with the same conversation.",
       "endedError": "Claude stopped with an error (exit {code}):",
       "restart": "Start again"
-    }
+    },
+    "edit": "Edit",
+    "editTitle": "Put this message back in the input to edit and send it again",
+    "copyCode": "Copy code",
+    "jumpLatest": "Jump to latest",
+    "context": "Context: {used} of {limit} tokens ({pct}%)"
   },
   "main": {
     "guiTerminalNote": "This tab runs as a chat (chat view). Its terminal is empty; use the Chat button, or Terminal in the chat to continue here.",

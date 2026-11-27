@@ -67,6 +67,31 @@
       "projects": "düzenle grup kullanım projects edit",
       "settings": "tercihler dil tema settings",
       "office": "ofis deneyim geri office"
+    },
+    "untitled": "Yeni oturum",
+    "now": "şimdi",
+    "working": "Çalışıyor",
+    "waiting": "Onayını bekliyor",
+    "waitingShort": "Seni bekliyor",
+    "worktreeKey": "yeni worktree",
+    "renameTitle": "Oturumu yeniden adlandırmak için tıkla",
+    "branch": "Dal",
+    "accountMenu": "Hesap, tema ve ayarlar",
+    "theme": "Studio teması",
+    "themeSystem": "Sistem",
+    "themeLight": "Açık",
+    "themeDark": "Koyu",
+    "accounts": "Hesaplar",
+    "start": {
+      "starting": "Oturum başlatılıyor…",
+      "failed": "Oturum başlatılamadı. Tekrar dene.",
+      "changeAccount": "değiştir",
+      "changeAccountTitle": "Hesabı proje ayarlarından değiştir",
+      "worktree": "Yeni worktree",
+      "modelDefault": "Projenin varsayılan modeli",
+      "modeDefault": "Projenin varsayılan modu",
+      "placeholder": "Ne üzerinde çalışalım?",
+      "send": "Oturumu başlat"
     }
   },
   "app": {
@@ -810,7 +835,11 @@
     "fileGone": "Bu dosya artık yok.",
     "fileShown": "Bu dosya açılınca kod çalıştırabilir; bu yüzden klasöründe gösterildi.",
     "fileNotAttached": "Bu dosya bu sohbette eklenmedi; buradan açılamaz. Proje klasöründeki dosyalar Finder'da gösterilebilir.",
-    "drop": { "any": "Dosyaları buraya bırakın", "one": "1 dosyayı bırakın", "many": "{count} dosyayı bırakın" },
+    "drop": {
+      "any": "Dosyaları buraya bırakın",
+      "one": "1 dosyayı bırakın",
+      "many": "{count} dosyayı bırakın"
+    },
     "fileRemove": "Bu dosyayı çıkar",
     "pick": {
       "modelTitle": "Sonraki turlar için model",
@@ -895,7 +924,12 @@
       "ended": "Oturum kapandı (çıkış {code}). Aynı konuşmaya devam etmek için yeniden başlat.",
       "endedError": "Claude bir hatayla durdu (çıkış {code}):",
       "restart": "Yeniden başlat"
-    }
+    },
+    "edit": "Düzenle",
+    "editTitle": "Mesajı düzenleyip yeniden göndermek için girişe geri koy",
+    "copyCode": "Kodu kopyala",
+    "jumpLatest": "En sona git",
+    "context": "Bağlam: {used} / {limit} token (%{pct})"
   },
   "main": {
     "guiTerminalNote": "Bu sekme sohbet olarak çalışıyor (sohbet görünümü). Terminali boş; Sohbet düğmesini kullan ya da burada devam etmek için sohbetteki Terminal düğmesine bas.",

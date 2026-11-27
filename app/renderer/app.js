@@ -486,10 +486,38 @@ async function addTab(projectId, mode) {
     if (tab?.n) {
       applyProjects(await api.projects.list());
       selectTab(projectId, tab.n);
-      return;
+      return tab.n;
     }
   } catch (e) { console.error(e); }
   focusActive();
+  return 0;
+}
+/**
+ * v3.120 Studio UX start screen: a new tab (same folder or a new worktree), then the chosen model and mode through
+ * chat:setting once its GUI chat runs (tabs start with the project's own), then the first prompt. → started
+ * @param {string} projectId @param {{ tabMode: 'same' | 'worktree', settings: [string, string][] }} plan @param {string} text
+ */
+async function startStudioSession(projectId, plan, text) {
+  leaveBoard();
+  selectProject(projectId);
+  const n = await addTab(projectId, plan.tabMode);
+  if (!n) return false;
+  const pty = tabPtyId(projectId, n);
+  const wait = () => new Promise((r) => setTimeout(r, 400));
+  for (const [key, value] of plan.settings) {
+    for (let i = 0; i < 40; i++) {
+      const r = await api.chat.setting(pty, key, value).catch(() => 'error');
+      if (r !== 'not-running' && r !== 'busy') break;
+      await wait();
+    }
+  }
+  for (let i = 0; i < 40; i++) {
+    const r = await api.chat.send(pty, text).catch(() => 'error');
+    if (r === 'ok') return true;
+    if (r !== 'not-running') return false;
+    await wait();
+  }
+  return false;
 }
 async function closeTab(projectId, n) {
   try {
@@ -1116,6 +1144,8 @@ window.addEventListener('keydown', (e) => {
   e.stopImmediatePropagation();
   if (k.type === 'toggle') setExperience(otherExperience(experience));
   else if (k.type === 'new') studio?.newSession();
+  else if (k.type === 'newWorktree') studio?.newWorktreeSession();
+  else if (k.type === 'focus') { if (!studio?.focusStart()) focusActive(); }   // ⌘L the composer
   else if (k.type === 'search') studio?.openPalette();   // ⌘K: the command palette (renderer/studio.js)
   else studio?.selectIndex(k.index);
 }, true);
@@ -1346,6 +1376,10 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   activePty,
   hasSession: () => Boolean(activePty()),
   commands: (projectId) => studioCommands(projectId),
+  startSession: (projectId, plan, text) => startStudioSession(projectId, plan, text),
+  projectSettings: (projectId) => studioCommands(projectId).find((c) => c.id === 'projectSettings')?.run(),
+  showAccounts: () => studioCommands(studio?.currentProject() || '').find((c) => c.id === 'accounts')?.run(),
+  isMac,
 } });
 /**
  * v3.120 Studio's ⌘K palette: every Office feature Studio has no button for. Each one calls the Office's own handler
