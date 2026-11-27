@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('agentOffice', {
     setEngine: (id, value) => ipcRenderer.invoke('projects:setEngine', id, value), // 'agy' | 'commandcode' | null (Claude Code); { restarted: pty ids }, every tab fresh, or { restarted: [], refused } when a tab is working (v3.22, v3.25)
     setProjectFiles: (id, value) => ipcRenderer.invoke('projects:setProjectFiles', id, value), // true | false; { restarted, written, removed, refused } (v3.38)
     setShareMcp: (id, value) => ipcRenderer.invoke('projects:setShareMcp', id, value), // true | false; { restarted } (v3.128)
+    setEconomy: (id, value) => ipcRenderer.invoke('projects:setEconomy', id, value), // 'inherit' | 'on' | 'off'; { restarted } (v3.133)
+    setBudget: (id, value) => ipcRenderer.invoke('projects:setBudget', id, value), // { daily?, weekly?, unit: 'tokens' | 'usd' } | null; { ok, budget } (v3.133)
+    budgetAct: (id, action) => ipcRenderer.invoke('budget:act', id, action), // 'raise' | 'ignore' (today); { ok, budget } (v3.133)
     setAutoApprove: (id, value) => ipcRenderer.invoke('projects:setAutoApprove', id, value), // true | false; { restarted: pty ids } (v3.71)
     setSkipPermissions: (id, value) => ipcRenderer.invoke('projects:setSkipPermissions', id, value), // true | false; { restarted: pty ids } (v3.72)
     openFolder: (id) => ipcRenderer.invoke('projects:openFolder', id),   // opens the project's folder in the file manager → boolean

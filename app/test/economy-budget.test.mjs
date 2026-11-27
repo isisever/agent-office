@@ -95,3 +95,20 @@ test('normalizeBudget and noticeKey', () => {
   assert.equal(B.noticeKey({ level: 'ok' }, now), '');
   assert.equal(B.noticeKey({ level: 'warn', period: 'daily' }, now), 'warn:daily:2026-11-28');
 });
+
+test('economy view: effects, meter and banners', async () => {
+  const V = await import('../src/economy-view.mjs');
+  assert.equal(V.economyOn({ economy: 'off' }, true), false);
+  assert.deepEqual(V.economyEffects({ contextCap: 400000 }, { globalOn: true, sleepMinutes: 30 }),
+    { contextCap: null, agentModel: 'sonnet', savings: 'strict', shareMcp: true, sleepMinutes: 60 });
+  assert.equal(V.economyEffects({}, { globalOn: false }).contextCap, null);
+  assert.equal(V.meterView({}), null);
+  const m = V.meterView({ budget: { level: 'over', pct: 1.3, blocked: true, period: 'daily', used: 1.3e6, limit: 1e6, unit: 'tokens' } });
+  assert.equal(m.pct, 130);
+  assert.equal(m.width, 100);
+  assert.equal(V.amountText(1.3e6, 'tokens'), '1.3M');
+  assert.equal(V.amountText(4.2, 'usd'), '$4.20');
+  const briefs = [{ id: 'a', budget: { level: 'over', blocked: true } }, { id: 'b', budget: { level: 'warn' } }];
+  assert.deepEqual(V.bannersOf(briefs).map((b) => b.id), ['a']);
+  assert.deepEqual(V.bannersOf(briefs, new Set(['a'])), []);
+});

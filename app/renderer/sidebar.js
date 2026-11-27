@@ -5,6 +5,7 @@ import { hasText, locale, onLang, t } from './i18n.js';
 import { modLabel, platform } from './platform.js';
 import { voiceSettingsRows, voiceControls } from './voice.js';
 import { OFFICE_ORDER } from '../src/settings-model.mjs';
+import { economyEffects, meterView, amountText } from '../src/economy-view.mjs';
 import { isBossHere, projectStatus } from '../src/project-status.mjs';
 import { BOSS_MODEL_CHOICES, bossModelChoices, cap, isCustomModelId } from '../src/engine-caps.mjs';
 import { showHaikuManagerHint } from '../src/effective-model-hint.mjs';
@@ -180,6 +181,11 @@ export function mountSidebar(el, on) {
   const sleepLabel = h('span', {});
   const sleepSelect = h('select', { class: 'sb-acct sb-lang sb-sleep', onchange: (e) => on.setSleep?.(Number(e.target.value)) });
   const sleepRow = h('div', { class: 'sb-botcolor sb-langrow' }, sleepLabel, sleepSelect);
+  // v3.133 economy mode: one switch for every project that does not override it (main's src/economy.js)
+  let economyGlobal = false;
+  const economyLabel = h('span', {});
+  const economyBox = h('input', { type: 'checkbox', class: 'sb-check', onchange: (e) => on.setEconomy?.(e.target.checked) });
+  const economyRow = h('label', { class: 'sb-botcolor sb-langrow' }, economyLabel, economyBox);
   // keep computer awake (v3.78): Off | While agents work | Always; main's src/keep-awake.js has the rules
   const KEEP_AWAKE_CHOICES = ['off', 'working', 'always'];
   let keepAwake = 'working';
@@ -270,6 +276,8 @@ export function mountSidebar(el, on) {
     fallbackRow.title = t('sidebar.fallbackTitle');
     sleepLabel.textContent = t('sidebar.sleep');
     sleepRow.title = t('sidebar.sleepTitle');
+    economyLabel.textContent = t('sidebar.economy');
+    economyRow.title = t('sidebar.economyTitle');
     renderSleep();
     keepAwakeLabel.textContent = t('sidebar.keepAwake');
     keepAwakeRow.title = t('sidebar.keepAwakeTitle');
@@ -529,6 +537,56 @@ export function mountSidebar(el, on) {
     return control(p, 'autoApprove', t('sidebar.autoApprove'), box);
   }
 
+  // v3.133 economy per project: Inherit (the global switch), On or Off; the note lists what it sets right now
+  function economySelect(p) {
+    const now = p.economy === 'on' || p.economy === 'off' ? p.economy : 'inherit';
+    const opt = (v, label) => h('option', { value: v, selected: now === v }, label);
+    const sel = h('select', {
+      class: 'sb-acct sb-mode', title: t('sidebar.economyTitle'),
+      onclick: (e) => e.stopPropagation(),
+      onchange: (e) => queue('economy', () => on.setProjectEconomy?.(p.id, e.target.value)),
+    }, opt('inherit', t(economyGlobal ? 'sidebar.economyInheritOn' : 'sidebar.economyInheritOff')), opt('on', t('sidebar.economyOn')), opt('off', t('sidebar.economyOff')));
+    const fx = economyEffects(p, { globalOn: economyGlobal, sleepMinutes });
+    const parts = [
+      fx.contextCap ? t('sidebar.economyCap', { cap: '150K' }) : '',
+      fx.agentModel ? t('sidebar.economyAgents') : '',
+      fx.savings ? t('sidebar.economySavings') : '',
+      fx.shareMcp ? t('sidebar.economyMcp') : '',
+      fx.sleepMinutes ? t('sidebar.economySleep', { minutes: fx.sleepMinutes }) : '',
+    ].filter(Boolean);
+    const note = h('div', { class: 'sb-eco-note', hidden: !parts.length }, parts.join(' · '));
+    return h('div', { class: 'sb-eco' }, control(p, 'contextCap', t('sidebar.economyProject'), sel), note);
+  }
+  // v3.133 token budget: daily and/or weekly, in millions of tokens or USD; empty = none
+  function budgetControl(p) {
+    const b = p.budget || {};
+    const unit0 = b.unit === 'usd' ? 'usd' : 'tokens';
+    const scale = (u) => (u === 'usd' ? 1 : 1e6);
+    const save = () => {
+      const u = unitSel.value;
+      const d = Number(daily.value) * scale(u);
+      const w = Number(weekly.value) * scale(u);
+      const v = d > 0 || w > 0 ? { ...(d > 0 ? { daily: d } : {}), ...(w > 0 ? { weekly: w } : {}), unit: u } : null;
+      queue('budget', () => on.setBudget?.(p.id, v));
+    };
+    const num = (v, ph) => h('input', { type: 'number', min: '0', step: 'any', class: 'sb-budget-in', placeholder: ph, value: v ? String(v / scale(unit0)) : '', onclick: (e) => e.stopPropagation(), onchange: save });
+    const daily = num(b.daily, t('sidebar.budgetDaily'));
+    const weekly = num(b.weekly, t('sidebar.budgetWeekly'));
+    const unitSel = h('select', { class: 'sb-acct sb-mode', onclick: (e) => e.stopPropagation(), onchange: save },
+      h('option', { value: 'tokens', selected: unit0 === 'tokens' }, t('sidebar.budgetTokens')), h('option', { value: 'usd', selected: unit0 === 'usd' }, 'USD'));
+    const box = h('span', { class: 'sb-budget-edit', title: t('sidebar.budgetEditTitle') }, daily, weekly, unitSel);
+    return control(p, 'cost', t('sidebar.budget'), box);
+  }
+  // v3.133 the thin budget meter under a project row's cost line (hidden without a budget)
+  function fillBudgetBar(bar, id) {
+    const v = meterView(briefs.get(id));
+    bar.hidden = !v;
+    bar.className = `sb-budget${v ? ` ${v.level}` : ''}`;
+    bar.title = v ? t('sidebar.budgetMeter', { pct: v.pct, used: amountText(v.used, v.unit), limit: amountText(v.limit, v.unit), period: t(`sidebar.budget_${v.period}`) }) : '';
+    /** @type {HTMLElement} */ (bar.firstChild).style.width = `${v?.width || 0}%`;
+    return bar;
+  }
+
   // "Use my shared MCP servers" (contract v3.128): off by default; Claude Code only. The title says what it costs.
   function shareMcpToggle(p) {
     const box = h('input', {
@@ -573,7 +631,7 @@ export function mountSidebar(el, on) {
         custom?.picked(v);
       },
     },
-    opt('auto', t('sidebar.agentModelAuto', { model: 'Sonnet' })), opt('sonnet', t('sidebar.agentModelSonnet')),
+    opt('auto', economyEffects(p, { globalOn: economyGlobal }).agentModel ? t('sidebar.economyValue', { value: 'Sonnet' }) : t('sidebar.agentModelAuto', { model: 'Sonnet' })), opt('sonnet', t('sidebar.agentModelSonnet')),
     opt('haiku', t('sidebar.agentModelHaiku')), opt('opus', t('sidebar.agentModelOpus')),
     ...more.map((c) => opt(c.value, c.label)),
     custom ? opt(CUSTOM_MODEL, t('sidebar.modelCustom')) : null);
@@ -599,7 +657,7 @@ export function mountSidebar(el, on) {
       onclick: (e) => e.stopPropagation(),
       onchange: (e) => queue('contextCap', () => on.setContextCap?.(p.id, e.target.value === 'auto' ? null : Number(e.target.value))),
     },
-    opt('auto', t('sidebar.contextCapAuto', { cap: '200K' })),
+    opt('auto', economyEffects(p, { globalOn: economyGlobal }).contextCap ? t('sidebar.economyValue', { value: '150K' }) : t('sidebar.contextCapAuto', { cap: '200K' })),   // v3.133
     ...CONTEXT_CAP_CHOICES.map(([v, label]) => opt(String(v), label)),
     opt(String(CONTEXT_CAP_FULL), t('sidebar.contextCapFull')));
     return control(p, 'contextCap', t('sidebar.contextCap'), sel);
@@ -616,7 +674,7 @@ export function mountSidebar(el, on) {
       onclick: (e) => e.stopPropagation(),
       onchange: (e) => queue('savings', () => on.setSavings?.(p.id, e.target.value)),
     },
-    opt('off', t('sidebar.savingsOff')), opt('normal', t('sidebar.savingsNormal')), opt('strict', t('sidebar.savingsStrict')));
+    opt('off', t('sidebar.savingsOff')), opt('normal', economyEffects(p, { globalOn: economyGlobal }).savings ? t('sidebar.economyValue', { value: t('sidebar.savingsStrict') }) : t('sidebar.savingsNormal')), opt('strict', t('sidebar.savingsStrict')));
     return control(p, 'savings', t('sidebar.savings'), sel);
   }
 
@@ -824,7 +882,7 @@ export function mountSidebar(el, on) {
     badFields.clear();
     const body = [
       groupInput(p), accountSelect(p), managerSelect(p), bossModelSelect(p), agentModelSelect(p), projectFilesToggle(p), parallelToggle(p),
-      contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), shareMcpToggle(p), backupSelect(p), limitModelSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
+      economySelect(p), budgetControl(p), contextCapSelect(p), savingsSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), shareMcpToggle(p), backupSelect(p), limitModelSelect(p), delegatesControl(p), projectSkillsSection(p), projectToolsSection(p),
     ];
     const save = h('button', {
       class: 'sb-btn primary', onclick: async () => {
@@ -1075,9 +1133,9 @@ export function mountSidebar(el, on) {
 
   /** The global popup (contract v3.42): the rows that used to sit under ACCOUNTS; each change applies at once. */
   // v3.122 each row by its key in the settings model (src/settings-model.mjs); Studio's Settings page drives the same controls
-  const officeRows = { resume: resumeRow, resumeWork: resumeWorkRow, manager: managerRow, team: teamRow, shareMcp: shareMcpRow, reloadMcp: reloadMcpRow, fallback: fallbackRow, sleep: sleepRow, keepAwake: keepAwakeRow, lang: langRow, look: lookRow, mode: modeRow, office3d: office3dRow, experience: experienceRow, chatView: chatViewRow, theme: themeRow, bot: botRow };
+  const officeRows = { resume: resumeRow, resumeWork: resumeWorkRow, manager: managerRow, team: teamRow, shareMcp: shareMcpRow, reloadMcp: reloadMcpRow, fallback: fallbackRow, sleep: sleepRow, economy: economyRow, keepAwake: keepAwakeRow, lang: langRow, look: lookRow, mode: modeRow, office3d: office3dRow, experience: experienceRow, chatView: chatViewRow, theme: themeRow, bot: botRow };
   /** @type {Record<string, [HTMLElement, HTMLInputElement | HTMLSelectElement]>} each row's label and its control */
-  const officeControls = { resume: [resumeLabel, resumeBox], resumeWork: [resumeWorkLabel, resumeWorkBox], manager: [managerLabel, managerBox], team: [teamLabel, teamBox], shareMcp: [shareMcpLabel, shareMcpBox], reloadMcp: [reloadMcpLabel, reloadMcpBox], fallback: [fallbackLabel, fallbackBox], sleep: [sleepLabel, sleepSelect], keepAwake: [keepAwakeLabel, keepAwakeSelect], lang: [langLabel, langSelect], look: [lookLabel, lookSelect], mode: [modeLabel, modeSelect], office3d: [office3dLabel, office3dBox], experience: [experienceLabel, experienceSelect], chatView: [chatViewLabel, chatViewBox], theme: [themeLabel, themeSelect], bot: [botLabel, botInput] };
+  const officeControls = { resume: [resumeLabel, resumeBox], resumeWork: [resumeWorkLabel, resumeWorkBox], manager: [managerLabel, managerBox], team: [teamLabel, teamBox], shareMcp: [shareMcpLabel, shareMcpBox], reloadMcp: [reloadMcpLabel, reloadMcpBox], fallback: [fallbackLabel, fallbackBox], sleep: [sleepLabel, sleepSelect], economy: [economyLabel, economyBox], keepAwake: [keepAwakeLabel, keepAwakeSelect], lang: [langLabel, langSelect], look: [lookLabel, lookSelect], mode: [modeLabel, modeSelect], office3d: [office3dLabel, office3dBox], experience: [experienceLabel, experienceSelect], chatView: [chatViewLabel, chatViewBox], theme: [themeLabel, themeSelect], bot: [botLabel, botInput] };
   function openSettings() {
     openModal(t('sidebar.settings'),
       [...OFFICE_ORDER.flatMap((k) => (k === 'voice' ? voiceSettingsRows() : k === 'skills' ? [skillsSection()] : [officeRows[k]])), aboutRow],   // v3.123 About last
@@ -1133,6 +1191,7 @@ export function mountSidebar(el, on) {
           class: 'sb-cost', hidden: !cap(engineOfRow(p), 'cost').ok || !briefs.has(p.id), title: t('sidebar.costTitle'),
           onclick: (e) => { e.stopPropagation(); on.openUsage?.(p); },
         }, costText(briefs.get(p.id))),
+        fillBudgetBar(h('div', { class: 'sb-budget', 'data-budget': p.id }, h('i', {})), p.id),   // v3.133
       );
     };
     // v3.86 groups under headings (closed ones kept per window); members' personal workspaces are not listed
@@ -1495,7 +1554,7 @@ export function mountSidebar(el, on) {
       if (!p) return null;
       const map = new Map();
       badFields.clear();
-      const body = h('div', { class: 'st-set-project' }, accountSelect(p), autoApproveToggle(p), skipPermissionsToggle(p), shareMcpToggle(p), contextCapSelect(p));
+      const body = h('div', { class: 'st-set-project' }, accountSelect(p), economySelect(p), budgetControl(p), autoApproveToggle(p), skipPermissionsToggle(p), shareMcpToggle(p), contextCapSelect(p));
       // the controls queue into `draft`: point it at this map before their own change handlers run (capture phase)
       for (const type of ['change', 'input']) body.addEventListener(type, () => { draft = map; }, true);
       return {
@@ -1596,6 +1655,8 @@ export function mountSidebar(el, on) {
       sleepMinutes = minutes;
       renderSleep();
     },
+    /** v3.133 the global economy switch. */
+    setEconomy(value) { economyGlobal = value === true; economyBox.checked = economyGlobal; },
     /** "Keep computer awake" setting (v3.78): 'off' | 'working' | 'always'. */
     setKeepAwake(value) {
       if (!KEEP_AWAKE_CHOICES.includes(value)) return;
@@ -1653,6 +1714,8 @@ export function mountSidebar(el, on) {
         const p = projects.find((x) => x.id === li.dataset.id);
         btn.hidden = !b || !p || !cap(engineOfRow(p), 'cost').ok; // Antigravity: no token counts (contract v3.36)
         btn.textContent = costText(b);
+        const bar = li.querySelector('.sb-budget');
+        if (bar) fillBudgetBar(bar, li.dataset.id);
       }
     },
     /** OfficeData.projects: working / delivered / boss by project name. */

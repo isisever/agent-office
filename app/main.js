@@ -1147,7 +1147,7 @@ async function tokenBriefs() {
       const usage = { today: { total: r.today.total, usd: r.today.usd }, week: { total: r.week.total, usd: r.week.usd } };
       const budget = BG.budgetState({ usage, budget: p.budget, now: Date.now() });
       budgetSeen(p, budget);
-      out.push({ id: p.id, ...TU.brief(r), week: usage.week, economy: ecoOn(p), ...(budget.level !== 'none' ? { budget } : {}) });
+      out.push({ id: p.id, name: p.name, ...TU.brief(r), week: usage.week, economy: ecoOn(p), ...(budget.level !== 'none' ? { budget } : {}) });
     } catch (e) { console.error('token usage:', e.message); }
   }
   return out;
