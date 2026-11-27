@@ -1231,16 +1231,16 @@ test('the manager brief says one scoped task per agent and which model each kind
   expect(text).toContain('One scoped task per agent')
   expect(text).toContain('SendMessage that agent (it has the context)')
   expect(text).toContain('A new task: a fresh agent')
-  expect(text).toContain('"haiku" for searches and lookups')
-  expect(text).toContain('"sonnet" for mechanical edits, test and build runs and routine fixes')
-  expect(text).toContain('design, hard debugging and reviews')
+  expect(text).toContain('model: "haiku" for search, read and report agents')
+  expect(text).toContain('"sonnet" for coding')
+  expect(text).toContain('"opus" only for review or design')
   expect(text).not.toContain('{{MODEL}}')
 })
 
 // a model set without forcing it is only the default for agents started without one: the boss still picks
 test('CLAUDE_CODE_SUBAGENT_MODEL without _FORCE keeps the model advice', async ($, on) => {
   setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', CLAUDE_CODE_SUBAGENT_MODEL: 'sonnet' })
-  expect((await $.prompt.compose(mainLoop)).sections[1]?.text).toContain('"haiku" for searches and lookups')
+  expect((await $.prompt.compose(mainLoop)).sections[1]?.text).toContain('"haiku" for search, read and report agents')
 })
 
 for (const [model, shown] of [['sonnet', 'Sonnet'], ['HAIKU', 'Haiku'], ['opus', 'Opus'], ['claude-sonnet-4-6', 'claude-sonnet-4-6'], ['', 'your own model']] as const) {
@@ -1252,7 +1252,7 @@ for (const [model, shown] of [['sonnet', 'Sonnet'], ['HAIKU', 'Haiku'], ['opus',
     expect(manager?.scope).toBe('session')
     expect(manager?.text).toContain(`Every agent of this session runs on ${shown} (the person's setting in Agent Office)`)
     expect(manager?.text).toContain("don't set the Agent tool's model parameter")
-    expect(manager?.text).not.toContain('"haiku" for searches')
+    expect(manager?.text).not.toContain('"haiku" for search')
     expect(manager?.text).toContain('One scoped task per agent')
     expect((await $.prompt.compose(mainLoop)).sections[1]?.text).toBe(manager?.text)
   })
@@ -1260,7 +1260,7 @@ for (const [model, shown] of [['sonnet', 'Sonnet'], ['HAIKU', 'Haiku'], ['opus',
 
 test('CLAUDE_CODE_SUBAGENT_MODEL_FORCE=0 is no pin', async ($, on) => {
   setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_MANAGER: '1', CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '0', CLAUDE_CODE_SUBAGENT_MODEL: 'haiku' })
-  expect((await $.prompt.compose(mainLoop)).sections[1]?.text).toContain('"haiku" for searches and lookups')
+  expect((await $.prompt.compose(mainLoop)).sections[1]?.text).toContain('"haiku" for search, read and report agents')
 })
 
 for (const [name, env, ids] of [

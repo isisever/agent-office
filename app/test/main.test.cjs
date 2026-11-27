@@ -320,16 +320,25 @@ test('proje başına ajan modeli: normalizeState, setProjectAgentModel, agentMod
   assert.deepEqual(again.projects.map((p) => p.agentModel), ['sonnet', undefined, undefined, 'opus']);
 });
 
-test('sessionEnv: sabitlenmiş ajan modeli CLAUDE_CODE_SUBAGENT_MODEL(+_FORCE) olur; Otomatik kullanıcınınkine dokunmaz (v3.14)', () => {
+test('sessionEnv: the agent model is CLAUDE_CODE_SUBAGENT_MODEL, Sonnet on Auto, never forced (v3.14, v3.127)', () => {
   const pinned = A.sessionEnv({ PATH: '/bin' }, { agentModel: 'haiku' });
   assert.equal(pinned.CLAUDE_CODE_SUBAGENT_MODEL, 'haiku');
-  assert.equal(pinned.CLAUDE_CODE_SUBAGENT_MODEL_FORCE, '1');
+  assert.equal(pinned.CLAUDE_CODE_SUBAGENT_MODEL_FORCE, undefined); // an explicit per-agent model must win
   assert.equal(pinned.AGENT_OFFICE_AGENT_MODEL, 'haiku'); // the launch line re-exports it after the rc files
-  const auto = A.sessionEnv({ PATH: '/bin', AGENT_OFFICE_AGENT_MODEL: 'opus', CLAUDE_CODE_SUBAGENT_MODEL: 'sonnet' }, { agentModel: null });
-  assert.equal(auto.AGENT_OFFICE_AGENT_MODEL, undefined);
+  const auto = A.sessionEnv({ PATH: '/bin', AGENT_OFFICE_AGENT_MODEL: 'opus', CLAUDE_CODE_SUBAGENT_MODEL: 'opus', CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' }, { agentModel: null });
+  assert.equal(auto.AGENT_OFFICE_AGENT_MODEL, 'sonnet');
   assert.equal(auto.CLAUDE_CODE_SUBAGENT_MODEL, 'sonnet');
-  assert.equal(auto.CLAUDE_CODE_SUBAGENT_MODEL_FORCE, undefined);
-  assert.equal(A.sessionEnv({ PATH: '/bin' }).AGENT_OFFICE_AGENT_MODEL, undefined);
+  assert.equal(auto.CLAUDE_CODE_SUBAGENT_MODEL_FORCE, undefined); // an inherited FORCE is dropped too
+  assert.equal(A.sessionEnv({ PATH: '/bin' }).CLAUDE_CODE_SUBAGENT_MODEL, A.AGENT_MODEL_DEFAULT);
+  assert.equal(A.sessionEnv({ PATH: '/bin' }, { agentModel: 'claude-opus-5-5' }).CLAUDE_CODE_SUBAGENT_MODEL, 'claude-opus-5-5'); // a saved pin is kept
+});
+
+test('effectiveAgentModel: the pin, else Sonnet (v3.127)', () => {
+  assert.equal(P.AGENT_MODEL_DEFAULT, 'sonnet');
+  assert.equal(P.effectiveAgentModel({ id: 'a', dir: '/a' }), 'sonnet');
+  assert.equal(P.effectiveAgentModel({ id: 'a', dir: '/a', agentModel: 'opus' }), 'opus');
+  assert.equal(P.effectiveAgentModel({ id: 'a', dir: '/a', agentModel: 'haiku' }), 'haiku');
+  assert.equal(P.effectiveAgentModel(null), 'sonnet');
 });
 
 test('proje başına bağlam sınırı: normalizeState, setProjectContextCap, contextCapOf (v3.15)', () => {
@@ -357,18 +366,31 @@ test('proje başına bağlam sınırı: normalizeState, setProjectContextCap, co
   assert.deepEqual(again.projects.map((p) => p.contextCap), [200000, undefined, undefined, undefined, 400000]);
 });
 
-test('sessionEnv: bağlam sınırı CLAUDE_CODE_AUTO_COMPACT_WINDOW olur; Otomatik kullanıcınınkine dokunmaz (v3.15)', () => {
-  const capped = A.sessionEnv({ PATH: '/bin' }, { contextCap: 200000 });
-  assert.equal(capped.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000'); // plain tokens: Claude Code reads no "200k"
-  assert.equal(capped.AGENT_OFFICE_CONTEXT_CAP, '200000'); // the launch line re-exports it after the rc files
+test('sessionEnv: the context cap is CLAUDE_CODE_AUTO_COMPACT_WINDOW, 200000 on Auto (v3.15, v3.127)', () => {
+  const capped = A.sessionEnv({ PATH: '/bin' }, { contextCap: 400000 });
+  assert.equal(capped.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '400000'); // plain tokens
+  assert.equal(capped.AGENT_OFFICE_CONTEXT_CAP, '400000'); // the launch line re-exports it after the rc files
   const auto = A.sessionEnv({ PATH: '/bin', AGENT_OFFICE_CONTEXT_CAP: '400000', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '500000' }, { contextCap: null });
-  assert.equal(auto.AGENT_OFFICE_CONTEXT_CAP, undefined);
-  assert.equal(auto.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '500000');
-  assert.equal(A.sessionEnv({ PATH: '/bin' }).CLAUDE_CODE_AUTO_COMPACT_WINDOW, undefined);
-  const both = A.sessionEnv({ PATH: '/bin' }, { agentModel: 'sonnet', contextCap: 400000 });
+  assert.equal(auto.AGENT_OFFICE_CONTEXT_CAP, '200000');
+  assert.equal(auto.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
+  assert.equal(A.sessionEnv({ PATH: '/bin' }).CLAUDE_CODE_AUTO_COMPACT_WINDOW, String(A.CONTEXT_CAP_DEFAULT));
+  assert.equal(A.sessionEnv({ PATH: '/bin' }, { contextCap: 1000000 }).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000'); // Full
+  const both = A.sessionEnv({ PATH: '/bin' }, { agentModel: 'sonnet', contextCap: 100000 });
   assert.equal(both.CLAUDE_CODE_SUBAGENT_MODEL, 'sonnet');
-  assert.equal(both.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '400000');
+  assert.equal(both.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '100000');
 });
+
+test('effectiveContextCap: an explicit cap is kept, unset or unknown is the 200k default (v3.127)', () => {
+  assert.deepEqual(P.CONTEXT_CAPS, [100000, 150000, 200000, 400000, 1000000]);
+  assert.equal(P.CONTEXT_CAP_DEFAULT, 200000);
+  for (const cap of P.CONTEXT_CAPS) assert.equal(P.effectiveContextCap({ id: 'a', dir: '/a', contextCap: cap }), cap);
+  for (const cap of [undefined, null, 'auto', 300000, '200000', 0]) assert.equal(P.effectiveContextCap({ id: 'a', dir: '/a', contextCap: cap }), 200000, String(cap));
+  assert.equal(P.effectiveContextCap(null), 200000);
+  const s = P.normalizeState({ projects: [{ id: 'a', dir: '/a', contextCap: 150000 }, { id: 'b', dir: '/b', contextCap: 1000000 }, { id: 'c', dir: '/c' }] }, { id });
+  assert.deepEqual(s.projects.map((p) => p.contextCap), [150000, 1000000, undefined]); // Auto is never written
+  assert.deepEqual(s.projects.map((p) => P.effectiveContextCap(p)), [150000, 1000000, 200000]);
+});
+
 
 test('proje başına tasarruf: normalizeState, setProjectSavings, savingsOf; Normal yazılmaz (v3.20)', () => {
   let s = P.normalizeState({

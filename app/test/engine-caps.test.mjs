@@ -174,7 +174,7 @@ test('custom model id: set, load, launch argument and agent env; Claude Code onl
   assert.deepEqual([a.bossModel, a.agentModel], ['claude-next-9', 'sonnet[1m]'])
   assert.deepEqual(P.bossModelArgs(a), ['--model', 'claude-next-9'])
   const env = A.sessionEnv({}, { agentModel: P.agentModelOf(a) })
-  assert.deepEqual([env.AGENT_OFFICE_AGENT_MODEL, env.CLAUDE_CODE_SUBAGENT_MODEL, env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE], ['sonnet[1m]', 'sonnet[1m]', '1'])
+  assert.deepEqual([env.AGENT_OFFICE_AGENT_MODEL, env.CLAUDE_CODE_SUBAGENT_MODEL, env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE], ['sonnet[1m]', 'sonnet[1m]', undefined])
   // refused: the setter returns the same state, the loader drops it to Auto
   for (const v of ['fixcloud/glm-4.6', 'FixCloud/x', 'a b', 'x;rm -rf ~', '$(id)', '`id`', '-p', 'a\nb', 'a'.repeat(101)]) {
     assert.equal(P.setProjectBossModel(s, 'a', v), s, v)

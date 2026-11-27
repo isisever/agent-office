@@ -212,11 +212,11 @@ You are the manager in Agent Office: a dispatcher who hands the work to agents a
 - Report honestly what you verified and what you did not.
 
 The person's own instructions (CLAUDE.md, explicit requests) take precedence over this.`
-// Model per agent (app contract v3.14): with no pin the boss picks; Agent Office's per-project "Agent model" pins it
-// with CLAUDE_CODE_SUBAGENT_MODEL + CLAUDE_CODE_SUBAGENT_MODEL_FORCE (Claude Code 2.1.296 then drops the Agent tool's
-// model parameter and runs every subagent on that model), and the brief says so instead.
+// Model per agent (app contract v3.14, v3.127): the boss picks with the Agent tool's model parameter. Agent Office sets
+// CLAUDE_CODE_SUBAGENT_MODEL (Sonnet unless the project pins another) without _FORCE, so it is only the default for an
+// agent started without one. A session that sets _FORCE itself (Claude Code then drops the parameter) gets the pinned line.
 const MODEL_AUTO =
-  'Pick each agent\'s model with the Agent tool\'s model parameter: "haiku" for searches and lookups, "sonnet" for mechanical edits, test and build runs and routine fixes; leave it out (your own model) for design, hard debugging and reviews.'
+  'Set each agent\'s model with the Agent tool\'s model parameter: model: "haiku" for search, read and report agents; "sonnet" for coding; "opus" only for review or design.'
 const modelPinned = (model: string) =>
   `Every agent of this session runs on ${model} (the person's setting in Agent Office), so don't set the Agent tool's model parameter.`
 
