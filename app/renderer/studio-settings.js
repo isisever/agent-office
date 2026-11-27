@@ -61,6 +61,8 @@ export function mountSettingsPage({ el, t, host, studioTheme, setStudioTheme, ho
       box.checked = !box.checked;
       fire(box);
       sync();
+      // Rows that depend on this switch (Team → "Team members") are drawn from its value: redraw the page.
+      if (box === ctlOf('team')?.control) setTimeout(draw, 0);
     } }, el('span', { class: 'st-switch-knob' }));
     const sync = () => { sw.setAttribute('aria-checked', String(box.checked)); /** @type {HTMLButtonElement} */ (sw).disabled = box.disabled; };
     sync();
