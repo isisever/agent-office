@@ -2123,6 +2123,7 @@ function onOfficeReport({ id, pub, report }) {
   rec.status = 'reported';
   saveDispatches();
   const done = hqOnReport(id, report);   // v3.46 board row, tasks/<id>/report.{json,md}; requests whose tasks all ended
+  hqChainSweep();   // v3.126 the next stage is released now, not at the next hqTick (≤ 5 s)
   // v3.47/v3.49 a routine's own project or remote run: HQ was not asked, no HQ inbox rows (also when the run already ended)
   if (rec.routine) { routinesOnDone(done); return; }
   const sid = bossSid(rec.tab);

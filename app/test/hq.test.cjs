@@ -1620,3 +1620,14 @@ test('v3.126 hqDispatch never pre-starts a desk; the queue knows HQ-started desk
   assert.match(src, /HQ\.preStartTarget\(\{ running: terms\.has\(startId\), desk: Boolean\(args\.desk\) \}\)/);
   assert.match(src, /hqDesk: \(id\) => hqDesks\.has\(String\(id\)\)/);
 });
+
+test('v3.126 wakes: a report releases the next stage at once; queueing pumps at once; reports are watched', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = src.slice(src.indexOf('function onOfficeReport('), src.indexOf('\n}\n', src.indexOf('function onOfficeReport(')));
+  assert.ok(body.indexOf('hqChainSweep();') > body.indexOf('hqOnReport(id, report)'), 'onOfficeReport sweeps the chain after the board row');
+  assert.ok(body.indexOf('hqChainSweep();') < body.indexOf('if (rec.routine)'), 'before any early return');
+  const lh = fs.readFileSync(path.join(__dirname, '..', 'src', 'link-host.js'), 'utf8');
+  assert.match(lh, /queue\.set\(project, q\);[\s\S]{0,300}?\n {4}pump\(\);/, 'a queued entry is pumped at once');
+  assert.match(lh, /fs\.watch\(rdir,/);
+  assert.match(lh, /setInterval\(\(\) => \{ watchReports\(\); scanReports\(\); \}, REPORT_POLL_MS\)/, 'the poll stays as the fallback');
+});

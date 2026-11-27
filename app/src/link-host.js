@@ -21,6 +21,7 @@ const RESETTABLE = new Set(['keys-decrypt', 'keys-format', 'keys-file']);   // v
 const SET_ASIDE = ['keys.bin', 'keys.bin.ao1', 'own.bin', 'own.bin.ao1', 'devices.json', 'keys.bin.tmp', 'own.bin.tmp'];
 const SELF = 'self';                    // v3.35 the device of a task dispatched to a project of this machine
 const REPORT_POLL_MS = 5000;
+const REPORT_DEBOUNCE_MS = 150;   // v3.126 a burst of writes in the reports dir is one scan
 const REVIVE_MAX = 3;                    // v3.46 amendment: an HQ task wakes/starts its gone boss at most this often
 const REVIVE_STALE_MS = 10 * 60 * 1000;  // a budget untouched this long starts over
 const REVIVE_GAP_MS = 60 * 1000;          // between the start tries of one budget (and the first one after the person's own stop, see pump)
@@ -842,7 +843,25 @@ function setupLink(d) {
       if (used || old || !report) fs.rmSync(f, { force: true });
     }
   }
-  const reportTimer = setInterval(scanReports, REPORT_POLL_MS);
+  // v3.126 a report is taken as soon as the plugin writes it (fs.watch on the reports dir, debounced); the poll stays
+  // as the fallback (a dir made later, a watch that errored or missed an event), and retries the watch each round
+  let reportWatch = null;
+  let reportKick = null;
+  function watchReports() {
+    const rdir = d.reportsDir;
+    if (reportWatch || !rdir) return;
+    try {
+      reportWatch = fs.watch(rdir, () => {
+        if (reportKick) return;
+        reportKick = setTimeout(() => { reportKick = null; scanReports(); }, REPORT_DEBOUNCE_MS);
+        reportKick.unref?.();
+      });
+      reportWatch.on('error', () => { try { reportWatch?.close(); } catch { /* gone */ } reportWatch = null; });
+      reportWatch.unref?.();
+    } catch { reportWatch = null; }   // no dir yet: the poll tries again
+  }
+  watchReports();
+  const reportTimer = setInterval(() => { watchReports(); scanReports(); }, REPORT_POLL_MS);
   reportTimer.unref?.();
 
   const ipc = (ch, fn) => d.ipcMain.handle(ch, async (_e, ...a) => { const l = start(); if (!l) return view(); await fn(l, ...a); return view(); });
@@ -943,7 +962,7 @@ function setupLink(d) {
     /** Paired offices a project can be handed to (online ones first); v3.121 never a phone. */
     devices() { const l = start(); return l ? C.offices(l.devices).map((x) => ({ id: x.pub, name: x.name, online: l.conns.has(x.pub) })) : []; },
     handOff, unknownFor, askAgain, keepHere,
-    destroy() { clearInterval(pumpTimer); clearInterval(reportTimer); clearInterval(sessTimer); relay?.destroy(); return link?.destroy(); },
+    destroy() { clearInterval(pumpTimer); clearInterval(reportTimer); clearTimeout(reportKick); try { reportWatch?.close(); } catch { /* gone */ } reportWatch = null; clearInterval(sessTimer); relay?.destroy(); return link?.destroy(); },
   };
 }
 
