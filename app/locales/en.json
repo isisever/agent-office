@@ -1,6 +1,8 @@
 {
   "_name": "English",
   "studio": {
+    "switchLabel": "Studio",
+    "switchTitle": "Studio experience on or off ({key})",
     "newSession": "New session",
     "search": "Search",
     "hq": "HQ",

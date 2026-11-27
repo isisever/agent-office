@@ -225,3 +225,25 @@ test('v3.120 Auto turns the project\'s Auto-approve on; no other mode does (and 
   assert.equal(S.turnsAutoApproveOn('auto'), true);
   for (const m of ['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions', '']) assert.equal(S.turnsAutoApproveOn(m), false, m);
 });
+
+test('v3.120 the title bar Studio switch: role=switch, no-drag, same toggle, hotkey tooltip', async () => {
+  const { experienceSwitch } = await import('../src/studio-keys.mjs');
+  assert.deepEqual(experienceSwitch('studio', true), { checked: true, ariaChecked: 'true', hotkey: '⌘⇧E' });
+  assert.deepEqual(experienceSwitch('office', false), { checked: false, ariaChecked: 'false', hotkey: 'Ctrl+Shift+E' });
+  assert.equal(experienceSwitch('bogus', true).checked, false);
+  const html = fs.readFileSync(path.join(__dirname, '../renderer/index.html'), 'utf8');
+  const btn = /<button id="experience-switch"[^>]*>/.exec(html)?.[0] || '';
+  assert.match(btn, /role="switch"/);
+  assert.match(btn, /aria-checked=/);
+  assert.ok(html.indexOf('id="experience-switch"') > html.indexOf('id="stats"'), 'the switch sits after the stats');
+  const css = fs.readFileSync(path.join(__dirname, '../renderer/style.css'), 'utf8');
+  assert.match(css, /#experience-switch \{[^}]*-webkit-app-region: no-drag/);
+  assert.match(css, /@media \(max-width: \d+px\) \{ #experience-switch \.xs-label \{ display: none; \} \}/);
+  const app = fs.readFileSync(path.join(__dirname, '../renderer/app.js'), 'utf8');
+  assert.match(app, /\$\('experience-switch'\)\?\.addEventListener\('click', \(\) => setExperience\(otherExperience\(experience\)\)\)/,
+    'the switch uses the same experience switch as ⌘⇧E');
+  for (const lang of ['en', 'tr']) {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, `../locales/${lang}.json`), 'utf8')).studio;
+    assert.ok(s.switchLabel && s.switchTitle.includes('{key}'), lang);
+  }
+});

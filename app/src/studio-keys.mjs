@@ -26,3 +26,14 @@ export function studioKey(e, experience) {
 
 /** The other experience. */
 export const otherExperience = (experience) => (experience === 'studio' ? 'office' : 'studio');
+
+/**
+ * v3.120 the title bar's Studio switch: on in Studio, and the hotkey its tooltip names.
+ * @param {string} experience 'office' | 'studio'
+ * @param {boolean} mac
+ * @returns {{ checked: boolean, ariaChecked: 'true' | 'false', hotkey: string }}
+ */
+export function experienceSwitch(experience, mac) {
+  const checked = experience === 'studio';
+  return { checked, ariaChecked: checked ? 'true' : 'false', hotkey: mac ? '⌘⇧E' : 'Ctrl+Shift+E' };
+}

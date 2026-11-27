@@ -10,7 +10,7 @@ import { setLang, onLang, t } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
 import { mountStudio } from './studio.js';
 import { startStep, startFailure } from '../src/studio-ux.mjs';
-import { studioKey, otherExperience } from '../src/studio-keys.mjs';
+import { studioKey, otherExperience, experienceSwitch } from '../src/studio-keys.mjs';
 import { chatShownFor, chatButtonFor } from '../src/chat-view.mjs';
 import { themeChoices, effectiveTheme } from '../src/themes.mjs';
 import { normalizeLook, normalizeMode, effectiveMode, chromeFor, terminalTheme } from '../src/appearance.mjs';
@@ -393,10 +393,25 @@ function applyExperience(p) {
   studioOn = experience === 'studio';
   studio?.setOn(studioOn);
   sidebar?.setExperience?.(experience);
+  syncExperienceSwitch();
   applyAppearance();
   render();
   focusActive();
 }
+/** v3.120 the title bar's Studio switch follows the experience and the language. */
+function syncExperienceSwitch() {
+  const btn = $('experience-switch');
+  if (!btn) return;
+  const s = experienceSwitch(experience, isMac);
+  btn.setAttribute('aria-checked', s.ariaChecked);
+  btn.classList.toggle('on', s.checked);
+  const label = btn.querySelector('.xs-label');
+  if (label) label.textContent = t('studio.switchLabel');
+  btn.title = t('studio.switchTitle', { key: s.hotkey });
+  btn.setAttribute('aria-label', t('studio.switchLabel'));
+}
+$('experience-switch')?.addEventListener('click', () => setExperience(otherExperience(experience)));
+onLang(syncExperienceSwitch);
 function setExperience(value) {
   applyExperience({ experience: value });
   api.prefs?.set({ experience: value }).then((r) => { if (r && r.experience !== experience) applyExperience(r); }).catch((e) => console.error(e));

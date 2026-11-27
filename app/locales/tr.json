@@ -1,6 +1,8 @@
 {
   "_name": "Türkçe",
   "studio": {
+    "switchLabel": "Studio",
+    "switchTitle": "Studio deneyimini aç veya kapat ({key})",
     "newSession": "Yeni oturum",
     "search": "Ara",
     "hq": "HQ",

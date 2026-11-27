@@ -2956,6 +2956,12 @@ type StudioProject = { id, name, dir, engine, account: string, active: boolean, 
 - **The setting**: Settings → Experience (Office / Studio), or ⌘⇧E (Ctrl+Shift+E on Linux and Windows) in either
   experience. Main keeps it in state.json (`experience`, only `'studio'` is read back, so a first start is the Office);
   `src/studio.js` `normalizeExperience`. The renderer puts `body.studio` on and mounts `renderer/studio.js`.
+- **The title bar switch**: an Outlook-style labelled "Studio" switch (`#experience-switch`, `role="switch"`,
+  `aria-checked`, a native button so Enter and Space work, `-webkit-app-region: no-drag`) at the right end of the title
+  bar in both experiences: after the "working · delivered" stats in the Office, after `#studio-header` in Studio. A click
+  runs the same experience switch as ⌘⇧E and Settings (idle tabs move to the chat on entering Studio, nothing busy
+  restarts). The tooltip names the hotkey (`src/studio-keys.mjs` `experienceSwitch`); below 760 px the label hides and
+  the switch stays.
 - **Layout**: `body.studio` hides `#sidebar`, `#office`, `#divider`, `#tabs`, `#tab-add` and the side panels; Studio's
   `#studio-sidebar` comes first in `#body` and the main region is the Office's own `#terminal`, so the chat view
   (`renderer/chat.js`, v3.80) is reused, not rendered twice. With no session (no project) the start screen shows

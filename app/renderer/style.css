@@ -128,6 +128,21 @@ button { font: inherit; color: inherit; }
   padding: 2px 6px;
   cursor: help;
 }
+/* v3.120 the Outlook-style Studio switch: right end of the title bar in both experiences */
+#experience-switch {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; gap: 6px; flex: none; order: 10;
+  padding: 2px 4px; background: none; border: 1px solid transparent; border-radius: var(--radius);
+  font-size: 11px; opacity: .85; cursor: pointer;
+}
+#experience-switch:hover { opacity: 1; }
+#experience-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#experience-switch .xs-track { position: relative; width: 26px; height: 14px; border-radius: 7px; background: rgba(127, 127, 127, .45); transition: background .15s; }
+#experience-switch .xs-knob { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: #fff; transition: left .15s; }
+#experience-switch.on .xs-track { background: var(--accent); }
+#experience-switch.on .xs-knob { left: 14px; }
+@media (max-width: 760px) { #experience-switch .xs-label { display: none; } }
+@media (prefers-reduced-motion: reduce) { #experience-switch .xs-track, #experience-switch .xs-knob { transition: none; } }
 #stats { margin-left: auto; opacity: .75; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 #toggle-sidebar, #settings {
   -webkit-app-region: no-drag;
