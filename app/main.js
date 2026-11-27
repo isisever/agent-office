@@ -5570,8 +5570,9 @@ ipcMain.handle('chat:answer', (_e, id, askId, answer) => {
   return r;
 });
 // v3.121 Studio's model / permission pickers: a running GUI chat switches for its next turns, never mid-turn and never
-// by a restart → 'ok' | 'not-running' (no GUI chat runs) | 'busy' (a turn or an open request) | 'bad' | 'gone'
-ipcMain.handle('chat:setting', (_e, id, key, value) => {
+// by a restart → 'ok' | 'not-running' (no GUI chat runs) | 'busy' (a turn, an open request or a waiting setting) |
+// 'bad' | 'gone' | 'error:<claude's message>' (claude answered with an error: nothing changed)
+ipcMain.handle('chat:setting', async (_e, id, key, value) => {
   const t = terms.get(String(id));
   if (!t?.gui || typeof t.setting !== 'function') return 'not-running';
   if (t.live().busy || t.asks().length) return 'busy';

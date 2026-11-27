@@ -810,7 +810,11 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     let r = 'error';
     try { r = api.chat.setting ? await api.chat.setting(ptyId, key, value) : 'not-running'; } catch (e) { console.error(e); }
     if (r === 'ok') { picks = { ...picks, [key]: value }; if (gui) gui.settings = { model: '', mode: '', ...(gui.settings || {}), [key]: value }; note(''); }
-    else note(t(`chat.pick.failed.${['busy', 'not-running'].includes(r) ? r : 'other'}`));
+    else {
+      // claude's own error text when it refused; the pickers go back to what runs (drawPicks reads the unchanged state)
+      const detail = typeof r === 'string' && r.startsWith('error:') ? ` (${r.slice(6)})` : '';
+      note(`${t(`chat.pick.failed.${['busy', 'not-running'].includes(r) ? r : 'other'}`)}${detail}`);
+    }
     drawPicks();
   }
 

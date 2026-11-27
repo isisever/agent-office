@@ -6,6 +6,7 @@
 const GS = require('./gui-session.js');
 
 const STDERR_MAX = 64 * 1024;
+const SETTING_WAIT = 10000;   // ms to wait for claude's answer to a setting request
 
 /**
  * @param {(file: string, args: string[], opts: object) => any} spawn child_process.spawn (or a fake)
@@ -31,6 +32,8 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
   let seq = 0;
   let stderr = '';
   const settings = { model: '', mode: '' };   // v3.121 what Studio's pickers set in this run
+  /** @type {Map<string, { key: string, value: string, done: (r: string) => void, timer: any }>} */
+  const pending = new Map();   // v3.121 setting requests waiting for claude's control_response
 
   const put = (s) => {
     if (ended || !child.stdin || child.stdin.destroyed) return false;
@@ -53,6 +56,15 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
       } else if (msg.type === 'control_cancel_request' && typeof msg.request_id === 'string') {
         asks.delete(msg.request_id);   // claude withdrew it (the turn was stopped)
       }
+      if (msg.type === 'control_response' && pending.has(String(msg.response?.request_id))) {
+        const id = String(msg.response.request_id);
+        const p = pending.get(id);
+        pending.delete(id);
+        clearTimeout(p.timer);
+        if (msg.response.subtype === 'success') { settings[p.key === 'model' ? 'model' : 'mode'] = p.value; p.done('ok'); }
+        else p.done(`error:${String(msg.response.error || 'claude refused the change').slice(0, 300)}`);
+        continue;
+      }
       if (msg.type === 'result') asks.clear();   // a finished turn leaves nothing to answer
       live = GS.nextLive(live, msg);
       for (const f of msgFns) { try { f(msg); } catch (e) { console.error('gui msg:', e.message); } }
@@ -68,6 +80,8 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
     if (ended) return;
     ended = true;
     asks.clear();
+    for (const p of pending.values()) { clearTimeout(p.timer); p.done('gone'); }
+    pending.clear();
     live = { busy: false, text: '', tool: '' };
     const e = { exitCode: typeof code === 'number' ? code : signal ? 1 : 0, ...(signal ? { signal } : {}) };
     for (const f of exitFns) f(e);
@@ -99,13 +113,22 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, killGroup = process.
       return ok;
     },
     interrupt: () => put(GS.interruptLine(`interrupt-${++seq}`)),
-    /** v3.121 the model or permission mode for the next turns ('ok' | 'bad' | 'gone'); never during a turn (main checks). */
+    /**
+     * v3.121 the model or permission mode for the next turns, resolved by claude's control_response: 'ok', 'bad' (not
+     * a known key/value), 'busy' (one is already waiting), 'gone' (claude ended), 'error:<claude's message>' (an error
+     * reply, or no reply within SETTING_WAIT). Never during a turn (main checks); never a restart.
+     */
     setting(key, value) {
-      const out = GS.settingLine(`setting-${++seq}`, key, value);
-      if (!out) return 'bad';
-      if (!put(out)) return 'gone';
-      settings[key === 'model' ? 'model' : 'mode'] = value;
-      return 'ok';
+      const id = `setting-${++seq}`;
+      const out = GS.settingLine(id, key, value);
+      if (!out) return Promise.resolve('bad');
+      if (pending.size) return Promise.resolve('busy');
+      return new Promise((done) => {
+        const timer = setTimeout(() => { if (pending.delete(id)) done('error:no answer from claude'); }, SETTING_WAIT);
+        timer.unref?.();
+        pending.set(id, { key, value, done, timer });
+        if (!put(out)) { pending.delete(id); clearTimeout(timer); done('gone'); }
+      });
     },
     settings: () => ({ ...settings }),
     /** Answers an open card; 'ok', 'gone' (no such request any more) or 'bad-answer'. */

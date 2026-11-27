@@ -361,3 +361,27 @@ test('nextLive: a user or assistant message outside a turn does not make a fresh
   assert.equal(GS3.nextLive(idle, { type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start' } }).busy, true);
   assert.equal(GS3.nextLive({ busy: true, text: 'x', tool: 'Read' }, { type: 'user', parent_tool_use_id: null }).busy, true);
 });
+
+test('GUI chat setting: waits for claude\'s control_response; an error reply changes nothing and is reported', async () => {
+  const { spawn, made } = fakeSpawn();
+  const t = spawnGui(spawn, 'sh', [], { cwd: '/', env: {} }, { killGroup: () => {} });
+  const c = made[0].c;
+  assert.equal(await t.setting('model', 'gpt-4'), 'bad');
+  const ok = t.setting('model', 'sonnet');
+  const req = c.written.at(-1);
+  assert.equal(req.request.subtype, 'set_model');
+  assert.equal(await t.setting('mode', 'plan'), 'busy', 'one setting request at a time');
+  assert.equal(t.settings().model, '', 'not recorded before claude answers');
+  c.out({ type: 'control_response', response: { subtype: 'success', request_id: req.request_id, response: { model: 'claude-sonnet' } } });
+  assert.equal(await ok, 'ok');
+  assert.equal(t.settings().model, 'sonnet');
+  const bad = t.setting('mode', 'plan');
+  const req2 = c.written.at(-1);
+  c.out({ type: 'control_response', response: { subtype: 'error', request_id: req2.request_id, error: 'Cannot set permission mode' } });
+  assert.equal(await bad, 'error:Cannot set permission mode');
+  assert.equal(t.settings().mode, '', 'an error reply records nothing');
+  assert.equal(t.live().busy, false, 'a setting never starts a turn');
+  const lost = t.setting('mode', 'plan');
+  c.emit('exit', 0, null);
+  assert.equal(await lost, 'gone');
+});
