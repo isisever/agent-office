@@ -13,8 +13,9 @@ const SETTING_WAIT = 10000;   // ms to wait for claude's answer to a setting req
 /**
  * @param {(file: string, args: string[], opts: object) => any} spawn child_process.spawn (or a fake)
  * @param {string} file @param {string[]} args @param {{ cwd: string, env: object }} opts
- * @param {{ onAsk?: (ask: any, input: any) => boolean, killGroup?: (pid: number, signal: string) => void }} [hooks]
- *   onAsk: true when main answered the request itself; killGroup: process.kill (a test passes a fake)
+ * @param {{ onAsk?: (ask: any, input: any) => boolean, onModels?: (models: import('./model-list.js').ModelOption[]) => void, killGroup?: (pid: number, signal: string) => void }} [hooks]
+ *   onAsk: true when main answered the request itself; onModels: the models claude reported at start (v3.120);
+ *   killGroup: process.kill (a test passes a fake)
  */
 function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup = process.kill } = {}) {
   // its own process group (as a pty's session is): a stop reaches claude's shells and MCP servers too, not only claude
@@ -34,8 +35,8 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup 
   let seq = 0;
   let stderr = '';
   const settings = { model: '', mode: '' };   // v3.121 what Studio's pickers set in this run
-  /** @type {{ model: string, usage: null | { input_tokens: number, cache_read_input_tokens: number, cache_creation_input_tokens: number } }} */
-  const info = { model: '', usage: null, models: /** @type {import('./model-list.js').ModelOption[]} */ ([]) };   // v3.120 Studio UX: the running model and the last answer's usage
+  /** @type {{ model: string, usage: null | { input_tokens: number, cache_read_input_tokens: number, cache_creation_input_tokens: number }, models: import('./model-list.js').ModelOption[] }} */
+  const info = { model: '', usage: null, models: [] };   // v3.120 Studio UX: the running model and the last answer's usage
   /** @type {Map<string, { key: string, value: string, done: (r: string) => void, timer: any }>} */
   const pending = new Map();   // v3.121 setting requests waiting for claude's control_response
 

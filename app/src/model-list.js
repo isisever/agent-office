@@ -17,7 +17,7 @@ const VALUE_RE = /^[A-Za-z0-9][\w.:@/[\]-]{0,99}$/;
 /** What a session that reports nothing may pick: the start's model and the short aliases ('' label: the app's own name). */
 const FALLBACK = Object.freeze(['', 'opus', 'sonnet', 'haiku'].map((value) => Object.freeze({ value, label: '', description: '', resolved: '' })));
 
-const str = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '');
+const str = (v, max) => (typeof v === 'string' ? [...v].map((c) => (c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f ? ' ' : c)).join('').trim().slice(0, max) : '');
 
 /**
  * The picker options from claude's initialize answer (the control_response's inner `response`, or its `models`

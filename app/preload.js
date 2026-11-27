@@ -148,7 +148,9 @@ contextBridge.exposeInMainWorld('agentOffice', {
     answer: (id, askId, answer) => ipcRenderer.invoke('chat:answer', id, askId, answer),   // answer: { allow, message?, answers? } → 'ok' | 'gone' | 'bad-answer' | 'locked' | 'not-running'
     agents: (id) => ipcRenderer.invoke('chat:agents', id),               // v3.115 the tab's sub-agents → [{ id, toolUseId, description, type, state: 'running' | 'done' | 'stopped', tool, detail, toolCount, at }]
     agent: (id, agentId, cursor) => ipcRenderer.invoke('chat:agent', id, agentId, cursor),   // v3.115 one sub-agent's conversation → readChat's result | { gone }
-    setting: (id, key, value) => ipcRenderer.invoke('chat:setting', id, key, value),   // v3.121 key 'model' | 'mode' → 'ok' | 'not-running' | 'busy' | 'bad' | 'gone' | 'locked' (mode of a skip-permissions or desk session) | 'error:<message>'
+    setting: (id, key, value) => ipcRenderer.invoke('chat:setting', id, key, value),
+    startModels: (projectId) => ipcRenderer.invoke('studio:models', projectId),   // v3.120 the start screen's models for the project's account → { models: [{ value, label, description, resolved }], loading }
+    // (setting) v3.121 key 'model' | 'mode' → 'ok' | 'not-running' | 'busy' | 'bad' | 'gone' | 'locked' (mode of a skip-permissions or desk session) | 'error:<message>'
     interrupt: (id) => ipcRenderer.invoke('chat:interrupt', id),         // stop the running turn → 'ok' | 'not-running'
     sessions: (id) => ipcRenderer.invoke('chat:sessions', id),           // v3.118 /resume in a GUI chat tab: the project's sessions → [{ id, title, prompt, branch, at, size }]
     resume: (id, sid) => ipcRenderer.invoke('chat:resume', id, sid),     // v3.118 continue one of them in this tab → 'moved' | 'busy:<why>' | 'gone' | 'locked' | 'not-running' | 'unsupported'

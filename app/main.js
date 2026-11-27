@@ -24,6 +24,7 @@ const TIO = require('./src/transfer-io.js');
 const CHAT = require('./src/chat.js');
 const GS = require('./src/gui-session.js');   // v3.108 GUI chat: the SDK protocol
 const GP = require('./src/gui-proc.js');
+const ML = require('./src/model-list.js');   // v3.120 Studio UX: the models each account can use
 const TW = require('./src/task-watch.js');
 const SC = require('./src/shared-config.js');
 const PF = require('./src/project-files.js');
@@ -1421,7 +1422,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       t = guiProc = GP.spawnGui(spawn, shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args)], {
         cwd: isDir(cwd) ? cwd : app.getPath('home'),
         env,
-      }, { onAsk: (ask, input) => guiAsk(id, ask, input, { autoApprove: !project.hq && P.autoApproveOf(project), mailGuard: Boolean(mailMcp) }) });
+      }, { onAsk: (ask, input) => guiAsk(id, ask, input, { autoApprove: !project.hq && P.autoApproveOf(project), mailGuard: Boolean(mailMcp) }),
+        onModels: (models) => noteModels(configDir, models) });
       if (!t.pid) throw new Error('claude did not start');
     } else t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', cmd, 'claude', ...args], {
       name: 'xterm-256color',
@@ -5622,9 +5624,78 @@ function saveChatImages(images) {
 }
 // --- v3.108 GUI chat: what the chat shows besides the transcript, the person's answers, Stop, and terminal ↔ chat
 /** null for a terminal tab; else { asks, live, gui: true } (the tab may be stopped: then nothing is open). */
+// v3.120 Studio UX: the models each account can use (src/model-list.js), cached per account in userData (never in
+// ~/.claude). A GUI session's initialize answer fills and refreshes it; the start screen, where no session runs yet,
+// probes an account with no cache: a short-lived claude (that account's CLAUDE_CONFIG_DIR, an empty temp folder,
+// initialize only, no prompt) killed as soon as it answers.
+const modelCachePath = () => path.join(app.getPath('userData'), 'model-cache.json');
+let modelCache = null;
+const modelProbes = new Map();   // account key → the running probe's kill
+const modelProbeFailed = new Map();   // account key → when its last probe gave nothing (retried after PROBE_RETRY)
+const PROBE_WAIT = 20000;
+const PROBE_RETRY = 5 * 60 * 1000;
+function readModelCache() {
+  if (!modelCache) { try { modelCache = JSON.parse(fs.readFileSync(modelCachePath(), 'utf8')); } catch { modelCache = {}; } }
+  return modelCache;
+}
+function noteModels(configDir, models) {
+  const key = ML.accountKey(configDir);
+  modelProbeFailed.delete(key);
+  const { cache, changed } = ML.mergeCache(readModelCache(), key, models);
+  if (!changed) return;
+  modelCache = cache;
+  try { SF.writeAtomic(modelCachePath(), JSON.stringify(cache)); } catch (e) { console.error('model cache:', e.message); }
+}
+function probeModels(configDir) {
+  const key = ML.accountKey(configDir);
+  if (IS_WIN || modelProbes.has(key)) return;   // Windows: no probe (a session of the account fills the cache)
+  if (Date.now() - (modelProbeFailed.get(key) || 0) < PROBE_RETRY) return;
+  let dir;
+  try { dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ao-models-')); } catch { return; }
+  const cmd = '[ -n "$AGENT_OFFICE_CONFIG_DIR" ] && export CLAUDE_CONFIG_DIR="$AGENT_OFFICE_CONFIG_DIR"; exec claude "$@"';
+  let child = null;
+  let found = false;
+  let timer = null;
+  const end = () => {
+    if (!modelProbes.has(key)) return;
+    modelProbes.delete(key);
+    clearTimeout(timer);
+    if (!found) modelProbeFailed.set(key, Date.now());
+    try { if (child?.pid) process.kill(-child.pid, 'SIGKILL'); } catch {}
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  };
+  modelProbes.set(key, end);
+  try {
+    child = spawn(shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.GUI_FLAGS], { cwd: dir, env: A.ptyEnv(process.env, configDir), stdio: ['pipe', 'pipe', 'ignore'], detached: true });
+  } catch { end(); return; }
+  const lines = GS.createLines();
+  child.stdout?.on('data', (chunk) => {
+    for (const msg of lines.push(chunk)) {
+      if (msg.type !== 'control_response' || msg.response?.request_id !== 'ao-probe') continue;
+      const models = msg.response.subtype === 'success' ? ML.parseModels(msg.response.response) : [];
+      if (models.length) { found = true; noteModels(configDir, models); }
+      end();
+    }
+  });
+  child.stdin?.on('error', () => {});
+  child.on('error', end);
+  child.on('exit', end);
+  timer = setTimeout(end, PROBE_WAIT);
+  timer.unref?.();
+  try { child.stdin.write(ML.initLine('ao-probe')); } catch { end(); }
+}
+// the start screen's model list for a project's account → { models, loading }
+ipcMain.handle('studio:models', (_e, projectId) => {
+  const p = state.projects.find((x) => x.id === String(projectId));
+  if (!p || P.engineOf(p) !== 'claude') return { models: ML.FALLBACK, loading: false };
+  const { configDir } = A.accountOf(state, p);
+  const key = ML.accountKey(configDir);
+  if (!ML.cachedModels(readModelCache(), key)) probeModels(configDir);
+  return ML.startModels(readModelCache(), key, modelProbes.has(key));
+});
 function guiInfo(id) {
   const t = terms.get(id);
-  if (t?.gui) return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, modeLock: guiModeLock.get(id) || '', info: t.info?.() || { model: '', usage: null }, contextCap: P.resolvePty(state, id)?.project?.contextCap || 0 };
+  if (t?.gui) return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, models: ML.pickerModels(t.models?.()), modeLock: guiModeLock.get(id) || '', info: t.info?.() || { model: '', usage: null }, contextCap: P.resolvePty(state, id)?.project?.contextCap || 0 };
   const r = P.resolvePty(state, id);
   if (!r || terms.has(id) || !guiTab(id, r)) return null;
   const ended = guiEnded.get(id);
@@ -5649,6 +5720,8 @@ ipcMain.handle('chat:setting', async (e, id, key, value) => {
   if (!t?.gui || typeof t.setting !== 'function') return 'not-running';
   if (!STU.settingAllowed(guiModeLock.get(String(id)) || '', String(key))) return 'locked';
   if (t.live().busy || t.asks().length) return 'busy';
+  // v3.120 Studio UX: a model only from the list this session reported (the fallback aliases when it reported none)
+  if (String(key) === 'model' && !ML.allowedModel(t.models?.(), String(value ?? ''))) return 'bad';
   return t.setting(String(key), String(value ?? ''));
 });
 ipcMain.handle('chat:interrupt', (_e, id) => {
