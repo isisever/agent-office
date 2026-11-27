@@ -1521,7 +1521,7 @@ const whatsNew = mountWhatsNew({
   t,
   lang: getLang,
   experience: () => (experience === 'studio' ? 'studio' : 'office'),
-  run: (action) => { const { id, arg } = splitAction(action); return whatsNewActions[id]?.(arg) || ''; },
+  run: (action) => { const { id, arg } = splitAction(action); return Object.hasOwn(whatsNewActions, id) ? whatsNewActions[id](arg) || '' : ''; },
 });
 function openWhatsNew() {
   api.whatsNew?.all().then((entries) => whatsNew.show(entries)).catch((e) => console.error(e));
