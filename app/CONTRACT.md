@@ -2857,3 +2857,82 @@ agentOffice.chat.resume(ptyId, sessionId)   // 'chat:resume' → 'moved' | 'busy
   checks by source text).
 - **Sleeping tabs** (review of PR #20): `liveSids` also holds every `asleep` entry's `sessionId`, so the picker never offers a
   session a sleeping tab will resume. A claude started outside the app on the same session cannot be detected.
+
+## Voice input (v3.119)
+
+Push-to-talk in the window: speech becomes text on this computer with whisper.cpp, goes into the text field that had
+focus and is sent only when the person asks for that. The audio stays in memory, is never written to disk and never
+leaves the machine; only the model download goes to the network.
+
+```ts
+agentOffice.voice.settings(): Promise<VoiceSettings & { status: { enabled, binary: boolean, models: { [id]: { present, size } } } }>   // 'voice:settings'
+agentOffice.voice.setSettings(p: Partial<VoiceSettings>)   // 'voice:setSettings' → the same as settings()
+agentOffice.voice.start()        // 'voice:start' → { ok, id } | { ok: false, error: 'off' | 'mic-denied' }
+agentOffice.voice.chunk(id, pcm) // 'voice:chunk' (send): ArrayBuffer of Int16, 16 kHz mono
+agentOffice.voice.stop(id)       // 'voice:stop' → { ok, text } | { ok: false, error: 'no-binary' | 'broken-binary' | 'checksum' | 'cancelled' | 'failed' | 'unknown' }
+agentOffice.voice.cancel(id)     // 'voice:cancel' (send): the recording is dropped
+agentOffice.voice.downloadModel(id)   // 'voice:downloadModel' → { ok } | { ok: false, error: 'model' | 'checksum' | 'failed' }
+agentOffice.voice.onProgress(cb)      // 'voice:progress': { phase: 'download', model, got, total } | 'downloaded' | 'starting' | 'transcribing' | 'idle'
+type VoiceSettings = { enabled: boolean, language: 'auto' | 'tr' | 'en', model: 'large-v3-turbo-q5_0' | 'small-q5_1',
+  sendAfter: boolean, shortcut: 'ctrl+space' | 'alt+space' | 'ctrl+shift+space' | 'off' }   // state.json `voice`
+```
+
+- **Capture** (`renderer/voice.js`, `renderer/voice-worklet.js`): `getUserMedia` audio only (echo cancellation, noise
+  suppression), an AudioWorklet down-samples to 16 kHz mono PCM16 (`src/voice-input.mjs` `Downsampler`, a box filter
+  whose position carries across blocks) and posts ~100 ms blocks; the page sends them to main. Main keeps at most
+  5 minutes per recording (`MAX_PCM_BYTES`) and refuses a chunk over 1 s (`MAX_CHUNK_BYTES`); under 0.3 s is "nothing
+  heard". Only one recording is open: `voice:start` replaces an earlier one, whose chunks are dropped. On stop the
+  worklet's last partial block is flushed first ('flush' → 'flushed', at most 300 ms). Cancel or an error drops the
+  chunks. Every `voice:*` message is accepted only from the app's own window (`e.sender === win.webContents`).
+- **Where it starts**: a 🎙 button in the chat composer (not in a paired device's read-only chat) and in an HQ remote
+  row's command box: hold to talk, or click and click again. The talk key (default Ctrl+Space; Alt+Space,
+  Ctrl+Shift+Space or off) is held while the window has focus; releasing it (or the window losing focus) ends the
+  recording (only a recording the key started), Esc cancels. The key is caught before the terminal sees it.
+- **Where the text goes** (`spliceText`): into the textarea / text input that had focus when the recording started (the
+  button's own composer for the button), in place of the selection, a space before it after a word, then an `input`
+  event. Never into a terminal: xterm's key catcher is not a target, and nothing is written to a pty. Without a target
+  the text is shown in the status line with Copy. "Send after speaking" (off by default) then sends the composer
+  through the composer's registered send only (the chat's submit, the HQ row's form); any other field is never sent.
+- **Speech to text** (`src/voice.js`, pure parts `src/voice-core.js`): `whisper-server` from Resources/whisper
+  (development: `app/vendor/whisper/<os>-<arch>/`), spawned without a shell on first use. macOS and Linux: `--host
+  <socket>.sock` (whisper-server's unix-socket mode) in `userData/voice/run`, a folder made 0700 (a private 0700 temp
+  folder when that path would not fit a socket address), a fresh name per start; requests go over the socket
+  (`http.request({ socketPath })`), no TCP port is opened, and nobody else can sit at that path. Windows: `--host
+  127.0.0.1 --port <free port>`; there a port can be taken between choosing it and the bind, so the server counts only
+  when the port answers with whisper-server's own page and our child is still running a moment later (a child that
+  lost the bind exits). Either way it is ready when it answers with that page while our child runs. Only a failed bind
+  (`couldn't bind` in its output, TCP only) is retried on another port, up to 3 times; any other exit or a timeout
+  ends the start. A `stop()` while the port is chosen or the child starts cancels it (`cancelled`) and kills the
+  child. It is killed after 5 minutes without a transcription (the timer is cleared while a transcription runs and
+  set again after it, success or failure), when voice is turned off, when the window closes and at quit. The binary
+  is checked by running `whisper-server --help`: missing → `no-binary`, present but not running → `broken-binary`
+  (checked again on the next try; only `ok` is kept for the run); any other failure is `failed`. Before each request
+  the child must still be the running server, and an answer without whisper's `text` is refused. The WAV is built in
+  memory and posted to `/inference` (`verbose_json`, temperature 0). Language: the setting; "Auto" lets whisper
+  detect it and, when it hears neither Turkish nor English, transcribes once more as the app's language (Turkish
+  when the app speaks Turkish, else English).
+- **Models**: downloaded on first use (or "Download now" in Settings) into `userData/voice/models` from the official
+  `ggerganov/whisper.cpp` Hugging Face repository at a pinned revision; size and sha256 are checked while streaming
+  to a `.part` file, which takes its name only when both match (the `.part` is deleted on any failure). A model already
+  on disk has its sha256 checked once per app run before the first start; a damaged one is deleted and downloaded
+  again. Default `ggml-large-v3-turbo-q5_0` (574 MB), light
+  `ggml-small-q5_1` (190 MB). Progress shows in the status line and in Settings.
+- **The binary** (`app/scripts/fetch-whisper.mjs`, not in git: `app/vendor/` is ignored): pinned to whisper.cpp tag
+  `b5907` (commit `5eaee0c`). macOS arm64 / x64: the tag is cloned, its commit checked, and `whisper-server` built
+  static with Metal (embedded shaders), only system frameworks linked. Windows x64 and Linux x64: the official release
+  asset, sha256 checked. electron-builder copies `vendor/whisper/${os}-${arch}` to Resources/whisper
+  (`extraResources`, `${arch}`: each arch's app gets only its own binary); a build without it has no voice
+  (`no-binary`). `npm run dist:release` builds both macOS binaries in `predist:release` (x64 cross-built on Apple
+  silicon, Metal on); a folder whose `.whisper-version` stamp names the pinned tag and commit is skipped (the stamp
+  is not packaged). The Linux and Windows release workflows fetch their asset before packaging.
+- **Permissions**: the window's permission handler allows `media` only for audio and only for the app's own page
+  (`mediaDecision`); other permissions keep Electron's default. macOS: `askForMediaAccess('microphone')` before the
+  first recording, `com.apple.security.device.audio-input` in the entitlements and `NSMicrophoneUsageDescription`
+  (`mac.extendInfo`). Release builds (`npm run dist:release`) are signed with the Developer ID identity and use the
+  same `build/entitlements.mac.plist`, so the microphone grant survives updates; the ad-hoc `-` identity is for local builds only.
+- **Settings** (the Settings popup): Voice input on/off, speech language (Auto / Turkish / English), speech model (with
+  its download state), Send after speaking, talk key. Locale keys `voice.*`.
+- **Tests**: `app/test/voice.test.cjs` (settings, model table, sha check, WAV header, server arguments, language
+  choice, permission rule, binary path, down-sampler, PCM16, talk key, text insertion; `createVoice` with a fake
+  whisper-server: one recording, chunk cap, cancel, reuse, sha check once, idle stop, stop during start, port retry,
+  foreign answers, binary states, a bad model; `copyBinDir` with library symlinks; the wiring by source text).

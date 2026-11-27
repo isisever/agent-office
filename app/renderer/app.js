@@ -12,6 +12,7 @@ import { themeChoices, effectiveTheme } from '../src/themes.mjs';
 import { normalizeLook, normalizeMode, effectiveMode, chromeFor, terminalTheme } from '../src/appearance.mjs';
 import { tildePath, windowTitle } from '../src/layout.mjs';
 import { promptReady } from '../src/tui-menu.mjs';
+import { initVoice } from './voice.js';
 
 // Fake window.agentOffice to see the layout in a plain browser (outside Electron).
 if (!window.agentOffice) await import('./dev-mock.js');
@@ -21,6 +22,7 @@ const api = window.agentOffice;
 let initialLang = null;
 try { initialLang = await api.language?.get(); } catch (e) { console.error(e); }
 if (initialLang) await setLang(initialLang.lang);
+initVoice();   // v3.119 the talk key and voice progress
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
 

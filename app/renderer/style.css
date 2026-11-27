@@ -1650,3 +1650,12 @@ select option.rt-off { color: #888; }
 .rv-note { font-family: var(--font-ui); font-size: 12px; padding: 6px 8px; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius); }
 .rv-note[hidden] { display: none; }
 .rv-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+
+/* v3.119 voice input: the mic button and the status line while listening / transcribing */
+.voice-mic.on { background: var(--danger, #c0392b); color: #fff; border-color: transparent; }
+.voice-mic.busy { opacity: 0.6; }
+#voice-hud { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1000; display: flex; gap: 10px; align-items: center; max-width: min(640px, 90vw); padding: 8px 14px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--raised); color: var(--text); font-size: 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); }
+#voice-hud[hidden] { display: none; }
+#voice-hud > span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+body.voice-recording #voice-hud { border-color: var(--danger, #c0392b); }
+.voice-model-state { font-size: 11px; }

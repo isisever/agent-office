@@ -81,6 +81,8 @@ jobs:
         run: node --test app/test/node-pty-patch.test.cjs
       - name: pty wiring (attachPty)
         run: node --test app/test/pty-attach.test.cjs
+      - name: Voice input (v3.119)
+        run: node --test app/test/voice.test.cjs
 
   plugin:
     runs-on: ubuntu-latest

@@ -1,5 +1,5 @@
 // Agent Office shell: window, projects, accounts, one claude pty per project (several with tabs), and office data.
-const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, nativeTheme, safeStorage, powerMonitor, powerSaveBlocker, shell: eShell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Notification, nativeImage, nativeTheme, safeStorage, powerMonitor, powerSaveBlocker, systemPreferences, shell: eShell } = require('electron');
 const { execFile, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -63,6 +63,8 @@ const CH = require('./src/hq-chain.js');
 const DR = require('./src/desk-rules.js');
 const ROUT = require('./src/routines.js');
 const KA = require('./src/keep-awake.js');
+const VC = require('./src/voice-core.js');   // v3.119 voice input
+const { createVoice } = require('./src/voice.js');
 const PTY = require('./src/pty-attach.js');
 // dev only: a throwaway profile (two instances side by side for the device link, v3.28); never in the packaged app
 if (!app.isPackaged && process.env.AGENT_OFFICE_USER_DATA) {
@@ -5839,6 +5841,11 @@ async function createWindow() {
       additionalArguments: [`--agent-office-home=${app.getPath('home')}`],   // preload's agentOffice.home (v3.18)
     },
   });
+  // v3.119 the microphone: audio only, only for the app's own page; other permissions keep Electron's default (granted)
+  win.webContents.session.setPermissionRequestHandler((_wc, permission, cb, details) => {
+    const d = VC.mediaDecision({ permission, mediaTypes: /** @type {any} */ (details)?.mediaTypes, requestingUrl: details?.requestingUrl, rendererDir: path.join(__dirname, 'renderer') });
+    cb(d === null ? true : d);
+  });
   // The window shows only its own page: no new windows, no navigating elsewhere; web links open in the browser.
   const openOutside = (url) => { if (/^https?:\/\//i.test(url)) eShell.openExternal(url).catch(() => {}); };
   win.webContents.setWindowOpenHandler(({ url }) => { openOutside(url); return { action: 'deny' }; });
@@ -5847,7 +5854,7 @@ async function createWindow() {
   win.once('ready-to-show', () => win.show());
   win.on('focus', onFocus);
   if (IS_WIN) win.on('focus', () => win?.flashFrame(false));
-  win.on('closed', () => { killAll(); asleep.clear(); clearInterval(poll); clearInterval(usagePoll); clearInterval(sleepPoll); clearInterval(turnPoll); isLoaded = false; win = null; });
+  win.on('closed', () => { killAll(); asleep.clear(); clearInterval(poll); clearInterval(usagePoll); clearInterval(sleepPoll); clearInterval(turnPoll); isLoaded = false; win = null; voice?.stop(); });
 
   // The folder from the command line is added/activated; if there are no projects, ask for a folder.
   const arg = argProject();
@@ -5974,6 +5981,47 @@ function buildMenu() {
 // teamMode = the TEAM panel (contract v3.83); off unless set, and unset is not written
 const themeSetting = (v) => (TH ? TH.normalizeThemeSetting(v) : 'auto');
 const prefs = () => ({ resume: state.resume !== false, resumeWork: state.resumeWork !== false, theme: themeSetting(state.theme), ...appearance(), manager: state.manager !== false, shareMcp: state.shareMcp !== false, reloadMcp: state.reloadMcp !== false, fallback: state.fallback !== false, sleepMinutes: sleepMinutes(), keepAwake: keepAwakePref(), showAgyAccount: typeof state.showAgyAccount === 'boolean' ? state.showAgyAccount : null, showCmdAccount: typeof state.showCmdAccount === 'boolean' ? state.showCmdAccount : null, showOcAccount: typeof state.showOcAccount === 'boolean' ? state.showOcAccount : null, chatView: state.chatView === true, termTabs: [...termTabs], office3d: state.office3d === true, teamMode: state.teamMode === true });
+// --- voice input (contract v3.119): audio stays in memory in src/voice.js and never leaves the machine
+/** @type {ReturnType<typeof createVoice> | null} */
+let voice = null;
+const voiceSettings = () => VC.normalizeSettings(state?.voice);
+function voiceApi() {
+  if (!voice) voice = createVoice({
+    userData: app.getPath('userData'),
+    binary: VC.binaryPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appDir: __dirname, platform: process.platform, arch: process.arch }),
+    emit: (payload) => send('voice:progress', payload),
+    uiLang,
+    settings: voiceSettings,
+  });
+  return voice;
+}
+/** voice:* is accepted only from the app's own window (contract v3.119). */
+const fromWin = (e) => Boolean(win && !win.isDestroyed() && e?.sender === win.webContents);
+ipcMain.handle('voice:settings', async (e) => (fromWin(e) ? { ...voiceSettings(), status: await voiceApi().status() } : null));
+ipcMain.handle('voice:setSettings', async (e, p) => {
+  if (!fromWin(e)) return null;
+  const next = VC.normalizeSettings({ ...voiceSettings(), ...(p && typeof p === 'object' ? p : {}) });
+  commit({ ...state, voice: next });
+  if (!next.enabled) voice?.stop();
+  return { ...next, status: await voiceApi().status() };
+});
+ipcMain.handle('voice:start', async (e) => {
+  if (!fromWin(e)) return { ok: false, error: 'failed' };
+  if (!voiceSettings().enabled) return { ok: false, error: 'off' };
+  if (IS_MAC && systemPreferences.getMediaAccessStatus('microphone') !== 'granted') {
+    const ok = await systemPreferences.askForMediaAccess('microphone').catch(() => false);
+    if (!ok) return { ok: false, error: 'mic-denied' };
+  }
+  return { ok: true, id: voiceApi().begin() };   // replaces any recording still open
+});
+ipcMain.on('voice:chunk', (e, id, data) => { if (fromWin(e) && typeof id === 'string') voice?.chunk(id, data); });
+ipcMain.on('voice:cancel', (e, id) => { if (fromWin(e) && typeof id === 'string') voice?.cancel(id); });
+ipcMain.handle('voice:stop', (e, id) => (fromWin(e) && typeof id === 'string' ? voiceApi().finish(id) : { ok: false, error: 'unknown' }));
+ipcMain.handle('voice:downloadModel', async (e, id) => {
+  if (!fromWin(e) || !Object.hasOwn(VC.MODELS, id)) return { ok: false, error: 'model' };
+  try { await voiceApi().ensureModel(id); return { ok: true }; } catch (err) { return { ok: false, error: String(err?.message) === 'checksum' ? 'checksum' : 'failed' }; }
+});
+
 ipcMain.handle('prefs:get', () => prefs());
 ipcMain.handle('prefs:set', (_e, p) => {
   if (p && typeof p.resume === 'boolean' && p.resume !== prefs().resume) commit({ ...state, resume: p.resume });
@@ -6063,6 +6111,7 @@ if (!isSecondInstance) app.whenReady().then(async () => {
   const mig = MS.migrateConnections(raw.projects, raw.mcpServers);
   const base = P.normalizeState({ ...raw, projects: mig.projects });
   state = { ...base, interrupted: R.normalizeInterrupted(raw.interrupted, base.projects.flatMap((p) => P.ptyIdsOf(p))), language: LANG_SETTINGS.includes(raw.language) ? raw.language : 'auto', resume: raw.resume !== false, resumeWork: raw.resumeWork !== false, manager: raw.manager !== false, shareMcp: raw.shareMcp !== false, reloadMcp: raw.reloadMcp !== false, fallback: raw.fallback !== false, accountLimits: FB.normalizeMarks(raw.accountLimits, base.accounts.map((a) => a.id)), modelLimits: FB.normalizeModelMarks(raw.modelLimits, base.accounts.map((a) => a.id)), theme: themeSetting(raw.theme), look: AP ? AP.normalizeLook(raw.look) : 'pixel', mode: AP ? AP.normalizeMode(raw.mode) : 'system', sleepMinutes: Z.normalizeSleep(raw.sleepMinutes), keepAwake: KA.normalizeKeepAwake(raw.keepAwake), mcpServers: MS.normalizeServers(mig.servers, base.projects.map((p) => p.id)), skillPacks: SP.cleanMap(raw.skillPacks), ...(typeof raw.chatView === 'boolean' ? { chatView: raw.chatView } : {}), ...(typeof raw.office3d === 'boolean' ? { office3d: raw.office3d } : {}), ...(typeof raw.teamMode === 'boolean' ? { teamMode: raw.teamMode } : {}) };
+  state = { ...state, voice: VC.normalizeSettings(raw.voice) };   // v3.119 voice input settings
   for (const id of GS.cleanTermTabs(raw.termTabs, state.projects.flatMap((p) => P.ptyIdsOf(p)))) termTabs.add(id);   // v3.110
   // v3.83 the staff, cleaned against the projects, accounts and preset roles that exist (written only once used)
   if (Array.isArray(raw.customRoles)) state = { ...state, customRoles: ST.normalizeCustomRoles(raw.customRoles) };   // v3.84, before the staff that use them
@@ -6099,4 +6148,4 @@ if (!isSecondInstance) app.whenReady().then(async () => {
 });
 app.on('activate', () => { if (!win && state) createWindow(); });
 app.on('window-all-closed', () => { killAll(); app.quit(); });
-app.on('before-quit', () => { appQuitting = true; killAll(); });
+app.on('before-quit', () => { appQuitting = true; killAll(); voice?.stop(); });

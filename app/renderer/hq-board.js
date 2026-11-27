@@ -28,6 +28,7 @@ function el(tag, attrs = {}, ...kids) {
 
 // engine names on a remote row's status line (brand names, not translated)
 import { mountRemoteView } from './remote-view.js';
+import { micButton } from './voice.js';
 
 const ENGINE_NAMES = { claude: 'Claude Code', agy: 'Antigravity', commandcode: 'Command Code', opencode: 'OpenCode' };
 
@@ -318,7 +319,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link }) {
         drafts.delete(r.key);
         api.link.send(pub, r.id, input.value).then(() => renderRemote()).catch((err) => console.error(err));
         input.value = '';
-      } }, input, el('button', { class: 'sb-btn', type: 'submit' }, t('devices.send'))),
+      } }, input, micButton(input, () => input.form?.requestSubmit()), el('button', { class: 'sb-btn', type: 'submit' }, t('devices.send'))),   // v3.119 mic
       ...out.map((o) => el('div', { class: `sb-note cmd-${o.status}` },
         `${o.firstLine} — ${o.status === 'rejected' ? t('devices.cmd.rejected', { reason: t(`devices.reason.${o.reason}`) }) : t(`devices.cmd.${o.status}`)}`)));
   }

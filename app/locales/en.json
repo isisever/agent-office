@@ -1604,5 +1604,57 @@
     "certValid": "Expires",
     "certHint": "Compare the fingerprint with your IT team. If you trust it, only this exact certificate is accepted; you are asked again when it changes.",
     "certTrust": "Trust this certificate and try again"
+  },
+  "voice": {
+    "mic": "Talk (hold, or click and click again). Your voice is turned into text on this computer.",
+    "listening": "Listening… release or click the mic to finish, Esc cancels",
+    "listeningKey": "Listening… release the key to finish, Esc cancels",
+    "transcribing": "Turning speech into text…",
+    "starting": "Starting speech recognition…",
+    "downloading": "Downloading the speech model… {pct}%",
+    "cancelled": "Cancelled",
+    "nothing": "Nothing was heard",
+    "noTarget": "No text field had focus. Heard: {text}",
+    "copy": "Copy",
+    "err": {
+      "off": "Voice input is off (Settings).",
+      "mic-denied": "Agent Office may not use the microphone. Allow it in System Settings → Privacy & Security → Microphone.",
+      "mic": "The microphone could not be opened.",
+      "broken-binary": "Speech recognition is included but does not run on this computer.",
+      "cancelled": "Cancelled.",
+      "no-binary": "Speech recognition is not included in this build.",
+      "checksum": "The speech model download was damaged; try again.",
+      "failed": "Speech recognition failed.",
+      "unknown": "Speech recognition failed.",
+      "model": "Unknown model."
+    },
+    "settings": {
+      "enabled": "Voice input",
+      "enabledTitle": "A mic button in the chat and HQ, and a talk key. Speech is turned into text on this computer; the audio is never saved or sent anywhere.",
+      "language": "Speech language",
+      "model": "Speech model",
+      "modelReady": "Downloaded",
+      "modelMissing": "Downloaded on first use ({mb} MB)",
+      "download": "Download now",
+      "sendAfter": "Send after speaking",
+      "sendAfterTitle": "Off: the text goes into the input for you to check. On: it is sent at once.",
+      "shortcut": "Talk key (hold)",
+      "shortcutTitle": "Hold to talk while the window has focus; Esc cancels. On a Mac, Ctrl+Space may be taken by the input-source switch."
+    },
+    "lang": {
+      "auto": "Auto (Turkish / English)",
+      "tr": "Turkish",
+      "en": "English"
+    },
+    "model": {
+      "large-v3-turbo-q5_0": "Best (large-v3-turbo, 574 MB)",
+      "small-q5_1": "Light (small, 190 MB)"
+    },
+    "key": {
+      "ctrl-space": "Ctrl+Space",
+      "alt-space": "Alt+Space",
+      "ctrl-shift-space": "Ctrl+Shift+Space",
+      "off": "Off"
+    }
   }
 }
