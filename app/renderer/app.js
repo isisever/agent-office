@@ -229,8 +229,18 @@ function isAsleep(id) {
 // ---- Chat view (contract v3.80, chat.js): with the setting on, a Claude Code tab shows its conversation; the
 // terminal stays mounted under it and is one click away. Off: nothing below runs and the pane is as before.
 let chatView = false;
-// v3.120 Studio shows Claude Code tabs as a chat too (on Windows, where GUI chat is off, their terminals)
-const chatShown = () => chatView || (studioOn && osPlatform !== 'win32');
+// v3.120 Studio shows a tab as a chat only when main started it as a GUI chat (status isGui), or when the person
+// switched it to its terminal from the chat (so the Chat button brings it back). A tab running in a terminal (started
+// before Studio was on, or on Windows, where GUI chat is off) shows its terminal in the main region: switching the
+// experience never restarts or moves a running session.
+function guiRunning(id) {
+  if (!id) return false;
+  const [projectId, n] = String(id).split(':');
+  const st = status.find((x) => x.id === projectId);
+  return Boolean(n ? st?.tabs?.find((x) => x.n === Number(n))?.isGui : st?.isGui);
+}
+/** @param {string | null | undefined} id */
+const chatShown = (id) => chatView || (studioOn && osPlatform !== 'win32' && Boolean(id) && (guiRunning(id) || chatOff.has(String(id))));
 const chatOff = new Set();   // pty ids the person switched back to the terminal (v3.110 seeded from main's termTabs)
 let chatOffSeeded = false;
 let chatSwitch = null;       // the "chat" button over a terminal (made when first needed)
@@ -298,7 +308,7 @@ function watchCommands() {
   for (const [id, w] of cmdRuns) {
     const p = panes.get(id);
     // the person went back to the chat (or the tab is gone): nothing to watch
-    if (!p || !chatOff.has(id) || !chatShown()) { endCommand(id); continue; }
+    if (!p || !chatOff.has(id) || !chatShown(id)) { endCommand(id); continue; }
     let lines = [];
     try { lines = p.term.screen(); } catch (e) { console.error(e); }
     if (!w.typedAt) {
@@ -333,7 +343,7 @@ function syncChat() {
   const visible = activePty();
   const attn = (id) => status.find((x) => x.id === String(id).split(':')[0])?.attention || null;
   for (const [id, p] of panes) {
-    const want = chatShown() && id === visible && chatCapable(id) && !chatOff.has(id);
+    const want = chatShown(id) && id === visible && chatCapable(id) && !chatOff.has(id);
     if (want && !p.chat) {
       const host = document.createElement('div');
       host.className = 'chat-host';
@@ -348,7 +358,7 @@ function syncChat() {
     if (want) { p.chat.setAttention(attn(id)); p.chat.show(); if (!was) requestAnimationFrame(() => p.term.fit()); } else p.chat?.hide();
     if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
   }
-  const canSwitch = chatShown() && chatCapable(visible) && chatOff.has(visible);
+  const canSwitch = chatShown(visible) && chatCapable(visible) && chatOff.has(visible);
   if (canSwitch && !chatSwitch) {
     chatSwitch = document.createElement('button');
     chatSwitch.id = 'chat-switch';
