@@ -36,6 +36,7 @@ const REVIVE_SEEN_MS = 3500;               // a gap longer than ~2 pump ticks be
  *   tabState: (projectId: string) => 'ready' | 'busy' | 'starting' | 'gone', type: (projectId: string, text: string, o?: { taskId?: string }) => boolean | void,   // false: not typed
  *   loginOf?: (projectId: string) => 'in' | 'out' | 'unknown', reportsDir?: string,
  *   answersPrompts?: (projectId: string) => boolean, confirmPair?: (device: string) => Promise<boolean>,   // v3.101 the pairing dialog on this machine
+ *   ctlHq?: (text: string, o: { device: string, id: string }) => boolean | void | Promise<boolean | void>, ctlReports?: (limit: number) => any[] | Promise<any[]>,   // v3.121 phone controller
  *   onReport?: (r: { id: string, machine: string, pub: string, report: any }) => void,
  *   asleep?: (projectId: string) => boolean, attentionOf?: (projectId: string) => string,   // v3.48 why a device's task waits / needs approval
  *   stoppedHere?: (projectId: string) => number,   // v3.99 when the person at this machine last stopped that project themselves (0: never)
@@ -110,41 +111,44 @@ function setupLink(d) {
     if (!S.plainDir(dir)) { const e = new Error('the link folder is not a plain folder'); fail('keys-file', e); throw e; }
     if (!S.present(keysFile)) {
       const kp = require('hyperdht').keyPair();
-      return { publicKey: kp.publicKey, secretKey: kp.secretKey, secrets: {}, own: [], ownV: C.OWN_VERSION, fresh: true };
+      return { publicKey: kp.publicKey, secretKey: kp.secretKey, secrets: {}, own: [], ownV: C.OWN_VERSION, ctl: [], fresh: true };
     }
     let got;
     try { got = sealer.openFile(keysFile, S.PURPOSE.LINK_KEYS, S.linkKeysText); } catch (e) { fail(e && e.sealStage === 'decrypt' ? 'keys-decrypt' : e && e.sealStage === 'file' ? 'keys-file' : 'start', e); throw e; }
     if (!got) { const e = new Error('the keys file is not a link keys file'); fail('keys-format', e); throw e; }
     const k = guard('keys-format', () => JSON.parse(got.payload));
     if (!S.isLinkKeys(k)) { const e = new Error('the keys file is malformed'); fail('keys-format', e); throw e; }
-    return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {}, own: k.own, ownV: k.ownV, legacy: got.legacy };
+    return { publicKey: Buffer.from(k.publicKey, 'hex'), secretKey: Buffer.from(k.secretKey, 'hex'), secrets: k.secrets || {}, own: k.own, ownV: k.ownV, ctl: Array.isArray(k.ctl) ? k.ctl : [], legacy: got.legacy };
   }
   /**
    * v3.101 The own record (own.bin, keychain-encrypted like keys.bin): the migration marker with the current own and
    * paused sets. An older app rewrites keys.bin without the marker and knows nothing of this file, so it is what tells
    * a rolled-back keys.bin from a first upgrade. → state 'none' (no file), 'bad' (unreadable or malformed) or 'ok'.
    * v3.102: a record without the header of its purpose (or with another one's) is 'bad'; `legacy`: it had no header yet.
-   * @returns {{ state: 'none' | 'bad' | 'ok', own: string[], legacy?: boolean }} own: the keys the record lists as own (empty unless 'ok')
+   * @returns {{ state: 'none' | 'bad' | 'ok', own: string[], ctl?: string[], legacy?: boolean }} own: the keys the record lists as own (empty unless 'ok')
    */
   function loadOwnRecord() {
-    if (!S.present(ownFile)) return { state: 'none', own: [] };
+    if (!S.present(ownFile)) return { state: 'none', own: [], ctl: [] };
     try {
       const got = sealer.openFile(ownFile, S.PURPOSE.LINK_OWN, S.ownRecordText);
       if (!got) return { state: 'bad', own: [] };
       const r = JSON.parse(got.payload);
       if (!S.isOwnRecord(r) || r.v !== C.OWN_VERSION) return { state: 'bad', own: [] };
-      return { state: 'ok', own: r.own.filter((k) => C.isHex(k, 32)), legacy: got.legacy };
+      return { state: 'ok', own: r.own.filter((k) => C.isHex(k, 32)), ctl: Array.isArray(r.ctl) ? r.ctl.filter((k) => C.isHex(k, 32)) : [], legacy: got.legacy };
     } catch { return { state: 'bad', own: [] }; }
   }
+  // v3.121 written only when a phone is paired: without one both files keep the exact bytes of earlier versions
+  const ctlSet = (devices) => (C.ctlKeys(devices).length ? { ctl: C.ctlKeys(devices) } : {});
   function save({ name, devices, secrets }) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (!S.plainDir(dir)) throw new Error('the link folder is not a plain folder');
     // the own record first: were the two files ever to disagree, the device reads as paused (start() takes what both say)
-    const record = { v: C.OWN_VERSION, own: C.ownKeys(devices), paused: devices.filter((x) => x.own !== true).map((x) => x.pub) };
+    // v3.121 the paired phone controllers are sealed in both files the same way, in their own set `ctl`
+    const record = { v: C.OWN_VERSION, own: C.ownKeys(devices), paused: devices.filter((x) => x.own !== true && x.kind !== 'controller').map((x) => x.pub), ...ctlSet(devices) };
     sealer.writeFile(ownFile, S.PURPOSE.LINK_OWN, JSON.stringify(record));
     // v3.101 (the v3.97 sealing) the keys of the devices that are `own` are sealed here with the migration marker:
     // devices.json alone (a plain file) can neither resume a paused device nor run the migration again
-    const keys = { publicKey: link.pub, secretKey: C.hex(link.keyPair.secretKey), secrets, own: C.ownKeys(devices), ownV: C.OWN_VERSION };
+    const keys = { publicKey: link.pub, secretKey: C.hex(link.keyPair.secretKey), secrets, own: C.ownKeys(devices), ownV: C.OWN_VERSION, ...ctlSet(devices) };
     sealer.writeFile(keysFile, S.PURPOSE.LINK_KEYS, JSON.stringify(keys));
     fs.writeFileSync(devicesFile, JSON.stringify({ name, devices }, null, 2), { mode: 0o600 });
   }
@@ -165,7 +169,7 @@ function setupLink(d) {
       const moved = migrate ? C.migrateOwn(saved.devices, keys.secrets) : null;
       const sealedOwn = Array.isArray(keys.own) ? keys.own : [];
       const ownSet = rec.state === 'bad' ? [] : rec.state === 'none' ? sealedOwn : marked ? sealedOwn.filter((k) => rec.own.includes(k)) : rec.own;
-      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: moved ? moved.devices : C.sealOwn(saved.devices, ownSet), secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), tasksFile: path.join(dir, 'tasks-out.json'), seenFile: path.join(dir, 'tasks-seen.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
+      link = new C_Link({ keyPair: { publicKey: keys.publicKey, secretKey: keys.secretKey }, name: saved.name || os.hostname().replace(/\.local$/, ''), devices: moved ? moved.devices : C.sealOwn(saved.devices, ownSet, rec.state === 'ok' ? (keys.ctl || []).filter((k) => (/** @type {any} */ (rec).ctl || []).includes(k)) : []), secrets: keys.secrets, resultsFile, reportsFile: path.join(dir, 'reports-out.json'), tasksFile: path.join(dir, 'tasks-out.json'), seenFile: path.join(dir, 'tasks-seen.json'), app: typeof d.app.getVersion === 'function' ? d.app.getVersion() : '' });
       link.confirmPair = async (name) => (d.confirmPair ? (await d.confirmPair(name)) === true : false);   // no dialog wired = no pairing
       link.on('persist', save);
       link.on('own', () => pump());   // v3.101 a paused device's queued entries are refused now
@@ -188,6 +192,12 @@ function setupLink(d) {
       link.on('sess-items', (m) => d.send('link:sess', m));               // v3.100 a session this machine reads
       link.on('sess-end', (m) => d.send('link:sess', { ...m, end: true }));
       link.on('task-cancel', onTaskCancel);   // v3.48
+      // v3.121 a phone controller types an HQ turn / asks for the reports; no host callback = refused ('no-hq') / none
+      if (d.ctlHq) link.on('ctl-hq', ({ device, id, text, reply }) => {
+        clog({ device: device.name, project: 'hq', firstLine: C.cleanLine(text.split(/\r?\n/)[0], 120) });
+        Promise.resolve().then(() => d.ctlHq?.(text, { device: device.name, id })).then((ok) => reply(ok === false ? 'rejected' : 'queued', ok === false ? 'busy' : undefined), () => reply('rejected', 'failed'));
+      });
+      if (d.ctlReports) link.on('ctl-reports', ({ limit, reply }) => { Promise.resolve().then(() => d.ctlReports?.(limit)).then(reply, () => reply([])); });
       link.on('report', ({ device, id, report }) => d.onReport?.({ id, machine: device.name, pub: device.pub, report }));
       link.on('handoff-offer', onHandoffOffer);
       link.on('handoff-refused', ({ device, offer, reason }) => hlog({ dir: 'in', device: device.name, project: offer.name, outcome: `refused:${reason}` }));
@@ -661,6 +671,7 @@ function setupLink(d) {
   // --- v3.100 a paired device reads the session of one of our projects (contract v3.100). Only the project's main tab,
   // only chat items (src/chat.js linkItems: redacted text, tool names), only while that device is paired and not paused (v3.101).
   const SESS_POLL_MS = 1000;
+  function clog(entry) { log({ name: entry.device }, 'hq', entry.firstLine, 'controller'); }
   function slog(entry) {
     try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.appendFileSync(sessLog, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, { mode: 0o600 }); } catch { /* best effort */ }
   }
@@ -826,6 +837,12 @@ function setupLink(d) {
     const { l, reset, recovered } = startForPairing(o?.reset === true);
     if (l) await l.invite();
     return { ...view(), ...pairExtra(reset, recovered) };
+  });
+  // v3.121 + Add phone: a one-time code for a phone controller, shown as a QR in the renderer
+  d.ipcMain.handle('link:invitePhone', async () => {
+    const { l } = startForPairing(false);
+    if (l) await l.invite({ kind: 'controller' });
+    return view();
   });
   d.ipcMain.handle('link:join', async (_e, code, o) => {
     const { l, reset, recovered } = startForPairing(o?.reset === true);
