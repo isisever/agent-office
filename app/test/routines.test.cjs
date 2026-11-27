@@ -428,6 +428,7 @@ function remoteHarness({ online = true, ask = true } = {}) {
     const notify = (title, body) => env.notes.push({ title, body });
     const notifyRemoteSent = (project, machine) => env.notes.push({ title: 'remote-sent ' + project + ' @ ' + machine });   // v3.99 the no-dialog notice
     const confirmHqDispatch = async () => { env.dialogs++; return true; };
+    const budgetBlocked = () => false;   // v3.133
     const projectOp = () => {}; const bossSid = () => 'sid'; const inboxRow = (sid, tab, row) => env.rows.push(row);
     const linkHost = { link: () => env.link, remoteTask: (id) => env.records.get(id) || null, knows: () => false };
     env.pace = (ok) => { hqPacer.submit = ok ? hqPacer.submit : (pub, fn) => { env.paced = fn; return false; }; };

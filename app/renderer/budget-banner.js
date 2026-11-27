@@ -26,10 +26,10 @@ export function mountBudgetBanner({ api, t, names }) {
       row.className = 'bb-row';
       const text = document.createElement('span');
       text.textContent = t('app.budgetReached', { project: b.name || names().get(b.id) || '', used: amountText(v.used, v.unit), limit: amountText(v.limit, v.unit), period: t(`sidebar.budget_${v.period}`) });
-      const btn = (/** @type {string} */ key, /** @type {() => void} */ fn) => {
+      const btn = (/** @type {string} */ label, /** @type {() => void} */ fn) => {
         const x = document.createElement('button');
         x.type = 'button';
-        x.textContent = t(key);
+        x.textContent = label;
         x.addEventListener('click', fn);
         return x;
       };
@@ -38,8 +38,8 @@ export function mountBudgetBanner({ api, t, names }) {
         draw();
         Promise.resolve(api.projects?.budgetAct?.(b.id, action)).catch((/** @type {any} */ e) => console.error(e));
       };
-      row.append(text, btn('app.budgetRaise', act('raise')), btn('app.budgetIgnore', act('ignore')),
-        btn('app.budgetClose', () => { dismissed.add(b.id); draw(); }));
+      row.append(text, btn(t('app.budgetRaise'), act('raise')), btn(t('app.budgetIgnore'), act('ignore')),
+        btn(t('app.budgetClose'), () => { dismissed.add(b.id); draw(); }));
       return row;
     }));
   }
