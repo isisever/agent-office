@@ -49,7 +49,10 @@
       "projects": "Edit projects (Office list)",
       "settings": "Settings",
       "office": "Go to the Office",
-      "whatsNew": "What's new"
+      "whatsNew": "What's new",
+      "usage": "Usage: tokens and cost of this project",
+      "machines": "Machines: resources and projects",
+      "mail": "Mail: accounts and outbox"
     },
     "cmdKeys": {
       "team": "staff members desks roles wizard",
@@ -70,7 +73,10 @@
       "projects": "edit rename group usage",
       "settings": "preferences language theme",
       "office": "experience switch back",
-      "whatsNew": "whats new release notes changes update tour features"
+      "whatsNew": "whats new release notes changes update tour features",
+      "usage": "tokens cost spend today week month model agents",
+      "machines": "devices computers remote cpu memory projects login",
+      "mail": "email outbox drafts accounts"
     },
     "untitled": "New session",
     "now": "now",
@@ -1954,6 +1960,8 @@
       "mcpServers": "MCP servers",
       "skills": "Skills",
       "devices": "Paired devices and phones",
+      "usage": "Usage",
+      "machines": "Machines",
       "hq": "HQ",
       "routines": "Reports and routines",
       "version": "Version"
@@ -1983,6 +1991,8 @@
       "mcpServers": "Add, edit or remove MCP servers.",
       "skills": "Bundled skill packs for every session.",
       "devices": "Pair other computers and phones with this office.",
+      "usage": "Tokens and cost of the current project, by period, model and agent.",
+      "machines": "Every paired machine's resources, projects and accounts.",
       "hq": "The overview of every project.",
       "routines": "Reports and scheduled routines on HQ's board.",
       "office3d": "Draw the office in 3D.",

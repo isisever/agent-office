@@ -3248,7 +3248,11 @@ chat:read gui += { modes: string[], autoApprove: boolean }   // the account's pi
 - Projects: a project picker and the project popup's own account, Auto-approve, skip-permissions and context-cap
   controls inline (`sidebar.projectInline(id)`, the popup's draft; Save applies the account first), plus "All project
   settings…" for the popup. Accounts: the list with labels and the Office's Log in call; "Manage accounts", MCP
-  servers and Devices & phone show the Office's own panel over Studio (`studio.showPanel`).
+  servers and Devices & phone show the Office's own panel over Studio (`studio.showPanel`). Accounts → Usage and
+  Devices & phone → Machines, and the ⌘K commands Usage, Machines and Mail, reach the panels outside the sidebar too:
+  `studio.showPanel('#usage-panel' | '#machines-panel')` (studio.js `FLOATS`) asks the Office to open its own panel
+  (`hooks.openFloat`: Usage for Studio's current project) and centres it as a card (`body.studio-float`); it keeps its
+  own refresh (Usage every 15 s, Machines on each devices view), and its ×, Escape or the backdrop close both.
 - About & updates shows the running version and, when an update is downloaded, Restart to update (`update:install`).
   There is no manual "check now" IPC; updates download on their own.
 

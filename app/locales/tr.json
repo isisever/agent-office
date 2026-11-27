@@ -49,7 +49,10 @@
       "projects": "Projeleri düzenle (Ofis listesi)",
       "settings": "Ayarlar",
       "office": "Ofis'e dön",
-      "whatsNew": "Neler yeni"
+      "whatsNew": "Neler yeni",
+      "usage": "Kullanım: bu projenin token ve maliyeti",
+      "machines": "Makineler: kaynaklar ve projeler",
+      "mail": "Posta: hesaplar ve giden kutusu"
     },
     "cmdKeys": {
       "team": "ekip personel masa rol sihirbaz team desk",
@@ -70,7 +73,10 @@
       "projects": "düzenle grup kullanım projects edit",
       "settings": "tercihler dil tema settings",
       "office": "ofis deneyim geri office",
-      "whatsNew": "neler yeni sürüm notları değişiklikler güncelleme tur özellikler whats new"
+      "whatsNew": "neler yeni sürüm notları değişiklikler güncelleme tur özellikler whats new",
+      "usage": "kullanım token maliyet harcama bugün hafta ay model ajan usage cost",
+      "machines": "makine cihaz bilgisayar uzak işlemci bellek proje giriş machines",
+      "mail": "posta e-posta giden taslak hesap mail"
     },
     "untitled": "Yeni oturum",
     "now": "şimdi",
@@ -1926,6 +1932,8 @@
       "mcpServers": "MCP sunucuları",
       "skills": "Beceriler",
       "devices": "Eşli cihazlar ve telefonlar",
+      "usage": "Kullanım",
+      "machines": "Makineler",
       "hq": "Merkez",
       "routines": "Raporlar ve rutinler",
       "version": "Sürüm"
@@ -1955,6 +1963,8 @@
       "mcpServers": "MCP sunucusu ekle, düzenle ya da kaldır.",
       "skills": "Her oturum için hazır beceri paketleri.",
       "devices": "Başka bilgisayarları ve telefonları bu ofisle eşle.",
+      "usage": "Geçerli projenin token ve maliyeti; döneme, modele ve ajana göre.",
+      "machines": "Eşli her makinenin kaynakları, projeleri ve hesapları.",
       "hq": "Tüm projelerin özeti.",
       "routines": "Merkez panosunda raporlar ve zamanlanmış rutinler.",
       "office3d": "Ofisi 3B çiz.",
