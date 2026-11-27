@@ -28,7 +28,8 @@
       "command": "Komut",
       "session": "Oturum",
       "recent": "Son",
-      "project": "Proje"
+      "project": "Proje",
+      "template": "Şablon"
     },
     "cmd": {
       "team": "Ekip ve masalar",
@@ -52,7 +53,8 @@
       "whatsNew": "Neler yeni",
       "usage": "Kullanım: bu projenin token ve maliyeti",
       "machines": "Makineler: kaynaklar ve projeler",
-      "mail": "Posta: hesaplar ve giden kutusu"
+      "mail": "Posta: hesaplar ve giden kutusu",
+      "runTemplate": "Şablon çalıştır…"
     },
     "cmdKeys": {
       "team": "ekip personel masa rol sihirbaz team desk",
@@ -76,7 +78,8 @@
       "whatsNew": "neler yeni sürüm notları değişiklikler güncelleme tur özellikler whats new",
       "usage": "kullanım token maliyet harcama bugün hafta ay model ajan usage cost",
       "machines": "makine cihaz bilgisayar uzak işlemci bellek proje giriş machines",
-      "mail": "posta e-posta giden taslak hesap mail"
+      "mail": "posta e-posta giden taslak hesap mail",
+      "runTemplate": "şablon emir hq çalıştır doldur"
     },
     "untitled": "Yeni oturum",
     "now": "şimdi",
@@ -1947,7 +1950,8 @@
       "machines": "Makineler",
       "hq": "Merkez",
       "routines": "Raporlar ve rutinler",
-      "version": "Sürüm"
+      "version": "Sürüm",
+      "templates": "Emir şablonları"
     },
     "desc": {
       "lang": "Tüm uygulamanın dili.",
@@ -1983,7 +1987,8 @@
       "look": "Ofisin görünümü.",
       "mode": "Ofis için açık ya da koyu.",
       "bot": "Ofis robotlarının gövde rengi.",
-      "version": "Çalışan Agent Office sürümü."
+      "version": "Çalışan Agent Office sürümü.",
+      "templates": "Kayıtlı HQ emirleri: yeniden adlandırın ya da silin. HQ yazma kutusundan veya ⌘K ile kullanın."
     }
   },
   "board": {
@@ -2050,6 +2055,29 @@
     "headline": "{range}: {bugfix} hata, {hotfix} acil, {feature} özellik kapandı",
     "none": "(yok)",
     "noReport": "Bu aralıkta kapanan bir şey yok.",
-    "pickDates": "Bir başlangıç ve bitiş tarihi seç."
+    "pickDates": "Bir başlangıç ve bitiş tarihi seç.",
+    "more": "Diğer"
+  },
+  "templates": {
+    "button": "Şablonlar",
+    "tip": "Emir şablonları: kayıtlı bir emri HQ yazma kutusuna koyar. Düzenleyip kendiniz gönderirsiniz.",
+    "none": "Henüz şablon yok",
+    "noneManage": "Henüz şablon yok. HQ yazma kutusunda ya da bir emir kartında \"Şablon olarak kaydet\"i kullanın.",
+    "saveAs": "Şablon olarak kaydet",
+    "saved": "\"{name}\" şablon olarak kaydedildi.",
+    "emptyText": "Önce emri yazın, sonra şablon olarak kaydedin.",
+    "title": "Emir şablonları",
+    "use": "Kullan",
+    "rename": "Yeniden adlandır",
+    "delete": "Sil",
+    "saveName": "Kaydet",
+    "name": "Şablon adı",
+    "paletteHint": "Bir şablon seçin: HQ yazma kutusunu doldurur, siz gönderirsiniz",
+    "why": {
+      "invalid": "Bu şablon kaydedilemedi (ad en fazla 80, metin en fazla 4000 karakter).",
+      "unknown": "Bu şablon artık yok.",
+      "too-many": "Zaten 50 şablonunuz var. Önce birini silin.",
+      "gone": "Bu emir artık yok."
+    }
   }
 }

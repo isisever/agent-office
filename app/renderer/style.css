@@ -1886,3 +1886,20 @@ body.studio.studio-float #machines-panel.studio-shown { display: block !importan
 .bv-num { text-align: right !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bv-barcell { width: 40%; }
 .bv-bar { display: block; height: 8px; min-width: 2px; border-radius: 4px; background: var(--muted); }
+
+/* v3.134 order templates: the Templates menu next to HQ's composer and the manage list */
+.tpl-wrap { position: relative; display: inline-flex; }
+.tpl-btn { font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border, #444); background: transparent; color: inherit; cursor: pointer; }
+.tpl-menu { position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 50; min-width: 220px; max-width: 360px; max-height: 320px; overflow: auto;
+  display: flex; flex-direction: column; padding: 4px; border-radius: 8px; border: 1px solid var(--border, #444); background: var(--panel, #1e1e1e); box-shadow: 0 6px 20px rgba(0, 0, 0, .3); }
+.tpl-menu[hidden] { display: none; }
+.tpl-item { text-align: left; padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tpl-item:hover { background: rgba(127, 127, 127, .15); }
+.tpl-save { border-top: 1px solid var(--border, #444); border-radius: 0; margin-top: 2px; }
+.tpl-none, .tpl-note { padding: 5px 8px; opacity: .7; font-size: 12px; }
+.tpl-manage { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.tpl-head { font-weight: 600; font-size: 12px; }
+.tpl-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.tpl-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpl-name-in { flex: 1; min-width: 0; }
+.bv-more { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0 4px; margin-left: auto; }

@@ -7,6 +7,7 @@
 // permission requests, questions and plans come as data and are answered with chat:answer; Stop is chat:interrupt.
 import { t, hasText } from './i18n.js';
 import { micButton } from './voice.js';
+import { templatesButton } from './templates-ui.js';
 import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
@@ -131,6 +132,9 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   live.hidden = true;
   // v3.119 the mic: hold to talk (or click, click again); the text goes into the input
   const mic = source ? null : micButton(input, () => submit());
+  // v3.134 HQ's composer: Templates (fills the input; the person sends it) and Save as template from the input
+  const tplBtn = source || String(ptyId).split(':')[0] !== 'hq' ? null
+    : templatesButton({ t, fill: (text) => setDraft(text), getText: () => input.value, note: (s) => note(s) });
   // v3.121 Studio's composer: one box (.chat-composer) with the attachments above the input and a row of controls under
   // it. In the Office the box and the row are display: contents and the controls keep their one-line order (style.css);
   // the file chips, the pickers and the overflow menu are Studio's only (studio.css).
@@ -156,7 +160,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   const more = h('button', { class: 'chat-more', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => { e.stopPropagation(); moreMenu.hidden = !moreMenu.hidden; } }, icon('more', 18));
   const closeMore = () => { moreMenu.hidden = true; };
   document.addEventListener('click', closeMore);   // removed again in destroy()
-  const row = h('div', { class: 'chat-row' }, attach, mic, h('span', { class: 'chat-row-gap chat-studio-only' }), pickers,
+  const row = h('div', { class: 'chat-row' }, attach, mic, tplBtn, h('span', { class: 'chat-row-gap chat-studio-only' }), pickers,
     h('span', { class: 'chat-more-wrap chat-studio-only' }, more, moreMenu), stop, send);
   const form = h('div', { class: 'chat-form' }, slash, atList, input, row, term);
   form.hidden = Boolean(source);
@@ -1015,6 +1019,12 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       return true;
     } catch (e) { console.error(e); return false; }
   }
+  function setDraft(/** @type {string} */ text) {
+    input.value = String(text || '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
   async function submit() {
     if (imageReads.length) await Promise.all(imageReads.slice());   // an image pasted a moment ago goes with this message
     const text = input.value;
@@ -1210,6 +1220,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     /** v3.108 is this tab a GUI chat (as of the last read)? */
     isGui: () => Boolean(gui),
     focus() { input.focus(); },
+    /** v3.134 puts a template's text into the input (never sends it). */
+    setDraft: (text) => setDraft(text),
     /** v3.112 the menu's Paste while this chat's input has the focus (see pasteFromMenu). */
     paste: () => pasteFromMenu(),
     /** v3.112 a line under the input (why the Terminal button did not switch). */
