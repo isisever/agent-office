@@ -1552,6 +1552,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // the usage-limit watch as a terminal line would (v3.77)
   guiProc?.onMessage((m) => {
     if (terms.get(id) !== guiProc) return;
+    if (m && (m.type === 'result' || m.type === 'control_cancel_request')) setImmediate(pushCtlAsks);   // v3.178 a finished turn or a withdrawn request clears the phones' ask now, not on the next attention tick
     const a = activity.get(id);
     if (a) a.at = Date.now();
     const text = GS.errorText(m);
@@ -1572,6 +1573,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     },
     onExit: ({ exitCode }) => {   // killed on purpose (restart/removal): silent (the id guard)
       terms.delete(id);
+      setImmediate(pushCtlAsks);   // v3.178 its open asks are gone with it
       mcpPrint.delete(id);
       ptyStart.delete(id);
       ptyLimit.delete(id);
@@ -1991,7 +1993,8 @@ function typePrompt(id, text, { taskId = '', images = [], supersede = false } = 
   }
   // v3.108 a GUI chat tab takes the text as a message (claude queues one sent mid-turn); never HQ
   if (t.gui) {
-    if (!t.sendUser(text, images, { supersede })) return false;   // v3.109 pasted images go in as image blocks
+    if (!t.sendUser(text, images, { supersede })) return false;
+    if (supersede) setImmediate(pushCtlAsks);   // v3.178 a question or plan that this message superseded is gone   // v3.109 pasted images go in as image blocks
     noteInput(id, '\r');
     const a = activity.get(id);
     if (a) { a.at = Date.now(); a.draft = false; a.inputAt = a.at; }
@@ -6484,7 +6487,7 @@ function ctlAskList() {
   for (const [id, t] of terms) {
     if (!t.gui) continue;
     const p = P.resolvePty(state, id);
-    if (!p || p.tab) continue;
+    if (!p || p.tab || p.project.hq || p.project.staffOwner || id === HQ.HQ_ID) continue;   // v3.178 like linkSessionOf: never HQ or a personal workspace
     for (const a of t.asks()) {
       const options = a.kind === 'question' ? (a.questions?.[0]?.options || []).slice(0, 8).map((o, i) => ({ key: String(i), label: String(o?.label || o || '').slice(0, 40) })).filter((o) => o.label) : [];
       out.push({ project: id, ask: { askId: a.id, kind: a.kind, at: Number(a.since) || 0, tool: String(a.name || a.tool || '').slice(0, 60), detail: LC.cleanLine(HQ.redact(String(a.detail || '')), 300), ...(options.length ? { options } : {}) } });
@@ -6509,7 +6512,7 @@ function pushCtlAsks() {
 function ctlOp(op, id, { text, askId, answer }) {
   id = String(id);
   const r = P.resolvePty(state, id);
-  if (!r || r.tab) return 'unknown-project';
+  if (!r || r.tab || r.project.hq || r.project.staffOwner || id === HQ.HQ_ID) return 'unknown-project';   // HQ goes only through ctl-hq; a personal workspace is never remote
   if (P.engineOf(r.project) !== 'claude') return 'engine';
   const t = terms.get(id);
   if (op === 'send') {
@@ -6529,12 +6532,17 @@ function ctlOp(op, id, { text, askId, answer }) {
   if (!ask) return 'stale';
   let a;
   if (answer.decision) a = { allow: answer.decision === 'allow' };
-  else {
+  else if (answer.option != null) {   // a choice is for a question only
+    if (ask.kind !== 'question') return 'not-allowed';
     const q = ask.questions?.[0];
-    const label = answer.option != null ? q?.options?.[Number(answer.option)]?.label ?? q?.options?.[Number(answer.option)] : answer.text;
-    if (ask.kind === 'question') { if (!q || !label) return 'failed'; a = { allow: true, answers: { [q.question]: String(label) } }; }
-    else a = { allow: true, message: String(answer.text || '') };   // a plan / permission: a typed text is a message
-  }
+    const label = q?.options?.[Number(answer.option)]?.label ?? q?.options?.[Number(answer.option)];
+    if (!q || !label) return 'failed';
+    a = { allow: true, answers: { [q.question]: String(label) } };
+  } else if (ask.kind === 'question') {
+    const q = ask.questions?.[0];
+    if (!q || !answer.text) return 'failed';
+    a = { allow: true, answers: { [q.question]: String(answer.text) } };
+  } else a = { allow: false, message: String(answer.text || '') };   // a plan / permission: typed text is a denial with feedback, never an approval
   const res = t.answer(askId, a);
   if (res === 'ok') { const act = activity.get(id); if (act) act.at = Date.now(); setImmediate(() => { if (lastOffice) updateAttention(); pushCtlAsks(); }); return 'ok'; }
   return res === 'gone' ? 'stale' : 'failed';

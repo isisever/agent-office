@@ -9,6 +9,8 @@ const { CtlClient } = require('./ctl-client.js');
 
 // what the phone may send through {t:'send'}: an HQ turn, a reports request, reading a session, and (ctl2) the project
 // screen, sending a message, answering an approval and stopping a turn
+// an old desktop drops a connection after 20 invalid messages, so these go only to a desktop whose hello advertised 'ctl2'
+const CTL2_ONLY = new Set(['ctl-proj', 'ctl-send', 'ctl-answer', 'ctl-stop']);
 const SENDABLE = new Set(['ctl-hq', 'ctl-reports', 'sess-open', 'sess-keep', 'sess-close', 'ctl-proj', 'ctl-send', 'ctl-answer', 'ctl-stop']);
 const isId = (s) => typeof s === 'string' && s.length > 0 && s.length <= 64;
 const isHex = (s, n) => typeof s === 'string' && s.length === n * 2 && /^[0-9a-f]+$/.test(s);
@@ -57,6 +59,10 @@ function createController(o) {
       const msg = m.msg;
       if (!msg || !SENDABLE.has(msg.t) || (msg.t === 'sess-open' && (!isId(msg.project) || (msg.sid !== undefined && !isId(msg.sid))))) return log(`refused to send ${msg?.t}`);
       if (msg.t.startsWith('ctl-') && !W.validateCtl(msg)) return log(`malformed ${msg.t}`);
+      if (CTL2_ONLY.has(msg.t) && !client.peerCaps?.includes('ctl2')) {   // v3.178: not sent; the app shows "Update Agent Office on your Mac"
+        log(`${msg.t} not sent: the desktop has no ctl2`);
+        return emit({ t: 'recv', msg: { t: 'mac-outdated', of: msg.t } });
+      }
       client.write(msg);
     } else if (m.t === 'suspend') {
       await client.swarm.suspend?.().catch?.(() => {});
@@ -78,4 +84,4 @@ function createController(o) {
   };
 }
 
-module.exports = { createController, SENDABLE };
+module.exports = { createController, SENDABLE, CTL2_ONLY };
