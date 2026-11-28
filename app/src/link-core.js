@@ -526,7 +526,7 @@ const mayAccounts = (devices, secrets, remotePub) => isOwn(devices, secrets, rem
 // --- what this device publishes: from the same OfficeData the office renders, nothing else
 
 /**
- * @param {{ id: string, name: string, engine?: string }[]} projects state.projects (with engineOf applied)
+ * @param {{ id: string, name: string, engine?: string, live?: string }[]} projects state.projects (with engineOf applied)
  * @param {any} office readOffice's result
  * @param {Map<string, string>} attention projectId → 'permission' | 'done'
  */

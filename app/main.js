@@ -6520,7 +6520,7 @@ function ctlOp(op, id, { text, askId, answer, late }) {
   if (P.engineOf(r.project) !== 'claude') return 'engine';
   const t = terms.get(id);
   if (op === 'send') return ctlQueue.submit(id, text, late);   // v3.179 busy/locked/not-ready waits in the queue instead of a refusal the phone loses
-  return ctlOpNow(op, id, { text, askId, answer }, r, t);
+  return ctlOpNow(op, id, { askId, answer }, r, t);
 }
 /** One immediate attempt of a phone's ctl-send: 'ok', 'wait' (try again when the session takes input) or a hard refusal. */
 function ctlSendNow(id, text) {

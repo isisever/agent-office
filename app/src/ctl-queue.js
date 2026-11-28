@@ -5,7 +5,7 @@
 // or outlived ttlMs (onDrop is told). The queue is in memory only: an app restart loses what was waiting.
 
 /**
- * @param {{ attempt: (key: string, text: string) => 'ok' | 'wait' | string, onDrop?: (key: string, text: string, reason: string, meta?: any) => void,
+ * @param {{ attempt: (key: string, text: string, meta?: any) => 'ok' | 'wait' | string, onDrop?: (key: string, text: string, reason: string, meta?: any) => void,
  *           precheck?: (key: string, text: string) => string | null | undefined,
  *           now?: () => number, ttlMs?: number, max?: number }} o
  *   precheck returns a hard refusal reason (e.g. HQ is off) or nothing; it runs before a message is queued behind others.
