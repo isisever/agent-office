@@ -214,10 +214,11 @@ function listSessions({ projects, status, recent, activeId = null, staff = [], a
  * listed yet nor running. Newest first, at most `limit`. `exclude` = session ids of running tabs.
  * @param {{ sessionId: string, title: string, at: number, dir?: string }[]} kept
  * @param {{ id: string, title?: string, prompt?: string, at: number }[]} history
- * @param {{ limit?: number, exclude?: Iterable<string>, names?: Record<string, string> }} [o]
+ * @param {{ limit?: number, exclude?: Iterable<string>, names?: Record<string, string>, known?: Iterable<string> }} [o]
  */
-function mergeRecent(kept, history, { limit = RECENT_PER_PROJECT, exclude = [], names = {} } = {}) {
+function mergeRecent(kept, history, { limit = RECENT_PER_PROJECT, exclude = [], names = {}, known = [] } = {}) {
   const skip = new Set(exclude);
+  const mine = new Set(known);   // sessions the app opened or the person named: a headless transcript is listed only for these
   const seen = new Set();
   const out = [];
   for (const r of Array.isArray(kept) ? kept : []) {
@@ -226,6 +227,7 @@ function mergeRecent(kept, history, { limit = RECENT_PER_PROJECT, exclude = [], 
   }
   for (const h of Array.isArray(history) ? history : []) {
     if (!h || typeof h.id !== 'string' || seen.has(h.id) || skip.has(h.id)) continue;
+    if (h.headless && !mine.has(h.id) && !names[h.id]) continue;   // started by a script, template or `claude -p`, never opened here
     seen.add(h.id);
     out.push({ sessionId: h.id, title: names[h.id] || h.title || h.prompt || '', at: h.at });
   }

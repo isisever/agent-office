@@ -6942,12 +6942,13 @@ const STUDIO_RECENT_SHOWN = 10;
 /** v3.162 the saved Recent entries plus each project's transcripts, as listSessions' `recent` (per project, newest first). */
 function studioRecentWithHistory() {
   const kept = studioRecent();
+  const known = new Set(kept.map((r) => r.sessionId));   // headless transcripts count only when the app itself opened them
   const out = [];
   for (const p of state.projects.filter((x) => !x.hq)) {
     const mine = kept.filter((r) => r.projectId === p.id);
     const open = new Set(liveSids());   // sessions that already have a row (running or asleep tabs)
     for (const id of P.ptyIdsOf(p)) { const sid = studioSid(id, P.resolvePty(state, id)); if (sid) open.add(sid); }
-    const merged = STU.mergeRecent(mine, studioHistory(p), { limit: STUDIO_RECENT_SHOWN, exclude: open });
+    const merged = STU.mergeRecent(mine, studioHistory(p), { limit: STUDIO_RECENT_SHOWN, exclude: open, known, names: SN.normalizeNames(state.sessionNames) });
     for (const m of merged) out.push({ projectId: p.id, sessionId: m.sessionId, title: m.title, dir: m.dir || p.dir, at: m.at });
   }
   return out;
