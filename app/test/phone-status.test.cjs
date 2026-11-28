@@ -22,7 +22,7 @@ test('wiring: main.js publishes the live tab state, the phone applies the ctl-pr
   assert.match(main, /live: liveStatusOf\(p\.id\)/);
   const model = fs.readFileSync(path.join(root, 'ios', 'AgentOfficeRemote', 'WorkletModel.swift'), 'utf8');
   assert.match(model, /proj\["status"\] as\? String/);
-  assert.match(model, /func pollProject/);
+  assert.match(model, /func projectVisible/);
   const sess = fs.readFileSync(path.join(root, 'ios', 'AgentOfficeRemote', 'Sessions.swift'), 'utf8');
-  assert.strictEqual((sess.match(/link\.pollProject\(projectId\)/g) || []).length, 2);
+  assert.strictEqual((sess.match(/link\.projectVisible\(projectId, true\)/g) || []).length, 2);
 });
