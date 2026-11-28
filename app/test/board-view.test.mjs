@@ -90,3 +90,13 @@ test('typeCounts and reportRows', () => {
   assert.deepEqual(byProject.map((r) => r.key), ['c', 'a', 'b']);
   assert.deepEqual(reportRows(null), []);
 });
+
+test('orderTag names the order of an order card, not a chat card', async () => {
+  const { orderTag, isAllOrders } = await import('../src/board-view.mjs');
+  assert.equal(orderTag({ kind: 'order', request: 'r-abcdef123' }), '#abcdef');
+  assert.equal(orderTag({ kind: 'order', request: 'x9' }), '#x9');
+  assert.equal(orderTag({ kind: 'chat', request: 'r1' }), '');
+  assert.equal(orderTag(null), '');
+  assert.equal(isAllOrders({ request: '' }), true);
+  assert.equal(isAllOrders({ request: 'r1' }), false);
+});

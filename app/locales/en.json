@@ -2088,7 +2088,6 @@
       "member": "All members"
     },
     "search": "Search cards",
-    "showAll": "Show all cards",
     "typeTip": "Change the type",
     "typeByPerson": "set by you",
     "done": "Done",
@@ -2125,7 +2124,12 @@
     "none": "(none)",
     "noReport": "Nothing was closed in this range.",
     "pickDates": "Pick a start and an end date.",
-    "more": "More"
+    "more": "More",
+    "allOrders": "All orders",
+    "allOrdersTip": "Show every order on the board",
+    "backToHq": "Back to HQ",
+    "order": "Order",
+    "orderTagTip": "Order {id}"
   },
   "templates": {
     "button": "Templates",
@@ -2166,6 +2170,8 @@
       "needs": "{who} needs you on project {project}",
       "done": "{who} done on project {project}",
       "failed": "{who} failed on project {project}"
-    }
+    },
+    "all": "All orders",
+    "allTip": "Open every order together on the board"
   }
 }

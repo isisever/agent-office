@@ -3862,3 +3862,23 @@ Amends v3.122 (Studio reached the Office's Usage panel only from ⌘K). Studio's
 (`studio.usage`, `coins` icon) between Reports and Routines. A click calls `hooks.showPanel('#usage-panel')`: the
 Office's own Usage panel (tokens and estimated cost by period, model and agent) for Studio's current project, the same
 as ⌘K → Usage. With no current project it does nothing.
+
+## Studio: HQ board, all orders and the way back (v3.143)
+
+Fixes three Studio problems with HQ; the Office look and behaviour are unchanged.
+
+- **Popup colours.** `.tpl-menu` (the Templates menu next to HQ's composer) used `--panel`, which Studio does not define, so
+  it fell back to a dark box with dark text on the light theme. `body.studio` rules in `studio.css` now colour the
+  button, menu, items, hover, the "Save as template" separator and the "no saved templates" line from the `--st-*`
+  tokens, in both `data-studio-theme` values. The other HQ popup, the card menu (`.bv-menu`), already followed the tokens.
+- **All orders.** The aggregate board already existed: the board with no request filter (Studio's Board pin,
+  `studio.openBoard('board')`, shows every order and chat card in the five status columns). It is now also reachable from
+  the ORDERS strip: an "All orders" row (`orders.all`) calls `openOrder('')`. A single-order view shows a chip
+  "← All orders · <id>" (`board.allOrders`) that clears the filter. Order cards carry an order tag chip, "Order #abc123"
+  (`orderTag(card)` in `src/board-view.mjs`: the request id's first six characters; chat cards have none).
+- **Back to HQ.** `mountBoardView` takes `onBack`; the board draws a pill with the `back` icon and "Back to HQ"
+  (`board.backToHq`) at its top-left, styled like `#chat-switch`, visible only in Studio (`body.studio .bv-back`).
+  `Esc` does the same while the board is open (`body.studio-board`), unless a menu is open or a field has focus. The click
+  runs `leaveBoard()` and `selectProject(HQ_ROW.id)`, the path of the sidebar HQ pin.
+- **Board / Office tabs.** The `.hq-viewbar` pair is hidden in Studio (`body.studio .hq-viewbar`): the Board pin, the
+  "All orders" row and the Back to HQ pill replace it, and the Office view is not part of Studio. The Office keeps it.

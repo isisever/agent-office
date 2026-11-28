@@ -849,3 +849,26 @@ body.studio .bv-bar { background: var(--st-accent); }
 body.studio .bv-bar.bv-bugfix { background: #dc2626; }
 body.studio .bv-bar.bv-hotfix { background: #d97706; }
 body.studio .bv-bar.bv-feature { background: #2563eb; }
+
+/* v3.143 HQ popups follow the Studio tokens (the Templates menu used the Office's dark fallback) */
+body.studio .tpl-btn { border-color: var(--st-border-strong); color: var(--st-text); border-radius: var(--st-radius-s); font-family: var(--st-font); }
+body.studio .tpl-btn:hover { background: var(--st-hover); }
+body.studio .tpl-menu { background: var(--st-raised); color: var(--st-text); border-color: var(--st-border); border-radius: var(--st-radius-s); box-shadow: var(--st-shadow); font-family: var(--st-font); }
+body.studio .tpl-item { color: var(--st-text); }
+body.studio .tpl-item:hover { background: var(--st-hover); }
+body.studio .tpl-save { border-top-color: var(--st-border); }
+body.studio .tpl-none, body.studio .tpl-note { color: var(--st-muted); opacity: 1; }
+/* v3.143 the all-orders entry in the Orders strip, the order tag on cards, and the board's Back to HQ pill */
+body.studio .hq-order-all { color: var(--st-accent-ink); font-weight: 600; }
+body.studio .hq-order-all:hover { background: var(--st-hover); }
+body.studio .bv-order-tag { color: var(--st-muted); }
+.bv-back { display: none; }
+body.studio .bv-back {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; margin: 0 0 12px; padding: 0 12px 0 10px;
+  border: 1px solid var(--st-border-strong); border-radius: 999px; background: var(--st-raised); color: var(--st-text);
+  font: 500 13px var(--st-font); box-shadow: var(--st-shadow); cursor: pointer;
+}
+body.studio .bv-back:hover { background: var(--st-bubble); }
+body.studio .bv-back .st-icon { display: block; color: var(--st-muted); }
+/* v3.143 the Board / Office tab pair is hidden in Studio: the sidebar's Board pin, the Orders strip's "All orders" and the Back to HQ pill cover it */
+body.studio .hq-viewbar { display: none !important; }
