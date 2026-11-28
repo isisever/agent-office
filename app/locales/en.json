@@ -94,6 +94,8 @@
     "themeSystem": "System",
     "themeLight": "Light",
     "themeDark": "Dark",
+    "themeToLight": "Switch to light",
+    "themeToDark": "Switch to dark",
     "accounts": "Accounts",
     "start": {
       "starting": "Starting the session…",

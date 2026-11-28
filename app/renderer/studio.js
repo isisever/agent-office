@@ -385,6 +385,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
         el('span', { class: 'st-title' }, (sameAsActive && (u.name || u.email)) || label),
         el('span', { class: 'st-email' }, [sameAsActive && u.name ? u.email : '', label].filter(Boolean).join(' · '))),
       icon('chevron', 12)),
+      themeButton(),
       el('button', { class: 'st-gear', type: 'button', title: `${t('studio.settings')} (${hooks.isMac ? '⌘,' : 'Ctrl+,'})`, 'aria-label': t('studio.settings'), onclick: () => openSettings() }, icon('gear', 16)));
     const fn = firstName(sameAsActive ? u.name : '');
     greeting.textContent = fn ? t('studio.greetingName', { name: fn }) : t('studio.greeting');
@@ -532,7 +533,15 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const studioTheme = () => { try { const v = localStorage.getItem(THEME_KEY); return v === 'light' || v === 'dark' ? v : 'system'; } catch { return 'system'; } };
   function applyTheme() { const v = studioTheme(); if (v === 'system') document.body.removeAttribute('data-studio-theme'); else document.body.setAttribute('data-studio-theme', v); }
   applyTheme();
-  function setStudioTheme(/** @type {string} */ v) { try { if (v === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, v); } catch { /* storage off */ } applyTheme(); }
+  function setStudioTheme(/** @type {string} */ v) { try { if (v === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, v); } catch { /* storage off */ } applyTheme(); refresh(); }
+  // the footer's sun / moon: flips Studio between light and dark (the menu and Settings still offer "System")
+  const darkNow = () => { const v = studioTheme(); return v === 'dark' || (v === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches); };
+  function themeButton() {
+    const dark = darkNow();
+    const label = t(dark ? 'studio.themeToLight' : 'studio.themeToDark');
+    return el('button', { class: 'st-gear st-theme', type: 'button', title: label, 'aria-label': label,
+      onclick: () => setStudioTheme(darkNow() ? 'light' : 'dark') }, icon(dark ? 'sun' : 'moon', 16));
+  }
   function toggleMenu(/** @type {boolean} */ force = menu.hidden) {
     menu.hidden = !force;
     if (menu.hidden) return;
