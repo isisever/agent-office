@@ -67,6 +67,6 @@ test('iOS controller sends ctl2 messages only to a desktop that advertised ctl2'
   CtlClient.prototype.handle.call(self, { t: 'hello', v: 2, caps: ['ctl', 'sess', 'ctl2'] });
   assert.ok(self.peerCaps.includes('ctl2'));
   const src = fs.readFileSync(path.join(__dirname, '..', '..', 'ios', 'core', 'controller.js'), 'utf8');
-  assert.match(src, /CTL2_ONLY\.has\(msg\.t\) && !client\.peerCaps\?\.includes\('ctl2'\)[^]*mac-outdated/);
+  assert.match(src, /CTL2_ONLY\.has\(msg\.t\)[^]*waitCaps[^]*caps\?\.includes\('ctl2'\)[^]*mac-outdated/);
   assert.match(fs.readFileSync(path.join(__dirname, '..', '..', 'ios', 'AgentOfficeRemote', 'tr.lproj', 'Localizable.strings'), 'utf8'), /"Update Agent Office on your Mac"/);
 });

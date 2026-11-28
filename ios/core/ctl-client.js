@@ -24,6 +24,18 @@ class CtlClient {
     this.swarm.on('connection', (conn) => this.onConnection(conn));
     this.pairing = null;
     this.hqWaits = new Map();
+    this.peerCaps = null;   // null until the desktop's hello arrives on the current connection
+    this.capWaits = [];
+  }
+  /** Resolves with the desktop's caps once its hello has arrived (at once if known); null when none comes within ms. */
+  waitCaps(ms = 3000) {
+    if (this.peerCaps) return Promise.resolve(this.peerCaps);
+    return new Promise((resolve) => {
+      const w = (caps) => { clearTimeout(t); resolve(caps); };
+      const t = setTimeout(() => { const i = this.capWaits.indexOf(w); if (i >= 0) this.capWaits.splice(i, 1); resolve(null); }, ms);
+      t.unref?.();
+      this.capWaits.push(w);
+    });
   }
   write(m) { const line = W.encode(m); if (line && this.conn && !this.conn.destroyed) this.conn.write(line); }
 
@@ -92,16 +104,22 @@ class CtlClient {
     this.conn = conn;
     this.write({ t: 'hello', v: 2, name: this.name, caps: W.CTL_CAPS });   // 'sess': it reads the HQ session
     const beat = setInterval(() => this.write({ t: 'ping' }), 5000);
+    beat.unref?.();
     conn.on('close', () => {
       clearInterval(beat);
       if (this.conn === conn) { this.conn = null; this.failWaits(); }   // no answer can come on a closed connection
-      if (this.conn === null) this.peerCaps = null;
+      if (this.conn === null) { this.peerCaps = null; for (const w of this.capWaits.splice(0)) w(null); }
       this.onEvent({ t: 'offline' });
     });
     this.onEvent({ t: 'online' });
   }
   handle(raw) {
-    if (raw?.t === 'hello') { this.peerCaps = Array.isArray(raw.caps) ? raw.caps.filter((c) => typeof c === 'string') : []; return; }   // what this desktop understands (ctl2 = project screen, send, answer, stop)
+    if (raw?.t === 'hello') {
+      this.peerCaps = Array.isArray(raw.caps) ? raw.caps.filter((c) => typeof c === 'string') : [];
+      const ws = this.capWaits?.splice(0) || [];
+      for (const w of ws) w(this.peerCaps);
+      return;
+    }   // what this desktop understands (ctl2 = project screen, send, answer, stop)
     if (raw?.t === 'sess-items' || raw?.t === 'sess-end') return this.onEvent(raw);   // the HQ session (hqSession)
     const m = W.validateCtl(raw);   // ctl2 answers: the Swift side parses them defensively
     if (!m) return;   // ping and hello are not used here
@@ -135,7 +153,7 @@ class CtlClient {
     this.write({ t: 'sess-open', id, project: 'hq' });
     return { id, keep: () => this.write({ t: 'sess-keep', id }), close: () => this.write({ t: 'sess-close', id }) };
   }
-  destroy() { this.cancelPair('destroyed'); this.failWaits(); return this.swarm.destroy(); }
+  destroy() { this.cancelPair('destroyed'); this.failWaits(); try { this.conn?.destroy(); } catch {} return this.swarm.destroy(); }
 }
 
 module.exports = { CtlClient };

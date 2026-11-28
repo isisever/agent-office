@@ -59,8 +59,14 @@ function createController(o) {
       const msg = m.msg;
       if (!msg || !SENDABLE.has(msg.t) || (msg.t === 'sess-open' && (!isId(msg.project) || (msg.sid !== undefined && !isId(msg.sid))))) return log(`refused to send ${msg?.t}`);
       if (msg.t.startsWith('ctl-') && !W.validateCtl(msg)) return log(`malformed ${msg.t}`);
-      if (CTL2_ONLY.has(msg.t) && !client.peerCaps?.includes('ctl2')) {   // v3.178: not sent; the app shows "Update Agent Office on your Mac"
-        log(`${msg.t} not sent: the desktop has no ctl2`);
+      if (CTL2_ONLY.has(msg.t)) {
+        // the connection reports 'online' before the desktop's hello: wait for it instead of reading "no caps yet" as "no ctl2"
+        const c = client;
+        const caps = c.peerCaps || (c.conn ? await c.waitCaps(3000) : null);
+        if (client !== c) return;
+        if (caps?.includes('ctl2')) return c.write(msg);
+        // v3.178: not sent; the app shows "Update Agent Office on your Mac". Also used when no hello came in time (logged).
+        log(caps ? `${msg.t} not sent: the desktop has no ctl2` : `${msg.t} not sent: no hello from the desktop within 3s`);
         return emit({ t: 'recv', msg: { t: 'mac-outdated', of: msg.t } });
       }
       client.write(msg);
