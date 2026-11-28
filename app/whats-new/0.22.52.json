@@ -1,0 +1,29 @@
+{
+  "version": "0.22.52",
+  "items": [
+    {
+      "id": "hq-dispatches-always",
+      "experience": "studio",
+      "title": {
+        "en": "HQ hands out work instead of asking you",
+        "tr": "HQ sormadan işi dağıtıyor"
+      },
+      "body": {
+        "en": "A project's Skip permissions or Auto-approve setting no longer stops HQ from sending it a task. HQ now acts on what it can do itself and asks you only for passwords, sign-ins and card approvals.",
+        "tr": "Bir projenin \"İzinleri atla\" ya da \"Otomatik onay\" ayarı artık HQ'nun ona görev göndermesini engellemiyor. HQ kendi yapabileceği her şeyi yapar; sizden yalnız şifre, giriş ve kart onayı ister."
+      }
+    },
+    {
+      "id": "studio-sidebar-perm-picker",
+      "experience": "studio",
+      "title": {
+        "en": "Pinned account bar, permission picker unlocked",
+        "tr": "Sabit hesap çubuğu, açılan izin seçicisi"
+      },
+      "body": {
+        "en": "The account bar at the bottom of the sidebar stays put while the project list scrolls. In a chat started with Skip permissions, pick another mode between turns to turn Skip permissions off; the chat resumes in the new mode.",
+        "tr": "Kenar çubuğunun altındaki hesap çubuğu sabit kalır, yalnız proje listesi kayar. \"İzinleri atla\" ile açılmış bir sohbette, turlar arasında başka bir mod seçerek \"İzinleri atla\"yı kapatabilirsiniz; sohbet yeni modla kaldığı yerden sürer."
+      }
+    }
+  ]
+}
