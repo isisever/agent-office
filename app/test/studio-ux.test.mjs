@@ -153,3 +153,13 @@ test('defaultModelName: the default option names the resolved model, else the ru
   assert.equal(defaultModelName(undefined), '');
   assert.equal(defaultModelName(null, ''), '');
 });
+
+test('guiSessionId: a restarted chat keeps its session id until its first message (v3.156)', async () => {
+  const { createRequire } = await import('node:module');
+  const { guiSessionId } = createRequire(import.meta.url)('../src/studio.js');
+  const a = '60004499-356f-41b4-9e58-9eabcfb6fe3c';
+  assert.equal(guiSessionId('', a), a);
+  assert.equal(guiSessionId('11111111-2222-3333-4444-555555555555', a), '11111111-2222-3333-4444-555555555555');
+  assert.equal(guiSessionId('', undefined), '');
+  assert.equal(guiSessionId('../x', 'bad id'), '');
+});

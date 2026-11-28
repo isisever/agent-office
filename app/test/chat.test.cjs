@@ -770,3 +770,15 @@ test('v3.120 sessionNames: a /rename that scrolled out of both windows is kept; 
   assert.equal(C.sessionNames(f, 10, n).custom, '');   // a shorter file is not the one remembered
   fs.rmSync(d, { recursive: true, force: true });
 });
+
+test('chatFileCurrent: a cached transcript is kept only for the same session and the same account folder (v3.156)', () => {
+  const { chatFileCurrent } = require('../src/chat.js');
+  const yes = () => true;
+  const known = { sid: 's1', file: '/a/projects/x/s1.jsonl', configDir: '/a' };
+  assert.equal(chatFileCurrent(known, { sid: 's1', configDir: '/a', exists: yes }), true);
+  assert.equal(chatFileCurrent(known, { sid: 's1', configDir: '/b', exists: yes }), false);   // backup-account switch
+  assert.equal(chatFileCurrent(known, { sid: 's2', configDir: '/a', exists: yes }), false);
+  assert.equal(chatFileCurrent(known, { sid: 's1', configDir: '/a', exists: () => false }), false);
+  assert.equal(chatFileCurrent(null, { sid: 's1', exists: yes }), false);
+  assert.equal(chatFileCurrent({ sid: 's1', file: '/f' }, { sid: 's1', configDir: null, exists: yes }), true);
+});
