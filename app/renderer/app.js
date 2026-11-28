@@ -1640,6 +1640,17 @@ function openWhatsNew() {
   api.whatsNew?.all().then((entries) => whatsNew.show(entries)).catch((e) => console.error(e));
 }
 api.whatsNew?.onOpen(() => openWhatsNew());
+// v3.138 the title bar's gift: the same card again, for when it was closed before it was read
+{
+  const btn = $('whats-new-btn');
+  if (btn) {
+    btn.replaceChildren(icon('gift', 15));
+    const label = () => { btn.title = t('app.whatsNewTitle'); btn.setAttribute('aria-label', btn.title); };
+    label();
+    btn.addEventListener('click', () => openWhatsNew());
+    onLang(label);
+  }
+}
 // after the experience is known, so the card has its look and its items
 Promise.resolve(prefsReady).catch(() => {}).then(() => window.setTimeout(() => {
   api.whatsNew?.pending().then((entries) => { if (Array.isArray(entries) && entries.length) whatsNew.show(entries); }).catch((e) => console.error(e));

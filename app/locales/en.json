@@ -263,6 +263,7 @@
     "asleep": " (asleep: starts when opened)",
     "keepAwake": "Awake",
     "keepAwakeTitle": "{label}: {state}",
+    "whatsNewTitle": "What's new in this version",
     "economyOnTitle": "Economy mode is on: fewer tokens in projects that do not override it. Click to turn it off.",
     "economyOffTitle": "Economy mode is off. Click to spend fewer tokens (150K context, Sonnet agents, Savings Strict, no shared MCP, longer idle sleep).",
     "budgetReached": "{project}: token budget reached ({used} of {limit}, {period}). HQ tasks and routines wait; your own typing is not blocked.",

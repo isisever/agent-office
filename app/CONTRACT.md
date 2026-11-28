@@ -3847,3 +3847,11 @@ Amends v3.120 (Studio hid `#chat-switch`, so a Studio tab switched to its termin
   (`setChatMode(activePty(), true)`), shown under the same condition (`chatButtonFor`), drawn as a pill at the top-right
   of `#terminal` with the `back` icon and "Back to chat" (`chat.backToChat`). In both experiences it is hidden while the
   visible pane shows its chat (`panes.get(visible).chatOn`).
+
+## Title bar: What's new button (v3.138)
+
+Amends v3.123 (the What's new card opened once after an update, and from Help, ⌘K and Settings → About only).
+
+- `#whats-new-btn` sits in the title bar next to the economy leaf (`#economy`), in both experiences, with the `gift`
+  icon and the tooltip "What's new in this version" (`app.whatsNewTitle`). A click calls `openWhatsNew()`: the same
+  card, items and "Try it" actions as the other entry points. It does not change what counts as seen.

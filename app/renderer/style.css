@@ -1910,6 +1910,10 @@ body.studio.studio-float #machines-panel.studio-shown { display: block !importan
 .bv-barcell { width: 40%; }
 .bv-bar { display: block; height: 8px; min-width: 2px; border-radius: 4px; background: var(--muted); }
 
+/* v3.138 What's new (app.js), next to the economy leaf: reopens the card for the installed version */
+#whats-new-btn { background: none; border: 0; color: inherit; opacity: .7; cursor: pointer; padding: 2px 4px; display: inline-flex; align-items: center; -webkit-app-region: no-drag; flex: none; order: 9; margin-left: 6px; }
+#whats-new-btn:hover { opacity: 1; }
+#whats-new-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* v3.133 economy leaf (economy-button.js) next to the keep-awake cup; filled in the accent when on */
 #economy { background: none; border: 0; color: inherit; opacity: .7; cursor: pointer; padding: 2px 4px; display: inline-flex; align-items: center; -webkit-app-region: no-drag; flex: none; order: 9; margin-left: 6px; }
 #economy[hidden] { display: none; }

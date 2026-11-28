@@ -263,6 +263,7 @@
     "asleep": " (uykuda: açınca başlar)",
     "keepAwake": "Uyanık kal",
     "keepAwakeTitle": "{label}: {state}",
+    "whatsNewTitle": "Bu sürümde neler yeni",
     "economyOnTitle": "Tasarruf modu açık: kendi ayarı olmayan projelerde daha az token. Kapatmak için tıklayın.",
     "economyOffTitle": "Tasarruf modu kapalı. Daha az token için tıklayın (150K bağlam, Sonnet ajanlar, Tasarruf Sıkı, paylaşılan MCP yok, daha uzun boşta uyku).",
     "budgetReached": "{project}: token bütçesi doldu ({used} / {limit}, {period}). HQ görevleri ve rutinler bekliyor; kendi yazdıklarınız engellenmez.",
