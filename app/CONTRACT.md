@@ -4196,3 +4196,7 @@ After a usage-limit fallback the chat no longer shows the stopped account's limi
 ## Studio pickers: ask-permission honoured, picks survive a restart (v3.168)
 - `guiAsk` no longer lets the project's Auto-approve answer a chat's permission cards once the person picked a non-auto mode (default / acceptEdits / plan) in the Studio picker (`studio.managerAnswers`). Auto (or no mode set) behaves as before.
 - main remembers each chat's picked `model` / `mode` (`guiPicks`, in memory) and `startPty` re-applies them as `--model` / `--permission-mode` (`studio.restartPickArgs`), so a restart no longer drops them; locked sessions (skip / desk) are untouched.
+
+## Studio project right click: change account, sleep now (v3.171)
+- Right click on a Studio project row lists "Change account" (the header picker's path: `setProjectAccount` -> `projects:setAccount`) and "Sleep" (or "Wake" when its boss tab is asleep).
+- New IPC `projects:sleepNow(id, 'sleep' | 'wake')` -> `{ ok, reason? }` calls `projectOp` (the remote proj-op path). Guard `src/project-op.js opGuard`: refuses with `engine` | `draft` | `permission` | `busy`; the menu shows the reason. The slept tab is `asleep` (sidebar, desk, counters) and wakes on open via `--resume`.

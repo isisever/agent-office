@@ -517,14 +517,31 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     document.querySelector('.st-ctx')?.remove();
     const names = studioSections(ordered()).map((x2) => x2.name).filter(Boolean);
     const row = (/** @type {string} */ label, /** @type {() => void} */ run) => el('div', { class: 'st-ctx-row', onclick: () => { menuEl.remove(); run(); } }, label);
+    // v3.171 change account (the header picker's path: setProjectAccount) and Sleep / Wake (projects:sleepNow)
+    const choices = accountChoices(hooks.accounts?.() || [], g.account || '');
+    const accountRows = pickerUseful(choices)
+      ? choices.filter((c) => !c.current).map((c) => row(c.label + (c.signedOut ? ` (${t('studio.accountSignedOut')})` : ''), () => { const id = accountToSet(choices, c.id, Boolean(g.home)); if (id) hooks.setProjectAccount?.(g.id, id); })) : [];
+    const main = (g.sessions || []).find((/** @type {any} */ s) => s.ptyId === g.id);
+    const canSleep = g.engine === 'claude' && Boolean(api.projects?.sleepNow) && Boolean(main?.isRunning || main?.isAsleep);
     const menuEl = el('div', { class: 'st-ctx', style: `left:${x}px;top:${y}px` },
       el('div', { class: 'st-ctx-title' }, t('studio.moveToGroup')),
       ...names.filter((n) => n !== g.group).map((n) => row(n, () => applyMove(g.id, { group: n }))),
       row(t('studio.newGroup'), () => { editing = { fresh: true, projectId: g.id }; draw(); }),
-      ...(g.group ? [row(t('studio.removeFromGroup', { group: g.group }), () => applyMove(g.id, { group: '' }))] : []));
+      ...(g.group ? [row(t('studio.removeFromGroup', { group: g.group }), () => applyMove(g.id, { group: '' }))] : []),
+      ...(accountRows.length ? [el('div', { class: 'st-ctx-title' }, t('studio.changeAccount')), ...accountRows] : []),
+      ...(canSleep ? [row(main?.isAsleep ? t('studio.wakeNow') : t('studio.sleepNow'), () => sleepNow(g.id, main?.isAsleep ? 'wake' : 'sleep'))] : []));
     document.body.append(menuEl);
     const off = (/** @type {Event} */ e) => { if (e.target instanceof Node && menuEl.contains(e.target)) return; menuEl.remove(); document.removeEventListener('mousedown', off, true); };
     document.addEventListener('mousedown', off, true);
+  }
+  async function sleepNow(/** @type {string} */ id, /** @type {'sleep'|'wake'} */ op) {
+    const r = await api.projects.sleepNow(id, op).catch(() => null);
+    if (r && r.ok === false) {
+      const note = el('div', { class: 'st-ctx st-sleep-note', role: 'status', style: 'left:16px;bottom:16px;top:auto;padding:8px 12px' }, t('studio.sleepRefused', { reason: t(`studio.sleepWhy_${r.reason}`) }));
+      document.body.append(note);
+      setTimeout(() => note.remove(), 4000);
+    }
+    refresh();
   }
   function nameInput(/** @type {string} */ value, /** @type {string} */ placeholder, /** @type {(v: string) => void} */ commit) {
     let done = false;

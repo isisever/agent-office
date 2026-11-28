@@ -20,6 +20,7 @@ const L = require('./src/locales.js');
 const UP = require('./src/updates.js');
 const M = require('./src/memory.js');
 const Z = require('./src/sleep.js');
+const PO = require('./src/project-op.js');
 const TR = require('./src/transfer.js');
 const TIO = require('./src/transfer-io.js');
 const CHAT = require('./src/chat.js');
@@ -3532,15 +3533,16 @@ function projectOp(op, projectId) {
     broadcast();
     return { ok: true };
   }
-  if (op === 'sleep' && P.engineOf(p) !== 'claude') return { ok: false, reason: 'engine' };
   const t = terms.get(id);
-  if (!t) {
+  const ts = t ? linkTabState(id) : 'gone';
+  const g = PO.opGuard(op === 'sleep' ? 'sleep' : 'stop', { engine: P.engineOf(p), running: Boolean(t), tabState: ts,
+    working: t ? tabWorkRunning(id) : false, hasDraft: Boolean(activity.get(id)?.draft), permission: attention.get(id) === 'permission',
+    guiBusy: Boolean(t?.gui && (t.asks().length > 0 || t.live().busy)) });
+  if (!g.ok) return g;
+  if (g.action === 'noop') {
     if (op === 'stop' && asleep.delete(id)) { send('pty:exit', id, 0); broadcast(); }
     return { ok: true };   // already asleep or stopped
   }
-  const ts = linkTabState(id);
-  if (ts !== 'ready' && !(ts === 'starting' && !activity.get(id)?.draft)) return { ok: false, reason: 'busy' };
-  if (tabWorkRunning(id)) return { ok: false, reason: 'busy' };   // 'ready' includes a background shell: sleep/stop would kill it
   if (op === 'sleep') {
     const claude = readJson(Z.claudePidFile(A.accountOf(state, p).configDir, app.getPath('home'), t.pid));
     killPty(id);
@@ -5106,6 +5108,11 @@ ipcMain.handle('projects:setActive', (_e, id) => {
   if (left && left.id !== id) for (const pid of P.ptyIdsOf(left)) { const a = activity.get(pid); if (a) a.at = Date.now(); }
   commit(P.setActive(state, id));
   updateAttention();
+});
+// v3.171 Studio right click: put a project's boss tab to sleep now (or wake it); the same guards as a remote Sleep.
+ipcMain.handle('projects:sleepNow', (e, id, op) => {
+  if (!fromWin(e) || typeof id !== 'string' || (op !== 'sleep' && op !== 'wake')) return { ok: false, reason: 'bad-args' };
+  return projectOp(op, id);
 });
 ipcMain.handle('projects:setAccount', (e, id, accountId) => {
   if (!fromWin(e) || typeof id !== 'string' || typeof accountId !== 'string' || !state.accounts.some((a) => a.id === accountId)) return;
