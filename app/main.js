@@ -3668,6 +3668,7 @@ function startLink() {
       // v3.178 the paired phone is the owner: its HQ order mints a typed request id like the person's own prompt
       type: () => { hqLastKey = Date.now(); hqMintTyped(); return typePrompt(HQ.HQ_ID, text); },
       start: () => { hqMintTyped(); hqWanted = true; startPty(HQ.HQ_ID, { resume: true, prompt: text, forcePrompt: true }); hqRestarter.tick(true); } }),
+    ctlProj: ctlProjSessions,   // v3.178 a phone's project screen: running + recent sessions
     ctlReports: ctlReportsList,   // v3.121 the newest HQ reports for a phone controller
     stoppedHere: (id) => stoppedHere.get(String(id)) || 0,   // v3.99 the person's own stop: no remote revive for 10 minutes
     handoff: handoffDeps(),
@@ -5926,7 +5927,7 @@ function linkHqSessionOf() {
  * v3.100 the transcript a paired device may read (src/link-host.js, "Allow reading sessions from this device"): a
  * project's MAIN tab only → { file } | { reason }. Never HQ's session, a staff desk, an extra tab or a personal workspace.
  */
-function linkSessionOf(id) {
+function linkSessionOf(id, sid) {
   id = String(id);
   const p = state.projects.find((x) => x.id === id);
   if (!p || p.hq || p.staffOwner || id === HQ.HQ_ID) return { reason: 'unknown-project' };
@@ -5934,8 +5935,14 @@ function linkSessionOf(id) {
   if (!r || r.tab || r.project.id !== p.id) return { reason: 'unknown-project' };
   if (P.engineOf(p) !== 'claude') return { reason: 'engine' };
   const { configDir } = A.accountOf(state, p);
-  const sid = chatSession(id, r, configDir);
-  if (!sid) return { reason: 'no-session' };
+  if (sid != null) {   // v3.178 a recent session picked on the phone's project screen
+    if (!validSid(sid)) return { reason: 'unknown-session' };
+    const f = TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file;
+    return f ? { file: f } : { reason: 'unknown-session' };
+  }
+  const msid = chatSession(id, r, configDir);
+  if (!msid) return { reason: 'no-session' };
+  sid = msid;
   let known = chatFiles.get(id);
   if (!CHAT.chatFileCurrent(known, { sid, configDir })) {
     const f = TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file;
@@ -6465,6 +6472,20 @@ function liveSids() {
   }
   for (const how of asleep.values()) { const s = validSid(how?.sessionId); if (s) out.add(s); }   // v3.118 a sleeping tab resumes its session on wake
   return out;
+}
+/** v3.178 the sessions of one project for a phone: the running one first (from its tab), then the recent ones, newest first. */
+function ctlProjSessions(id) {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab) return { sessions: [] };
+  const t = terms.get(id);
+  const { configDir } = A.accountOf(state, r.project);
+  const out = [];
+  const main = validSid(t?.sessionId?.() || '') || (t ? chatSession(id, r, configDir) : '');
+  if (main) out.push({ sid: main, title: 'Current session', at: Date.now(), running: Boolean(t), main: true });
+  const recent = CHAT.sessionList(TIO.historyDirsOf(r.dir, configDir, app.getPath('home')), { exclude: new Set(main ? [main] : []) }) || [];
+  for (const s of recent) if (validSid(s.id)) out.push({ sid: s.id, title: String(s.title || s.prompt || '').slice(0, 80), at: Number(s.at) || 0, running: false, main: false });
+  return { sessions: out.slice(0, 30) };
 }
 ipcMain.handle('chat:sessions', (_e, id) => chatSessionsOf(String(id), terms.get(String(id))) || []);
 ipcMain.handle('chat:resume', (_e, id, sid) => {

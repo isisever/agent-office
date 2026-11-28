@@ -111,12 +111,20 @@ function validatePair(m) {
 
 const CTL_STATUS = ['working', 'idle', 'approval'];
 /** v3.121 the caps a phone controller and the desktop exchange in their hello: 'sess' = it reads the HQ session (sess-end). */
-const CTL_CAPS = ['ctl', 'sess'];
+const CTL_CAPS = ['ctl', 'sess', 'ctl2'];
 const CTL_HQ_STATUS = ['queued', 'delivered', 'rejected'];
 const CTL_REASONS = ['not-allowed', 'rate-limited', 'empty', 'too-large', 'not-text', 'no-hq', 'busy', 'offline', 'failed'];
 const CTL_PROJECTS = 50;
 const CTL_REPORTS = 20;
 const CTL_REPORT_TEXT = 4000;
+// v3.178 cap 'ctl2': project screen, live session of any project, send, approve and stop from the phone.
+const CTL_SESSIONS = 30;
+const CTL_ASK_OPTIONS = 8;
+const CTL_ASK_KINDS = ['permission', 'question', 'plan'];
+const CTL_ACK = ['queued', 'done', 'rejected'];
+const CTL_ACK_OPS = ['send', 'answer', 'stop'];
+const CTL_ACK_REASONS = ['unknown-project', 'engine', 'not-running', 'busy', 'locked', 'stale', 'too-large', 'empty', 'rate-limited', 'failed', 'not-allowed'];
+const CTL_PROJ_ERRORS = ['unknown-project', 'engine', 'rate-limited'];
 const ENGINES = ['claude', 'agy', 'commandcode', 'opencode'];
 
 function cleanCtlProject(p) {
@@ -140,6 +148,29 @@ function cleanCtlReport(r) {
   if (!r || !isId(r.id) || !isInt(r.at)) return null;
   return { id: r.id, at: r.at, project: cleanLine(r.project, 60), title: cleanLine(r.title, 120),
     summary: String(r.summary ?? '').replace(ESCAPES, '').replace(CONTROLS, '').slice(0, CTL_REPORT_TEXT) };
+}
+
+function cleanCtlAsk(a) {
+  if (!a || typeof a !== 'object' || !isId(a.askId) || !CTL_ASK_KINDS.includes(a.kind) || !isInt(a.at)) return null;
+  const options = Array.isArray(a.options)
+    ? a.options.slice(0, CTL_ASK_OPTIONS).map((o) => (o && isId(o.key) ? { key: o.key, label: cleanLine(o.label, 40) } : null)).filter(Boolean) : [];
+  return { askId: a.askId, kind: a.kind, at: a.at,
+    ...(isStr(a.tool, 200) && a.tool ? { tool: cleanLine(a.tool, 60) } : {}),
+    ...(isStr(a.detail, 2000) && a.detail ? { detail: cleanLine(a.detail, 300) } : {}),
+    ...(options.length ? { options } : {}) };
+}
+function cleanCtlSession(s) {
+  if (!s || !isId(s.sid) || !isInt(s.at)) return null;
+  return { sid: s.sid, title: cleanLine(s.title, 80), at: s.at, running: s.running === true, main: s.main === true };
+}
+function cleanCtlProj(p) {
+  const base = cleanCtlProject({ ...p, sessions: 0, working: 0 });
+  if (!base || !Array.isArray(p.sessions)) return null;
+  const pending = Array.isArray(p.pending) ? p.pending.slice(0, CTL_ASK_OPTIONS).map(cleanCtlAsk).filter(Boolean) : [];
+  return { id: base.id, name: base.name, engine: base.engine, status: base.status, attention: base.attention,
+    ...(base.tool ? { tool: base.tool } : {}),
+    sessions: p.sessions.slice(0, CTL_SESSIONS).map(cleanCtlSession).filter(Boolean),
+    ...(pending.length ? { pending } : {}) };
 }
 
 /** Every ctl-* message, validated with size limits; null when malformed. Sent only to and from a peer with cap 'ctl'. */
@@ -166,6 +197,36 @@ function validateCtl(m) {
       if (!Array.isArray(m.reports) || m.reports.length > CTL_REPORTS) return null;
       return { t: 'ctl-reports', id: m.id, reports: m.reports.map(cleanCtlReport).filter(Boolean) };
     }
+    // --- cap 'ctl2'. The caller must drop these from a peer whose hello lacks 'ctl2'.
+    case 'ctl-proj': {      // phone → desktop: request {id, project}; desktop → phone: {id, project, proj} or {id, project, error}
+      if (!isId(m.id) || !isId(m.project)) return null;
+      if (m.proj != null) { const proj = cleanCtlProj(m.proj); return proj ? { t: 'ctl-proj', id: m.id, project: m.project, proj } : null; }
+      if (m.error != null) return CTL_PROJ_ERRORS.includes(m.error) ? { t: 'ctl-proj', id: m.id, project: m.project, error: m.error } : null;
+      return { t: 'ctl-proj', id: m.id, project: m.project };
+    }
+    case 'ctl-send':        // phone → desktop
+      return isId(m.id) && isId(m.project) && typeof m.text === 'string' && m.text.length <= MAX_COMMAND * 4 ? { t: 'ctl-send', id: m.id, project: m.project, text: m.text } : null;
+    case 'ctl-ask': {       // desktop → phone: a pending approval/question
+      const ask = cleanCtlAsk(m.ask);
+      return isInt(m.seq) && isId(m.project) && ask ? { t: 'ctl-ask', seq: m.seq, project: m.project, ask } : null;
+    }
+    case 'ctl-ask-clear':   // desktop → phone: answered anywhere
+      return isInt(m.seq) && isId(m.project) && isId(m.askId) ? { t: 'ctl-ask-clear', seq: m.seq, project: m.project, askId: m.askId } : null;
+    case 'ctl-answer': {    // phone → desktop: exactly one of decision / option / text
+      const a = m.answer;
+      if (!isId(m.id) || !isId(m.project) || !isId(m.askId) || !a || typeof a !== 'object' || Array.isArray(a)) return null;
+      const keys = Object.keys(a);
+      if (keys.length !== 1) return null;
+      const answer = keys[0] === 'decision' && (a.decision === 'allow' || a.decision === 'deny') ? { decision: a.decision }
+        : keys[0] === 'option' && isId(a.option) ? { option: a.option }
+        : keys[0] === 'text' && typeof a.text === 'string' && a.text.length <= 2000 ? { text: a.text } : null;
+      return answer ? { t: 'ctl-answer', id: m.id, project: m.project, askId: m.askId, answer } : null;
+    }
+    case 'ctl-stop':        // phone → desktop
+      return isId(m.id) && isId(m.project) ? { t: 'ctl-stop', id: m.id, project: m.project } : null;
+    case 'ctl-ack':         // desktop → phone: the result of ctl-send / ctl-answer / ctl-stop
+      return isId(m.id) && CTL_ACK_OPS.includes(m.op) && CTL_ACK.includes(m.status) && (m.reason == null || CTL_ACK_REASONS.includes(m.reason))
+        ? { t: 'ctl-ack', id: m.id, op: m.op, status: m.status, ...(m.reason ? { reason: m.reason } : {}) } : null;
     default:
       return null;
   }
@@ -226,7 +287,7 @@ function parsePairUrl(text) {
 
 module.exports = {
   PAIR_TTL_MS, MAX_FRAME, MAX_COMMAND, MAX_NAME, CODE_WORDS, WORDS, PAIR_SALT, SCRYPT, KINDS,
-  CTL_STATUS, CTL_CAPS, CTL_HQ_STATUS, CTL_REASONS, CTL_PROJECTS, CTL_REPORTS, CTL_REPORT_TEXT,
+  CTL_STATUS, CTL_CAPS, CTL_SESSIONS, CTL_ASK_OPTIONS, CTL_ASK_KINDS, CTL_ACK, CTL_ACK_OPS, CTL_ACK_REASONS, CTL_PROJ_ERRORS, CTL_HQ_STATUS, CTL_REASONS, CTL_PROJECTS, CTL_REPORTS, CTL_REPORT_TEXT,
   ESCAPES, CONTROLS, cleanLine, deviceName, isStr, isInt, isId, hex, isHex, toHex, fromHex, utf8Len, normalizeCode,
   LineReader, encode, validatePair, validateCtl, cleanCtlView, createWire, pairUrl, parsePairUrl,
 };

@@ -212,6 +212,7 @@ function setupLink(d) {
           reply(why ? 'rejected' : 'queued', why || undefined);
         }, () => reply('rejected', 'failed'));
       });
+      if (d.ctlProj) link.on('ctl-proj', ({ project, reply }) => { Promise.resolve().then(() => d.ctlProj(project)).then((r) => reply(r?.sessions, r?.pending), () => reply([])); });
       if (d.ctlReports) link.on('ctl-reports', ({ limit, reply }) => { Promise.resolve().then(() => d.ctlReports?.(limit)).then(reply, () => reply([])); });
       link.on('report', ({ device, id, report }) => d.onReport?.({ id, machine: device.name, pub: device.pub, report }));
       link.on('handoff-offer', onHandoffOffer);
@@ -693,21 +694,21 @@ function setupLink(d) {
     try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.appendFileSync(sessLog, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, { mode: 0o600 }); } catch { /* best effort */ }
   }
   /** main's answer for a project id: { file } (its main tab's transcript) or { reason }. */
-  function sessionOf(project) {
+  function sessionOf(project, sid) {
     // v3.121 'hq' is opened only by a controller (onSessOpen): HQ's own transcript, read-only like any other
     if (project === 'hq') { try { return (d.hqSessionOf && d.hqSessionOf()) || { reason: 'unknown-project' }; } catch { return { reason: 'no-session' }; } }
-    try { return (d.sessionOf && d.sessionOf(project)) || { reason: 'unknown-project' }; } catch { return { reason: 'no-session' }; }
+    try { return (d.sessionOf && d.sessionOf(project, sid)) || { reason: 'unknown-project' }; } catch { return { reason: 'no-session' }; }
   }
   const SESS_NOTIFY_MS = 10 * 60 * 1000;
   const notified = new Map();   // device pub/project → when it was last announced
-  function onSessOpen({ key, device, project, refuse, controller = false }) {
+  function onSessOpen({ key, device, project, sid, refuse, controller = false }) {
     if (project === 'hq' && !controller) return refuse('unknown-project');
-    const p = controller ? (project === 'hq' ? { id: 'hq', name: 'HQ', engine: 'claude' } : null) : d.projects().find((x) => x.id === project);
+    const p = controller && project === 'hq' ? { id: 'hq', name: 'HQ', engine: 'claude' } : d.projects().find((x) => x.id === project);   // v3.178 a controller with ctl2 may open any project
     if (!p) return refuse('unknown-project');
     if (p.engine !== 'claude') return refuse('engine');
-    const s = sessionOf(project);
+    const s = sessionOf(project, sid);
     if (!s.file) return refuse(C.SESS_REASONS.includes(s.reason) ? s.reason : 'no-session');
-    const r = { key, device: device.name, project, name: p.name, file: '', cursor: null };
+    const r = { key, device: device.name, project, sid, name: p.name, file: '', cursor: null };
     readers.set(key, r);
     slog({ device: device.name, project: p.name, event: 'open' });
     const nk = `${device.pub}/${project}`;
@@ -722,7 +723,7 @@ function setupLink(d) {
   /** Reads what the transcript gained and hands it to the link (the first read and a new session file start over). */
   function feed(r) {
     if (!readers.has(r.key)) return;
-    const s = sessionOf(r.project);
+    const s = sessionOf(r.project, r.sid);
     if (!s.file) return;   // no session right now: what was sent stays, the next one starts over
     if (s.file !== r.file) { r.file = s.file; r.cursor = null; }
     let items = [];

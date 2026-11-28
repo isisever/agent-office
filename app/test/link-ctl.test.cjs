@@ -103,9 +103,13 @@ test('integration: a phone pairs by QR URL, reads ctl-view and types an HQ turn'
   desk.endSess(opened[0].key, 'limit', 'test');
   await until(() => events.some((e) => e.t === 'sess-end' && e.id === 'h1'));
   assert.ok(hs.close);
-  phone.write({ t: 'sess-open', id: 'p2', project: 'p1' });   // any other project: refused
-  await until(() => events.some((e) => e.t === 'sess-end' && e.id === 'p2' && e.reason === 'not-allowed'));
-  assert.equal(opened.length, 1);
+  phone.write({ t: 'sess-open', id: 'p2', project: 'p1' });   // v3.178 the phone says 'ctl2': any project opens
+  await until(() => opened.length === 2);
+  assert.equal(opened[1].project, 'p1');
+  assert.equal(opened[1].controller, true);
+  phone.write({ t: 'sess-open', id: 'p3', project: 'p1:tab' });   // never an extra tab or a desk
+  await until(() => events.some((e) => e.t === 'sess-end' && e.id === 'p3' && e.reason === 'unknown-project'));
+  desk.endSess(opened[1].key, 'limit', 'test');
   // a phone is never an office: a task for it is refused, never held for its next hello
   const phonePub = desk.view().phones[0].pub || desk.devices.find((x) => x.kind === 'controller').pub;
   const task = desk.sendCommand(phonePub, 'p1', 'do it', { report: true, hold: true });

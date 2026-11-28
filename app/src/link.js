@@ -646,8 +646,10 @@ class Link extends EventEmitter {
   sessOf(pub) { return [...this.sessOut.values()].filter((s) => s.pub === pub); }
   /** v3.121 may this subscription still be fed? An own office: any project; a paired phone: the HQ session only. */
   maySess(s) {
-    return C.maySessions(this.devices, this.secrets, s.pub) || (s.project === 'hq' && C.isController(this.devices, this.secrets, s.pub));
+    return C.maySessions(this.devices, this.secrets, s.pub) || (C.isController(this.devices, this.secrets, s.pub) && (s.project === 'hq' || this.ctl2(s.pub)));
   }
+  /** v3.178 did this phone say it speaks 'ctl2' (any-project sessions, project screen, send/answer/stop)? */
+  ctl2(pub) { return Boolean(this.peers.get(pub)?.caps?.includes('ctl2')); }
   /** A device asks to read one of our projects' sessions: only while it is paired and not paused (v3.101). */
   receiveSessOpen(conn, d, m) {
     if (!this.peerHas(d.pub, 'sess')) return;   // it never said it understands the answer
@@ -1088,12 +1090,24 @@ class Link extends EventEmitter {
       if (!this.queryLimiter.take(d.pub)) return reply([]);
       if (!this.listenerCount('ctl-reports')) return reply([]);
       this.emit('ctl-reports', { device: d, id: m.id, limit: m.limit, reply });
+    } else if (m.t === 'ctl-proj' && !m.proj && !m.error) {   // v3.178 cap 'ctl2': the project screen
+      if (!this.ctl2(d.pub)) return onInvalid();
+      const reply = (extra) => { const line = W.validateCtl({ t: 'ctl-proj', id: m.id, project: m.project, ...extra }); if (line && !conn.destroyed) this.write(conn, line); };
+      if (!this.queryLimiter.take(d.pub)) return reply({ error: 'rate-limited' });
+      const row = this.ctlView()?.projects.find((p) => p.id === m.project);
+      if (!row) return reply({ error: 'unknown-project' });
+      if (row.engine !== 'claude') return reply({ error: 'engine' });
+      if (!this.listenerCount('ctl-proj')) return reply({ proj: { ...row, sessions: [] } });
+      this.emit('ctl-proj', { device: d, id: m.id, project: m.project, reply: (sessions, pending) => reply({ proj: { ...row, sessions: sessions || [], ...(pending?.length ? { pending } : {}) } }) });
     } else onInvalid();   // ctl-view, ctl-event, ctl-hq-status and answers only go to the phone
   }
   /** A controller reads the HQ session only (project 'hq'), with the same limits as a device reading a session. */
   ctlSessOpen(conn, d, m) {
     const end = (reason) => { if (!conn.destroyed) this.write(conn, { t: 'sess-end', id: m.id, reason }); };
-    if (m.project !== 'hq') return end('not-allowed');
+    const ctl2 = this.ctl2(d.pub);
+    if (m.project !== 'hq' && !ctl2) return end('not-allowed');   // an older phone reads the HQ only
+    if (m.sid && !ctl2) return end('not-allowed');
+    if (m.project.includes(':')) return end('unknown-project');
     const now = this.now();
     const opens = (this.sessOpens.get(d.pub) || []).filter((at) => now - at < 60000);
     this.sessOpens.set(d.pub, opens);
@@ -1101,9 +1115,9 @@ class Link extends EventEmitter {
     opens.push(now);
     const key = `${d.pub}/${m.id}`;
     if (this.sessOut.has(key)) return;
-    if (this.sessOf(d.pub).length >= C.SESS_PER_DEVICE) return end('limit');
-    this.sessOut.set(key, { key, pub: d.pub, device: d.name, id: m.id, project: 'hq', conn, seq: 0, keptAt: now, queue: [], cool: null });
-    this.emit('sess-open', { key, device: d, id: m.id, project: 'hq', controller: true, refuse: (reason) => this.endSess(key, reason, 'refused') });
+    if (this.sessOf(d.pub).length >= (ctl2 ? C.SESS_PER_CONTROLLER : C.SESS_PER_DEVICE)) return end('limit');
+    this.sessOut.set(key, { key, pub: d.pub, device: d.name, id: m.id, project: m.project, ...(m.sid ? { sid: m.sid } : {}), conn, seq: 0, keptAt: now, queue: [], cool: null });
+    this.emit('sess-open', { key, device: d, id: m.id, project: m.project, ...(m.sid ? { sid: m.sid } : {}), controller: true, refuse: (reason) => this.endSess(key, reason, 'refused') });
     this.emit('change');
   }
   /** The host tells the HQ's status ('working' | 'idle' | 'approval'); controllers get it with the view. */

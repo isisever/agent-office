@@ -260,13 +260,14 @@ function cleanAccounts(list) {
 }
 
 // --- v3.100 reading a remote project's session (cap 'sess'): chat items of the project's main tab, never terminal bytes
-const SESS_REASONS = ['not-allowed', 'unknown-project', 'engine', 'no-session', 'rate-limited', 'limit'];
+const SESS_REASONS = ['not-allowed', 'unknown-project', 'engine', 'no-session', 'rate-limited', 'limit', 'unknown-session'];
 const SESS_BACKFILL_ITEMS = 200;          // a new subscription starts with the last items of the transcript's tail …
 const SESS_BACKFILL_BYTES = 256 * 1024;   // … and at most this many bytes of them (JSON, UTF-8)
 const SESS_FRAME_BYTES = 48 * 1024;       // one sess-items line in BYTES after JSON.stringify (well under MAX_FRAME)
 const SESS_FRAME_ITEMS = 200;             // items in one frame
 const SESS_FRAMES_PER_SEC = 4;
-const SESS_PER_DEVICE = 2;                // subscriptions one device may hold here
+const SESS_PER_DEVICE = 2;
+const SESS_PER_CONTROLLER = 3;           // v3.178 a phone: HQ + a project + one while switching                // subscriptions one device may hold here
 const SESS_IDLE_MS = 10 * 60 * 1000;      // without a sess-keep the subscription ends
 const SESS_QUEUE_MAX = 32;                // frames waiting for one subscription; more ends it (rate-limited)
 const SESS_OPENS_PER_MIN = 12;            // sess-open messages taken from one device per minute
@@ -409,7 +410,7 @@ function validateMessage(m) {
       return isId(m.id) && CMD_STATUS.includes(m.status) && (m.reason == null || REASONS.includes(m.reason))
         ? { t: 'cmd-status', id: m.id, status: m.status, ...(m.reason ? { reason: m.reason } : {}) } : null;
     case 'sess-open':    // v3.100, all five only to a peer with cap 'sess'
-      return isId(m.id) && isId(m.project) ? { t: 'sess-open', id: m.id, project: m.project } : null;
+      return isId(m.id) && isId(m.project) && (m.sid == null || isId(m.sid)) ? { t: 'sess-open', id: m.id, project: m.project, ...(m.sid != null ? { sid: m.sid } : {}) } : null;
     case 'sess-keep':
       return isId(m.id) ? { t: 'sess-keep', id: m.id } : null;
     case 'sess-close':
@@ -575,7 +576,7 @@ module.exports = {
   cleanLine, sanitizeCommand, markedCommand, markedTask, cleanReport, fitReport, REPORT_MAX, REPORT2_MAX, REPORT2_COMMITS, TRUNC_MARK, TASK_STATES, WAIT_STATES, TASK_TTL_MAX, deviceName, RateLimiter,
   cleanSnapshot, validateMessage, validatePair, LineReader, encode,
   normalizeDevices, ownKeys, sealOwn, ctlKeys, isController, offices, migrateOwn, isOwn, isPaused, OWN_VERSION, PAIR_CONFIRM_MS, trusted, mayCommand, mayRunUnattended, mayHandoff, mayManage, mayAccounts, maySessions,
-  SESS_REASONS, SESS_BACKFILL_ITEMS, SESS_BACKFILL_BYTES, SESS_FRAME_BYTES, SESS_FRAME_ITEMS, SESS_FRAMES_PER_SEC, SESS_PER_DEVICE, SESS_IDLE_MS, SESS_QUEUE_MAX, SESS_OPENS_PER_MIN,
+  SESS_REASONS, SESS_BACKFILL_ITEMS, SESS_BACKFILL_BYTES, SESS_FRAME_BYTES, SESS_FRAME_ITEMS, SESS_FRAMES_PER_SEC, SESS_PER_DEVICE, SESS_PER_CONTROLLER, SESS_IDLE_MS, SESS_QUEUE_MAX, SESS_OPENS_PER_MIN,
   ctlHqStatus, ctlTurn,
   cleanSessItem, fitSessItem, sessFrames, sessBackfill, snapshotOf, snapshotFor, logEntry,
   cleanRes, cleanCatalog, resOf, resChanged, typingReady,
