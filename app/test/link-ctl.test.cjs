@@ -158,7 +158,8 @@ test('a paired phone is never an office in main or link-host (dispatch, HQ machi
   assert.match(host, /function dispatchRemote[^]*?C\.offices\(l\.devices\)\.some/);
   assert.match(host, /devices\(\) \{ const l = start\(\); return l \? C\.offices\(l\.devices\)/);
   // and the HQ setting gates a phone's turn; it mints no "the person typed it" request id
-  const ctl = main.slice(main.indexOf('ctlHq: (text) =>'), main.indexOf('ctlReports: ctlReportsList'));
+  const k = main.indexOf('function ctlHqNow(');   // v3.179 the turn runs in ctlHqNow, behind the busy queue
+  const ctl = main.slice(main.indexOf('ctlHq: (text) =>'), main.indexOf('ctlReports: ctlReportsList')) + main.slice(k, main.indexOf('function ctlOpNow(', k));
   assert.match(ctl, /enabled: Boolean\(hqSettings\(\)\.enabled && P\.hqProject\(state\)\)/);
   assert.doesNotMatch(ctl, /hqMinter\.mint/);
   // the offices filter itself

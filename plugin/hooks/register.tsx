@@ -222,10 +222,10 @@ const MODEL_AUTO =
 const modelPinned = (model: string) =>
   `Every agent of this session runs on ${model} (the person's setting in Agent Office), so don't set the Agent tool's model parameter.`
 
-// Studio (AGENT_OFFICE_STUDIO=1, set by the app only on a Studio GUI chat spawn): the person's messages queue behind a
-// running tool call, so a long foreground command would lock them out. Fixed per session, so the prompt stays cached.
+// Studio (AGENT_OFFICE_STUDIO=1, set by the app only on a Studio GUI chat spawn): the person's messages (also from the phone)
+// queue behind a running tool call, so the manager runs no Bash of its own. Fixed per session, so the prompt stays cached.
 const STUDIO_BULLET = `
-- In Studio the person's messages wait until your current tool call ends: never run a long command (test suite, build, archive, upload, anything over a few seconds) in the foreground yourself. Hand it to an agent or run it with run_in_background, and act on the person's orders before your own verification.`
+- In Studio (a chat the person drives from the app or a phone) your messages from the person only reach you between tool calls, so you never run Bash yourself, and no build, test, git, archive or upload command either, not even a short one: dispatch an agent in the background for every command (run_in_background) and stay free to read new messages. Reading files and answering are fine. Act on the person's new orders before you look at an agent's result.`
 
 /** The manager brief; pinned: the model every subagent is forced to (CLAUDE_CODE_SUBAGENT_MODEL_FORCE), else ''. */
 function managerText(pinned = '', studio = false): string {

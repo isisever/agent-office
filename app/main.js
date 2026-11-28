@@ -64,6 +64,7 @@ const CA = require('./src/cmd-auth.js');
 const OCA = require('./src/oc-auth.js');
 const LH = require('./src/link-host.js');
 const LC = require('./src/link-core.js');
+const { createCtlQueue } = require('./src/ctl-queue.js');
 const OM = require('./src/office-mcp.js');
 const HQ = require('./src/hq.js');
 const HO = require('./src/hq-order.js');
@@ -3668,10 +3669,7 @@ function startLink() {
     // v3.121 a phone controller's HQ turn, typed like the person's own (false = HQ is busy right now)
     // v3.121 a phone controller's HQ turn. Only with HQ on; refused while HQ is busy or an approval prompt is open. It is
     // the owner's own typed turn: a live request id is minted (hqMintTyped) so HQ orders need no Mac consent dialog.
-    ctlHq: (text) => LC.ctlTurn({ enabled: Boolean(hqSettings().enabled && P.hqProject(state)), busy: hqBusyNow(), approval: attention.get(HQ.HQ_ID) === 'permission',
-      // v3.178 the paired phone is the owner: its HQ order mints a typed request id like the person's own prompt
-      type: () => { hqLastKey = Date.now(); hqMintTyped(); return typePrompt(HQ.HQ_ID, text); },
-      start: () => { hqMintTyped(); hqWanted = true; startPty(HQ.HQ_ID, { resume: true, prompt: text, forcePrompt: true }); hqRestarter.tick(true); } }),
+    ctlHq: (text) => { const r = ctlQueue.submit(HQ.HQ_ID, text); return r === 'ok' ? 'queued' : r; },   // v3.179 a busy HQ queues the turn
     ctlOp,   // v3.178 ctl2: a phone sends, answers or stops
     ctlAsks: (sink) => { ctlAsksSink = sink; ctlAsksKey = ''; pushCtlAsks(); },
     ctlProj: ctlProjSessions,   // v3.178 a phone's project screen: running + recent sessions
@@ -6515,7 +6513,14 @@ function ctlOp(op, id, { text, askId, answer }) {
   if (!r || r.tab || r.project.hq || r.project.staffOwner || id === HQ.HQ_ID) return 'unknown-project';   // HQ goes only through ctl-hq; a personal workspace is never remote
   if (P.engineOf(r.project) !== 'claude') return 'engine';
   const t = terms.get(id);
-  if (op === 'send') {
+  if (op === 'send') return ctlQueue.submit(id, text);   // v3.179 busy/locked/not-ready waits in the queue instead of a refusal the phone loses
+  return ctlOpNow(op, id, { text, askId, answer }, r, t);
+}
+/** One immediate attempt of a phone's ctl-send: 'ok', 'wait' (try again when the session takes input) or a hard refusal. */
+function ctlSendNow(id, text) {
+  const t = terms.get(id);
+  const r = P.resolvePty(state, id);
+  {
     if (!t && win && isLoaded && !handoffLocked(id) && String(text || '').trim()) {   // not running: start/resume it with this message like the GUI would
       boardNoteRequest(id, r, text);
       startPty(id, { resume: true, prompt: text, forcePrompt: true });
@@ -6523,8 +6528,25 @@ function ctlOp(op, id, { text, askId, answer }) {
     }
     const res = chatSend(id, text, []);
     const map = { 'too-long': 'too-large', permission: 'busy', draft: 'busy', unsupported: 'engine' };
-    return res === 'ok' ? 'ok' : (map[res] || (['not-running', 'locked', 'empty', 'busy', 'too-large'].includes(res) ? res : 'failed'));
+    if (res === 'ok') return 'ok';
+    const why = map[res] || (['not-running', 'locked', 'empty', 'busy', 'too-large'].includes(res) ? res : 'failed');
+    return ['busy', 'locked', 'not-running'].includes(why) ? 'wait' : why;
   }
+}
+const ctlQueue = createCtlQueue({
+  attempt: (key, text) => (key === HQ.HQ_ID ? ctlHqNow(text) : ctlSendNow(key, text)),
+  onDrop: (key, text, reason) => console.error(`phone message for ${key} dropped (${reason}):`, String(text).slice(0, 80)),
+});
+setInterval(() => { try { ctlQueue.drain(); } catch (e) { console.error('ctl queue:', e.message); } }, 1000).unref();
+/** v3.179 a phone's HQ turn: 'ok', 'wait' while HQ is busy or an approval is open, or 'no-hq'. */
+function ctlHqNow(text) {
+  const r = LC.ctlTurn({ enabled: Boolean(hqSettings().enabled && P.hqProject(state)), busy: hqBusyNow(), approval: attention.get(HQ.HQ_ID) === 'permission',
+    // v3.178 the paired phone is the owner: its HQ order mints a typed request id like the person's own prompt
+    type: () => { hqLastKey = Date.now(); hqMintTyped(); return typePrompt(HQ.HQ_ID, text); },
+    start: () => { hqMintTyped(); hqWanted = true; startPty(HQ.HQ_ID, { resume: true, prompt: text, forcePrompt: true }); hqRestarter.tick(true); } });
+  return r === 'queued' ? 'ok' : r === 'busy' ? 'wait' : r;
+}
+function ctlOpNow(op, id, { askId, answer }, r, t) {
   if (!t?.gui) return 'not-running';
   if (op === 'stop') return t.interrupt() ? 'ok' : 'not-running';
   if (handoffLocked(id)) return 'locked';
