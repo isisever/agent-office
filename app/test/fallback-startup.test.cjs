@@ -39,3 +39,24 @@ test('an idle chat on a marked account gets a hit once per mark; a free account 
   assert.equal(FB.idleLimitHit({ mark, now: NOW }).at, NOW - 10);
   assert.equal(FB.idleLimitHit({ now: NOW }), null);
 });
+
+test('an idle chat move waits while any tab of the project is mid-turn', () => {
+  assert.equal(FB.idleMoveReady([false, false]), true);
+  assert.equal(FB.idleMoveReady([false, true]), false);
+  assert.equal(FB.idleMoveReady([]), true);
+});
+
+test('a no-backup plan is not redone for the same limit window', () => {
+  const entry = FB.retryEntry({ wait: NOW + 500000, hitAt: 100, now: NOW });
+  assert.equal(entry.until, NOW + 60000);   // capped so a freed account is noticed
+  assert.equal(FB.retryGate(entry, { hitAt: 100, now: NOW + 1500 }), false);
+  assert.equal(FB.retryGate(entry, { hitAt: 101, now: NOW + 1500 }), true);   // a newer hit
+  assert.equal(FB.retryGate(entry, { hitAt: 100, now: NOW + 60000 }), true);   // the window ended
+  assert.equal(FB.retryGate(undefined, { hitAt: 1, now: NOW }), true);
+});
+
+test('the startup move honors the loop guard', () => {
+  const recent = [NOW - 1000];
+  assert.equal(FB.switchAllowed(recent, NOW).ok, false);
+  assert.equal(FB.switchAllowed([], NOW).ok, true);
+});

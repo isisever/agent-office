@@ -5088,3 +5088,13 @@ test('resume: offerTargets is the complement of resumeTargets; guiTurn reads a c
   assert.deepStrictEqual(R.guiTurn({ live: () => ({ busy: true }), sessionId: () => 'abc-1' }), { busy: true, sessionId: 'abc-1' });
   assert.deepStrictEqual(R.guiTurn({ live: () => ({ busy: false }), sessionId: () => 'bad id!' }), { busy: false, sessionId: '' });
 });
+
+test('main.js wires the fallback review fixes', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
+  const start = src.slice(src.indexOf('function moveLimitedAtStart'), src.indexOf('function resumeUnfinished'));
+  assert.match(start, /FB\.switchAllowed/);
+  assert.match(start, /moveProject\(p\.id, account\)/);
+  assert.match(src, /FB\.idleMoveReady\(/);
+  assert.match(src, /reason: 'none', text: ''/);
+  assert.match(src, /kind: 'cleared'/);
+});

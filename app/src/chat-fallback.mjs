@@ -18,3 +18,8 @@ export function fallbackNote(ev) {
   }
   return null;
 }
+
+/** True when the event ends a "no switch" state (the chat resumed or the limit reset): the strip goes away. */
+export function clearsFallback(ev) {
+  return Boolean(ev) && typeof ev === 'object' && (ev.kind === 'resumed' || ev.kind === 'cleared');
+}

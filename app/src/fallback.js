@@ -523,6 +523,20 @@ function idleLimitHit({ usage = null, mark = null, now = Date.now() }) {
   return { at: mark?.at || usage?.updatedAt || until, resetsAt: until, type: null, text: '' };
 }
 
+/** An idle GUI chat's mark-only hit may move the whole project only when no tab of it is mid-turn. busy: one flag per tab. */
+function idleMoveReady(busy) {
+  return !(busy || []).some(Boolean);
+}
+
+/** Debounce of a "nothing to move to" plan: asked again only when its window ends (≤ 60 s) or a newer hit arrives. */
+const RETRY_CAP_MS = 60000;
+function retryGate(entry, { hitAt = 0, now = Date.now() } = {}) {
+  return !entry || now >= entry.until || hitAt > entry.at;
+}
+function retryEntry({ wait = null, hitAt = 0, now = Date.now() } = {}) {
+  return { until: Math.min(Number.isFinite(wait) && wait > now ? wait : Infinity, now + RETRY_CAP_MS), at: hitAt };
+}
+
 /** The model of the session's last real answer (an assistant entry's message.model, not '<synthetic>'), or null. */
 function modelFromTranscript(tail) {
   const lines = String(tail || '').split('\n');
@@ -606,6 +620,6 @@ module.exports = {
   isUsageLimitText, isCompactionLimitText, parseResetText, limitFromTranscript, plainText, scanPty,
   inputAfter, startInput, compactionSighting, compactionContradicted, compactionVerdict, compactionHit, limitMark, mergeMarks,
   limitedUntil, markFor, fullness, pickBackup, switchAllowed, shouldReturn, normalizeMarks,
-  FAMILIES, modelFamily, limitFamily, modelMarkKey, modelLimitedUntil, normalizeModelMarks, secondModel, planLimitMove, limitedStartMove, guiLimitHit, idleLimitHit,
+  FAMILIES, modelFamily, limitFamily, modelMarkKey, modelLimitedUntil, normalizeModelMarks, secondModel, planLimitMove, limitedStartMove, guiLimitHit, idleLimitHit, idleMoveReady, retryGate, retryEntry,
   modelFromTranscript, subagentLimits,
 };
