@@ -12,6 +12,10 @@ struct ContentView: View {
           Spacer()
           Text(link.state).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary)
         }
+        if let fatal = link.fatalError {
+          ScrollView { Text(fatal).font(.system(.caption, design: .monospaced)).foregroundStyle(.red).textSelection(.enabled) }
+            .frame(maxHeight: 220)
+        }
         Button("Start worklet") { link.start() }
           .buttonStyle(.bordered)
         TextField("Pairing URI or 5 words", text: $code)

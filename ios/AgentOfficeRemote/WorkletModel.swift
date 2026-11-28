@@ -7,6 +7,8 @@ import os
 final class WorkletModel: ObservableObject {
   @Published private(set) var state = "stopped"
   @Published private(set) var lines: [String] = []
+  /// The last worklet fatal error, shown in red by the UI so it can be read and screenshotted.
+  @Published private(set) var fatalError: String?
 
   private let logger = Logger(subsystem: "com.savasisisever.agentoffice.remote", category: "worklet")
   private var worklet: Worklet?
@@ -34,6 +36,7 @@ final class WorkletModel: ObservableObject {
       }
     } catch {
       state = "failed"
+      fatalError = "worklet failed to start: \(error)"
       append("worklet failed: \(error)")
     }
   }
@@ -79,7 +82,9 @@ final class WorkletModel: ObservableObject {
       switch t {
       case "log": append(obj["line"] as? String ?? "")
       case "status": state = obj["state"] as? String ?? state
-      case "fatal": state = "fatal"; append("FATAL \(obj["error"] as? String ?? "")")
+      case "fatal":
+        let text = obj["error"] as? String ?? "unknown error"
+        state = "fatal"; fatalError = text; append("FATAL \(text)")
       case "ready": if let seed = obj["seed"] as? String { UserDefaults.standard.set(seed, forKey: "ctlSeed") }
       case "paired": if let paired = obj["paired"] as? [String: Any] { UserDefaults.standard.set(paired, forKey: "ctlPaired"); append("paired with \(paired["name"] as? String ?? "?")") }
       case "recv":
