@@ -381,6 +381,15 @@ body.studio .chat-pick {
 body.studio .chat-pick:hover:not(:disabled) { background-color: var(--st-hover); color: var(--st-text); }
 body.studio .chat-pick:disabled { opacity: .55; cursor: default; }
 body.studio .chat-pick option { color: var(--st-text); background: var(--st-raised); }
+/* v3.137 the way back from a tab's terminal: #chat-switch as a pill at the top-right of the terminal */
+body.studio #chat-switch {
+  display: inline-flex; align-items: center; gap: 6px; top: 10px; right: 18px; z-index: 3; height: 30px; padding: 0 12px 0 10px;
+  border: 1px solid var(--st-border-strong); border-radius: 999px; background: var(--st-raised); color: var(--st-text);
+  font: 500 13px var(--st-font); opacity: 1; box-shadow: var(--st-shadow); cursor: pointer;
+}
+body.studio #chat-switch:hover { background: var(--st-bubble); }
+body.studio #chat-switch .st-icon { display: block; color: var(--st-muted); }
+body.studio #chat-switch[hidden] { display: none; }
 /* the overflow menu (the Terminal switch) */
 body.studio .chat-more-wrap { position: relative; display: inline-block; }
 body.studio .chat-more-menu {

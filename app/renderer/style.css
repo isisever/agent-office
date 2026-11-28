@@ -1687,8 +1687,10 @@ body.voice-recording #voice-hud { border-color: var(--danger, #c0392b); }
    own design (tokens, fonts, sidebar, chat, composer) is in studio.css, scoped under body.studio. */
 #studio-sidebar { display: none; }
 body.studio #sidebar, body.studio #office, body.studio #divider, body.studio #tabs, body.studio #tab-add,
-body.studio #agent-panel, body.studio #usage-panel, body.studio #machines-panel, body.studio #hq-board,
-body.studio #chat-switch { display: none !important; }
+body.studio #agent-panel, body.studio #usage-panel, body.studio #machines-panel, body.studio #hq-board { display: none !important; }
+/* v3.137 a button that opens the terminal: the Office's word, Studio's switch (renderer/chat.js termLabel) */
+body.studio .term-label-office, body:not(.studio) .term-label-studio { display: none; }
+body.studio .term-label-studio { display: inline-flex; align-items: center; gap: 6px; }
 body.studio #terminal { flex: 1 1 0; max-height: none; }
 body.studio #terminal #empty { display: none; }
 /* the HQ board (reports, routines) in place of the chat, opened from Studio's pinned entries */

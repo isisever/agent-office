@@ -3801,3 +3801,16 @@ Amends v3.131 (order cards' `tokens`/`usd` were 0). Pure rules in `src/order-tra
   card expanded (`board-view` `setRequest`).
 - Tests: `test/order-track.test.cjs` (sampling, carry, freeze, cleaning, order cost incl. remote/unknown, the card and
   report rows, strip items, progress lines). **Not verified live** in a running app.
+
+## Studio: switching to the terminal and back (v3.137)
+
+Amends v3.120 (Studio hid `#chat-switch`, so a Studio tab switched to its terminal had no way back to its chat).
+
+- **Switch label.** Every chat button that opens the tab's terminal (the composer's overflow item, the permission
+  banner, the cut-menu buttons) draws both labels (`renderer/chat.js` `termLabel`): the Office's "Terminal"
+  (`chat.terminal`, unchanged) and Studio's "Switch to terminal" (`chat.switchTerminal`, with the `terminal` icon on the
+  banner buttons). CSS shows the experience's one (`.term-label-office` / `.term-label-studio`).
+- **Back to chat.** Studio no longer hides `#chat-switch`: it is the same button and click handler as in the Office
+  (`setChatMode(activePty(), true)`), shown under the same condition (`chatButtonFor`), drawn as a pill at the top-right
+  of `#terminal` with the `back` icon and "Back to chat" (`chat.backToChat`). In both experiences it is hidden while the
+  visible pane shows its chat (`panes.get(visible).chatOn`).

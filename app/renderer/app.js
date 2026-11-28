@@ -10,6 +10,7 @@ import { mountDevices, mergeRemote } from './devices.js';
 import { setLang, onLang, t, getLang } from './i18n.js';
 import { modLabel, isModKey, keyOf, isMac, platform as osPlatform } from './platform.js';
 import { mountStudio } from './studio.js';
+import { icon } from './studio-icons.js';
 import { mountKeepAwake } from './keep-awake-button.js';
 import { mountEconomy } from './economy-button.js';
 import { mountBudgetBanner } from './budget-banner.js';
@@ -368,7 +369,8 @@ function syncChat() {
     if (want) { p.chat.setAttention(attn(id)); p.chat.show(); if (!was) requestAnimationFrame(() => p.term.fit()); } else p.chat?.hide();
     if (was && !want && id === visible) requestAnimationFrame(() => { p.term.fit(); p.term.focus(); });
   }
-  const canSwitch = Boolean(visible) && chatButtonFor({ ...chatFacts(visible), capable: chatCapable(visible) });
+  // never over a pane that shows its chat (Studio with the chat view on offers it over any Claude Code tab)
+  const canSwitch = Boolean(visible) && !panes.get(visible)?.chatOn && chatButtonFor({ ...chatFacts(visible), capable: chatCapable(visible) });
   if (canSwitch && !chatSwitch) {
     chatSwitch = document.createElement('button');
     chatSwitch.id = 'chat-switch';
@@ -377,8 +379,10 @@ function syncChat() {
   }
   if (chatSwitch) {
     chatSwitch.hidden = !canSwitch;
-    chatSwitch.textContent = t('chat.chat');
-    chatSwitch.title = t('chat.chatTitle');
+    // v3.137 Studio: the way back from a terminal is a "Back to chat" pill (same button, same click)
+    if (studioOn) chatSwitch.replaceChildren(icon('back', 14), document.createTextNode(t('chat.backToChat')));
+    else chatSwitch.textContent = t('chat.chat');
+    chatSwitch.title = t(studioOn ? 'chat.backToChat' : 'chat.chatTitle');
   }
 }
 
