@@ -240,6 +240,18 @@ function guiStartModeArgs({ gui = false, hq = false, lock = '', modes = [] } = {
   return ['--permission-mode', 'auto'];
 }
 /**
+ * v3.151 an account whose modes were never probed starts its GUI chats without --permission-mode (guiStartModeArgs
+ * never passes `auto` to an account that may not offer it). When the probe later learns the account offers `auto`,
+ * should this live chat be switched to it? Only a GUI chat that is not HQ / desk / guarded / skip-permissions (the same
+ * exclusions as guiStartModeArgs) and whose mode nobody set yet: `currentMode` is the gui-proc settings().mode, which
+ * holds a start --permission-mode and every picker or switch result, so '' means "started in claude's default, untouched".
+ * @param {{ gui?: boolean, hq?: boolean, lock?: string, modes?: string[], currentMode?: string }} o
+ * @returns {boolean}
+ */
+function guiAutoUpgrade({ gui = false, hq = false, lock = '', modes = [], currentMode = '' } = {}) {
+  return guiStartModeArgs({ gui, hq, lock, modes }).length > 0 && !currentMode;
+}
+/**
  * v3.120 chat:setting answers 'not-running' (startStep retries) for a model while the new tab's initialize answer has
  * not come: its model list is still empty, so an account model ("sonnet[1m]", "opusplan") would be refused as 'bad'.
  * @param {string} key @param {boolean|undefined} modelsKnown the GUI chat's modelsKnown() (undefined: an old wrapper)
@@ -261,5 +273,5 @@ function settingAllowed(lock, key) {
 
 module.exports = {
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
-  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs, autoApproveAfterSet, modelListPending,
+  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs, guiAutoUpgrade, autoApproveAfterSet, modelListPending,
 };

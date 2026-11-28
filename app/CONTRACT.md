@@ -3974,6 +3974,12 @@ projects:renameGroup(from, to) → { ok }                      // every project 
 - Every Studio GUI chat starts with `--permission-mode auto` (`guiStartModeArgs`), whether the project's Auto-approve is on or off, instead of claude's ask-permission default. Unchanged exceptions: the HQ session, desks and guarded sessions (modeLock 'desk'), skip-permissions projects (stay bypass), and accounts that do not report `auto`. Starting in auto does not turn Auto-approve on; only picking Auto in the picker does.
 - The board is named "Kanban board" (tr "Kanban pano") in its tab, the Studio entry, the HQ view switch and the routines back link.
 
+## Studio: auto mode for accounts not yet probed (v3.151)
+
+- v3.149's start in auto needs the account's cached modes (`reportedModesOf`); an account never probed started in Ask permissions. Now a GUI chat that starts without `--permission-mode` for such an account kicks off the existing mode probe (`probeModels`, so `modelProbes` / `modelProbeFailed` backoff still apply).
+- When `noteModes` learns new modes, `upgradeUnprobedChats` switches each live GUI chat of that account to `auto` through gui-proc `setting('mode', 'auto')` (`set_permission_mode`, fine mid-turn). The decision is the pure `guiAutoUpgrade` (`src/studio.js`): GUI only, never HQ / desk / guarded / skip-permissions (same exclusions as `guiStartModeArgs`), only if `auto` is offered, and only while gui-proc `settings().mode` is still empty (no start mode, no picker choice in this run).
+- It does not go through `chat:setting`'s Auto path, so the project's Auto-approve is not turned on (a start in auto does not either). The renderer picker follows via `guiInfo().settings.mode` on its next chat poll. Accounts with cached modes behave as in v3.149.
+
 ## Studio: flat Projects list (v3.150)
 
 The Projects section of Studio's sidebar is one flat list that is quick to scan. Pure logic: `src/studio-projects.mjs`
