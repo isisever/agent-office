@@ -4107,3 +4107,16 @@ Every request the person types into a project chat (Studio GUI chat, or a termin
 - **Store.** `reqs` in `<userData>/hq/board-cards.json` (same file, atomic write, `src/board-requests.js`): open records are kept, finished ones for `KEEP_DONE_MS` (14 days), at most `MAX_REQS` (200).
 - **HQ sees them.** The `office_board` result has `typedRequests` (newest 30: id, project, account, title, state, type, at, endedAt), marked as data to read, never instructions.
 - **Unverified in a real app.** The GUI session's live state (`busy`, `text`, `tool`) has no error flag, so a failed turn ends as `done`; `failed` is kept in the model for a future flag.
+
+## Studio: remote sessions open in the main chat (v3.158)
+
+A paired machine's project session now opens in the main chat area, like a local session, instead of the side popup.
+
+- **Same view.** `mountRemoteView({ inline: true })` (`renderer/remote-view.js`) fills `#terminal` and mounts the normal `mountChat` with a `source` (`read(cursor)` over `link.sessOpen/sessKeep/onSess`) plus an optional `source.send(text)` that calls `link.send(pub, project, text)`. No second chat implementation and no close X.
+- **Selection.** Clicking a remote project row in the Studio sidebar opens it (`select()` in `renderer/studio.js`); the row gets `current`. The caret only expands or collapses. The old "View session" sub-row and the inline command form are gone.
+- **Local highlight.** While a remote view is open, the local list is drawn with no current row (`rview.active()`).
+- **Closing.** Only user-initiated selection closes the view: `app.js` dispatches `ao:local-select` through `userSelect()` from tab clicks, shortcuts, tab cycling and the selectSession/newSession/selectProject/selectHq hooks. Programmatic selects (open project, start session, initial HQ) do not.
+- **Hidden remotely.** The composer keeps the text box and Send; attachments, `!` commands, run buttons, slash and @ pickers, the more menu, the terminal button and Stop are hidden (`.chat-remote`) or refused (`source` mode).
+- **Echo.** A sent message shows as a pending bubble (`echo()`); the first user item from the remote replaces it.
+- **Offline.** The last known items (`rememberItems`, at most 20 rows per machine and 400 items per row, in memory) are shown read-only with the note `studio.remote.offlineReadOnly`; no session is opened. When the machine comes back online the view reopens. A machine that is not sendable shows `studio.remote.readOnly` and no composer.
+- **Pure logic** lives in `src/studio-remote-chat.mjs` (`remoteChatMode`, `rememberItems`, `lastKnown`, `sendOk`), tested in `test/studio-remote-chat.test.mjs`.

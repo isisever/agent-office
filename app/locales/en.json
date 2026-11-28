@@ -246,7 +246,9 @@
       "heading": "On other machines",
       "runsOn": "Runs on {machine}",
       "offline": "{machine} is offline, showing last known state",
-      "view": "View session"
+      "offlineReadOnly": "{machine} is offline, showing its last known content (read-only)",
+      "readOnly": "This session cannot be controlled from here (read-only)",
+      "sendFailed": "Could not send the message to the other machine"
     }
   },
   "app": {

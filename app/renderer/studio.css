@@ -1038,3 +1038,17 @@ body:not(.studio) .chat-code-run { display: none; }
 body.studio .st-row-input { flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--st-raised); border: 1px solid var(--st-accent); border-radius: var(--st-radius-s); padding: 2px 6px; outline: none; }
 body.studio .st-menu.st-ctx { position: fixed; right: auto; bottom: auto; left: 0; top: 0; width: auto; min-width: 160px; z-index: 60; }
 body.studio .st-menu[hidden] { display: none; }
+/* v3.158 a remote session in the main chat area (renderer/remote-view.js, inline): fills the terminal area like a local
+   chat; what cannot work on another machine (attachments, mic, pickers, menus, terminal) is hidden */
+body.studio #terminal { position: relative; }
+body.studio .remote-view.rv-inline { position: absolute; inset: 0; top: 0; right: 0; bottom: 0; width: auto; min-width: 0; z-index: 5; padding: 0; gap: 0; border: 0; border-radius: 0; box-shadow: none; background: var(--st-bg, var(--bg)); }
+body.studio .rv-inline .rv-head { padding: 10px 16px 6px; }
+body.studio .rv-inline .rv-note { margin: 0 16px 6px; }
+body.studio .rv-inline .rv-body { min-height: 0; }
+body.studio .rv-inline.rv-ro .chat-form { display: none; }
+body.studio .rv-inline .chat-remote .chat-attach,
+body.studio .rv-inline .chat-remote .chat-more,
+body.studio .rv-inline .chat-remote .chat-more-menu,
+body.studio .rv-inline .chat-remote .chat-term,
+body.studio .rv-inline .chat-remote .chat-stop,
+body.studio .rv-inline .chat-remote .chat-chips { display: none; }

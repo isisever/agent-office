@@ -464,7 +464,7 @@ function tabButton(p, tab, active, running) {
   const member = tab?.staffId ? staffList.find((m) => m.id === tab.staffId) : null;
   label.textContent = member ? `● ${member.name}` : tab?.shell ? `› ${baseName(dir)}` : tab?.worktree ? `⎇ ${tab.worktree.branch}` : baseName(dir);
   b.append(num, label);
-  b.addEventListener('click', () => selectTab(p.id, n));
+  b.addEventListener('click', () => { userSelect(); selectTab(p.id, n); });
   if (tab) {
     const x = document.createElement('button');
     x.className = 'tab-x';
@@ -499,6 +499,8 @@ function renderTabs() {
   );
 }
 
+/** v3.158 a person's own selection of a local session closes a remote session shown in the main chat (programmatic selects do not). */
+const userSelect = () => window.dispatchEvent(new Event('ao:local-select'));
 function selectTab(projectId, n) {
   activeTab.set(projectId, n);
   render();
@@ -570,6 +572,7 @@ function cycleTab(step) {
   if (!p || !tabsOf(p).length) return;
   const ns = [MAIN_TAB, ...tabsOf(p).map((x) => x.n)];
   const i = ns.indexOf(tabOf(p));
+  userSelect();
   selectTab(p.id, ns[(i + step + ns.length) % ns.length]);
 }
 
@@ -1249,7 +1252,7 @@ window.addEventListener('keydown', (e) => {
   if (key === 'o') { e.preventDefault(); e.stopPropagation(); addProject(); return; }
   if (/^[1-9]$/.test(key)) {
     const p = shownOrder(projects)[Number(key) - 1];   // v3.86 the list's order (groups, no personal workspaces)
-    if (p) { e.preventDefault(); e.stopPropagation(); selectProject(p.id); }
+    if (p) { e.preventDefault(); e.stopPropagation(); userSelect(); selectProject(p.id); }
   }
 }, true);
 
@@ -1474,12 +1477,12 @@ hqUi = mountHq({ sidebar: $('sidebar'), office: $('office'), api, t, onSelect: (
 // v3.120 Studio: its sidebar and start screen (renderer/studio.js); the main region is the Office's own #terminal
 const leaveBoard = () => document.body.classList.remove('studio-board');
 studio = mountStudio({ api, t, modLabel, hooks: {
-  selectSession: (projectId, n) => { leaveBoard(); selectProject(projectId); selectTab(projectId, n); },
-  newSession: (projectId) => { leaveBoard(); selectProject(projectId); addTab(projectId, 'same'); },
+  selectSession: (projectId, n) => { userSelect(); leaveBoard(); selectProject(projectId); selectTab(projectId, n); },
+  newSession: (projectId) => { userSelect(); leaveBoard(); selectProject(projectId); addTab(projectId, 'same'); },
   closeSession: (projectId, n) => { closeTab(projectId, n); },
-  selectProject: (projectId) => { leaveBoard(); selectProject(projectId); },
-  selectHq: () => { leaveBoard(); selectProject(HQ_ROW.id); },
-  openBoard: (tab) => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); hqUi?.showBoard(tab === 'reports' ? 'reports' : 'board'); },   // v3.131 the board (renderer/board-view.js): Board, Reports; Routines
+  selectProject: (projectId) => { userSelect(); leaveBoard(); selectProject(projectId); },
+  selectHq: () => { userSelect(); leaveBoard(); selectProject(HQ_ROW.id); },
+  openBoard: (tab) => { userSelect(); selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); hqUi?.showBoard(tab === 'reports' ? 'reports' : 'board'); },   // v3.131 the board (renderer/board-view.js): Board, Reports; Routines
   openOfficeSettings: () => sidebar?.openSettings(),
   sidebar: () => sidebar,
   showPanel: (sel) => Boolean(studio?.showPanel(sel)),
@@ -1555,7 +1558,7 @@ function studioCommands(projectId) {
     ...cmd('machines', panel('#machines-panel')),   // v3.122 the Office's floating panels (studio.js FLOATS)
     ...cmd('usage', panel('#usage-panel'), Boolean(p)),
     ...cmd('mail', panel('#sb-panel-mail')),   // the MAIL panel, when mail is on (showPanel is false without it)
-    ...cmd('remoteTask', () => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); }),   // HQ's board: send-as-task to any target
+    ...cmd('remoteTask', () => { userSelect(); selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); }),   // HQ's board: send-as-task to any target
     ...cmd('addProject', () => addProject()),
     ...cmd('projectSettings', () => sidebar?.openProjectSettings(p.id), Boolean(p)),
     ...cmd('openFolder', () => api.projects.openFolder?.(p.id).catch((e) => console.error(e)), Boolean(p)),
