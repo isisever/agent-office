@@ -5009,7 +5009,8 @@ ipcMain.handle('projects:setActive', (_e, id) => {
   commit(P.setActive(state, id));
   updateAttention();
 });
-ipcMain.handle('projects:setAccount', (_e, id, accountId) => {
+ipcMain.handle('projects:setAccount', (e, id, accountId) => {
+  if (!fromWin(e) || typeof id !== 'string' || typeof accountId !== 'string' || !state.accounts.some((a) => a.id === accountId)) return;
   const p = P.findProject(state, id);
   if (!p || p.accountId === accountId) return;
   const from = A.accountOf(state, p);

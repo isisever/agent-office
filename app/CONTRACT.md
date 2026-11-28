@@ -4142,3 +4142,18 @@ terminal view appears only after the person clicks the "Switch to terminal" togg
 - `studio:open` with a `sessionId` accepts a saved Recent entry or a transcript of the project folder, and starts it in a new tab.
 - Clicking a project name opens `projectClickTarget(group)` (`src/studio-projects.mjs`): the first running/asleep tab, else the newest Recent session, else only selects the project (unchanged).
 - Tests: `test/studio-restore-select.test.mjs`.
+
+## Studio: account picker in the project header (v3.163)
+
+The account chip in Studio's session header is a picker. A click opens a menu of the configured accounts (the current
+one checked); choosing one sets that project's account.
+
+- Reuses the existing `projects:setAccount` IPC and the renderer `setAccount` (same effect as the sidebar's account
+  menu): the project's tabs restart on the new account and resume their own conversation (`moveProject`). Nothing new
+  is stored. The menu's note says so.
+- main validates: the call must come from the app window (`fromWin`), `id` and `accountId` must be strings, and the
+  account id must exist in `state.accounts`; anything else is ignored.
+- With a single account the chip stays a plain label (nothing to choose). Signed-out accounts are marked.
+- Pure logic: `src/studio-account-picker.mjs` (`accountChoices`, `accountToSet`, `pickerUseful`); the menu opens below
+  the chip, inside the window. Tests: `test/studio-account-picker.test.mjs`.
+- Strings: `studio.accountPick`, `studio.accountPickNote`, `studio.accountSignedOut` (en + tr).

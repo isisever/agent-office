@@ -1052,3 +1052,10 @@ body.studio .rv-inline .chat-remote .chat-more-menu,
 body.studio .rv-inline .chat-remote .chat-term,
 body.studio .rv-inline .chat-remote .chat-stop,
 body.studio .rv-inline .chat-remote .chat-chips { display: none; }
+
+/* v3.163 header account picker */
+body.studio button.st-chip-pick { border: 0; cursor: pointer; font-family: inherit; }
+body.studio button.st-chip-pick:hover { background: var(--st-border); color: var(--st-text); }
+body.studio .st-acct-menu { z-index: 60; }
+body.studio .st-menu-item[aria-checked="true"] { font-weight: 600; }
+body.studio .st-menu-note { padding: 6px 8px 2px; color: var(--st-faint); font: 400 11px/1.3 var(--st-font); }
