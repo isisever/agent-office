@@ -4059,3 +4059,14 @@ Logic lives in `src/chat-bash.mjs` (pure, tested in `test/chat-bash.test.mjs`); 
 - **Run buttons.** Assistant-message code blocks tagged bash, sh, shell, zsh or console get a Run button (finished messages only, not the live stream, not read-only views). Nothing runs until it is clicked. A multi-line script, or one containing `sudo` or `rm `, first shows an inline "Run this script? Run / Cancel" in place of the button. Output is shown and queued exactly as for `!`.
 - **Disabled.** HQ chats, non-GUI tabs and chats whose permission mode is held (bypass or desk) refuse (`runAllowed`); main answers `refused` and the chat shows a note. The renderer cannot see the mode lock, so main is the authority.
 - **Limits and cleanup.** At most `MAX_RUNNING` commands per chat; a command still running after `TIMEOUT_MS` is killed. Commands die (whole process tree) on Stop, when the chat or tab closes (`killBashFor`), and when the chat view is destroyed.
+
+## Board: requests typed in project chats (v3.159)
+
+Every request the person types into a project chat (Studio GUI chat, or a terminal tab's composer via `chat:send`) is one card on the Kanban board, so it can be followed there and by HQ. Raw keystrokes typed straight into a terminal's pty do not pass `chat:send` and make no card.
+
+- **One card per request.** Title = the first non-empty line of the text (redacted, at most 80 characters), plus project, account label, type (`BM.classify`, changeable like any card), start time and duration. Card id `q:<record id>`; the card has `kind: 'chat'` and `typed: true`, so a click opens the project's chat like a chat card. A session that has request cards shows no session chat card of its own (no duplicates).
+- **None for** HQ's own chat, tabs carrying a dispatched task (`guiTaskOpen`), messages starting with `/` (commands), and empty text. HQ's dispatches already have order cards.
+- **State.** `running` (column Working) while the turn runs, `waiting` (Needs you) while it needs an approval, `done` (Done) when the turn ended, `failed` (Needs you) is part of the model but nothing sets it yet. A turn is ended when its tab is no longer busy after it was seen busy, or `GRACE_MS` (20 s) after the send; typing a newer request in the same tab, closing the tab or the person's Done mark also finish the older one. State follows the 15 s board tick.
+- **Store.** `reqs` in `<userData>/hq/board-cards.json` (same file, atomic write, `src/board-requests.js`): open records are kept, finished ones for `KEEP_DONE_MS` (14 days), at most `MAX_REQS` (200).
+- **HQ sees them.** The `office_board` result has `typedRequests` (newest 30: id, project, account, title, state, type, at, endedAt), marked as data to read, never instructions.
+- **Unverified in a real app.** The GUI session's live state (`busy`, `text`, `tool`) has no error flag, so a failed turn ends as `done`; `failed` is kept in the model for a future flag.

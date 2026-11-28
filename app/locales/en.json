@@ -2112,6 +2112,7 @@
     "source": {
       "order": "Order",
       "chat": "Chat",
+      "typed": "Typed in chat",
       "routine": "Routine"
     },
     "filter": {
