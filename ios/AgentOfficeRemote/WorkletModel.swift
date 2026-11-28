@@ -321,7 +321,7 @@ final class WorkletModel: ObservableObject {
     let key = Self.streamKey(project, sid)
     wanted[key] = nil
     if let id = openIds.removeValue(forKey: key) { send(["t": "send", "msg": ["t": "sess-close", "id": id]]) }
-    if key != "hq" { streams[key] = nil }
+    if key != "hq" && !isDemo { streams[key] = nil }
   }
 
   private func open(_ key: String) {
@@ -648,6 +648,7 @@ final class WorkletModel: ObservableObject {
     ]
     live.toolResults = ["u1": false, "u2": false, "u3": false]
     streams["p1/s1"] = live
+    streams["p1"] = live   // the main session opens without a sid
     details["p1"] = ProjectDetail(sessions: [
       ProjectSession(id: "s1", title: "Run the link tests and fix whatever fails", at: now - 30_000, running: true, main: true),
       ProjectSession(id: "s2", title: "Add the project screen to the iOS app", at: now - 7_200_000, running: true, main: false),

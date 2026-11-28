@@ -246,6 +246,7 @@ struct SessionView: View {
     .background(Theme.background)
     .navigationTitle(title.isEmpty ? (project?.name ?? "") : title)
     .navigationBarTitleDisplayMode(.inline)
+    .toolbar(.hidden, for: .tabBar)
     .toolbar {
       ToolbarItem(placement: .navigationBarTrailing) {
         if canStop {
