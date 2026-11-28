@@ -3889,3 +3889,18 @@ Amends v3.108 (a GUI chat tab showed the answer being written only as an ellipsi
 - A project the person had collapsed is expanded again when a session is started or opened in it (`expandProject` in `src/studio-view.mjs`). Before, the collapse flag was ignored while the project had a single session (compact row) and took effect the moment a second one appeared, hiding the old session.
 - Child rows are named by the session's title (/rename, Claude Code title, first prompt). Sessions without a title yet are numbered by tab ("New session 2") when more than one is listed (`sessionNames`), so they can be told apart.
 - Every extra session row has an × on hover that calls the Office's own `closeTab` (main's `tabs:close` asks first, also for a busy session, and handles worktrees). Like the Office, a project's main tab has no ×; `canCloseSession` holds that rule.
+
+## Studio: carry on interrupted work (v3.146)
+
+Amends v3.8 and the launch resume. A Studio GUI chat has no Claude Code pid file, so `checkTurns` used to see it as
+never busy and never marked it interrupted. Now a chat's own state feeds the same marks (`src/resume.js`
+`guiTurn(gui)` -> `{ busy, sessionId }` -> `nextInterrupted`), so a chat that was mid-turn when the app quit or
+restarted carries on at the next launch exactly like a terminal tab (`--resume <id>` plus the carry-on prompt, GUI
+chat kept). The setting is the same stored pair as the Office (`resume`, `resumeWork`), already in Studio's Settings
+page (General).
+
+When a setting is off, the marked tabs are not dropped silently: `offers` (`offerTargets(marks, ptyIds, prefs)`,
+the exact complement of `resumeTargets`) keeps them in memory for this launch. The chat view shows a "Continue
+interrupted work" box (`chat:read` gui info `interrupted: true`); the button calls `agentOffice.work.continueTab(ptyId)`
+(`work:continueTab` -> `'ok' | 'none' | 'not-running'`): a running idle chat of that session gets the prompt typed,
+else the tab starts with `--resume <session id>` and the prompt. A chat turning busy, or Continue, clears the offer.

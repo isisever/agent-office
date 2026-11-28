@@ -114,6 +114,29 @@ function resumeTargets(marks, ptyIds, { resume, resumeWork }) {
 }
 
 /**
+ * Studio (contract v3.146): marked tabs that do NOT carry on by themselves at launch (a setting is off) are offered
+ * instead: the chat shows a "Continue" action for each. Same existence rule as resumeTargets; the exact complement.
+ * @param {Record<string, string>} marks @param {string[]} ptyIds @param {{ resume?: boolean, resumeWork?: boolean }} prefs
+ * @returns {Record<string, string>} pty id → session id ('' when unknown)
+ */
+function offerTargets(marks, ptyIds, prefs) {
+  const auto = new Set(resumeTargets(marks, ptyIds, prefs));
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const id of ptyIds) if (Object.prototype.hasOwnProperty.call(marks, id) && !auto.has(id)) out[id] = validSid(marks[id]);
+  return out;
+}
+
+/**
+ * The turn state of a GUI chat (it keeps no Claude Code pid file): busy from its own live state, session from the
+ * protocol's init message. Feeds nextInterrupted like the pid-file path does for terminal tabs.
+ * @param {{ live: () => { busy: boolean }, sessionId: () => string }} gui
+ */
+function guiTurn(gui) {
+  return { busy: Boolean(gui.live().busy), sessionId: validSid(gui.sessionId()) };
+}
+
+/**
  * The prompt as one safe command-line argument: one line (control characters and newlines become spaces), and
  * without characters cmd.exe treats specially even inside quotes (`"`, `%`, `!`, `^`; npm's claude.cmd goes through
  * cmd.exe on Windows). It never starts with '-' (claude would read an option).
@@ -259,4 +282,6 @@ function typedPrompt(text) {
 }
 
 module.exports = {
+  offerTargets,
+  guiTurn,
   limitCarryOnPrompt, RESUME_PROMPT, UNFINISHED_PROMPT, entryTurn, transcriptState, transcriptFileState, unfinishedActions, typedPrompt, normalizeInterrupted, isTurnBusy, canTypePrompt, nextInterrupted, clearInterrupted, resumeTargets, promptArg, claudeArgs };

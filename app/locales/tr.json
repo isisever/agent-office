@@ -1098,7 +1098,9 @@
       },
       "ended": "Oturum kapandı (çıkış {code}). Aynı konuşmaya devam etmek için yeniden başlat.",
       "endedError": "Claude bir hatayla durdu (çıkış {code}):",
-      "restart": "Yeniden başlat"
+      "restart": "Yeniden başlat",
+      "interrupted": "Bu oturum çalışırken yarıda kesildi.",
+      "interruptedContinue": "Yarım kalan işe devam et"
     },
     "edit": "Düzenle",
     "editTitle": "Mesajı düzenleyip yeniden göndermek için girişe geri koy",
