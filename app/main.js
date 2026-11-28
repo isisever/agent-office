@@ -2347,7 +2347,6 @@ function hqOrders() {
 /** The person typed a request in HQ: its id is minted and recorded as an order. */
 function hqMintTyped() { const s = hqOrders(); const id = hqMinter.mint(); s.add(id); s.setPhone(false); return id; }
 /** v3.130 a phone turn starts: no order lends its authority until the person types in HQ (kept across a restart). */
-function hqMarkPhone() { const s = hqOrders(); hqMinter.markPhone(); s.setPhone(true); }
 const hqOrderOpen = (request) => typeof request === 'string' && Boolean(request) && hqOrders().isOpen(request) && hqMinter.isOrder(request);
 /** One OS notice per order and kind ('start', 'needs', 'end'). */
 function hqOrderNotice(request, kind) {
@@ -3664,12 +3663,11 @@ function startLink() {
     hqSessionOf: linkHqSessionOf,   // v3.121 a phone controller reads HQ's transcript
     // v3.121 a phone controller's HQ turn, typed like the person's own (false = HQ is busy right now)
     // v3.121 a phone controller's HQ turn. Only with HQ on; refused while HQ is busy or an approval prompt is open. It is
-    // NOT the person's typed turn: no request id is minted (and the person's live one is cleared), so HQ cannot dispatch to
-    // paired machines on it without the normal card. Face-ID-signed approvals are planned (P2).
+    // the owner's own typed turn: a live request id is minted (hqMintTyped) so HQ orders need no Mac consent dialog.
     ctlHq: (text) => LC.ctlTurn({ enabled: Boolean(hqSettings().enabled && P.hqProject(state)), busy: hqBusyNow(), approval: attention.get(HQ.HQ_ID) === 'permission',
-      // v3.130 a phone turn never uses a typed order's authority (hqMinter.markPhone, until the person types in HQ)
-      type: () => { hqLastKey = Date.now(); hqMarkPhone(); return typePrompt(HQ.HQ_ID, text); },
-      start: () => { hqMarkPhone(); hqWanted = true; startPty(HQ.HQ_ID, { resume: true, prompt: text, forcePrompt: true }); hqRestarter.tick(true); } }),
+      // v3.178 the paired phone is the owner: its HQ order mints a typed request id like the person's own prompt
+      type: () => { hqLastKey = Date.now(); hqMintTyped(); return typePrompt(HQ.HQ_ID, text); },
+      start: () => { hqMintTyped(); hqWanted = true; startPty(HQ.HQ_ID, { resume: true, prompt: text, forcePrompt: true }); hqRestarter.tick(true); } }),
     ctlReports: ctlReportsList,   // v3.121 the newest HQ reports for a phone controller
     stoppedHere: (id) => stoppedHere.get(String(id)) || 0,   // v3.99 the person's own stop: no remote revive for 10 minutes
     handoff: handoffDeps(),
