@@ -3,6 +3,7 @@
 // may spotlight the item's `target` for a moment. The Office's modal look; in Studio, studio.css restyles it.
 
 import { stepsFor, textOf } from '../src/whats-new-ui.mjs';
+import { placeSpot, movedSpot } from '../src/spot-place.mjs';
 export { stepsFor, splitAction, textOf } from '../src/whats-new-ui.mjs';
 
 /** @typedef {import('../src/whats-new-ui.mjs').WhatsNewItem} WhatsNewItem @typedef {import('../src/whats-new-ui.mjs').WhatsNewEntry} WhatsNewEntry @typedef {import('../src/whats-new-ui.mjs').WhatsNewStep} WhatsNewStep */
@@ -86,9 +87,10 @@ export function mountWhatsNew({ t, lang, experience, run }) {
     let tries = 0;
     /** @type {number | undefined} */
     let timer;
+    let raf = 0;
     /** @type {HTMLElement[]} */
     const parts = [];
-    const end = () => { clearTimeout(timer); for (const p of parts) p.remove(); document.removeEventListener('mousedown', end, true); if (endSpot === end) endSpot = null; };
+    const end = () => { clearTimeout(timer); cancelAnimationFrame(raf); for (const p of parts) p.remove(); document.removeEventListener('mousedown', end, true); if (endSpot === end) endSpot = null; };
     endSpot = end;
     const find = () => {
       /** @type {HTMLElement | null} */
@@ -101,13 +103,25 @@ export function mountWhatsNew({ t, lang, experience, run }) {
         return;
       }
       target.scrollIntoView?.({ block: 'nearest' });
-      const box = target.getBoundingClientRect();
-      const pad = 6;
       const ring = el('div', { class: 'wn-spot', 'aria-hidden': 'true' });
-      Object.assign(ring.style, { left: `${box.left - pad}px`, top: `${box.top - pad}px`, width: `${box.width + pad * 2}px`, height: `${box.height + pad * 2}px` });
       const tip = el('div', { class: 'wn-tip', role: 'status' }, text);
-      const below = box.bottom + 60 < window.innerHeight;
-      Object.assign(tip.style, { left: `${Math.max(8, Math.min(window.innerWidth - 268, box.left))}px`, top: below ? `${box.bottom + pad + 8}px` : '', bottom: below ? '' : `${window.innerHeight - box.top + pad + 8}px` });
+      // the ring and tip are position: fixed; the target can move while they show (window resize, a scrolled list, a
+      // panel finishing its opening animation), so they follow it each frame instead of being placed once
+      /** @type {ReturnType<typeof placeSpot> | null} */
+      let last = null;
+      const place = () => {
+        if (!target?.isConnected) return end();
+        const box = target.getBoundingClientRect();
+        if (!box.width && !box.height) return end();
+        const next = placeSpot(box, window.innerWidth, window.innerHeight);
+        if (movedSpot(last, next)) {
+          Object.assign(ring.style, { left: `${next.ring.left}px`, top: `${next.ring.top}px`, width: `${next.ring.width}px`, height: `${next.ring.height}px` });
+          Object.assign(tip.style, { left: `${next.tip.left}px`, top: next.tip.top == null ? '' : `${next.tip.top}px`, bottom: next.tip.bottom == null ? '' : `${next.tip.bottom}px` });
+          last = next;
+        }
+        raf = window.requestAnimationFrame(place);
+      };
+      place();
       parts.push(ring, tip);
       document.body.append(ring, tip);
       document.addEventListener('mousedown', end, true);

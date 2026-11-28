@@ -4133,3 +4133,8 @@ terminal view appears only after the person clicks the "Switch to terminal" togg
   stdio, not detached) instead of a POSIX login shell. If it cannot start, the chat view shows the ended/error state;
   it never falls back to the terminal.
 - Tests: test/studio-chat-default.test.mjs (decision logic), test/gui-session.test.cjs, test/studio.test.cjs.
+
+## v3.162 What's-new spotlight follows its target; chat message buttons on short answers
+- **Spotlight.** The ring and tooltip of "Try it" (renderer/whats-new.js) are `position: fixed` and were placed once from `getBoundingClientRect()`; a window resize, a scrolled list or a panel still animating open left them offset ("onboardda kayma"). They now follow the target every animation frame while shown (4.5 s), end if the target leaves the DOM, and the tooltip is clamped inside the viewport. Placement is the pure `src/spot-place.mjs` (`placeSpot`, `movedSpot`).
+- **Message buttons.** In the Office, `.chat-acts` was right-anchored for every message; on a short left-aligned message (answer, error, output) the Copy/Reply row was wider than the bubble and hung out past the list's left edge, clipped by `.chat-list` overflow. Left-aligned messages now anchor the row at their left edge (style.css).
+- Tests: test/spot-place.test.mjs.
