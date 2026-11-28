@@ -1,0 +1,53 @@
+{
+  "version": "0.22.50",
+  "items": [
+    {
+      "id": "studio-fallback-switch",
+      "experience": "studio",
+      "title": {
+        "en": "Backup account switch works in Studio",
+        "tr": "Yedek hesaba geçiş Studio'da çalışıyor"
+      },
+      "body": {
+        "en": "When an account hits its limit, Studio chats now move to the backup account and carry on with the unfinished work. The limit notice names the account it switches to, and says so plainly when no backup is free.",
+        "tr": "Bir hesabın limiti dolunca Studio sohbetleri yedek hesaba geçer ve yarım kalan işi sürdürür. Limit uyarısı hangi hesaba geçileceğini gösterir; boşta yedek yoksa bunu açıkça söyler."
+      }
+    },
+    {
+      "id": "studio-pickers-account",
+      "experience": "studio",
+      "title": {
+        "en": "Permission and model pickers stick, account picker in the header",
+        "tr": "İzin ve model seçimleri kalıcı, hesap seçici başlıkta"
+      },
+      "body": {
+        "en": "Choosing \"ask permission\" now really asks you, and your model and mode picks survive a restart or account switch. Pick a project's account from the project header; picking its current account clears an old \"on backup\" label.",
+        "tr": "\"İzin sor\" seçildiğinde artık gerçekten size sorulur; model ve mod seçimleriniz yeniden başlatma ya da hesap değişiminde korunur. Projenin hesabını proje başlığından seçin; mevcut hesabı seçmek eski \"yedekte\" etiketini temizler."
+      }
+    },
+    {
+      "id": "studio-sessions-questions",
+      "experience": "studio",
+      "title": {
+        "en": "Old sessions come back, questions get answered",
+        "tr": "Eski oturumlar geri geliyor, sorular yanıtlanıyor"
+      },
+      "body": {
+        "en": "Past sessions show again after a restart and clicking a project selects its session. A message you type while a question card is open now answers it instead of getting stuck. Board tasks no longer close as failed when the reply was quick.",
+        "tr": "Geçmiş oturumlar yeniden başlatmadan sonra yine görünür; projeye tıklamak oturumunu seçer. Soru kartı açıkken yazdığınız mesaj artık takılmak yerine onu yanıtlar. Yanıt hızlı geldiğinde pano görevleri artık başarısız diye kapanmıyor."
+      }
+    },
+    {
+      "id": "office-more-desks",
+      "experience": "studio",
+      "title": {
+        "en": "More desks, faster tasks, smoother splitter",
+        "tr": "Daha çok masa, daha hızlı görevler, akıcı ayırıcı"
+      },
+      "body": {
+        "en": "The office grows past four rows of desks when more agents work. HQ stages start right after the previous report instead of waiting for the next poll. The terminal/office splitter no longer stutters, and desks no longer wait on the trust-folder prompt.",
+        "tr": "Daha çok ajan çalışınca ofis dört sıra masanın ötesine büyür. HQ aşamaları bir sonraki taramayı beklemeden önceki rapordan hemen sonra başlar. Terminal/ofis ayırıcısı artık takılmıyor; masalar artık klasör güven sorusunda beklemiyor."
+      }
+    }
+  ]
+}
