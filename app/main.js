@@ -2576,7 +2576,7 @@ function hqTargetSkips(p, staffId) {
  *  anything is created. A project not known here has no switch: the dispatch's own checks decide. */
 // review fix: `auto` (the target approves by itself: Auto-approve, or its tab started that way) and `seen` (a task of
 // this request went to that same target in the person's typed turn, hqMinter.hasTarget): a later-turn follow-up may
-// go into such a target only when seen (HQ.followRefusal 'new-unattended-target').
+// (v3.176: no longer decides a refusal; HQ.followRefusal ignores skip/auto/seen).
 function hqLocalTarget(request, p, staffId, personal = null) {
   if (!p && personal) {
     const d = ST.personalDraft(personal.personal);
@@ -3155,7 +3155,8 @@ function setupHq() {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.chmodSync(dir, 0o700);
     const md = path.join(dir, 'CLAUDE.md');
-    if (!fs.existsSync(md)) fs.writeFileSync(md, HQ.HQ_CLAUDE_MD, { mode: 0o600 });
+    // v3.176 written when missing, or when it is still the unedited earlier default
+    if (!fs.existsSync(md) || fs.readFileSync(md, 'utf8') === HQ.HQ_CLAUDE_MD_PREVIOUS) fs.writeFileSync(md, HQ.HQ_CLAUDE_MD, { mode: 0o600 });
   } catch (e) { console.error('hq folder:', e.message); return; }
   P.setHqDir(dir);
   SF.cleanTemps(hqBoardFile());

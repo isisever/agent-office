@@ -979,13 +979,14 @@ test('an approved held card for a member: the sent row keeps the member and the 
   assert.deepEqual([kept.staff, kept.staffId, kept.consented, kept.title], ['Ada', 's-ada', true, 'x']);
 });
 
-test('initiative target: a project with Skip permissions always asks', () => {
+test('initiative target: a project with Skip permissions no longer refuses (v3.176)', () => {
   const { m, id, board, ask } = initiativeCase();
-  assert.equal(ask({ targets: [{ projectId: 'p-web', skip: true }] }), false);
-  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [{ projectId: 'p-web', skip: true }], now: 1000 }), 'skip-permissions');
+  // v3.176: Skip permissions is never a reason to refuse an HQ task
+  assert.equal(ask({ targets: [{ projectId: 'p-web', skip: true }] }), true);
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [{ projectId: 'p-web', skip: true }], now: 1000 }), null);
   assert.equal(ask({ targets: [{ projectId: 'p-web', skip: false }] }), true);
-  assert.equal(ask({ targets: [WEB, { projectId: 'p-web', skip: true }] }), false);   // one stage is enough
-  assert.equal(HQ.takeInitiative(board, { request: id, minter: m, targets: [{ projectId: 'p-web', skip: true }], now: 1000 }).reason, 'skip-permissions');
+  assert.equal(ask({ targets: [WEB, { projectId: 'p-web', skip: true }] }), true);
+  assert.equal(HQ.takeInitiative(board, { request: id, minter: m, targets: [{ projectId: 'p-web', skip: true }], now: 1000 }).ok, true);
 });
 
 test('follow-up wiring: decided and counted by HQ.takeInitiative, final before anything is made, refused with its reason, the person is told', () => {
@@ -1372,7 +1373,7 @@ test('v3.99/v3.103 follow-up: a paired machine target must name the machine by i
   assert.equal(why({ machine: 'self', projectId: 'p-api' }), 'unknown-machine');
   assert.equal(why({ machine: '', projectId: '' }), 'unknown-machine');
   assert.equal(why({ machine: PUB, projectId: 'p-api' }, { now: clock.t + HQ.INITIATIVE_MS }), 'request-expired');
-  assert.equal(why({ machine: PUB, projectId: 'p-api', skip: true }), 'skip-permissions');
+  assert.equal(why({ machine: PUB, projectId: 'p-api', skip: true }), null);   // v3.176 a paired machine's skip no longer refuses
   // mixed targets of one chain: every one is checked
   const mixed = (targets) => HQ.followRefusal({ request: id, minter: m, board, targets, now: clock.t });
   assert.equal(mixed([{ projectId: 'p-web' }, { remote: true, machine: PUB, projectId: 'p-api' }]), null);
@@ -1417,12 +1418,11 @@ test('v3.101 review: a paired machine\'s project gets a follow-up only when its 
   m.clear();
   const cat = [{ id: 'p1', skips: true }, { id: 'p2', skips: false }, { id: 'p3' }];
   const args = (projectId, catalog) => ({ request: id, minter: m, targets: [{ machine: PUB, projectId, staffId: '', remote: true, skip: HQ.remoteSkips(catalog, projectId) }], now: clock.t });
-  assert.deepEqual(['p1', 'p2', 'p3'].map((p) => HQ.initiativeFor({ ...args(p, cat), board })), [false, true, false]);
-  assert.deepEqual(['p1', 'p2', 'p3'].map((p) => HQ.followRefusal({ ...args(p, cat), board })), ['skip-permissions', null, 'skip-permissions']);
-  assert.equal(HQ.initiativeFor({ ...args('p2', undefined), board }), false);   // no catalog from that machine yet
-  // nothing is counted for a refused target
-  assert.deepEqual(['p1', 'p2', 'p3'].map((p) => HQ.takeInitiative(board, args(p, cat)).ok), [false, true, false]);
-  assert.equal(HQ.initiativeSent(HQ.takeInitiative(board, args('p1', cat)).board, id), 0);
+  assert.deepEqual(['p1', 'p2', 'p3'].map((p) => HQ.initiativeFor({ ...args(p, cat), board })), [true, true, true]);
+  assert.deepEqual(['p1', 'p2', 'p3'].map((p) => HQ.followRefusal({ ...args(p, cat), board })), [null, null, null]);   // v3.176 the catalog flag no longer refuses
+  assert.equal(HQ.initiativeFor({ ...args('p2', undefined), board }), true);
+  assert.deepEqual(['p1', 'p2', 'p3'].map((p) => HQ.takeInitiative(board, args(p, cat)).ok), [true, true, true]);
+  assert.equal(HQ.initiativeSent(HQ.takeInitiative(board, args('p1', cat)).board, id), 1);
   assert.equal(HQ.initiativeSent(HQ.takeInitiative(board, args('p2', cat)).board, id), 1);
 });
 
@@ -1496,13 +1496,14 @@ test('v3.103 followRefusal: unknown-machine, then skip-permissions (local, paire
   assert.equal(why([WEB, null]), 'unknown-machine');
   assert.equal(why([{ remote: true, projectId: 'p1', skip: true }]), 'unknown-machine');   // the machine is checked first
   assert.equal(why([{ remote: true, machine: PUB, projectId: 'p1' }]), null);
-  assert.equal(why([{ projectId: 'p-web', skip: true }]), 'skip-permissions');
-  assert.equal(why([{ remote: true, machine: PUB, projectId: 'p1', skip: true }]), 'skip-permissions');
-  assert.equal(why([WEB, { remote: true, machine: PUB, projectId: 'p1', skip: true }]), 'skip-permissions');   // one stage is enough
+  // v3.176 skip never refuses, local or paired
+  assert.equal(why([{ projectId: 'p-web', skip: true }]), null);
+  assert.equal(why([{ remote: true, machine: PUB, projectId: 'p1', skip: true }]), null);
+  assert.equal(why([WEB, { remote: true, machine: PUB, projectId: 'p1', skip: true }]), null);
   assert.equal(why([{ projectId: 'p-web', skip: false }]), null);
   // a paired machine's flag from its catalog: unknown counts as skipping
   for (const catalog of [undefined, null, [], [{ id: 'p1' }], [{ id: 'p1', skips: 'no' }]]) {
-    assert.equal(why([{ remote: true, machine: PUB, projectId: 'p1', skip: HQ.remoteSkips(catalog, 'p1') }]), 'skip-permissions', JSON.stringify(catalog));
+    assert.equal(why([{ remote: true, machine: PUB, projectId: 'p1', skip: HQ.remoteSkips(catalog, 'p1') }]), null, JSON.stringify(catalog));
   }
   assert.equal(why([{ remote: true, machine: PUB, projectId: 'p1', skip: HQ.remoteSkips([{ id: 'p1', skips: false }], 'p1') }]), null);
 });
@@ -1672,7 +1673,7 @@ test('v3.130 order authority: a typed id keeps its authority until closed, with 
   assert.equal(HQ.consentFor({ request: id2, minter: m, ask: true, now: t }), 'app');
 });
 
-test('v3.130 order follow-ups: no count and no cap refusal, Skip and new-unattended rules stay', () => {
+test('v3.130 order follow-ups: no count and no cap refusal, Skip and Auto-approve no longer refuse (v3.176)', () => {
   let t = 5_000_000;
   const m = HQ.createMinter({ now: () => t });
   const id = m.mint();
@@ -1682,8 +1683,8 @@ test('v3.130 order follow-ups: no count and no cap refusal, Skip and new-unatten
   assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [local], now: t }), null);   // 40 sent: no follow-up-cap
   const full = { tasks: Array.from({ length: HQ.MAX_OPEN }, (_, i) => ({ id: `t${i}`, request: id, status: 'running' })), requests: board.requests };
   assert.equal(HQ.followRefusal({ request: id, minter: m, board: full, targets: [local], now: t }), null);   // the caps queue, not refuse
-  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [{ ...local, skip: true }], now: t }), 'skip-permissions');
-  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [{ ...local, auto: true, seen: false }], now: t }), 'new-unattended-target');
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [{ ...local, skip: true }], now: t }), null);
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [{ ...local, auto: true, seen: false }], now: t }), null);
   m.closeOrder(id);
   assert.equal(HQ.followRefusal({ request: id, minter: m, board, targets: [local], now: t }), 'follow-up-cap');
 });

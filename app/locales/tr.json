@@ -1654,8 +1654,7 @@
     "askBeforeDispatch": "Müdür görev vermeden önce bana sor",
     "askBeforeDispatchHint": "Bu kapalıyken Müdür, yazdığınız bir isteğin görevlerini size sormadan verir. Yazdığınız turda buna İzinleri atla ya da Otomatik onay açık projeler de dahildir. Sonraki devam görevleri (bir rapor geldikten sonra) sınırlıdır: istek başına en çok 4, isteminizden sonraki 2 saat içinde, İzinleri atla açık bir projeye asla, Otomatik onay açık bir projeye ise yalnızca o isteği kendi turunuzda oraya gönderdiyseniz. Her zaman istek başına en çok 8 ve aynı anda en çok 12 açık görev; başka bir bilgisayar kendi kurallarını uygulamayı sürdürür. Zamanlanmış rutinler de bu ayara uyar: kapalıyken bir rutinin görevleri, eşleştirilmiş bir bilgisayara gidenler de dahil, onay kartı olmadan gider; açıkken rutin, kendi kutusu aksini demedikçe Pano'da sorar (başka bir bilgisayar için olan rutin o zaman her zaman sorar).",
     "reason": {
-      "stage-changed": "Gönderilmedi: aşamanın kayıtlı hedefi ya da metni kabul edildikten sonra değiştirilmiş",
-      "new-unattended-target": "Gönderilmedi: bir devam görevi kendiliğinden onaylayan bir projeye yalnızca isteği oraya kendiniz gönderdiyseniz gidebilir"
+      "stage-changed": "Gönderilmedi: aşamanın kayıtlı hedefi ya da metni kabul edildikten sonra değiştirilmiş"
     },
     "byInitiative": "Müdür bunu kendiliğinden gönderdi",
     "orderQueued": "sırada ({n} önde)",
