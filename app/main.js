@@ -1965,7 +1965,7 @@ function hqWriteTyped(id, d) {
 /** Types the prompt into a running claude's input box and submits it. */
 /** → false when nothing was typed (no tab, or the project is being handed off). taskId (v3.35): the dispatched task's id
  *  is written to ~/.claude/agent-office/tasks/<session>.json first, so the plugin knows it even without the marker. */
-function typePrompt(id, text, { taskId = '', images = [] } = {}) {
+function typePrompt(id, text, { taskId = '', images = [], supersede = false } = {}) {
   const t = terms.get(id);
   if (!t || handoffLocked(id)) return false;
   if (taskId) {
@@ -1976,7 +1976,7 @@ function typePrompt(id, text, { taskId = '', images = [] } = {}) {
   }
   // v3.108 a GUI chat tab takes the text as a message (claude queues one sent mid-turn); never HQ
   if (t.gui) {
-    if (!t.sendUser(text, images)) return false;   // v3.109 pasted images go in as image blocks
+    if (!t.sendUser(text, images, { supersede })) return false;   // v3.109 pasted images go in as image blocks
     noteInput(id, '\r');
     const a = activity.get(id);
     if (a) { a.at = Date.now(); a.draft = false; a.inputAt = a.at; }
@@ -6004,7 +6004,7 @@ ipcMain.handle('chat:send', (_e, id, text, images) => {
   if (gui || !img.images.length) {
     // v3.154 commands that finished since the last message go in front of this one (taken only when it is typed)
     const ctx = gui && CB ? CB.buildContext(bashPending.get(id)) : '';
-    if (!typePrompt(id, ctx + body, { images: img.images })) return 'not-running';
+    if (!typePrompt(id, ctx + body, { images: img.images, supersede: true })) return 'not-running';   // v3.166 only the person's composer supersedes open cards
     if (ctx) bashPending.delete(id);
     boardNoteRequest(id, r, body);
     return 'ok';

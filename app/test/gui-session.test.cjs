@@ -261,7 +261,7 @@ test('GUI chat: main wiring (source text): a card is a waiting approval for HQ, 
   assert.match(MAIN, /if \(guiProc\) guiEnded\.set\(id, \{ code: exitCode, text: GS\.endNote\(guiProc\.stderr\(\)\)/);
   assert.match(fnBody('startPty'), /guiEnded\.delete\(id\)/);
   // typed prompts (HQ dispatch, routines, remote tasks) reach a GUI tab as a message
-  assert.match(fnBody('typePrompt'), /if \(t\.gui\) \{\s+if \(!t\.sendUser\(text, images\)\) return false;/);
+  assert.match(fnBody('typePrompt'), /if \(t\.gui\) \{\s+if \(!t\.sendUser\(text, images, \{ supersede \}\)\) return false;/);
   // HQ never runs as a GUI chat; auto answers go through the plugin's rules
   assert.match(fnBody('guiTab'), /hq: Boolean\(r\.project\.hq\)/);
   assert.match(fnBody('guiAsk'), /GS\.autoAllows\(/);
@@ -453,7 +453,7 @@ test('v3.170 a message sent while a question card is open declines the card so c
   const input = { questions: [{ question: 'Which color?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: '' }, { label: 'Blue', description: '' }] }] };
   child.stdout.emit('data', `${JSON.stringify({ type: 'control_request', request_id: 'q1', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input } })}\n`);
   assert.equal(t.asks().length, 1);
-  assert.equal(t.sendUser('what do you mean?'), true);
+  assert.equal(t.sendUser('what do you mean?', [], { supersede: true }), true);
   const lines = written.slice(-2).map(JSON.parse);
   assert.equal(lines[0].response.request_id, 'q1');
   assert.equal(lines[0].response.response.behavior, 'deny');
@@ -461,4 +461,22 @@ test('v3.170 a message sent while a question card is open declines the card so c
   assert.equal(lines[1].message.content, 'what do you mean?');
   assert.deepEqual(t.asks(), [], 'the card is taken down');
   assert.equal(t.live().busy, true);
+});
+
+test('v3.166 only the composer supersedes, and only question and plan cards', () => {
+  const written = [];
+  const child = Object.assign(new EventEmitter(), { pid: 44, stdin: Object.assign(new EventEmitter(), { destroyed: false, write: (s) => { written.push(s); return true; } }), stdout: new EventEmitter(), stderr: new EventEmitter(), kill() {} });
+  const t = spawnGui(() => child, 'sh', [], { cwd: '/', env: {} }, { killGroup: () => {} });
+  const ask = (tool, input, id) => child.stdout.emit('data', `${JSON.stringify({ type: 'control_request', request_id: id, request: { subtype: 'can_use_tool', tool_name: tool, input } })}\n`);
+  const q = { questions: [{ question: 'Which?', header: 'H', multiSelect: false, options: [{ label: 'A', description: '' }, { label: 'B', description: '' }] }] };
+  ask('AskUserQuestion', q, 'q1');
+  ask('Bash', { command: 'rm x' }, 'p1');
+  const before = written.length;
+  assert.equal(t.sendUser('app prompt'), true);   // default: the app's own send never denies
+  assert.equal(written.length, before + 1);
+  assert.equal(t.asks().length, 2);
+  assert.equal(t.sendUser('from the composer', [], { supersede: true }), true);
+  assert.deepEqual(t.asks().map((a) => a.id), ['p1'], 'the permission card stays open');
+  const denies = written.slice(before + 1).map(JSON.parse).filter((m) => m.type === 'control_response');
+  assert.deepEqual(denies.map((m) => m.response.request_id), ['q1']);
 });

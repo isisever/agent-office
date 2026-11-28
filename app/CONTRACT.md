@@ -4133,3 +4133,12 @@ terminal view appears only after the person clicks the "Switch to terminal" togg
   stdio, not detached) instead of a POSIX login shell. If it cannot start, the chat view shows the ended/error state;
   it never falls back to the terminal.
 - Tests: test/studio-chat-default.test.mjs (decision logic), test/gui-session.test.cjs, test/studio.test.cjs.
+
+## Studio composer message supersedes open question and plan cards (v3.166)
+
+A message typed in Studio's composer while an AskUserQuestion or plan card is open used to queue behind the card
+(claude waits for its answer), so it got no reply. `chat:send` now calls `typePrompt(..., { supersede: true })` →
+`sendUser(text, images, { supersede: true })`, which declines those cards (deny with `SUPERSEDED_NOTE`) before writing
+the message. The default is off: HQ dispatches, resume/limit prompts, inbox and mail never deny cards. Permission cards
+(including a sub-agent's pending permission) are never superseded.
+- Tests: test/gui-session.test.cjs.
