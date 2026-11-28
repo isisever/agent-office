@@ -5026,7 +5026,7 @@ ipcMain.handle('projects:setActive', (_e, id) => {
 ipcMain.handle('projects:setAccount', (e, id, accountId) => {
   if (!fromWin(e) || typeof id !== 'string' || typeof accountId !== 'string' || !state.accounts.some((a) => a.id === accountId)) return;
   const p = P.findProject(state, id);
-  if (!p || p.accountId === accountId) return;
+  if (!p || (p.accountId === accountId && !p.homeAccount)) return;   // same account WITH a stale home: it still goes through, to forget the home
   const from = A.accountOf(state, p);
   const next = P.setProjectAccount(state, id, accountId);
   if (next === state) return;
@@ -6860,6 +6860,12 @@ function studioUser(p) {
   return { name, email, account: accountName(a) };
 }
 /** The label of the Claude account a project runs on (the Office's account name), never a token or folder. */
+/** The label of the account a project was moved away from (its home), or '' (v3.164: shown as the header's backup note). */
+function studioHomeLabel(sp) {
+  const p = P.findProject(state, sp.id);
+  const h = p?.homeAccount ? state.accounts.find((a) => a.id === p.homeAccount) : null;
+  return h ? accountName(h) || '' : '';
+}
 function studioAccountLabel(sp) {
   const p = P.findProject(state, sp.id);
   const a = p ? A.accountOf(state, p) : null;
@@ -6888,7 +6894,7 @@ ipcMain.handle('studio:sessions', (e) => {
     user: studioUser(P.findProject(state, state.activeId)),
     // v3.153 paired machines' projects (live while online, last known when offline): the Projects list shows them as rows
     remotes: HQ.remoteRows(peerCache(), liveRemotes()),
-    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecentWithHistory(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel, infoOf: studioTabInfo, names: SN.normalizeNames(state.sessionNames) }),
+    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecentWithHistory(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel, homeOf: studioHomeLabel, infoOf: studioTabInfo, names: SN.normalizeNames(state.sessionNames) }),
   };
 });
 // v3.157 a custom session name (right-click → Rename in Studio's sidebar, the header's rename): kept per Claude session id

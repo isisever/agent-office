@@ -22,12 +22,14 @@ export function accountChoices(accounts, current) {
  * The account id to send for a click, or null when nothing changes (unknown id, or already the project's account).
  * @param {{ id: string, current: boolean }[]} choices from accountChoices
  * @param {unknown} id
+ * @param {boolean} [pinCurrent] the project remembers a different home account
  * @returns {string | null}
  */
-export function accountToSet(choices, id) {
+export function accountToSet(choices, id, pinCurrent = false) {
   if (typeof id !== 'string') return null;
   const hit = choices.find((c) => c.id === id);
-  return hit && !hit.current ? hit.id : null;
+  // pinCurrent: the project is on a backup (it remembers another home); choosing the account it is on makes it the home
+  return hit && (!hit.current || pinCurrent) ? hit.id : null;
 }
 
 /** Is a picker worth showing? One account has nothing to choose between. */

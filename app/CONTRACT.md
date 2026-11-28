@@ -4171,3 +4171,6 @@ A message typed in Studio's composer while an AskUserQuestion or plan card is op
 the message. The default is off: HQ dispatches, resume/limit prompts, inbox and mail never deny cards. Permission cards
 (including a sub-agent's pending permission) are never superseded.
 - Tests: test/gui-session.test.cjs.
+
+## v3.164 Project home account label
+Studio project rows carry `home` (label of the account a project was moved away from, or ''). Choosing the account a project is already on, while it remembers a home, goes through `projects:setAccount` and forgets the home.
