@@ -4048,3 +4048,14 @@ sees a usage-limit stop in a tab's transcript (`apiError: usage_limit_reached`, 
 replaces it and one from before cannot; once `resetsAt` passes the window shows as reset. This runs whether or not the
 backup-account switch is on. The panel (renderer/sidebar.js `usageRows`) shows a full row as "Limit reached · resets
 HH:MM" (tr: "Limit doldu · sıfırlanma HH:MM") and, for a reading older than 15 minutes, a dim "measured at HH:MM" line.
+
+## Studio chat: ! commands and Run buttons (v3.154)
+
+Logic lives in `src/chat-bash.mjs` (pure, tested in `test/chat-bash.test.mjs`); main.js spawns and kills; `renderer/chat.js` draws.
+
+- **`!` commands.** In a GUI chat, a message that starts with `!` (e.g. `!git status`) is not sent to the model. It runs in the project folder with the user's login shell (`chat:bash`: id, command, runId). Terminal tabs are untouched (Claude Code's own `!` mode applies there).
+- **Command bubble.** The chat shows the command, streamed stdout/stderr (the tail, capped at `OUTPUT_CAP`), the exit code and, while it runs, a Stop button (`chat:bashStop`). Events arrive on `chat:bash` (`start`, `stream`, `done`).
+- **Context for the next message.** Finished commands queue in main (`bashPending`, at most `MAX_PENDING`). The next message typed in that chat is sent with `<bash-input>…</bash-input><bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` blocks in front (capped by `CONTEXT_CAP` per stream and `CONTEXT_TOTAL` overall), as Claude Code's terminal `!` mode does. The queue is taken only when a message is actually typed.
+- **Run buttons.** Assistant-message code blocks tagged bash, sh, shell, zsh or console get a Run button (finished messages only, not the live stream, not read-only views). Nothing runs until it is clicked. A multi-line script, or one containing `sudo` or `rm `, first shows an inline "Run this script? Run / Cancel" in place of the button. Output is shown and queued exactly as for `!`.
+- **Disabled.** HQ chats, non-GUI tabs and chats whose permission mode is held (bypass or desk) refuse (`runAllowed`); main answers `refused` and the chat shows a note. The renderer cannot see the mode lock, so main is the authority.
+- **Limits and cleanup.** At most `MAX_RUNNING` commands per chat; a command still running after `TIMEOUT_MS` is killed. Commands die (whole process tree) on Stop, when the chat or tab closes (`killBashFor`), and when the chat view is destroyed.

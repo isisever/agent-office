@@ -14,6 +14,7 @@ import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
 import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, managerOffNote, modelChoices, modeChoices } from '../src/composer.mjs';
 import { icon } from './studio-icons.js';
+import { parseBang, blockScript, needsConfirm, appendCapped } from '../src/chat-bash.mjs';
 import { contextUsage, shortTokens, defaultModelName } from '../src/studio-ux.mjs';
 import { syncSelect, setProp } from './select-sync.js';
 
@@ -54,23 +55,28 @@ function mdInline(kids) {
     return h(k.t === 'b' ? 'strong' : k.t === 'i' ? 'em' : 's', {}, ...mdInline(k.kids));
   });
 }
-function mdNodes(list) {
+function mdNodes(list, runner = null) {
   return list.map((b) => {
     if (b.t === 'p') return h('div', { class: 'chat-p' }, ...mdInline(b.kids));
     if (b.t === 'h') return h('div', { class: `chat-h chat-h${Math.min(b.level, 4)}` }, ...mdInline(b.kids));
-    if (b.t === 'pre') return h('pre', { class: 'chat-code' }, b.text);
+    if (b.t === 'pre') {
+      const pre = h('pre', { class: 'chat-code' }, b.text);
+      const script = runner ? blockScript(b.lang, b.text) : null;
+      if (script) pre.append(runner(script));   // v3.154 a shell block gets a Run button
+      return pre;
+    }
     if (b.t === 'hr') return h('hr', { class: 'chat-hr' });
-    if (b.t === 'quote') return h('blockquote', { class: 'chat-quote' }, ...mdNodes(b.blocks));
+    if (b.t === 'quote') return h('blockquote', { class: 'chat-quote' }, ...mdNodes(b.blocks, runner));
     if (b.t === 'table') {
       const row = (cells, tag) => h('tr', {}, ...cells.map((c, n) => h(tag, { style: `text-align:${b.align[n] || 'left'}` }, ...mdInline(c))));
       return h('div', { class: 'chat-table-wrap' }, h('table', { class: 'chat-table' }, h('thead', {}, row(b.head, 'th')), h('tbody', {}, ...b.rows.map((r) => row(r, 'td')))));
     }
     const attrs = b.t === 'ol' && b.start !== 1 ? { start: String(b.start) } : {};
-    return h(b.t, { class: 'chat-list-md', ...attrs }, ...b.items.map((it) => h('li', {}, ...mdInline(it.kids), ...mdNodes(it.sub))));
+    return h(b.t, { class: 'chat-list-md', ...attrs }, ...b.items.map((it) => h('li', {}, ...mdInline(it.kids), ...mdNodes(it.sub, runner))));
   });
 }
-function mdBody(text) {
-  return h('div', { class: 'chat-text chat-md' }, ...mdNodes(mdBlocks(text)));
+function mdBody(text, runner = null) {
+  return h('div', { class: 'chat-text chat-md' }, ...mdNodes(mdBlocks(text), runner));
 }
 
 /** Message text: ``` fences become code blocks, the rest keeps its line breaks (no other markdown, no HTML). */
@@ -261,6 +267,68 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     drawAgents();
   }
 
+
+  // ---- v3.154 "!" commands and Run buttons: main runs the command (chat:bash) and queues its output for the next message
+  /** @type {Map<string, { box: HTMLElement, out: HTMLElement, err: HTMLElement, state: HTMLElement, stop: HTMLElement, o: { text: string, dropped: number }, e: { text: string, dropped: number } }>} */
+  const bashRuns = new Map();
+  const tailText = (/** @type {{ text: string, dropped: number }} */ s) => (s.dropped ? `[... ${s.dropped}+ ${t('studio.bash.cut')}]\n` : '') + s.text;
+  function bashBubble(/** @type {string} */ runId, /** @type {string} */ command) {
+    const state = h('span', { class: 'chat-bash-state' }, t('studio.bash.running'));
+    const stop = h('button', { class: 'chat-bash-stop', type: 'button', onclick: () => { api.chat.bashStop(runId); } }, t('studio.bash.stop'));
+    const out = h('pre', { class: 'chat-bash-out' });
+    const err = h('pre', { class: 'chat-bash-out chat-bash-err' });
+    out.hidden = err.hidden = true;
+    const box = h('div', { class: 'chat-bash', 'data-state': 'running' },
+      h('div', { class: 'chat-bash-head' }, h('span', { class: 'chat-bash-prompt' }, '$'), h('code', { class: 'chat-bash-cmd' }, command), state, stop), out, err);
+    bashRuns.set(runId, { box, out, err, state, stop, o: { text: '', dropped: 0 }, e: { text: '', dropped: 0 } });
+    list.append(box);
+    empty.hidden = true;
+    list.scrollTop = list.scrollHeight;
+  }
+  const offBash = api.chat.onBash?.((/** @type {any} */ ev) => {
+    if (!ev || ev.id !== ptyId) return;
+    const run = bashRuns.get(ev.runId);
+    if (!run) return;
+    if (ev.stream) {
+      const k = ev.stream === 'stderr' ? 'e' : 'o';
+      run[k] = appendCapped(run[k], ev.text);
+      const pre = k === 'e' ? run.err : run.out;
+      pre.hidden = false;
+      pre.textContent = tailText(run[k]);
+      pre.scrollTop = pre.scrollHeight;
+    } else if (ev.done) {
+      bashRuns.delete(ev.runId);
+      run.stop.remove();
+      run.box.dataset.state = ev.killed ? 'stopped' : ev.code ? 'failed' : 'done';
+      run.state.textContent = ev.killed ? t('studio.bash.stopped') : t('studio.bash.exit', { code: ev.code });
+      if (ev.error && run.err.hidden) { run.err.hidden = false; run.err.textContent = ev.error; }
+    }
+  });
+  /** Runs a command; true when it started. A refusal shows a note under the input. */
+  async function runShell(/** @type {string} */ command) {
+    if (!gui || source) { note(t('studio.bash.refused')); return false; }
+    const runId = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+    let r;
+    try { r = await api.chat.bash(ptyId, command, runId); } catch (e) { console.error(e); r = 'error'; }
+    if (r !== 'ok') { note(r === 'refused' ? t('studio.bash.refused') : r === 'busy' ? t('studio.bash.busy') : r === 'not-running' ? t('studio.bash.notRunning') : t('studio.bash.failed')); return false; }
+    note('');
+    bashBubble(runId, command);
+    return true;
+  }
+  /** The Run button of a shell code block; a multi-line script, sudo or rm asks first (inline, in place of the button). */
+  function runButton(/** @type {string} */ script) {
+    const wrap = h('span', { class: 'chat-code-run' });
+    const run = h('button', { class: 'chat-run-btn', type: 'button', title: t('studio.bash.runTip') }, icon('terminal', 13), t('studio.bash.run'));
+    const go = () => { wrap.replaceChildren(run); runShell(script); };
+    const ask = () => {
+      const yes = h('button', { class: 'chat-run-btn chat-run-yes', type: 'button', onclick: (/** @type {Event} */ e) => { e.stopPropagation(); go(); } }, t('studio.bash.confirmYes'));
+      const no = h('button', { class: 'chat-run-btn', type: 'button', onclick: (/** @type {Event} */ e) => { e.stopPropagation(); wrap.replaceChildren(run); } }, t('studio.bash.confirmNo'));
+      wrap.replaceChildren(h('span', { class: 'chat-run-ask' }, t('studio.bash.confirm')), yes, no);
+    };
+    run.onclick = (e) => { e.stopPropagation(); if (needsConfirm(script)) ask(); else go(); };
+    wrap.append(run);
+    return wrap;
+  }
   function clear() { list.replaceChildren(); tools.clear(); agentRows.clear(); pending.length = 0; }
   // messages sent from here, shown at once until the transcript has them (then the transcript's copy replaces them)
   /** @type {HTMLElement[]} */
@@ -325,7 +393,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       if (it.images) body.append(h('div', { class: 'chat-images dim' }, t('chat.images', { count: it.images })));
       return message('user', it.text, body, ro);
     }
-    if (it.kind === 'assistant') return message('assistant', it.text, mdBody(it.text), ro);
+    if (it.kind === 'assistant') return message('assistant', it.text, mdBody(it.text, ro || source ? null : runButton), ro);
     if (it.kind === 'error') return message('error', it.text, textBody(it.text), ro);
     if (it.kind === 'tool') {
       // v3.109 a file the tool worked on: Show in Finder (main allows only a path inside the tab's folder)
@@ -1079,6 +1147,9 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     const files = fileChips.map((f) => f.path);
     if (!text.trim() && !images.length && !files.length) return;
     if (menu && !gui) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
+    // v3.154 "!command" in a GUI chat runs in the project folder instead of going to the model
+    const bang = gui && !source && !images.length && !files.length ? parseBang(text) : null;
+    if (bang) { if (await runShell(bang)) { input.value = ''; fitInput(); closeSlash(); } return; }
     // a slash command is sent as typed (a quote in front would stop it being a command)
     const out = withMentions(replying && !/^\s*\//.test(text) ? withReply(replying, text) : text, files);
     // v3.117 a command with a screen of its own (/resume, /model, /mcp, …) runs in the tab's terminal; the chat comes back
@@ -1274,6 +1345,6 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     paste: () => pasteFromMenu(),
     /** v3.112 a line under the input (why the Terminal button did not switch). */
     note: (text) => note(String(text || '')),
-    destroy() { shown = false; window.clearInterval(timer); window.clearInterval(menuTimer); document.removeEventListener('click', closeMore); el.remove(); },
+    destroy() { offBash?.(); for (const id of bashRuns.keys()) api.chat.bashStop(id); shown = false; window.clearInterval(timer); window.clearInterval(menuTimer); document.removeEventListener('click', closeMore); el.remove(); },
   };
 }

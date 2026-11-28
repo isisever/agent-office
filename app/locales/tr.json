@@ -1,6 +1,12 @@
 {
   "_name": "Türkçe",
   "studio": {
+    "bash": {
+      "run": "Çalıştır", "runTip": "Bunu proje klasöründe çalıştır", "stop": "Durdur", "running": "çalışıyor", "stopped": "durduruldu", "exit": "çıkış {code}",
+      "cut": "karakter kesildi", "confirm": "Bu betik çalıştırılsın mı?", "confirmYes": "Çalıştır", "confirmNo": "Vazgeç",
+      "refused": "Bu sohbette komut çalıştırılamaz (merkez ve kilitli sohbetler hariç).", "busy": "Çok fazla komut çalışıyor; bekleyin veya birini durdurun.",
+      "notRunning": "Bu sohbet çalışmıyor.", "failed": "Komut başlatılamadı."
+    },
     "switchLabel": "Studio",
     "switchTitle": "Studio deneyimini aç veya kapat ({key})",
     "newSession": "Yeni oturum",

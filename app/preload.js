@@ -143,6 +143,9 @@ contextBridge.exposeInMainWorld('agentOffice', {
   chat: {
     read: (id, cursor) => ipcRenderer.invoke('chat:read', id, cursor),   // → { unsupported } | { sid, cursor, items, reset, more }
     send: (id, text, images) => ipcRenderer.invoke('chat:send', id, text, images),   // → 'ok' | why not ('empty', 'not-running', 'permission', 'draft', 'locked', …); v3.109 images: [{ type, data (base64) }] ≤ 5, ≤ 5 MB each ('too-many-images', 'image-type', 'image-size', 'image-save')
+    bash: (id, command, runId) => ipcRenderer.invoke('chat:bash', id, command, runId),   // v3.154 run a "!" / Run-button command in the project folder → 'ok' | 'refused' | 'busy' | 'bad' | 'no-folder' | 'not-running'
+    bashStop: (runId) => ipcRenderer.invoke('chat:bashStop', runId),   // → 'ok' | 'gone'
+    onBash: listen('chat:bash'),   // { id, runId, start, command, cwd } | { id, runId, stream, text } | { id, runId, done, code, killed, error }
     keys: (id, steps, expect) => ipcRenderer.invoke('chat:keys', id, steps, expect),     // expect: the key of the menu the card shows; a menu answer: ['2'] | ['3', { text }, '\r'] | ['\x1b'] …; → 'ok' | why not
     commands: (id) => ipcRenderer.invoke('chat:commands', id),           // the "/" list → [{ name, description, source, ui? }]
     files: (id, query) => ipcRenderer.invoke('chat:files', id, query),   // v3.109 the "@" list → [{ path, insert }] (the tab's project files)

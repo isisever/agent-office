@@ -1,6 +1,12 @@
 {
   "_name": "English",
   "studio": {
+    "bash": {
+      "run": "Run", "runTip": "Run this in the project folder", "stop": "Stop", "running": "running", "stopped": "stopped", "exit": "exit {code}",
+      "cut": "characters cut", "confirm": "Run this script?", "confirmYes": "Run", "confirmNo": "Cancel",
+      "refused": "Commands cannot run in this chat (headquarters and locked chats are excluded).", "busy": "Too many commands are running; wait or stop one.",
+      "notRunning": "This chat is not running.", "failed": "The command could not start."
+    },
     "switchLabel": "Studio",
     "switchTitle": "Studio experience on or off ({key})",
     "newSession": "New session",

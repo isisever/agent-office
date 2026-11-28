@@ -423,6 +423,7 @@ function killPty(id) {
   const map = terms.has(id) ? terms : logins;
   const t = map.get(id);
   if (!t) return;
+  killBashFor(id);   // v3.154 commands the chat started die with it
   map.delete(id);
   activity.delete(id);
   mcpPrint.delete(id);
@@ -5992,13 +5993,87 @@ ipcMain.handle('chat:send', (_e, id, text, images) => {
   if (why) { if (why === 'locked') lockedNotice(id); return why; }
   attachedFiles.add(id, ATT.sentPaths(body));   // v3.121 the @paths the person sent from this composer may open as chips
   if (P.isHqId(id)) { hqLastKey = Date.now(); hqMintTyped(); }
-  if (gui || !img.images.length) return typePrompt(id, body, { images: img.images }) ? 'ok' : 'not-running';
+  if (gui || !img.images.length) {
+    // v3.154 commands that finished since the last message go in front of this one (taken only when it is typed)
+    const ctx = gui && CB ? CB.buildContext(bashPending.get(id)) : '';
+    if (!typePrompt(id, ctx + body, { images: img.images })) return 'not-running';
+    if (ctx) bashPending.delete(id);
+    return 'ok';
+  }
   // a terminal tab: each image goes to a file of the app's (0600) and in as @path, which Claude Code attaches
   const paths = saveChatImages(img.images);
   if (!paths) return 'image-save';
   if (typePrompt(id, [body, ...paths.map(FM.mention)].filter(Boolean).join(' '))) return 'ok';
   for (const p of paths) { try { fs.rmSync(p); } catch { /* gone */ } }   // nothing was typed: its files go at once
   return 'not-running';
+});
+// --- v3.154 Studio chat: "!" commands and Run buttons (src/chat-bash.mjs). Only a person's action starts one: a "!"
+// message or a click on a Run button. The command runs in the project's folder in the login shell with the account's
+// env (as other shell spawns); its output streams to the chat bubble and, once finished, goes in front of the next message.
+const bashRuns = new Map();      // run id → { id (pty id), child, entry, timer }
+const bashPending = new Map();   // pty id → finished commands waiting for the next message
+function killBashTree(child) {
+  if (!child?.pid) return;
+  try {
+    if (IS_WIN) spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
+    else process.kill(-child.pid, 'SIGKILL');   // its own process group: the shell and everything it started
+  } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } }
+}
+/** Stops every command a chat started (Stop, the chat closing). */
+function killBashFor(id) {
+  for (const run of [...bashRuns.values()]) if (run.id === id) killBashTree(run.child);
+  bashPending.delete(id);
+}
+ipcMain.handle('chat:bash', (_e, id, command, runId) => {
+  id = String(id); runId = String(runId || '');
+  const r = P.resolvePty(state, id);
+  const t = terms.get(id);
+  if (!CB || !r || r.tab?.shell || P.engineOf(r.project) !== 'claude' || !t) return 'not-running';
+  if (!CB.runAllowed({ hq: P.isHqId(id) || Boolean(r.project.hq), gui: Boolean(t.gui), modeLock: guiModeLock.get(id) || '' })) return 'refused';
+  command = typeof command === 'string' ? command.trim() : '';
+  if (!command || command.length > CB.COMMAND_CAP || !/^[\w-]{4,40}$/.test(runId) || bashRuns.has(runId)) return 'bad';
+  if ([...bashRuns.values()].filter((x) => x.id === id).length >= CB.MAX_RUNNING) return 'busy';
+  if (!isDir(r.dir)) return 'no-folder';
+  const env = accountEnv(A.accountOf(state, r.project));
+  let child;
+  try {
+    child = IS_WIN
+      ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', command], { cwd: r.dir, env, windowsVerbatimArguments: true, windowsHide: true })
+      : spawn(shell(), ['-l', '-i', '-c', command], { cwd: r.dir, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) { console.error('chat bash:', e.message); return 'error'; }
+  const entry = { command, stdout: '', stderr: '', code: 0, killed: false };
+  const run = { id, child, entry, timer: null, done: false };
+  bashRuns.set(runId, run);
+  const out = { stdout: { text: '', dropped: 0 }, stderr: { text: '', dropped: 0 } };
+  const feed = (stream) => (d) => {
+    out[stream] = CB.appendCapped(out[stream], d.toString());
+    entry[stream] = out[stream].text;
+    send('chat:bash', { id, runId, stream, text: d.toString().slice(-CB.OUTPUT_CAP) });
+  };
+  child.stdout?.on('data', feed('stdout'));
+  child.stderr?.on('data', feed('stderr'));
+  const finish = (code, error) => {
+    if (run.done) return;
+    run.done = true;
+    clearTimeout(run.timer);
+    bashRuns.delete(runId);
+    entry.code = typeof code === 'number' ? code : 1;
+    if (error) entry.stderr += `${entry.stderr ? '\n' : ''}${error}`;
+    if (!quitting && terms.get(id)) bashPending.set(id, CB.pushPending(bashPending.get(id), entry));
+    send('chat:bash', { id, runId, done: true, code: entry.code, killed: entry.killed, ...(error ? { error } : {}) });
+  };
+  child.on('error', (e) => finish(127, e.message));
+  child.on('close', (code) => finish(code));
+  run.timer = setTimeout(() => { entry.killed = true; killBashTree(child); }, CB.TIMEOUT_MS);
+  send('chat:bash', { id, runId, start: true, command, cwd: r.dir });
+  return 'ok';
+});
+ipcMain.handle('chat:bashStop', (_e, runId) => {
+  const run = bashRuns.get(String(runId));
+  if (!run) return 'gone';
+  run.entry.killed = true;
+  killBashTree(run.child);
+  return 'ok';
 });
 const chatImagesDir = () => path.join(app.getPath('userData'), 'chat-images');
 /** v3.109 a terminal tab's pasted images as files (0600, folder 0700); those older than 7 days go. → paths | null */
@@ -6455,9 +6530,12 @@ ipcMain.handle('office:today', () => {
 let TH = null; // loaded at startup, like src/i18n.mjs
 /** @type {{ normalizeLook(v: unknown): string, normalizeMode(v: unknown): string, windowBackground(look: unknown, mode: unknown, systemDark: boolean): string } | null} */
 let AP = null; // src/appearance.mjs (contract v3.74), loaded with the themes library
+/** @type {{ OUTPUT_CAP: number, TIMEOUT_MS: number, MAX_RUNNING: number, COMMAND_CAP: number, appendCapped(prev: { text: string, dropped: number } | undefined, chunk: string, cap?: number): { text: string, dropped: number }, buildContext(entries: any[] | undefined): string, pushPending(list: any[] | undefined, entry: any): any[], runAllowed(o: { hq?: boolean, gui?: boolean, modeLock?: string }): boolean } | null} */
+let CB = null; // src/chat-bash.mjs (contract v3.154): "!" commands and Run buttons in the GUI chat
 async function loadThemesLib() {
   try { TH = await import('./src/themes.mjs'); } catch {}
   try { AP = await import('./src/appearance.mjs'); } catch {}
+  try { CB = await import('./src/chat-bash.mjs'); } catch (e) { console.error('chat-bash:', e.message); }
   // v3.108 the plugin's auto-approve rules (a generated copy): until loaded, a GUI tab asks the person
   try { AA = await import('./src/auto-approve.mjs'); } catch (e) { console.error('auto-approve rules:', e.message); }
 }
