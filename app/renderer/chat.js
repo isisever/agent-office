@@ -957,7 +957,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       ctxRing.title = t('chat.context', { used: shortTokens(ctx.used), limit: shortTokens(ctx.limit), pct: ctx.pct });
       ctxRing.setAttribute('aria-label', ctxRing.title);
     }
-    setProp(modeSel, 'title', `${t('chat.pick.modeTitle')}${st.lock ? ` · ${t(`chat.pick.why.${st.lock}`)}` : why}`);
+    setProp(modeSel, 'title', `${t('chat.pick.modeTitle')}${st.lock ? ` · ${t(`chat.pick.why.${st.lock}`)}` : st.why === 'busy' ? ` · ${t('chat.pick.modeLive')}` : why}`);
     // v3.120 Auto-approve turned off in the Office while this chat runs in auto: say so, never change the mode
     const off = managerOffNote(gui, gui?.settings || picks);
     modeNote.hidden = !st.managerNote && !off;

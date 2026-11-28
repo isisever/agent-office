@@ -3924,3 +3924,13 @@ Fixes three Studio problems with HQ; the Office look and behaviour are unchanged
   runs `leaveBoard()` and `selectProject(HQ_ROW.id)`, the path of the sidebar HQ pin.
 - **Board / Office tabs.** The `.hq-viewbar` pair is hidden in Studio (`body.studio .hq-viewbar`): the Board pin, the
   "All orders" row and the Back to HQ pill replace it, and the Office view is not part of Studio. The Office keeps it.
+
+## Studio: permissions can be changed while a turn runs (v3.147)
+
+- The Studio composer's permission picker stays enabled while a turn runs or a request card is open (`pickerState().modeEnabled`
+  is only false for a terminal tab or a locked session: skip-permissions or a desk). Its tooltip says the new mode applies from
+  the turn's next tool request. The model picker still waits for the turn's end.
+- `chat:setting` refuses `busy` only for the model; a `mode` change is sent as the SDK control request `set_permission_mode`, which
+  claude applies at runtime.
+- Stop recovers a stuck busy state: if no `result` ends the turn within 5 s of the interrupt (a turn lost to a restart, or an
+  interrupt claude ignored) `gui-proc` clears `live.busy`, so the composer and a new message work again.

@@ -8,6 +8,7 @@ const ML = require('./model-list.js');
 
 const STDERR_MAX = 64 * 1024;
 const INIT_ID = 'ao-initialize';   // v3.120 Studio UX: the request id of the initialize sent at start
+const INTERRUPT_WAIT = 5000;   // v3.147 ms after Stop before a turn that sent no result is shown as stopped
 const SETTING_WAIT = 10000;   // ms to wait for claude's answer to a setting request
 
 /**
@@ -33,6 +34,7 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup 
   let sid = '';
   let ended = false;
   let seq = 0;
+  let sent = 0;   // v3.147 messages sent; a Stop's fallback clears only the turn it stopped
   let stderr = '';
   // v3.121 what Studio's pickers set in this run; v3.120 a start with --permission-mode (an Auto-approve project's auto) counts
   const startMode = args.indexOf('--permission-mode');
@@ -134,10 +136,20 @@ function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup 
     /** The person's or the app's message; false when claude is gone. */
     sendUser: (text, images = []) => {
       const ok = put(GS.userLine(text, images));
-      if (ok) live = { ...live, busy: true };
+      if (ok) { live = { ...live, busy: true }; sent++; }
       return ok;
     },
-    interrupt: () => put(GS.interruptLine(`interrupt-${++seq}`)),
+    /** Stop: asks claude to interrupt; v3.147 if no `result` ends the turn within INTERRUPT_WAIT (a turn lost to a restart or
+     * an interrupt claude ignored) the busy state is cleared here, so Stop and the composer always recover. */
+    interrupt: () => {
+      const ok = put(GS.interruptLine(`interrupt-${++seq}`));
+      if (ok && live.busy) {
+        const at = sent;   // a message sent after this Stop starts a new turn: its busy state is not cleared here
+        const t = setTimeout(() => { if (!ended && live.busy && sent === at) live = { busy: false, text: '', tool: '' }; }, INTERRUPT_WAIT);
+        t.unref?.();
+      }
+      return ok;
+    },
     /**
      * v3.121 the model or permission mode for the next turns, resolved by claude's control_response: 'ok', 'bad' (not
      * a known key/value), 'busy' (one is already waiting), 'gone' (claude ended), 'error:<claude's message>' (an error

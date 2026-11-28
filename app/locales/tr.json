@@ -1038,6 +1038,7 @@
         "not-running": "Bu oturum sohbet olarak çalışmıyor.",
         "other": "Değiştirilemedi."
       },
+      "modeLive": "Bir tur çalışıyor: yeni mod turun sonraki araç isteğinden itibaren geçerli olur",
       "managerNote": "Yönetici yanıtlıyor",
       "managerNoteTitle": "Bu projede Otomatik onay açık: izin sorularını yine yönetici yanıtlıyor",
       "managerOffNote": "Otomatik mod, yönetici kapalı",
