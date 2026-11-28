@@ -1,0 +1,55 @@
+{
+  "version": "0.22.48",
+  "items": [
+    {
+      "id": "studio-remote-projects",
+      "experience": "studio",
+      "title": {
+        "en": "Projects on your other machines, right in the list",
+        "tr": "Diğer makinelerinizdeki projeler doğrudan listede"
+      },
+      "body": {
+        "en": "Projects on paired machines now appear in Studio's Projects list like your own, with a small tag showing the machine they run on. Expand one to follow its session and send it a message; start, wake, sleep or stop it where that machine allows. An offline machine's projects stay in the list, dimmed, with their last known state.",
+        "tr": "Eşleştirilmiş makinelerdeki projeler artık Studio'nun Projeler listesinde kendi projeleriniz gibi görünüyor; küçük bir etiket hangi makinede çalıştığını gösteriyor. Oturumunu izlemek ve mesaj göndermek için açın; o makine izin veriyorsa başlatın, uyandırın, uyutun ya da durdurun. Çevrimdışı bir makinenin projeleri son bilinen durumlarıyla soluk olarak listede kalır."
+      },
+      "try": { "label": { "en": "Pair a machine", "tr": "Makine eşleştir" }, "action": "open-devices" }
+    },
+    {
+      "id": "studio-sessions-order",
+      "experience": "studio",
+      "title": {
+        "en": "Several chats per project, your own order",
+        "tr": "Proje başına birden çok sohbet, kendi sıranız"
+      },
+      "body": {
+        "en": "A project can now hold several chats side by side. Drag projects to reorder them or drop them into named groups. Projects start collapsed and remember the ones you open, and the search box filters the list.",
+        "tr": "Bir projede artık yan yana birden çok sohbet olabilir. Projeleri sürükleyerek sıralayın ya da adlandırdığınız gruplara bırakın. Projeler kapalı başlar, açtıklarınızı hatırlar; arama kutusu listeyi süzer."
+      }
+    },
+    {
+      "id": "studio-auto-mode",
+      "experience": "studio",
+      "title": {
+        "en": "Chats start in Auto mode",
+        "tr": "Sohbetler Otomatik modda başlar"
+      },
+      "body": {
+        "en": "New Studio chats start in Auto instead of Ask permissions when your account offers it. You can switch the mode any time, even while a turn is running. If work was interrupted, Studio offers to carry on where it stopped.",
+        "tr": "Hesabınız destekliyorsa yeni Studio sohbetleri İzin sor yerine Otomatik modda başlar. Modu istediğiniz an, bir tur sürerken bile değiştirebilirsiniz. Bir iş yarıda kaldıysa Studio kaldığı yerden devam etmeyi önerir."
+      }
+    },
+    {
+      "id": "studio-kanban-usage",
+      "experience": "studio",
+      "title": {
+        "en": "Kanban board and Usage inside Studio",
+        "tr": "Studio içinde Kanban pano ve Kullanım"
+      },
+      "body": {
+        "en": "Open the Kanban board with all HQ orders from Studio and come back with one click. Usage & cost is in the sidebar, and its panel now matches Studio's look in light and dark. Settings → Projects is reorganised into Account & model, Budget, Permissions and MCP.",
+        "tr": "Tüm HQ emirleriyle Kanban panoyu Studio'dan açın ve tek tıkla geri dönün. Kullanım ve maliyet kenar çubuğunda; paneli artık açık ve koyu temada Studio'nun görünümünde. Ayarlar → Projeler; Hesap ve model, Bütçe, İzinler ve MCP olarak yeniden düzenlendi."
+      },
+      "try": { "label": { "en": "Open the Kanban board", "tr": "Kanban panoyu aç" }, "action": "open-board" }
+    }
+  ]
+}
