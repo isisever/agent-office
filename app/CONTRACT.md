@@ -4162,3 +4162,12 @@ one checked); choosing one sets that project's account.
 - **Spotlight.** The ring and tooltip of "Try it" (renderer/whats-new.js) are `position: fixed` and were placed once from `getBoundingClientRect()`; a window resize, a scrolled list or a panel still animating open left them offset ("onboardda kayma"). They now follow the target every animation frame while shown (4.5 s), end if the target leaves the DOM, and the tooltip is clamped inside the viewport. Placement is the pure `src/spot-place.mjs` (`placeSpot`, `movedSpot`).
 - **Message buttons.** In the Office, `.chat-acts` was right-anchored for every message; on a short left-aligned message (answer, error, output) the Copy/Reply row was wider than the bubble and hung out past the list's left edge, clipped by `.chat-list` overflow. Left-aligned messages now anchor the row at their left edge (style.css).
 - Tests: test/spot-place.test.mjs.
+
+## Studio composer message supersedes open question and plan cards (v3.166)
+
+A message typed in Studio's composer while an AskUserQuestion or plan card is open used to queue behind the card
+(claude waits for its answer), so it got no reply. `chat:send` now calls `typePrompt(..., { supersede: true })` →
+`sendUser(text, images, { supersede: true })`, which declines those cards (deny with `SUPERSEDED_NOTE`) before writing
+the message. The default is off: HQ dispatches, resume/limit prompts, inbox and mail never deny cards. Permission cards
+(including a sub-agent's pending permission) are never superseded.
+- Tests: test/gui-session.test.cjs.

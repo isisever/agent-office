@@ -136,7 +136,17 @@ function spawnGui(spawn, file, args, { cwd, env, spawnExtra = {} }, { onAsk, onM
       try { if (child.pid) killGroup(-child.pid, signal); else child.kill(signal); } catch { try { child.kill(signal); } catch {} }
     },
     /** The person's or the app's message; false when claude is gone. */
-    sendUser: (text, images = []) => {
+    sendUser: (text, images = [], { supersede = false } = {}) => {
+      // v3.166 a message the person typed in Studio's composer while a question or plan card is open used to queue behind
+      // it (claude waits for the answer, so the message got no reply): those cards are declined. Never for the app's own
+      // sends (supersede is off), and never for permission cards (a sub-agent's pending permission stays open).
+      if (supersede && !ended) {
+        for (const a of [...asks.values()]) {
+          if (a.ask.kind !== 'question' && a.ask.kind !== 'plan') continue;
+          asks.delete(a.ask.id);
+          put(GS.denyLine(a.ask.id, GS.SUPERSEDED_NOTE));
+        }
+      }
       const ok = put(GS.userLine(text, images));
       if (ok) { live = { ...live, busy: true }; sent++; }
       return ok;
