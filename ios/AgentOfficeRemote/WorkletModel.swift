@@ -145,6 +145,7 @@ final class WorkletModel: ObservableObject {
   @Published private(set) var pairError: String?
   @Published private(set) var projects: [Project] = []
   @Published private(set) var hasView = false
+  @Published private(set) var macOutdated = false                       // the Mac has no ctl2: project screens cannot work
   @Published private(set) var hqStatus: String?
   @Published private(set) var delivered = 0
   @Published private(set) var streams: [String: Stream] = [:]          // "hq" or "<project>/<sid>" or "<project>"
@@ -497,6 +498,8 @@ final class WorkletModel: ObservableObject {
       delivered = view["delivered"] as? Int ?? 0
       if let n = view["name"] as? String, var p = paired, p.name != n { p.name = n; paired = p }
       hasView = true
+    case "mac-outdated":
+      macOutdated = true
     case "ctl-event":
       guard let e = msg["event"] as? [String: Any], let pid = e["project"] as? String, let status = e["status"] as? String else { return }
       if pid == "hq" { hqStatus = status; return }
@@ -544,6 +547,7 @@ final class WorkletModel: ObservableObject {
       streams[key]?.received = false
       scheduleReopen(key)
     case "ctl-proj":
+      macOutdated = false
       guard let project = msg["project"] as? String else { return }
       if msg["error"] != nil || msg["proj"] == nil {
         details[project, default: ProjectDetail()].failed = !(details[project]?.loaded ?? false)
@@ -665,6 +669,7 @@ final class WorkletModel: ObservableObject {
     ]
     reportsLoaded = true
     lines = ["demo mode: no worklet is running"]
+    if UserDefaults.standard.bool(forKey: "uiMacOutdated") { macOutdated = true }
   }
 }
 

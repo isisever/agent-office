@@ -18,6 +18,10 @@ struct ProjectView: View {
       VStack(alignment: .leading, spacing: Space.m) {
         if !link.isOnline { OfflineBanner(text: "Offline. Showing the last known state.") }
         header
+        if link.macOutdated {
+          EmptyState(icon: "arrow.down.circle", title: "Update Agent Office on your Mac",
+                     detail: "Projects can't be opened from your phone until you do.")
+        } else {
         ForEach(link.asks[projectId] ?? []) { AskCard(link: link, ask: $0) }
         NavigationLink {
           SessionView(link: link, projectId: projectId, sid: nil, title: project?.name ?? "")
@@ -47,6 +51,7 @@ struct ProjectView: View {
         } else {
           if !running.isEmpty { sectionTitle("Running now"); ForEach(running) { row($0) } }
           if !recent.isEmpty { sectionTitle("Recent"); ForEach(recent) { row($0) } }
+        }
         }
       }
       .padding(.horizontal, Space.l).padding(.bottom, Space.xl)
