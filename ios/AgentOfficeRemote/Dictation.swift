@@ -12,16 +12,23 @@ final class Dictation: ObservableObject {
   private let engine = AVAudioEngine()
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var task: SFSpeechRecognitionTask?
+  private var starting = false      // auth callbacks pending: a second tap must not start twice
+  private var generation = 0         // bumped on every stop: late results of an older run are ignored
 
   func toggle(text: Binding<String>) {
     if isListening { stop(); return }
+    guard !starting else { return }
+    starting = true
     message = nil
+    let gen = generation
     SFSpeechRecognizer.requestAuthorization { status in
       DispatchQueue.main.async {
-        guard status == .authorized else { self.message = String(localized: "Speech recognition isn't allowed. Turn it on in Settings."); return }
+        guard self.generation == gen else { self.starting = false; return }
+        guard status == .authorized else { self.starting = false; self.message = String(localized: "Speech recognition isn't allowed. Turn it on in Settings."); return }
         AVAudioSession.sharedInstance().requestRecordPermission { granted in
           DispatchQueue.main.async {
-            guard granted else { self.message = String(localized: "Microphone access isn't allowed. Turn it on in Settings."); return }
+            guard self.generation == gen else { self.starting = false; return }
+            guard granted else { self.starting = false; self.message = String(localized: "Microphone access isn't allowed. Turn it on in Settings."); return }
             self.start(text: text)
           }
         }
@@ -30,7 +37,10 @@ final class Dictation: ObservableObject {
   }
 
   func stop() {
-    if engine.isRunning { engine.stop(); engine.inputNode.removeTap(onBus: 0) }
+    generation += 1
+    starting = false
+    if engine.isRunning { engine.stop() }
+    engine.inputNode.removeTap(onBus: 0)
     request?.endAudio()
     task?.cancel()
     request = nil; task = nil
@@ -39,6 +49,8 @@ final class Dictation: ObservableObject {
   }
 
   private func start(text: Binding<String>) {
+    starting = false
+    let gen = generation
     guard let recognizer = SFSpeechRecognizer(locale: Locale.current), recognizer.isAvailable else {
       message = String(localized: "Dictation isn't available for this language right now."); return
     }
@@ -61,7 +73,7 @@ final class Dictation: ObservableObject {
     isListening = true
     task = recognizer.recognitionTask(with: req) { [weak self] result, error in
       DispatchQueue.main.async {
-        guard let self else { return }
+        guard let self, self.generation == gen, self.isListening else { return }
         if let result {
           let spoken = result.bestTranscription.formattedString
           text.wrappedValue = base.isEmpty ? spoken : base + " " + spoken
@@ -75,7 +87,7 @@ final class Dictation: ObservableObject {
 /// Microphone button for the composer. Tap to start dictating into `text`, tap again to stop.
 struct DictationButton: View {
   @Binding var text: String
-  @StateObject private var dictation = Dictation()
+  @ObservedObject var dictation: Dictation
 
   var body: some View {
     Button {

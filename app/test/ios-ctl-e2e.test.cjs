@@ -93,3 +93,19 @@ test('a desktop without ctl2 still gets "mac-outdated" for the project screen', 
   assert.ok(out.some((m) => m.t === 'recv' && m.msg.t === 'mac-outdated'));
   await ctl.destroy();
 });
+
+test('a ctl-send whose client is replaced during the caps wait is rejected, not dropped silently', async () => {
+  const dsk = desktop(400);
+  const { ctl, out } = phone(dsk);
+  const paired = { pub: 'aa'.repeat(32), secret: 'bb'.repeat(32), name: 'Desk' };
+  await ctl.command({ t: 'init', name: 'iPhone', seed: '11'.repeat(32), paired });
+  for (let i = 0; i < 100 && !out.some((m) => m.t === 'status' && m.state === 'online'); i++) await wait(5);
+  const sending = ctl.command({ t: 'send', msg: { t: 'ctl-send', id: 'x9', project: 'p1', text: 'hello' } });
+  await wait(20);
+  await ctl.command({ t: 'init', name: 'iPhone', seed: '22'.repeat(32), paired });
+  await sending;
+  const ack = out.filter((m) => m.t === 'recv').map((m) => m.msg).find((m) => m.t === 'ctl-ack' && m.id === 'x9');
+  assert.ok(ack && ack.status === 'rejected' && ack.op === 'send', `got ${JSON.stringify(out)}`);
+  assert.ok(W.validateCtl(ack), 'the ack passes the same validation the phone applies');
+  await ctl.destroy();
+});

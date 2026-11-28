@@ -64,7 +64,8 @@ struct ProjectView: View {
       if let s = running.first ?? detail.sessions.first { SessionView(link: link, projectId: projectId, sid: s.main ? nil : s.id, title: s.title) }
     }
     .onAppear { link.requestProject(projectId) }
-    .task { await link.pollProject(projectId) }
+    .onAppear { link.projectVisible(projectId, true) }
+    .onDisappear { link.projectVisible(projectId, false) }
   }
 
   private var header: some View {
@@ -201,6 +202,7 @@ struct SessionView: View {
   let sid: String?
   let title: String
   @State private var draft = ""
+  @StateObject private var dictation = Dictation()
   @State private var followMain = false   // a send goes to the main tab, so the reply is read from its session
   @FocusState private var focused: Bool
 
@@ -268,7 +270,8 @@ struct SessionView: View {
     .safeAreaInset(edge: .bottom) { bottom }
     .onAppear { link.watch(projectId, sid: liveSid); link.requestProject(projectId) }
     .onDisappear { link.unwatch(projectId, sid: liveSid) }
-    .task { await link.pollProject(projectId) }
+    .onAppear { link.projectVisible(projectId, true) }
+    .onDisappear { link.projectVisible(projectId, false) }
   }
 
   private var bottom: some View {
@@ -298,12 +301,12 @@ struct SessionView: View {
         .padding(.horizontal, Space.m).padding(.vertical, 10)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.stroke))
-      DictationButton(text: $draft)
+      DictationButton(text: $draft, dictation: dictation)
       Button {
         if sid != nil && !followMain {   // an older session is picked: the reply lands in the main session
           link.unwatch(projectId, sid: sid); followMain = true; link.watch(projectId, sid: nil)
         }
-        link.sendToProject(projectId, draft); draft = ""
+        dictation.stop(); link.sendToProject(projectId, draft); draft = ""
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
       } label: {
         Group {

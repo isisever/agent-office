@@ -186,6 +186,7 @@ struct ProjectCard: View {
 struct HQView: View {
   @ObservedObject var link: WorkletModel
   @State private var draft = ""
+  @StateObject private var dictation = Dictation()
   @FocusState private var focused: Bool
 
   var body: some View {
@@ -226,9 +227,9 @@ struct HQView: View {
         .padding(.horizontal, Space.m).padding(.vertical, 10)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.stroke))
-      DictationButton(text: $draft)
+      DictationButton(text: $draft, dictation: dictation)
       Button {
-        link.sendHq(draft); draft = ""
+        dictation.stop(); link.sendHq(draft); draft = ""
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
       } label: {
         Image(systemName: "arrow.up").font(.headline.weight(.bold))
