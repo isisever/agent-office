@@ -63,7 +63,12 @@ function createController(o) {
         // the connection reports 'online' before the desktop's hello: wait for it instead of reading "no caps yet" as "no ctl2"
         const c = client;
         const caps = c.peerCaps || (c.conn ? await c.waitCaps(3000) : null);
-        if (client !== c) return;
+        if (client !== c) {
+          // the client was replaced during the wait: fail the request visibly so the phone's spinner clears (ctl-proj has no ack)
+          log(`${msg.t} dropped: the connection was replaced`);
+          if (msg.t !== 'ctl-proj') emit({ t: 'recv', msg: { t: 'ctl-ack', id: msg.id, op: msg.t.slice(4), status: 'rejected', reason: 'failed' } });
+          return;
+        }
         if (caps?.includes('ctl2')) return c.write(msg);
         // v3.178: not sent; the app shows "Update Agent Office on your Mac". Also used when no hello came in time (logged).
         log(caps ? `${msg.t} not sent: the desktop has no ctl2` : `${msg.t} not sent: no hello from the desktop within 3s`);

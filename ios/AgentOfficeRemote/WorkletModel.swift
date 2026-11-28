@@ -168,6 +168,8 @@ final class WorkletModel: ObservableObject {
   private var wanted: [String: (project: String, sid: String?)] = [:]
   private var attempts: [String: Int] = [:]
   private var pendingAcks: [String: PendingAck] = [:]
+  private var visibleProjects: [String: Int] = [:]       // project id -> number of visible screens showing it
+  private var pollTask: Task<Void, Never>?
   private var watched: [String: Int] = [:]                // project id -> last ctl-proj request time (ms)
   private var isDemo = false
   private var keepTask: Task<Void, Never>?
@@ -375,12 +377,21 @@ final class WorkletModel: ObservableObject {
     send(["t": "send", "msg": ["t": "ctl-proj", "id": newId("j"), "project": project]])
   }
 
-  /// Fallback while a project screen is visible: the Mac pushes status changes, this only catches a missed push (every 5 s).
-  func pollProject(_ project: String) async {
-    while !Task.isCancelled {
-      try? await Task.sleep(nanoseconds: 5_000_000_000)
-      if Task.isCancelled { break }
-      requestProject(project)
+  /// Fallback while a project screen is visible: the Mac pushes status changes, this only catches a missed push.
+  /// One poller for the whole app (the project screen and its session screen both report visibility), so the desktop's shared
+  /// rate limiter sees at most one ctl-proj per visible project every 5 s.
+  func projectVisible(_ project: String, _ visible: Bool) {
+    let n = (visibleProjects[project] ?? 0) + (visible ? 1 : -1)
+    if n > 0 { visibleProjects[project] = n } else { visibleProjects.removeValue(forKey: project) }
+    if visibleProjects.isEmpty { pollTask?.cancel(); pollTask = nil; return }
+    guard pollTask == nil else { return }
+    pollTask = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        if Task.isCancelled { break }
+        guard let self else { return }
+        for p in self.visibleProjects.keys { self.requestProject(p) }
+      }
     }
   }
 
