@@ -60,7 +60,49 @@ test('HQ: the old ctlTurn refused a busy HQ (the phone lost the turn); the queue
 
 test('main.js routes a phone send and an HQ turn through the queue', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  assert.match(src, /if \(op === 'send'\) return ctlQueue\.submit\(id, text\)/);
-  assert.match(src, /ctlHq: \(text\) => \{ const r = ctlQueue\.submit\(HQ\.HQ_ID, text\)/);
+  assert.match(src, /if \(op === 'send'\) return ctlQueue\.submit\(id, text, late\)/);
+  assert.match(src, /ctlHq: \(text, o\) => \{ const r = ctlQueue\.submit\(HQ\.HQ_ID, text, o\?\.late\)/);
   assert.match(src, /return \['busy', 'locked', 'not-running'\]\.includes\(why\) \? 'wait' : why/);
+});
+
+test('A: a queued message that later expires or hard-fails tells the phone that sent it (meta handed to onDrop)', () => {
+  const told = [];
+  const st = { clock: 0, mode: 'wait' };
+  const q = createCtlQueue({ now: () => st.clock, ttlMs: 1000,
+    attempt: () => st.mode, onDrop: (key, text, reason, late) => late?.(reason === 'expired' ? 'stale' : reason) });
+  assert.equal(q.submit('p1', 'a', (r) => told.push(['a', r])), 'ok');
+  assert.equal(q.submit('p1', 'b', (r) => told.push(['b', r])), 'ok');
+  st.clock = 5000;
+  q.drain();
+  assert.deepEqual(told, [['a', 'stale'], ['b', 'stale']]);
+  st.clock = 0; st.mode = 'wait';
+  q.submit('p2', 'c', (r) => told.push(['c', r]));
+  st.mode = 'engine';
+  q.drain();
+  assert.deepEqual(told[2], ['c', 'engine']);
+});
+
+test('A: link emits a late callback that pushes a rejected ctl-ack / ctl-hq-status, and the docs say so', () => {
+  const link = fs.readFileSync(path.join(__dirname, '../src/link.js'), 'utf8');
+  assert.match(link, /late: \(reason\) => ack\('rejected'/);
+  assert.match(link, /late: \(reason\) => send\('rejected'/);
+  const contract = fs.readFileSync(path.join(__dirname, '../CONTRACT.md'), 'utf8');
+  assert.match(contract, /later `rejected`|a later `rejected`/);
+  assert.match(contract, /in memory only/);
+});
+
+test('B: ctlSendNow answers wait while handoff-locked, before chatSend can print a notice', () => {
+  const main = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
+  const body = main.slice(main.indexOf('function ctlSendNow'));
+  const lock = body.indexOf('if (handoffLocked(id)) return \'wait\'');
+  assert.ok(lock > 0 && lock < body.indexOf('chatSend(id, text, [])'));
+});
+
+test('C: a hard refusal is rejected at once even when messages already wait behind a busy session', () => {
+  let hqOn = true;
+  const q = createCtlQueue({ attempt: () => 'wait', precheck: () => (hqOn ? null : 'no-hq') });
+  assert.equal(q.submit('hq', 'one'), 'ok');
+  hqOn = false;
+  assert.equal(q.submit('hq', 'two'), 'no-hq');
+  assert.equal(q.pending('hq'), 1);
 });

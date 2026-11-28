@@ -204,15 +204,15 @@ function setupLink(d) {
       link.on('sess-end', (m) => d.send('link:sess', { ...m, end: true }));
       link.on('task-cancel', onTaskCancel);   // v3.48
       // v3.121 a phone controller types an HQ turn / asks for the reports; no host callback = refused ('no-hq') / none
-      if (d.ctlHq) link.on('ctl-hq', ({ device, id, text, reply }) => {
+      if (d.ctlHq) link.on('ctl-hq', ({ device, id, text, reply, late }) => {
         clog({ device: device.name, project: 'hq', firstLine: C.cleanLine(text.split(/\r?\n/)[0], 120) });
         // ctlHq → 'queued' | a refusal reason ('busy', 'no-hq'); false = 'busy' (older callers)
-        Promise.resolve().then(() => d.ctlHq?.(text, { device: device.name, id })).then((r) => {
+        Promise.resolve().then(() => d.ctlHq?.(text, { device: device.name, id, late })).then((r) => {
           const why = r === false ? 'busy' : typeof r === 'string' && r !== 'queued' ? r : '';
           reply(why ? 'rejected' : 'queued', why || undefined);
         }, () => reply('rejected', 'failed'));
       });
-      if (d.ctlOp) link.on('ctl-op', ({ op, project, text, askId, answer, reply }) => { Promise.resolve().then(() => d.ctlOp(op, project, { text, askId, answer })).then((r) => reply(r), () => reply('failed')); });
+      if (d.ctlOp) link.on('ctl-op', ({ op, project, text, askId, answer, late, reply }) => { Promise.resolve().then(() => d.ctlOp(op, project, { text, askId, answer, late })).then((r) => reply(r), () => reply('failed')); });
       if (d.ctlAsks) d.ctlAsks((list) => link.setCtlAsks(list));   // the app calls this with its open asks whenever they change
       if (d.ctlProj) link.on('ctl-proj', ({ project, reply }) => { Promise.resolve().then(() => d.ctlProj(project)).then((r) => reply(r?.sessions, r?.pending), () => reply([])); });
       if (d.ctlReports) link.on('ctl-reports', ({ limit, reply }) => { Promise.resolve().then(() => d.ctlReports?.(limit)).then(reply, () => reply([])); });

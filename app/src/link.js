@@ -1085,7 +1085,7 @@ class Link extends EventEmitter {
       const s = C.sanitizeCommand(m.text);
       if (!s.ok) return send('rejected', s.reason);
       if (!this.listenerCount('ctl-hq')) return send('rejected', 'no-hq');
-      this.emit('ctl-hq', { device: d, id: m.id, text: s.text, reply: send });
+      this.emit('ctl-hq', { device: d, id: m.id, text: s.text, reply: send, late: (reason) => send('rejected', W.CTL_ACK_REASONS.includes(reason) ? reason : 'failed') });
     } else if (m.t === 'ctl-reports' && !m.reports) {
       const reply = (reports) => { const line = W.validateCtl({ t: 'ctl-reports', id: m.id, reports: (reports || []).slice(0, m.limit) }); if (line && !conn.destroyed) this.write(conn, line); };
       if (!this.queryLimiter.take(d.pub)) return reply([]);
@@ -1105,7 +1105,7 @@ class Link extends EventEmitter {
       } else if (m.t === 'ctl-answer') arg = { askId: m.askId, answer: m.answer };
       if (!this.listenerCount('ctl-op')) return ack('rejected', 'failed');
       // the host replies 'ok' or a refusal reason; send is only queued into the session, answer and stop are done
-      this.emit('ctl-op', { device: d, op, id: m.id, project: m.project, ...arg, reply: (r) => (r === 'ok' ? ack(op === 'send' ? 'queued' : 'done') : ack('rejected', W.CTL_ACK_REASONS.includes(r) ? r : 'failed')) });
+      this.emit('ctl-op', { device: d, op, id: m.id, project: m.project, ...arg, late: (reason) => ack('rejected', W.CTL_ACK_REASONS.includes(reason) ? reason : 'failed'), reply: (r) => (r === 'ok' ? ack(op === 'send' ? 'queued' : 'done') : ack('rejected', W.CTL_ACK_REASONS.includes(r) ? r : 'failed')) });
     } else if (m.t === 'ctl-proj' && !m.proj && !m.error) {   // v3.178 cap 'ctl2': the project screen
       if (!this.ctl2(d.pub)) return onInvalid();
       const reply = (extra) => { const line = W.validateCtl({ t: 'ctl-proj', id: m.id, project: m.project, ...extra }); if (line && !conn.destroyed) this.write(conn, line); };

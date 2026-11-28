@@ -3669,7 +3669,7 @@ function startLink() {
     // v3.121 a phone controller's HQ turn, typed like the person's own (false = HQ is busy right now)
     // v3.121 a phone controller's HQ turn. Only with HQ on; refused while HQ is busy or an approval prompt is open. It is
     // the owner's own typed turn: a live request id is minted (hqMintTyped) so HQ orders need no Mac consent dialog.
-    ctlHq: (text) => { const r = ctlQueue.submit(HQ.HQ_ID, text); return r === 'ok' ? 'queued' : r; },   // v3.179 a busy HQ queues the turn
+    ctlHq: (text, o) => { const r = ctlQueue.submit(HQ.HQ_ID, text, o?.late); return r === 'ok' ? 'queued' : r; },   // v3.179 a busy HQ queues the turn
     ctlOp,   // v3.178 ctl2: a phone sends, answers or stops
     ctlAsks: (sink) => { ctlAsksSink = sink; ctlAsksKey = ''; pushCtlAsks(); },
     ctlProj: ctlProjSessions,   // v3.178 a phone's project screen: running + recent sessions
@@ -6513,13 +6513,13 @@ function pushCtlAsks() {
   } catch (e) { console.error('ctl asks:', e.message); }
 }
 /** v3.178 a phone's ctl-send / ctl-answer / ctl-stop → 'ok' or an ack refusal reason. */
-function ctlOp(op, id, { text, askId, answer }) {
+function ctlOp(op, id, { text, askId, answer, late }) {
   id = String(id);
   const r = P.resolvePty(state, id);
   if (!r || r.tab || r.project.hq || r.project.staffOwner || id === HQ.HQ_ID) return 'unknown-project';   // HQ goes only through ctl-hq; a personal workspace is never remote
   if (P.engineOf(r.project) !== 'claude') return 'engine';
   const t = terms.get(id);
-  if (op === 'send') return ctlQueue.submit(id, text);   // v3.179 busy/locked/not-ready waits in the queue instead of a refusal the phone loses
+  if (op === 'send') return ctlQueue.submit(id, text, late);   // v3.179 busy/locked/not-ready waits in the queue instead of a refusal the phone loses
   return ctlOpNow(op, id, { text, askId, answer }, r, t);
 }
 /** One immediate attempt of a phone's ctl-send: 'ok', 'wait' (try again when the session takes input) or a hard refusal. */
@@ -6532,6 +6532,7 @@ function ctlSendNow(id, text) {
       startPty(id, { resume: true, prompt: text, forcePrompt: true });
       return 'ok';
     }
+    if (handoffLocked(id)) return 'wait';   // locked: chatSend would print a notice into the tab on every drain tick
     const res = chatSend(id, text, []);
     const map = { 'too-long': 'too-large', permission: 'busy', draft: 'busy', unsupported: 'engine' };
     if (res === 'ok') return 'ok';
@@ -6541,7 +6542,12 @@ function ctlSendNow(id, text) {
 }
 const ctlQueue = createCtlQueue({
   attempt: (key, text) => (key === HQ.HQ_ID ? ctlHqNow(text) : ctlSendNow(key, text)),
-  onDrop: (key, text, reason) => console.error(`phone message for ${key} dropped (${reason}):`, String(text).slice(0, 80)),
+  precheck: (key) => (key === HQ.HQ_ID && !(hqSettings().enabled && P.hqProject(state)) ? 'no-hq' : null),
+  // a message acked 'queued' that is later dropped is told to the phone that sent it (meta = its late-reject callback)
+  onDrop: (key, text, reason, late) => {
+    console.error(`phone message for ${key} dropped (${reason}):`, String(text).slice(0, 80));
+    try { late?.(reason === 'expired' ? 'stale' : reason); } catch (e) { console.error('ctl late reject:', e.message); }
+  },
 });
 setInterval(() => { try { ctlQueue.drain(); } catch (e) { console.error('ctl queue:', e.message); } }, 1000).unref();
 /** v3.179 a phone's HQ turn: 'ok', 'wait' while HQ is busy or an approval is open, or 'no-hq'. */

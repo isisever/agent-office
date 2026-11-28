@@ -1767,7 +1767,7 @@ test('v3.130 review: the phone flag survives a restart in the sealed store', () 
 });
 
 test('v3.178 a phone HQ order mints a typed request id: no Mac consent dialog', () => {
-  const i = MAIN.indexOf('ctlHq: (text) =>');
+  const i = MAIN.indexOf('ctlHq: (text');
   assert.ok(i > 0);
   const j = MAIN.indexOf('function ctlHqNow(');   // v3.179 the turn itself runs in ctlHqNow, behind the busy queue
   assert.ok(j > 0);
