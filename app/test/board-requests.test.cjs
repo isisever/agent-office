@@ -99,3 +99,18 @@ test('loadStore keeps and cleans reqs', () => {
   assert.equal(s.reqs.length, 1);
   assert.deepEqual(BM.loadStore(undefined).reqs, []);
 });
+
+test('a short turn the 15 s sampling never saw busy is done when the transcript changed after the send', () => {
+  const l0 = RQ.add([], rec(), 1000);
+  const l = RQ.observe(l0, 'pty1', { busy: false, activityAt: 1000 + RQ.ANSWER_MS }, 1000 + RQ.GRACE_MS);
+  assert.equal(l[0].state, 'done');
+  // no transcript change after the send: still never-started
+  const f = RQ.observe(l0, 'pty1', { busy: false, activityAt: 1500 }, 1000 + RQ.GRACE_MS);
+  assert.equal(f[0].state, 'failed');
+});
+
+test('a reply typed while a request waits on the person continues it (not superseded or failed)', () => {
+  let l = RQ.observe(RQ.add([], rec(), 1000), 'pty1', { waiting: true }, 2000);
+  l = RQ.add(l, rec({ id: 'qabcdef02' }), 3000);
+  assert.equal(l.find((r) => r.id === 'qabcdef01').state, 'waiting');
+});

@@ -7009,7 +7009,7 @@ function boardRequestsTick(/** @type {any} */ s, now = Date.now()) {
     const info = studioTabInfo(pid);
     const busy = info?.busy === true || (!tt.gui && tabWorkRunning(pid));
     reqs = BM.RQ.bindSession(reqs, pid, STU.validSessionId(info?.sessionId));
-    reqs = BM.RQ.observe(reqs, pid, { busy, waiting: info?.waiting === true }, now);
+    reqs = BM.RQ.observe(reqs, pid, { busy, waiting: info?.waiting === true, activityAt: info?.at || 0 }, now);
   }
   reqs = BM.RQ.detachGone(reqs, new Set(terms.keys()), now);
   return reqs === s.reqs ? s : { ...s, reqs };

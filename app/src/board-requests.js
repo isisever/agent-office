@@ -5,6 +5,7 @@
 
 const MAX_REQS = 200;                       // records kept (open first, then the newest closed)
 const KEEP_DONE_MS = 14 * 24 * 60 * 60 * 1000;   // a finished request older than this is dropped
+const ANSWER_MS = 3000;                     // the transcript changing this long after the send = the session answered (the prompt line itself lands within ms)
 const GRACE_MS = 20 * 1000;                 // a turn not seen busy this long after the send is taken as finished
 const TITLE_MAX = 80;
 const STATES = Object.freeze(['running', 'waiting', 'done', 'failed']);
@@ -47,6 +48,8 @@ function add(list, rec, now = Date.now()) {
   // Only a turn that really ran (seen busy, not waiting on the person) counts as done; the rest did not get its work.
   const old = list.map((r) => {
     if (!isOpen(r) || r.ptyId !== rec.ptyId) return r;
+    // A request the person answers by typing (waiting) is continued by that reply: it stays as it is, not closed.
+    if (r.state === 'waiting') return r;
     return r.busySeen && r.state === 'running' ? { ...r, state: 'done', endedAt: now } : { ...r, state: 'failed', reason: 'superseded', endedAt: now };
   });
   const c = clean({ ...rec, state: 'running', at: now });
@@ -61,7 +64,7 @@ function observe(list, ptyId, live, now = Date.now()) {
     if (live.failed) n = { ...r, state: 'failed', endedAt: now };
     else if (live.waiting) n = { ...r, state: 'waiting', busySeen: true };
     else if (live.busy) n = { ...r, state: 'running', busySeen: true };
-    else if (r.busySeen) n = { ...r, state: 'done', endedAt: now };
+    else if (r.busySeen || num(live.activityAt) - r.at >= ANSWER_MS) n = { ...r, state: 'done', endedAt: now };
     else if (now - r.at >= GRACE_MS) n = { ...r, state: 'failed', reason: 'never-started', endedAt: now };
     if (n !== r && JSON.stringify(n) !== JSON.stringify(r)) { changed = true; return n; }
     return r;
@@ -91,4 +94,4 @@ function summary(list, limit = 30) {
   return [...list].sort((a, b) => b.at - a.at).slice(0, limit).map((r) => ({ id: r.id, project: r.project, account: r.account, title: r.title, state: r.state, type: r.type, at: r.at, ...(r.endedAt ? { endedAt: r.endedAt } : {}) }));
 }
 const validId = (/** @type {any} */ id) => typeof id === 'string' && id.startsWith('q:') && ID_RE.test(id.slice(2));
-module.exports = { MAX_REQS, KEEP_DONE_MS, GRACE_MS, STATES, titleOf, clean, cleanList, cap, add, observe, bindSession, detachGone, card, summary, validId, isOpen };
+module.exports = { MAX_REQS, ANSWER_MS, KEEP_DONE_MS, GRACE_MS, STATES, titleOf, clean, cleanList, cap, add, observe, bindSession, detachGone, card, summary, validId, isOpen };
