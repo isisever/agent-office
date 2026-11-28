@@ -100,13 +100,28 @@ test('loadStore keeps and cleans reqs', () => {
   assert.deepEqual(BM.loadStore(undefined).reqs, []);
 });
 
-test('a short turn the 15 s sampling never saw busy is done when the transcript changed after the send', () => {
+test('assistantAtFromTail reads the latest assistant or result timestamp and skips a cut first line', () => {
+  const tail = ['ned":1}', JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:00:05.000Z' }),
+    JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:00:06.000Z' }), JSON.stringify({ type: 'result', timestamp: '2026-01-01T00:00:07.000Z' })].join('\n');
+  assert.equal(RQ.assistantAtFromTail(tail), Date.parse('2026-01-01T00:00:07.000Z'));
+  assert.equal(RQ.assistantAtFromTail('{"type":"user"}'), 0);
+});
+
+test('a reply under 3 s after the send is done, not never-started', () => {
   const l0 = RQ.add([], rec(), 1000);
-  const l = RQ.observe(l0, 'pty1', { busy: false, activityAt: 1000 + RQ.ANSWER_MS }, 1000 + RQ.GRACE_MS);
+  const l = RQ.observe(l0, 'pty1', { busy: false, assistantAt: 1800 }, 1000 + RQ.GRACE_MS);
   assert.equal(l[0].state, 'done');
-  // no transcript change after the send: still never-started
-  const f = RQ.observe(l0, 'pty1', { busy: false, activityAt: 1500 }, 1000 + RQ.GRACE_MS);
+  const f = RQ.observe(l0, 'pty1', { busy: false, assistantAt: 900 }, 1000 + RQ.GRACE_MS);   // output from before the send does not count
   assert.equal(f[0].state, 'failed');
+  assert.equal(f[0].reason, 'never-started');
+});
+
+test('typing again within 15 s closes a turn that ran (never sampled busy) as done, one that did not as superseded', () => {
+  const l0 = RQ.add([], rec(), 1000);
+  const ran = RQ.add(l0, rec({ id: 'qabcdef02' }), 5000, 3000);
+  assert.equal(ran.find((r) => r.id === 'qabcdef01').state, 'done');
+  const idle = RQ.add(l0, rec({ id: 'qabcdef02' }), 5000, 0);
+  assert.equal(idle.find((r) => r.id === 'qabcdef01').reason, 'superseded');
 });
 
 test('a reply typed while a request waits on the person continues it (not superseded or failed)', () => {
