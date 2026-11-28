@@ -94,6 +94,8 @@
     "themeSystem": "Sistem",
     "themeLight": "Açık",
     "themeDark": "Koyu",
+    "themeToLight": "Açık temaya geç",
+    "themeToDark": "Koyu temaya geç",
     "accounts": "Hesaplar",
     "start": {
       "starting": "Oturum başlatılıyor…",
