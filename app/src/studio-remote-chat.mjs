@@ -36,6 +36,10 @@ export function lastKnown(store, key) {
 /** The outcome of `api.link.send`: anything but a clear success is a failure the composer reports. @param {any} r */
 export function sendOk(r) {
   if (r === undefined || r === null || r === true || r === 'ok') return true;
-  if (typeof r === 'object') return r.ok !== false && !r.error && !r.reason;
+  if (typeof r === 'object') {
+    // link:send answers with the whole link view; the newest outgoing record is this command
+    if (Array.isArray(r.outgoing)) return !r.error && r.outgoing[0]?.status === 'sent';
+    return r.ok !== false && !r.error && !r.reason;
+  }
   return false;
 }

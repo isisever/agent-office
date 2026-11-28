@@ -35,3 +35,9 @@ test('sendOk accepts success shapes only', () => {
   for (const r of [undefined, true, 'ok', { ok: true }, {}]) assert.equal(sendOk(r), true);
   for (const r of [false, 'error', { ok: false }, { reason: 'x' }, { error: 'x' }]) assert.equal(sendOk(r), false);
 });
+
+test('sendOk reads the link view returned by link:send', () => {
+  assert.equal(sendOk({ error: null, outgoing: [{ status: 'sent' }] }), true);
+  assert.equal(sendOk({ error: null, outgoing: [{ status: 'rejected', reason: 'not-running' }] }), false);
+  assert.equal(sendOk({ error: 'off', outgoing: [] }), false);
+});
