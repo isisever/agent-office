@@ -97,11 +97,13 @@ class CtlClient {
     conn.on('close', () => {
       clearInterval(beat);
       if (this.conn === conn) { this.conn = null; this.failWaits(); }   // no answer can come on a closed connection
+      if (this.conn === null) this.peerCaps = null;
       this.onEvent({ t: 'offline' });
     });
     this.onEvent({ t: 'online' });
   }
   handle(raw) {
+    if (raw?.t === 'hello') { this.peerCaps = Array.isArray(raw.caps) ? raw.caps.filter((c) => typeof c === 'string') : []; return; }   // what this desktop understands (ctl2 = project screen, send, answer, stop)
     if (raw?.t === 'sess-items' || raw?.t === 'sess-end') return this.onEvent(raw);   // the HQ session (hqSession)
     const m = W.validateCtl(raw);   // ctl2 answers: the Swift side parses them defensively
     if (!m) return;   // ping and hello are not used here

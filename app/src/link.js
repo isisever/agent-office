@@ -1065,6 +1065,7 @@ class Link extends EventEmitter {
     if (raw?.t === 'hello') {   // only the caps a phone may have count: 'ctl' and 'sess' (it then gets sess-end)
       const caps = Array.isArray(raw.caps) ? raw.caps.filter((c) => W.CTL_CAPS.includes(c)) : [];
       this.peers.set(d.pub, { v: Number(raw.v) || 0, app: '', caps });
+      this.flushCtlAsks();   // a ctl2 phone that has just said hello gets the asks that are open now
       return;
     }
     if (raw?.t === 'sess-open' || raw?.t === 'sess-keep' || raw?.t === 'sess-close') {

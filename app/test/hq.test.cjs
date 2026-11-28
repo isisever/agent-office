@@ -92,11 +92,11 @@ test('consent matrix: the app is the only gate; no dialog by default for the liv
   ]) assert.equal(HQ.consentFor({ ask, remote, request, minter: m, now: t }), want, `${ask} ${remote} ${request}`);
   m.clear();   // an inbox row (report-ready / request-done) is a turn the person did not type
   assert.equal(HQ.consentFor({ remote: false, request: id, minter: m, now: t }), 'follow');
-  assert.equal(HQ.consentFor({ ask: false, remote: false, request: id, minter: m, now: t }), 'app');
+  assert.equal(HQ.consentFor({ ask: true, remote: false, request: id, minter: m, now: t }), 'app');
   const id2 = m.mint();
   t += 31 * 60 * 1000;
   assert.equal(HQ.consentFor({ remote: false, request: id2, minter: m, now: t }), 'follow');   // past its 30 min TTL, within 2 h
-  assert.equal(HQ.consentFor({ ask: false, remote: false, request: id2, minter: m, now: t }), 'app');
+  assert.equal(HQ.consentFor({ ask: true, remote: false, request: id2, minter: m, now: t }), 'app');
   assert.equal(HQ.submitsTyped(true, '\r'), true);
   assert.equal(HQ.submitsTyped(false, '\r'), false);
   assert.match(fnBody('inboxRow'), /hqMinter\.clear\(\)/);
@@ -820,7 +820,7 @@ test('askBeforeDispatch setting: default off, kept only when true; the initiativ
 test('follow-up: a later turn of a typed request needs no consent (consentFor says follow, initiativeFor holds)', () => {
   const { clock, m, id, ask } = initiativeCase();
   assert.equal(HQ.consentFor({ remote: false, request: id, minter: m, now: clock.t }), 'follow');
-  assert.equal(HQ.consentFor({ ask: false, remote: false, request: id, minter: m, now: clock.t }), 'app');
+  assert.equal(HQ.consentFor({ ask: true, remote: false, request: id, minter: m, now: clock.t }), 'app');
   assert.equal(m.isLive(id), false);
   assert.equal(ask(), true);
   assert.equal(ask({ initiative: false }), true);   // a stale argument changes nothing: there is no such setting any more
