@@ -4,7 +4,7 @@
     "switchLabel": "Studio",
     "switchTitle": "Studio experience on or off ({key})",
     "newSession": "New session",
-    "search": "Search",
+    "search": "Filter projects…",
     "hq": "HQ",
     "reports": "Reports",
     "usage": "Usage & cost",
@@ -90,6 +90,7 @@
       "mail": "email outbox drafts accounts",
       "runTemplate": "template order hq run fill"
     },
+    "sessionCount": "{n} sessions",
     "untitled": "New session",
     "now": "now",
     "working": "Working",

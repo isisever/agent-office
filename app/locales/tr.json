@@ -4,7 +4,7 @@
     "switchLabel": "Studio",
     "switchTitle": "Studio deneyimini aç veya kapat ({key})",
     "newSession": "Yeni oturum",
-    "search": "Ara",
+    "search": "Projeleri filtrele…",
     "hq": "HQ",
     "reports": "Raporlar",
     "usage": "Kullanım ve maliyet",
@@ -90,6 +90,7 @@
       "mail": "posta e-posta giden taslak hesap mail",
       "runTemplate": "şablon emir hq çalıştır doldur"
     },
+    "sessionCount": "{n} oturum",
     "untitled": "Yeni oturum",
     "now": "şimdi",
     "working": "Çalışıyor",

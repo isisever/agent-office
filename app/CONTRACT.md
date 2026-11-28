@@ -3973,3 +3973,21 @@ projects:renameGroup(from, to) → { ok }                      // every project 
 
 - Every Studio GUI chat starts with `--permission-mode auto` (`guiStartModeArgs`), whether the project's Auto-approve is on or off, instead of claude's ask-permission default. Unchanged exceptions: the HQ session, desks and guarded sessions (modeLock 'desk'), skip-permissions projects (stay bypass), and accounts that do not report `auto`. Starting in auto does not turn Auto-approve on; only picking Auto in the picker does.
 - The board is named "Kanban board" (tr "Kanban pano") in its tab, the Studio entry, the HQ view switch and the routines back link.
+
+## Studio: flat Projects list (v3.150)
+
+The Projects section of Studio's sidebar is one flat list that is quick to scan. Pure logic: `src/studio-projects.mjs`
+(`showAccountTags`, `projectRowView`, `escClearsFilter`); the list order and group headings stay v3.142 (`studioSections`).
+
+- Every project is one row. Group headings are light section labels, not containers; sessions are the only indented
+  lines, one small step in. Drag, the right-click menu, heading rename and collapse behave as in v3.142; dragging is
+  off while the filter has text.
+- The owning account is a small muted tag under the project name, shown only when the projects belong to more than one
+  account. It is not a nesting level.
+- Project (and session) names are never cut with an ellipsis: they wrap onto further lines, breaking long words.
+- A project's sessions (Running, then Recent) are listed only while it is expanded; the current project opens
+  automatically (`expandProject`). A collapsed row shows its session count, and a live dot or spinner while a session
+  runs or is busy; the attention dot stays. Hover "+" starts a session, a session row's hover x closes it
+  (`canCloseSession`), session names come from `sessionNames`.
+- The existing filter box at the top of the sidebar filters projects by name or account (`studioGroups`) and sessions by
+  title as you type; matching projects open. Esc clears the text.
