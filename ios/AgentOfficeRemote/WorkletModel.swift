@@ -375,6 +375,15 @@ final class WorkletModel: ObservableObject {
     send(["t": "send", "msg": ["t": "ctl-proj", "id": newId("j"), "project": project]])
   }
 
+  /// Fallback while a project screen is visible: the Mac pushes status changes, this only catches a missed push (every 5 s).
+  func pollProject(_ project: String) async {
+    while !Task.isCancelled {
+      try? await Task.sleep(nanoseconds: 5_000_000_000)
+      if Task.isCancelled { break }
+      requestProject(project)
+    }
+  }
+
   func refreshProject(_ project: String) async {
     guard isOnline else { return }
     requestProject(project)
@@ -560,6 +569,10 @@ final class WorkletModel: ObservableObject {
         return
       }
       let proj = msg["proj"] as? [String: Any] ?? [:]
+      if let st = proj["status"] as? String, let i = projects.firstIndex(where: { $0.id == project }) {   // the reply carries the current status too
+        projects[i].status = st
+        projects[i].attention = proj["attention"] as? String
+      }
       let list = (proj["sessions"] as? [[String: Any]] ?? []).compactMap { d -> ProjectSession? in
         guard let sid = d["sid"] as? String else { return nil }
         return ProjectSession(id: sid, title: d["title"] as? String ?? "", at: d["at"] as? Int ?? 0, running: d["running"] as? Bool ?? false, main: d["main"] as? Bool ?? false)
