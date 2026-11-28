@@ -41,3 +41,17 @@ export function projectRowView(g, { closed = new Set(), query = '' } = {}) {
 export function escClearsFilter(key, value) {
   return key === 'Escape' && String(value ?? '') !== '';
 }
+
+/**
+ * v3.162 What clicking a project's name opens: its first session. A running or asleep tab first (the list's first row),
+ * else the most recent saved/transcript session (reopened in a new tab), else nothing (the project is only selected).
+ * @param {{ running?: { n: number }[], recent?: { sessionId: string }[] }} g a studioGroups() entry
+ * @returns {{ n: number } | { sessionId: string } | null}
+ */
+export function projectClickTarget(g) {
+  const running = Array.isArray(g?.running) ? g.running : [];
+  if (running.length && Number.isInteger(running[0]?.n)) return { n: running[0].n };
+  const recent = Array.isArray(g?.recent) ? g.recent : [];
+  if (recent.length && typeof recent[0]?.sessionId === 'string' && recent[0].sessionId) return { sessionId: recent[0].sessionId };
+  return null;
+}

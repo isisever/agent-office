@@ -4133,3 +4133,12 @@ terminal view appears only after the person clicks the "Switch to terminal" togg
   stdio, not detached) instead of a POSIX login shell. If it cannot start, the chat view shows the ended/error state;
   it never falls back to the terminal.
 - Tests: test/studio-chat-default.test.mjs (decision logic), test/gui-session.test.cjs, test/studio.test.cjs.
+
+## Studio: sessions come back after restart; project click selects its session (v3.162)
+
+- Root cause 1: the sidebar's Recent list came only from `state.studioRecent`, which holds just the sessions Studio itself closed after 24 h asleep. After a restart the earlier Claude sessions (their transcripts in `<config>/projects/<slug>/*.jsonl`) were never listed.
+- Root cause 2: a click on a project name only called `selectProject`, so no session was selected or opened.
+- `studio:sessions` now merges each project's saved Recent entries with its transcripts (`chat.sessionList` over `historyDirsOf`, cached 15 s) through `studio.mergeRecent`: newest first, at most 10, without sessions that already have a running or asleep tab, a custom name wins. The folder slug is Claude Code's rule (every non-alphanumeric character becomes `-`, so `C:\Users\x\proj` works the same on Windows).
+- `studio:open` with a `sessionId` accepts a saved Recent entry or a transcript of the project folder, and starts it in a new tab.
+- Clicking a project name opens `projectClickTarget(group)` (`src/studio-projects.mjs`): the first running/asleep tab, else the newest Recent session, else only selects the project (unchanged).
+- Tests: `test/studio-restore-select.test.mjs`.
