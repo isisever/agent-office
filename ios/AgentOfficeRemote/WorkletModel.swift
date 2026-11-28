@@ -420,6 +420,12 @@ final class WorkletModel: ObservableObject {
     switch a.op {
     case "send":
       busy.remove("send:\(a.project)")
+      // A send always goes to the project's main tab, which may have just been started: its session is followed with no
+      // sid and a main stream the desktop ended (no session yet) is opened again now, not after the backoff.
+      if status == "queued", wanted[a.project] != nil {
+        attempts[a.project] = 0
+        if streams[a.project]?.ended != nil && openIds[a.project] == nil { open(a.project) }
+      }
       if status == "rejected" { sendIssue[a.project] = SendIssue(text: a.text ?? "", reason: reason ?? "failed") }
     case "answer":
       if let askId = a.askId {

@@ -200,9 +200,11 @@ struct SessionView: View {
   let sid: String?
   let title: String
   @State private var draft = ""
+  @State private var followMain = false   // a send goes to the main tab, so the reply is read from its session
   @FocusState private var focused: Bool
 
-  private var stream: Stream { link.streams[WorkletModel.streamKey(projectId, sid)] ?? Stream() }
+  private var liveSid: String? { followMain ? nil : sid }
+  private var stream: Stream { link.streams[WorkletModel.streamKey(projectId, liveSid)] ?? Stream() }
   private var project: Project? { link.projects.first { $0.id == projectId } }
   private var canStop: Bool { project?.status == "working" || project?.status == "approval" }
 
@@ -263,8 +265,8 @@ struct SessionView: View {
       }
     }
     .safeAreaInset(edge: .bottom) { bottom }
-    .onAppear { link.watch(projectId, sid: sid); link.requestProject(projectId) }
-    .onDisappear { link.unwatch(projectId, sid: sid) }
+    .onAppear { link.watch(projectId, sid: liveSid); link.requestProject(projectId) }
+    .onDisappear { link.unwatch(projectId, sid: liveSid) }
   }
 
   private var bottom: some View {
@@ -295,6 +297,9 @@ struct SessionView: View {
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.stroke))
       Button {
+        if sid != nil && !followMain {   // an older session is picked: the reply lands in the main session
+          link.unwatch(projectId, sid: sid); followMain = true; link.watch(projectId, sid: nil)
+        }
         link.sendToProject(projectId, draft); draft = ""
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
       } label: {
