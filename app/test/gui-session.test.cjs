@@ -121,6 +121,17 @@ test('GUI chat: the live line follows the turn', () => {
   assert.deepEqual(GS.nextLive(live, { type: 'result' }), { busy: false, text: '', tool: '' });
 });
 
+test('GUI chat: the live answer grows past the old cap and keeps its start', () => {
+  const ev = (text) => ({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
+  let live = { busy: true, text: '', tool: '' };
+  live = GS.nextLive(live, ev('START'));
+  live = GS.nextLive(live, ev('x'.repeat(10000)));
+  assert.equal(live.text.length, 10005, 'more than the old 4000 characters');
+  for (let i = 0; i < 8; i++) live = GS.nextLive(live, ev('y'.repeat(10000)));
+  assert.ok(live.text.startsWith('START'), 'the beginning is never cut');
+  assert.equal(live.text.length, 60000, 'capped, not unbounded');
+});
+
 /** A fake child process: stdin collects lines, out() feeds stdout. */
 function fakeSpawn() {
   const made = [];

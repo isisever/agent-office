@@ -3855,3 +3855,17 @@ Amends v3.123 (the What's new card opened once after an update, and from Help, â
 - `#whats-new-btn` sits in the title bar next to the economy leaf (`#economy`), in both experiences, with the `gift`
   icon and the tooltip "What's new in this version" (`app.whatsNewTitle`). A click calls `openWhatsNew()`: the same
   card, items and "Try it" actions as the other entry points. It does not change what counts as seen.
+
+## Chat: the answer as it is written (v3.139)
+
+Amends v3.108 (a GUI chat tab showed the answer being written only as an ellipsized one-line `.chat-live` status).
+
+- In a GUI chat tab (Studio and Office chat mode) the answer being written is one assistant row at the end of the list,
+  `.chat-msg.assistant.streaming`, with the same markdown rendering (`mdBody`) as a finished answer plus a subtle caret.
+  It is rebuilt only when `gui.live.text` changed, and the list stays pinned to the bottom only if it already was.
+- `gui.live.text` keeps the start of the answer and grows up to 60000 characters (was the last 4000); the transcript has all.
+- Dedup: `append()` removes the streaming row when a finished `assistant` or `error` item arrives, and puts other new
+  rows (tools, user echoes) above it; the row is also removed when the live text is empty, the turn ends (`result`) or
+  the tab is no longer a GUI tab. The main process clears `live.text` when the whole message arrives.
+- The bottom `.chat-live` line stays for the turn, showing the working text (or the running tool) and never repeats the answer.
+- Terminal-backed chat tabs are unchanged.

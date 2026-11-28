@@ -358,13 +358,33 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       if (n && carry && it.kind === 'user') { const count = n.querySelector('.chat-images'); if (count) count.replaceWith(carry); else n.firstElementChild?.append(carry); }
       if (n) frag.append(n);
     }
-    if (pending.length) list.insertBefore(frag, pending[0]); else list.append(frag);
+    // v3.139 the streaming bubble stays the last row: a finished answer replaces it, anything else goes above it
+    const answerCame = items.some((it) => it.kind === 'assistant' || it.kind === 'error');
+    if (answerCame) dropStream();
+    if (pending.length) list.insertBefore(frag, pending[0]); else if (streamEl && streamEl.parentNode === list) list.insertBefore(frag, streamEl); else list.append(frag);
     while (list.childElementCount > KEEP) {
       const gone = list.firstElementChild;
       for (const [id, line] of tools) if (line === gone) tools.delete(id);   // a trimmed tool row is never marked done
       if (gone instanceof HTMLElement && gone.dataset.agent) agentRows.delete(gone.dataset.agent);
       gone.remove();
     }
+    if (atBottom) list.scrollTop = list.scrollHeight;
+  }
+
+  // ---- v3.139 the answer as it is written: one assistant row at the end of the list, grown in place from gui.live.text
+  /** @type {HTMLElement | null} */
+  let streamEl = null;
+  let streamText = '';
+  function dropStream() { streamEl?.remove(); streamEl = null; streamText = ''; }
+  function drawStream(text) {
+    if (!text) { dropStream(); return; }
+    const atBottom = atBottomNow();
+    if (!streamEl) { streamEl = h('div', { class: 'chat-msg assistant streaming' }); streamText = ''; }
+    if (text !== streamText) {
+      streamText = text;
+      try { streamEl.replaceChildren(mdBody(text)); } catch (e) { console.error(e); streamEl.replaceChildren(textBody(text)); }
+    }
+    if (list.lastElementChild !== streamEl) list.append(streamEl);   // always the last row (new rows were put above it)
     if (atBottom) list.scrollTop = list.scrollHeight;
   }
 
@@ -602,7 +622,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     gui = g ? { ...g, asks: (g.asks || []).filter((a) => !answered.has(a.id)) } : null;
     drawPicks();
     if (gui && !was) { menu = null; menuShown = ''; texts(); }
-    if (!gui) { if (was) { askShown = ''; card.hidden = true; card.replaceChildren(); stop.hidden = true; endBox.hidden = true; texts(); } return; }
+    if (!gui) { if (was) { dropStream(); askShown = ''; card.hidden = true; card.replaceChildren(); stop.hidden = true; endBox.hidden = true; texts(); } return; }
     drawEnd(gui.ended || null);
     const first = gui.asks[0] || null;
     banner.hidden = true;   // another tab's request is no terminal dialog to open here: the badge shows it
@@ -610,7 +630,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     const l = gui.live;
     stop.hidden = !l.busy && !first;
     live.hidden = !l.busy || Boolean(first);
-    const txt = l.text ? l.text.slice(-300).replace(/\s+/g, ' ') : l.tool ? t('chat.gui.running', { tool: l.tool }) : t('chat.working');
+    drawStream(l.busy ? l.text : '');
+    const txt = l.text ? t('chat.working') : l.tool ? t('chat.gui.running', { tool: l.tool }) : t('chat.working');
     if (live.textContent !== txt) live.textContent = txt;
   }
   function drawEnd(e) {
