@@ -1317,6 +1317,7 @@ const guiEnded = new Map();   // pty id → { code, text, at }: how a GUI tab's 
 const studioStarted = new Set();
 // v3.121 pty id → what holds a running GUI chat's permission mode ('bypass' | 'desk' | ''; STU.modeLock)
 const guiModeLock = new Map();
+const guiPicks = new Map();   // v3.162 pty id → { model, mode } the person picked in Studio; re-applied when the chat restarts
 /**
  * Does this tab start as a GUI chat? (studio: false asks for the chat view alone.) v3.120 entering Studio also moves
  * running terminal Claude tabs to the GUI chat with --resume: an idle one at once, a busy one once it is idle (the
@@ -1327,6 +1328,8 @@ function guiTab(id, r, { studio = state.experience === 'studio' } = {}) {
 }
 /** A GUI tab's permission request: true when the app answers it (Auto-approve, v3.71 rules); else it waits for the person. */
 function guiAsk(id, ask, input, { autoApprove, mailGuard }) {
+  // v3.162 a mode the person picked (ask permission, plan, accept edits) is respected: the manager answers only in auto
+  autoApprove = STU.managerAnswers({ autoApprove, mode: terms.get(id)?.settings?.().mode || '' });
   if (GS.autoAllows({ tool: ask.tool, input, autoApprove, mailGuard, canAutoApprove: AA ? AA.canAutoApprove : null })) return true;
   const a = activity.get(id);
   if (a) a.at = Date.now();
@@ -1500,7 +1503,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       // v3.149 every GUI chat starts in auto mode (v3.120: Auto-approve projects only; never HQ, a desk, a guarded or a skip session)
       const startMode = STU.guiStartModeArgs({ gui: true, autoApprove: P.autoApproveOf(project), hq: Boolean(project.hq), modes: reportedModesOf(project),
         lock: STU.modeLock({ skip: P.skipPermissionsArgs(project).length > 0, desk: Boolean(mailMcp) || Boolean(r.tab?.staffId) || guarded !== settings }) });
-      const guiArgv = [...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args), ...startMode];
+      // v3.162 a restart (idle restart, account move, resume) keeps what the person picked in the pickers
+      const kept = STU.restartPickArgs({ picks: guiPicks.get(id), modes: reportedModesOf(project), lock: STU.modeLock({ skip: P.skipPermissionsArgs(project).length > 0, desk: Boolean(mailMcp) || Boolean(r.tab?.staffId) || guarded !== settings }), models: ML.modelValues(ML.cachedModels(readModelCache(), ML.accountKey(configDir))) });
+      const guiArgv = [...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args), ...(kept.mode.length ? kept.mode : startMode), ...kept.model];
       // v3.161 Windows: claude starts directly (its .cmd shim through cmd.exe), piped, no console window; no login shell there
       const winGui = IS_WIN ? windowsClaude(guiArgv, env) : null;
       if (IS_WIN && !winGui) { sendNoClaude(id); return broadcast(); }
@@ -6351,6 +6356,7 @@ ipcMain.handle('chat:setting', async (e, id, key, value) => {
   const before = Boolean(project) && P.autoApproveOf(project);
   const epoch = autoApproveEpoch;
   const r = await t.setting(String(key), String(value ?? ''), modes);
+  if (r === 'ok') guiPicks.set(String(id), { ...(guiPicks.get(String(id)) || {}), [String(key)]: String(value ?? '') });
   // v3.120 Auto = claude's auto mode AND the manager answers what it still asks: the project's own Auto-approve, the
   // one setting the Office uses. Another mode changes only this session; the project setting is never turned off here.
   if (r === 'ok' && String(key) === 'mode' && STU.turnsAutoApproveOn(String(value)) && project && !project.hq) {
