@@ -61,7 +61,7 @@ test('sess wire: the cap is announced, validators rebuild every message and boun
   assert.deepEqual(C.validateMessage({ t: 'sess-keep', id: 'i1', x: 1 }), { t: 'sess-keep', id: 'i1' });
   assert.deepEqual(C.validateMessage({ t: 'sess-close', id: 'i1' }), { t: 'sess-close', id: 'i1' });
   for (const reason of C.SESS_REASONS) assert.deepEqual(C.validateMessage({ t: 'sess-end', id: 'i1', reason }), { t: 'sess-end', id: 'i1', reason });
-  assert.deepEqual(C.SESS_REASONS, ['not-allowed', 'unknown-project', 'engine', 'no-session', 'rate-limited', 'limit']);
+  assert.deepEqual(C.SESS_REASONS, ['not-allowed', 'unknown-project', 'engine', 'no-session', 'rate-limited', 'limit', 'unknown-session']);
   assert.equal(C.validateMessage({ t: 'sess-end', id: 'i1', reason: 'because' }), null);
   const m = C.validateMessage({ t: 'sess-items', id: 'i1', seq: 3, reset: true, more: 'x', items: [
     { key: 'a b<c>', at: 5, kind: 'user', text: 'hi\x1b[31m there\x00', images: 3, path: '/secret' },
@@ -337,7 +337,7 @@ test('sess wiring: main gives the main tab only, preload and the Devices popup c
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const main = read('main.js');
   assert.match(main, /sessionOf: linkSessionOf,/);
-  const fn = main.slice(main.indexOf('function linkSessionOf(id) {'), main.indexOf("ipcMain.handle('chat:read'"));
+  const fn = main.slice(main.indexOf('function linkSessionOf(id, sid) {'), main.indexOf("ipcMain.handle('chat:read'"));
   assert.match(fn, /p\.hq \|\| p\.staffOwner \|\| id === HQ\.HQ_ID/);   // never HQ or a personal workspace
   assert.match(fn, /!r \|\| r\.tab /);                                  // never a desk or an extra tab
   assert.match(fn, /engineOf\(p\) !== 'claude'/);
