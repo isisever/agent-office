@@ -4226,3 +4226,6 @@ A paired phone controller that lists `ctl2` in its hello caps (the desktop hello
 - `ctl-stop {id, project}` → `t.interrupt()`, `ctl-ack` op `stop`.
 - `ctl-ack {id, op, status:'queued'|'done'|'rejected', reason?}`: `send` is `queued`, `answer`/`stop` are `done`. Reasons: `unknown-project`, `engine`, `not-running`, `busy`, `locked`, `stale`, `too-large`, `empty`, `rate-limited` (16 burst, one per 2 s), `failed`, `not-allowed`.
 - `ctl-ask {seq, project, ask:{askId,kind,at,tool?,detail?,options?}}` / `ctl-ask-clear {seq, project, askId}`: pushed to every ctl2 phone when a GUI chat's open request appears or goes (answered on the Mac or on a phone). `detail` is `HQ.redact`ed and one line (300). Option keys are the option's index as a string. `Link.setCtlAsks(list)` diffs per phone, so nothing repeats.
+
+### v3.179 phone status follows the Mac
+No new frame. The published status of a project now also counts the tab's own state: a GUI chat with an open ask is `approval`, one with a running turn is `working`, even before the transcript shows it (a project woken by a phone's ctl-send). The existing `ctl-view` / `ctl-event` frames carry it. The phone also applies `proj.status` / `proj.attention` of a `ctl-proj` reply and re-requests `ctl-proj` every 5 s while a project screen is visible (fallback only).

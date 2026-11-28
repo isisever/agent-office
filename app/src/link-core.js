@@ -535,7 +535,8 @@ function snapshotOf(projects, office, attention = new Map()) {
   const idOf = new Map(projects.map((p) => [p.name, p.id]));
   const list = projects.slice(0, 50).map((p) => {
     const o = byName.get(p.name) || {};
-    const status = o.waiting ? 'approval' : (o.isBossBusy || o.working > 0) ? 'working' : 'idle';
+    // v3.179 `live` is the tab's own state (a GUI chat's open ask / running turn): it counts before the transcript shows it
+    const status = (o.waiting || p.live === 'approval') ? 'approval' : (o.isBossBusy || o.working > 0 || p.live === 'working') ? 'working' : 'idle';
     return { id: p.id, name: p.name, engine: p.engine || 'claude', status, working: o.working || 0, delivered: o.delivered || 0, attention: attention.get(p.id) || null, ...(o.waiting?.tool ? { tool: o.waiting.tool } : {}) };
   });
   const workers = (office?.workers || []).filter((w) => idOf.has(w.project)).slice(0, 120).map((w) => ({

@@ -4288,6 +4288,12 @@ ipcMain.handle('projects:setLimitModel', (_e, id, value) => { commit(P.setProjec
 // Worktree session names → project name (see projects.js sessionAliases): the office and notifications count them toward the project.
 const sessionAliases = () => P.sessionAliases(state.projects);
 
+/** v3.179 a project's own tab state for phones: a GUI chat with an open ask or a running turn (a project woken by a phone's send is working at once). */
+function liveStatusOf(id) {
+  const t = terms.get(String(id));
+  if (!t?.gui) return undefined;
+  try { return t.asks().length > 0 ? 'approval' : t.live().busy ? 'working' : undefined; } catch { return undefined; }
+}
 let usagePoll = null;
 let tokenPoll = null;
 let sleepPoll = null;
@@ -4315,7 +4321,7 @@ function startPolling() {
       lastOffice = d.projects;
       updateAttention();
       runningAgents = (d.workers || []).filter((w) => !w.doneAt).length;
-      linkHost?.publish(state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p) })), d, attention);
+      linkHost?.publish(state.projects.map((p) => ({ id: p.id, name: p.name, engine: P.engineOf(p), live: liveStatusOf(p.id) })), d, attention);
     } catch (e) { console.error('readOffice:', e.message); }
   }, 500);
 }

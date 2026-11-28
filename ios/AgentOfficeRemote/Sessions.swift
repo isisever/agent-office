@@ -64,6 +64,7 @@ struct ProjectView: View {
       if let s = running.first ?? detail.sessions.first { SessionView(link: link, projectId: projectId, sid: s.main ? nil : s.id, title: s.title) }
     }
     .onAppear { link.requestProject(projectId) }
+    .task { await link.pollProject(projectId) }
   }
 
   private var header: some View {
@@ -267,6 +268,7 @@ struct SessionView: View {
     .safeAreaInset(edge: .bottom) { bottom }
     .onAppear { link.watch(projectId, sid: liveSid); link.requestProject(projectId) }
     .onDisappear { link.unwatch(projectId, sid: liveSid) }
+    .task { await link.pollProject(projectId) }
   }
 
   private var bottom: some View {
