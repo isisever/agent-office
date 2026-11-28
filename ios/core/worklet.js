@@ -25,6 +25,7 @@ Bare.on('uncaughtException', fatal);
 Bare.on('unhandledRejection', fatal);
 
 try {
+  require('./text-shim'); // before link-wire: Bare has no TextEncoder/TextDecoder globals
   const Hyperswarm = require('hyperswarm');
   const DHT = require('hyperdht');
   const crypto = require('./crypto-shim');
