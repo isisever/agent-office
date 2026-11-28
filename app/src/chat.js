@@ -276,6 +276,8 @@ function sessionInfo(file, size, fsm = fs, names = null) {
   let ai = '';
   let prompt = '';
   let branch = '';
+  let entry = '';
+  let side = false;
   for (const text of [head, tail]) {
     for (const line of text.split('\n')) {
       if (!line.includes('"type"')) continue;
@@ -284,6 +286,7 @@ function sessionInfo(file, size, fsm = fs, names = null) {
       if (j?.type === 'custom-title' && typeof j.customTitle === 'string') custom = j.customTitle;
       else if (j?.type === 'ai-title' && typeof j.aiTitle === 'string') ai = j.aiTitle;
       if (typeof j?.gitBranch === 'string' && j.gitBranch) branch = j.gitBranch;
+      if (!entry && j?.type === 'user' && typeof j.entrypoint === 'string') { entry = j.entrypoint; side = j.isSidechain === true; }
       if (!prompt && j?.type === 'user' && !j.isMeta && !j.isSidechain) {
         const c = j.message?.content;
         const it = userText(typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text).join('\n') : '', {});
@@ -292,8 +295,11 @@ function sessionInfo(file, size, fsm = fs, names = null) {
     }
   }
   if (names) { custom = names.custom || custom; ai = names.ai || ai; }
-  return { title: cut(oneLine(custom || ai), 120), prompt: cut(oneLine(prompt), 200), branch: cut(oneLine(branch), 80) };
+  // headless: not typed in a terminal (entrypoint sdk-*: `claude -p`, the Agent SDK, scripts) or a sidechain transcript
+  return { title: cut(stripHeading(oneLine(custom || ai)), 120), prompt: cut(stripHeading(oneLine(prompt)), 200), branch: cut(oneLine(branch), 80), headless: side || /^sdk/.test(entry) };
 }
+/** A prompt that starts as a markdown heading ("# Script options ...") shows without the leading # markers. */
+function stripHeading(/** @type {string} */ t) { return String(t || '').replace(/^\s*#{1,6}\s+/, ''); }
 /**
  * The sessions in Claude Code's folders of one project folder → [{ id, title, prompt, branch, at, size }], newest first,
  * at most SESSIONS_MAX; `exclude` (ids: the sessions running tabs are in) and sessions with nothing the person wrote
@@ -427,4 +433,4 @@ function chatFileCurrent(known, { sid, configDir = null, exists = (f) => fs.exis
   return Boolean(exists(known.file));
 }
 
-module.exports = { chatFileCurrent, sessionList, sessionInfo, sessionNames, AGENT_TOOLS, agentFile, chatAgents, IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };
+module.exports = { chatFileCurrent, stripHeading, sessionList, sessionInfo, sessionNames, AGENT_TOOLS, agentFile, chatAgents, IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };

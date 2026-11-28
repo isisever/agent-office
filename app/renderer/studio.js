@@ -381,7 +381,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   }
   function recentRow(/** @type {any} */ g, /** @type {any} */ r) {
     const key = `rec:${r.sessionId}`;
-    return el('div', { class: 'st-row st-session st-recent', title: new Date(r.at).toLocaleString(), onclick: () => { if (renaming?.key !== key) open(g.id, { sessionId: r.sessionId }); },
+    return el('div', { class: 'st-row st-session st-recent', title: `${r.title || ''}\n${new Date(r.at).toLocaleString()}`.trim(), onclick: () => { if (renaming?.key !== key) open(g.id, { sessionId: r.sessionId }); },
       oncontextmenu: (/** @type {MouseEvent} */ e) => sessionMenu(e, key, r.title || '', r.sessionId, '') },
       el('span', { class: 'sb-dot' }), titleEl(key, r.title || t('studio.untitled'), r.sessionId, ''), r.at ? el('span', { class: 'st-time' }, rel(r.at)) : null);
   }
