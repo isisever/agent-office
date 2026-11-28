@@ -2216,7 +2216,7 @@ function onOfficeReport({ id, pub, report }) {
   const rec = loadDispatches().get(id);
   if (!rec || rec.pub !== pub || !report || rec.report) return;   // only tasks we dispatched, from the machine we sent them to
   rec.report = report;
-  hqPumpKick();
+  if (typeof hqPumpKick === 'function') hqPumpKick();   // (typeof: tests eval onOfficeReport alone)
   rec.status = 'reported';
   saveDispatches();
   const done = hqOnReport(id, report);   // v3.46 board row, tasks/<id>/report.{json,md}; requests whose tasks all ended
