@@ -60,3 +60,8 @@ test('the startup move honors the loop guard', () => {
   assert.equal(FB.switchAllowed(recent, NOW).ok, false);
   assert.equal(FB.switchAllowed([], NOW).ok, true);
 });
+
+test('an idle hit is marked so the retry gate can ignore its moving timestamp', () => {
+  const mark = { at: NOW - 10, until: NOW + 5000 };
+  assert.equal(FB.idleLimitHit({ mark, now: NOW }).idle, true);
+});

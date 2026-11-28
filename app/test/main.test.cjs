@@ -5093,8 +5093,17 @@ test('main.js wires the fallback review fixes', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
   const start = src.slice(src.indexOf('function moveLimitedAtStart'), src.indexOf('function resumeUnfinished'));
   assert.match(start, /FB\.switchAllowed/);
-  assert.match(start, /moveProject\(p\.id, account\)/);
+  assert.match(start, /moveProject\(p\.id, account, /);
   assert.match(src, /FB\.idleMoveReady\(/);
   assert.match(src, /reason: 'none', text: ''/);
   assert.match(src, /kind: 'cleared'/);
+});
+
+test('main.js carries the unfinished prompt through a mid-session move', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../main.js'), 'utf8');
+  assert.match(src, /moveLimitedAtStart\(actions\.map\(/);   // typed tabs are considered too
+  assert.match(src, /carryOn: mine, prompt: R\.UNFINISHED_PROMPT, skip: stopped/);
+  assert.match(src, /skip\.includes\(id\)/);
+  assert.match(src, /stuckSaid\.delete\(k\)/);
+  assert.match(src, /h\.hit\.idle \? 1/);
 });

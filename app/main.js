@@ -3804,6 +3804,7 @@ app.on('will-quit', (e) => {
  * tabs start, so the "did not finish" prompt runs on an account with quota (FB.limitedStartMove decides).
  */
 function moveLimitedAtStart(ids) {
+  // ids: every unfinished tab (started or typed into); the running ones restart on the new account with the carry-on prompt
   const moved = new Set();   // tabs a whole-project move already restarted
   if (!fallbackOn()) return moved;
   scanUsage();
@@ -3831,8 +3832,11 @@ function moveLimitedAtStart(ids) {
     commit(next);
     fallbackNotice(p, 'switched', T('main.fallbackSwitchedTo', { from: accountName(account), to: accountName(to), limit: T('main.fallbackLimitUnknown'), model: modelLabel(plan.model || model), why: T('main.fallbackWhySame', { model: modelLabel(model) }) }), { from: account.id, to: to.id, model: plan.model || model || null, step: plan.step, ptyIds: accountTabs(p) });
     if (running) {
-      moveProject(p.id, account);   // restarts every tab of the project on the new account, with the carry-on prompt
-      for (const tid of accountTabs(p)) moved.add(tid);
+      const mine = ids.filter((tid) => accountTabs(p).includes(tid));
+      const stopped = mine.filter((tid) => !terms.has(tid));   // resumeUnfinished starts these (with the prompt) on the new account
+      const restarted = accountTabs(p).filter((tid) => !stopped.includes(tid) && !asleep.has(tid));
+      moveProject(p.id, account, { carryOn: mine, prompt: R.UNFINISHED_PROMPT, skip: stopped });
+      for (const tid of restarted) moved.add(tid);
     } else moveProjectFiles(p, account);
   }
   return moved;
@@ -3843,7 +3847,7 @@ function resumeUnfinished() {
   const tabs = unfinishedTabs();
   const nameOf = (id) => ({ id, name: tabs.find((x) => x.id === id)?.name || id });
   const { actions, skipped } = R.unfinishedActions(tabs);
-  const moved = moveLimitedAtStart(actions.filter((a) => a.how !== 'type').map((a) => a.id));
+  const moved = moveLimitedAtStart(actions.map((a) => a.id));
   for (const a of actions) {
     if (moved.has(a.id)) continue;
     if (a.how === 'type') typePrompt(a.id, R.UNFINISHED_PROMPT);
@@ -3932,7 +3936,7 @@ function moveProjectFiles(p, from) {
 // Skip permissions project the bypass mode warning), written before any tab starts, so no dialog stops a moved tab.
 // carryOn (v3.17): tabs that stopped at the usage limit; they are told to carry on like a tab cut off mid-turn.
 // An Antigravity project (v3.22) ignores accounts: nothing moves and its tabs keep running.
-function moveProject(projectId, from, { carryOn = [], prompt = '' } = {}) {
+function moveProject(projectId, from, { carryOn = [], prompt = '', skip = [] } = {}) {
   const p = P.findProject(state, projectId);
   if (!p || P.engineOf(p) !== 'claude') return; // accounts change nothing for agy or Command Code (v3.22, v3.25)
   const plan = [];
@@ -3940,7 +3944,7 @@ function moveProject(projectId, from, { carryOn = [], prompt = '' } = {}) {
   // account did not change, and its pid file and transcripts are not in `from`.
   for (const id of accountTabs(p)) {
     const r = P.resolvePty(state, id);
-    if (asleep.has(id)) continue;
+    if (asleep.has(id) || skip.includes(id)) continue;
     let sid = lastSid.get(id) || '';
     let busy = false;
     const wasGui = Boolean(terms.get(id)?.gui);   // a GUI chat restarts as a chat (GS.keepsGui)
@@ -4106,8 +4110,11 @@ function recordLimitHits(account, hits, now) {
   } catch {}
   sendAccounts();
 }
+/** A real hit's own time; an idle hit (its `at` follows every quota scan) counts as the one limit window it belongs to. */
+const hitStamp = (hits) => Math.max(...hits.map((h) => (h.hit.idle ? 1 : h.hit.at)));
 function clearStuck(p) {
   retryAt.delete(p.id);
+  for (const k of [...stuckSaid]) if (k.startsWith(`${p.id}|`)) stuckSaid.delete(k);
   if (stuckShown.delete(p.id)) send('account:fallback', { projectId: p.id, kind: 'cleared', text: '' });
 }
 /** Every 1.5 s (checkTurns): a limit in any running tab; every ~15 s, projects on a backup that may go home. */
@@ -4136,7 +4143,7 @@ function checkLimits() {
     if (hits.length) recordLimitHits(account, hits, now); // v3.155: the quota shows the stop, fallback on or off
     if (!fallbackOn()) continue;
     if (hits.length) {
-      if (FB.retryGate(retryAt.get(p.id), { hitAt: Math.max(...hits.map((h) => h.hit.at)), now })) onLimit(p, account, hits, now, Math.max(...hits.map((h) => h.hit.at)));
+      if (FB.retryGate(retryAt.get(p.id), { hitAt: hitStamp(hits), now })) onLimit(p, account, hits, now, hitStamp(hits));
     } else if (stuckShown.has(p.id) && !FB.limitedUntil({ usage: usages.get(account.id), mark: limitMarks()[account.id], now })) {
       clearStuck(p);   // the limit reset: the strip goes
     } else if (returning && p.homeAccount) maybeReturn(p, account, now);

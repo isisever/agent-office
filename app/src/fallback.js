@@ -520,7 +520,7 @@ function guiLimitHit(text, now = Date.now()) {
 function idleLimitHit({ usage = null, mark = null, now = Date.now() }) {
   const until = limitedUntil({ usage, mark, now });
   if (!until) return null;
-  return { at: mark?.at || usage?.updatedAt || until, resetsAt: until, type: null, text: '' };
+  return { at: mark?.at || usage?.updatedAt || until, resetsAt: until, type: null, text: '', idle: true };
 }
 
 /** An idle GUI chat's mark-only hit may move the whole project only when no tab of it is mid-turn. busy: one flag per tab. */
