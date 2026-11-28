@@ -1980,3 +1980,5 @@ body.studio.studio-board .hq-orders { display: none; }
 #studio-sidebar .st-x { background: none; border: 0; padding: 0 4px; color: inherit; cursor: pointer; opacity: 0; font: inherit; }
 #studio-sidebar .st-session:hover .st-x, #studio-sidebar .st-x:focus-visible { opacity: 0.8; }
 #studio-sidebar .st-x:hover { opacity: 1; }
+.bv-account { max-width: 120px; }
+.bv-source { text-transform: none; }

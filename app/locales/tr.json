@@ -2085,6 +2085,7 @@
     "source": {
       "order": "Emir",
       "chat": "Sohbet",
+      "typed": "Sohbete yazıldı",
       "routine": "Rutin"
     },
     "filter": {

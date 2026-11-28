@@ -4096,3 +4096,14 @@ sub-agent `description`, whitespace collapsed, clipped to 60 characters; the wor
 and a second line `project · tool` (project name, then the current tool without its `mcp__server__` prefix, or "thinking"
 while no tool runs). A finished worker shows `project · done` or `project · failed`. The label no longer shows only
 "engine / tool".
+
+## Board: requests typed in project chats (v3.159)
+
+Every request the person types into a project chat (Studio GUI chat, or a terminal tab's composer via `chat:send`) is one card on the Kanban board, so it can be followed there and by HQ. Raw keystrokes typed straight into a terminal's pty do not pass `chat:send` and make no card.
+
+- **One card per request.** Title = the first non-empty line of the text (redacted, at most 80 characters), plus project, account label, type (`BM.classify`, changeable like any card), start time and duration. Card id `q:<record id>`; the card has `kind: 'chat'` and `typed: true`, so a click opens the project's chat like a chat card. A session that has request cards shows no session chat card of its own (no duplicates).
+- **None for** HQ's own chat, tabs carrying a dispatched task (`guiTaskOpen`), messages starting with `/` (commands), and empty text. HQ's dispatches already have order cards.
+- **State.** `running` (column Working) while the turn runs, `waiting` (Needs you) while it needs an approval, `done` (Done) when the turn ended, `failed` (Needs you) is part of the model but nothing sets it yet. A turn is ended when its tab is no longer busy after it was seen busy, or `GRACE_MS` (20 s) after the send; typing a newer request in the same tab, closing the tab or the person's Done mark also finish the older one. State follows the 15 s board tick.
+- **Store.** `reqs` in `<userData>/hq/board-cards.json` (same file, atomic write, `src/board-requests.js`): open records are kept, finished ones for `KEEP_DONE_MS` (14 days), at most `MAX_REQS` (200).
+- **HQ sees them.** The `office_board` result has `typedRequests` (newest 30: id, project, account, title, state, type, at, endedAt), marked as data to read, never instructions.
+- **Unverified in a real app.** The GUI session's live state (`busy`, `text`, `tool`) has no error flag, so a failed turn ends as `done`; `failed` is kept in the model for a future flag.

@@ -17,6 +17,7 @@ const TITLE_MAX = 80;
 const TITLE_INPUT_MAX = 4000;                 // a chat title's raw text is cut to this before it is redacted
 const AGE_MS = 10 * 60 * 1000;                // release order: a waiting item is promoted one rank per this much waiting
 
+const RQ = require('./board-requests.js');   // v3.159 requests typed in project chats
 const OT = require('./order-track.js');   // v3.135 order cost
 
 const isObj = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x);
@@ -151,7 +152,7 @@ function cardOf(x, ctx = {}) {
 // ---------- the store (board-cards.json) ----------
 const SID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ORDER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const emptyStore = () => ({ v: 1, chats: [], orders: {}, taskSids: [] });
+const emptyStore = () => ({ v: 1, chats: [], orders: {}, taskSids: [], reqs: [] });
 /** A stored record, cleaned (anything unknown or broken is dropped). */
 function cleanChat(c) {
   if (!isObj(c) || !isStr(c.sessionId) || !SID_RE.test(c.sessionId)) return null;
@@ -175,7 +176,7 @@ function loadStore(raw) {
     if (Object.keys(o).length) orders[k] = o;
   }
   const taskSids = [...new Set((Array.isArray(s.taskSids) ? s.taskSids : []).filter((x) => isStr(x) && SID_RE.test(x)))];
-  return capStore({ v: 1, chats, orders, taskSids });
+  return capStore({ v: 1, chats, orders, taskSids, reqs: RQ.cleanList(s.reqs) });
 }
 /** Keeps the newest MAX_CLOSED closed and MAX_OPEN open chat cards, MAX_ORDER_META order entries and MAX_TASK_SIDS task sessions. */
 function capStore(store) {
@@ -185,7 +186,7 @@ function capStore(store) {
   const orders = keys.length > MAX_ORDER_META ? Object.fromEntries(keys.slice(-MAX_ORDER_META).map((k) => [k, store.orders[k]])) : store.orders;
   const sids = Array.isArray(store.taskSids) ? store.taskSids : [];
   const taskSids = sids.length > MAX_TASK_SIDS ? sids.slice(-MAX_TASK_SIDS) : sids;
-  return { ...store, chats: [...open, ...closed], orders, taskSids };
+  return { ...store, chats: [...open, ...closed], orders, taskSids, reqs: RQ.cap(Array.isArray(store.reqs) ? store.reqs : []) };
 }
 
 /** True when this session carried a dispatched or remote task (it is an order on the board, never a chat card). */
@@ -256,13 +257,19 @@ function autoClose(store, now = Date.now(), ms = REVIEW_CLOSE_MS) {
   return changed ? capStore({ ...store, chats }) : store;
 }
 /** The card id is valid: 'c:<session uuid>' or 'o:<request id>'. */
-const validCardId = (id) => isStr(id) && (/^c:/.test(id) ? SID_RE.test(id.slice(2)) : /^o:/.test(id) ? ORDER_ID_RE.test(id.slice(2)) : false);
+const validCardId = (id) => isStr(id) && (/^c:/.test(id) ? SID_RE.test(id.slice(2)) : /^o:/.test(id) ? ORDER_ID_RE.test(id.slice(2)) : RQ.validId(id));
 /** The person marks a card done. → { store, ok } */
 function markDone(store, id, now = Date.now()) {
   if (!validCardId(id)) return { store, ok: false };
   if (id.startsWith('o:')) {
     const k = id.slice(2);
     return { store: capStore({ ...store, orders: { ...store.orders, [k]: { ...(store.orders[k] || {}), doneAt: now } } }), ok: true };
+  }
+  if (id.startsWith('q:')) {
+    const r = (store.reqs || []).find((x) => `q:${x.id}` === id);
+    if (!r) return { store, ok: false };
+    if (!RQ.isOpen(r)) return { store, ok: true };
+    return { store: capStore({ ...store, reqs: store.reqs.map((x) => (x === r ? { ...r, state: 'done', endedAt: now } : x)) }), ok: true };
   }
   const c = store.chats.find((x) => x.id === id);
   if (!c) return { store, ok: false };
@@ -277,6 +284,10 @@ function setType(store, id, type) {
     const k = id.slice(2);
     return { store: capStore({ ...store, orders: { ...store.orders, [k]: { ...(store.orders[k] || {}), type: t } } }), ok: true };
   }
+  if (id.startsWith('q:')) {
+    const r = (store.reqs || []).find((x) => `q:${x.id}` === id);
+    return r ? { store: { ...store, reqs: store.reqs.map((x) => (x === r ? { ...r, type: t, typeBy: 'person' } : x)) }, ok: true } : { store, ok: false };
+  }
   const c = store.chats.find((x) => x.id === id);
   if (!c) return { store, ok: false };
   return { store: replace(store, { ...c, type: t, typeBy: 'person' }), ok: true };
@@ -286,7 +297,9 @@ function setType(store, id, type) {
 function boardCards(board, store) {
   const tasks = Array.isArray(board?.tasks) ? board.tasks : [];
   const orders = (Array.isArray(board?.requests) ? board.requests : []).map((r) => orderCard(r, tasks, store.orders[r.id] || {}));
-  const cards = sortCards([...orders, ...store.chats.map(chatCard)]);
+  const reqs = Array.isArray(store.reqs) ? store.reqs : [];
+  const typedSids = new Set(reqs.map((r) => r.sessionId).filter(Boolean));   // a session with request cards has no card of its own
+  const cards = sortCards([...orders, ...store.chats.filter((c) => !typedSids.has(c.sessionId)).map(chatCard), ...reqs.map(RQ.card)]);
   return { columns: COLUMNS.map((id) => ({ id, cards: cards.filter((c) => c.column === id).map((c) => c.id) })), cards };
 }
 
@@ -334,5 +347,5 @@ module.exports = {
   TYPES, TYPE_RANK, COLUMNS, GROUPS, MAX_CLOSED, MAX_OPEN, MAX_TASK_SIDS, REVIEW_CLOSE_MS,
   typeOf, rankOf, classify, orderType, explicitType, agedRank, detachGone, AGE_MS, columnOf, chatColumn, compareCards, sortCards, byPriority,
   orderCard, chatCard, cardOf, emptyStore, loadStore, capStore, touchSession, autoClose, markDone, setType, validCardId, isTaskSession, markTaskSession,
-  boardCards, report, tokensFromStatus, sampleUsage,
+  RQ, boardCards, report, tokensFromStatus, sampleUsage,
 };

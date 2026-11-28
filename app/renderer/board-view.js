@@ -97,7 +97,7 @@ export function mountBoardView({ api, t, renderTasks, openChat, onBack }) {
       open ? el('div', { class: 'bv-menu', role: 'menu' }, el('button', { class: 'bv-menu-item', role: 'menuitem',
         onclick: async (/** @type {Event} */ e) => { e.stopPropagation(); menuFor = ''; note = await saveFromOrder(c.id, t); draw(); } }, t('templates.saveAs'))) : null);
   }
-  const sourceOf = (/** @type {any} */ c) => (c.kind === 'chat' ? 'chat' : c.routine ? 'routine' : 'order');
+  const sourceOf = (/** @type {any} */ c) => (c.typed ? 'typed' : c.kind === 'chat' ? 'chat' : c.routine ? 'routine' : 'order');
   function card(/** @type {any} */ c) {
     const isOrder = c.kind === 'order';
     const open = isOrder && expanded.has(c.id);
@@ -115,7 +115,7 @@ export function mountBoardView({ api, t, renderTasks, openChat, onBack }) {
       isOrder ? cardMenu(c) : null),
     el('div', { class: 'bv-title' }, c.title || c.request || c.id),
     el('div', { class: 'bv-meta' }, orderTag(c) ? el('span', { class: 'bv-chip bv-order-tag', title: t('board.orderTagTip', { id: c.request }) }, `${t('board.order')} ${orderTag(c)}`) : null, ...projectsOf(c).map((p) => el('span', { class: 'bv-chip bv-proj' }, p)),
-      ...membersOf(c).map((m) => el('span', { class: 'bv-chip bv-member' }, `@${m}`))),
+      ...membersOf(c).map((m) => el('span', { class: 'bv-chip bv-member' }, `@${m}`)), c.account ? el('span', { class: 'bv-chip bv-account' }, c.account) : null),
     isOrder && (c.tasks || []).length > 1 ? el('div', { class: 'bv-targets' }, ...c.tasks.map((/** @type {any} */ x) => el('span', { class: `bv-chip bv-target bv-c-${x.column}`, title: `${x.title || x.id} · ${x.status}` },
       `${x.project}${x.member ? ` @${x.member}` : ''}${x.machine && x.machine !== 'self' ? ` · ${x.machine}` : ''}`))) : null,   // v3.132 a fan-out target shows its assigned member
     el('div', { class: 'bv-foot' }, el('span', {}, fmtDuration(age)), cost ? el('span', {}, cost) : null,
