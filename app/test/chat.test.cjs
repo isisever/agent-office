@@ -370,7 +370,7 @@ test('v3.109 pasted images: checked types, count and size; image blocks for a GU
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const send = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:send'"), MAIN.indexOf('const chatImagesDir'));
   assert.ok(send.indexOf('CHAT.cleanImages(images)') < send.indexOf('typePrompt('), 'checked before anything is sent');
-  assert.match(send, /if \(gui \|\| !img\.images\.length\) return typePrompt\(id, body, \{ images: img\.images \}\)/);
+  assert.match(send, /if \(gui \|\| !img\.images\.length\) \{[\s\S]*?typePrompt\(id, ctx \+ body, \{ images: img\.images \}\)/);
   assert.match(send, /paths\.map\(FM\.mention\)/);
   const save = MAIN.slice(MAIN.indexOf('function saveChatImages('), MAIN.indexOf('function saveChatImages(') + 900);
   assert.match(save, /mkdirSync\(dir, \{ recursive: true, mode: 0o700 \}\)/);
