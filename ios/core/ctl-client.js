@@ -4,6 +4,8 @@
 'use strict';
 const W = require('../../app/src/link-wire.js');
 
+const CTL2_IN = new Set(['ctl-proj', 'ctl-ask', 'ctl-ask-clear', 'ctl-ack']);
+
 class CtlClient {
   /**
    * @param {{ Hyperswarm: any, crypto: any, keyPair: { publicKey: Uint8Array, secretKey: Uint8Array }, name?: string,
@@ -90,7 +92,7 @@ class CtlClient {
   session(conn) {
     if (this.conn && this.conn !== conn) this.conn.destroy();
     this.conn = conn;
-    this.write({ t: 'hello', v: 2, name: this.name, caps: W.CTL_CAPS });   // 'sess': it reads the HQ session
+    this.write({ t: 'hello', v: 2, name: this.name, caps: [...new Set([...W.CTL_CAPS, 'ctl2'])] });   // 'sess': it reads the HQ session
     const beat = setInterval(() => this.write({ t: 'ping' }), 5000);
     conn.on('close', () => {
       clearInterval(beat);
@@ -101,7 +103,7 @@ class CtlClient {
   }
   handle(raw) {
     if (raw?.t === 'sess-items' || raw?.t === 'sess-end') return this.onEvent(raw);   // the HQ session (hqSession)
-    const m = W.validateCtl(raw);
+    const m = W.validateCtl(raw) || (CTL2_IN.has(raw?.t) ? raw : null);   // ctl2 answers: the Swift side parses them defensively
     if (!m) return;   // ping and hello are not used here
     if (m.t === 'ctl-view') this.view = m.view;
     if (m.t === 'ctl-hq-status' || m.t === 'ctl-reports') { const w = this.hqWaits.get(m.id); if (w) { this.hqWaits.delete(m.id); w(m); } }

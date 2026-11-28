@@ -7,8 +7,26 @@
 const W = require('../../app/src/link-wire.js');
 const { CtlClient } = require('./ctl-client.js');
 
-// what the phone may send through {t:'send'}: an HQ turn, a reports request, and reading the HQ session
-const SENDABLE = new Set(['ctl-hq', 'ctl-reports', 'sess-open', 'sess-keep', 'sess-close']);
+// what the phone may send through {t:'send'}: an HQ turn, a reports request, reading a session, and (ctl2) the project
+// screen, sending a message, answering an approval and stopping a turn
+const SENDABLE = new Set(['ctl-hq', 'ctl-reports', 'sess-open', 'sess-keep', 'sess-close', 'ctl-proj', 'ctl-send', 'ctl-answer', 'ctl-stop']);
+const CTL2 = new Set(['ctl-proj', 'ctl-send', 'ctl-answer', 'ctl-stop']);
+const isId = (s) => typeof s === 'string' && s.length > 0 && s.length <= 64;
+// The shared validator may not know the ctl2 messages yet (older link-wire); this is the same shape check, kept small.
+function validCtl2(m) {
+  if (!isId(m.id) || !isId(m.project)) return false;
+  if (m.t === 'ctl-send') return typeof m.text === 'string' && m.text.length > 0 && m.text.length <= 16000;
+  if (m.t === 'ctl-answer') {
+    const a = m.answer;
+    if (!isId(m.askId) || !a || typeof a !== 'object') return false;
+    const keys = Object.keys(a);
+    if (keys.length !== 1) return false;
+    if (keys[0] === 'decision') return a.decision === 'allow' || a.decision === 'deny';
+    if (keys[0] === 'option') return isId(a.option);
+    return keys[0] === 'text' && typeof a.text === 'string' && a.text.length <= 2000;
+  }
+  return true;
+}
 const isHex = (s, n) => typeof s === 'string' && s.length === n * 2 && /^[0-9a-f]+$/.test(s);
 
 /**
@@ -53,8 +71,8 @@ function createController(o) {
       } catch (e) { status('unpaired'); log(`pair failed: ${e.message}`); }
     } else if (m.t === 'send') {
       const msg = m.msg;
-      if (!msg || !SENDABLE.has(msg.t) || (msg.t === 'sess-open' && msg.project !== 'hq')) return log(`refused to send ${msg?.t}`);
-      if (msg.t.startsWith('ctl-') && !W.validateCtl(msg)) return log(`malformed ${msg.t}`);
+      if (!msg || !SENDABLE.has(msg.t) || (msg.t === 'sess-open' && (!isId(msg.project) || (msg.sid !== undefined && !isId(msg.sid))))) return log(`refused to send ${msg?.t}`);
+      if (CTL2.has(msg.t) ? !validCtl2(msg) : (msg.t.startsWith('ctl-') && !W.validateCtl(msg))) return log(`malformed ${msg.t}`);
       client.write(msg);
     } else if (m.t === 'suspend') {
       await client.swarm.suspend?.().catch?.(() => {});

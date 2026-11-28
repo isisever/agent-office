@@ -70,7 +70,38 @@
 "This code doesn't match your Mac. Scan the code that is showing now." = "Bu kod Mac'inle eşleşmiyor. Şu an görünen kodu tara.";
 "Your Mac declined the request." = "Mac'in isteği reddetti.";
 "Check that your Mac is online and try again." = "Mac'inin çevrimiçi olduğunu kontrol et ve tekrar dene.";
-"Waiting for your approval on the Mac" = "Mac'te onayın bekleniyor";
 "Finished" = "Bitti";
 
 "%@ · %lld sessions · %lld working" = "%@ · %lld oturum · %lld çalışıyor";
+
+/* Project and session screens */
+"Needs your approval. Tap to review." = "Onayın bekleniyor. İncelemek için dokun.";
+"New message to this project" = "Projeye yeni mesaj";
+"Sent to the main session on your Mac." = "Mac'indeki ana oturuma gönderilir.";
+"Couldn't load sessions" = "Oturumlar yüklenemedi";
+"Pull down to try again." = "Tekrar denemek için aşağı çek.";
+"No sessions yet" = "Henüz oturum yok";
+"Send a message to start one." = "Başlatmak için bir mesaj gönder.";
+"Running now" = "Şu an çalışıyor";
+"Recent" = "Son oturumlar";
+"Running" = "Çalışıyor";
+"Untitled session" = "Başlıksız oturum";
+"Your agent has a question" = "Ajanının bir sorusu var";
+"Approve this plan?" = "Bu plan onaylansın mı?";
+"Approval needed" = "Onay gerekiyor";
+"Your answer" = "Cevabın";
+"Send" = "Gönder";
+"Deny" = "Reddet";
+"Approve" = "Onayla";
+"Stop" = "Durdur";
+"Message this project" = "Projeye mesaj yaz";
+"Offline. Messages can't be sent right now." = "Çevrimdışı. Şu an mesaj gönderilemiyor.";
+"Waiting for this session to start." = "Oturumun başlaması bekleniyor.";
+"Reconnecting to the session." = "Oturuma yeniden bağlanılıyor.";
+"Nothing here yet" = "Burada henüz bir şey yok";
+"Send a message to get this session going." = "Oturumu başlatmak için bir mesaj gönder.";
+"%lld steps · %@" = "%lld adım · %@";
+"HQ is getting ready. Its answers will show up here." = "HQ hazırlanıyor. Cevapları burada görünecek.";
+"Your agent is busy right now" = "Ajanın şu an meşgul";
+"This session is locked on your Mac" = "Bu oturum Mac'inde kilitli";
+"This project isn't running" = "Bu proje çalışmıyor";

@@ -75,6 +75,8 @@ struct OfflineBanner: View {
 
 struct OfficeView: View {
   @ObservedObject var link: WorkletModel
+  // Demo/screenshot hook: launch with `-uiProject YES` (or `-uiSession YES`) to open the first project that needs approval.
+  @State private var showFirst = UserDefaults.standard.bool(forKey: "uiProject") || UserDefaults.standard.bool(forKey: "uiSession")
 
   private var sorted: [Project] {
     let rank = ["approval": 0, "working": 1, "idle": 2]
@@ -91,7 +93,9 @@ struct OfficeView: View {
             if link.projects.isEmpty {
               EmptyState(icon: "tray", title: "No projects yet", detail: "Projects you open in Agent Office show up here.")
             } else {
-              ForEach(sorted) { ProjectCard(project: $0) }
+              ForEach(sorted) { p in
+                NavigationLink { ProjectView(link: link, projectId: p.id) } label: { ProjectCard(project: p) }.buttonStyle(.plain)
+              }
             }
           } else if link.isOnline || link.state == "connecting" || link.state == "starting" {
             Skeleton(height: 64); Skeleton(); Skeleton()
@@ -103,6 +107,9 @@ struct OfficeView: View {
       }
       .background(Theme.background)
       .navigationTitle("Office")
+      .navigationDestination(isPresented: $showFirst) {
+        if let p = sorted.first { ProjectView(link: link, projectId: p.id) }
+      }
       .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ConnectionBadge(state: link.state) } }
     }
   }
@@ -156,9 +163,13 @@ struct ProjectCard: View {
           Spacer(minLength: Space.s)
           StatusPill(status: project.status)
         }
-        Text("\(engine) · \(project.sessions) sessions · \(project.working) working").font(.footnote).foregroundColor(Theme.muted)
+        HStack {
+          Text("\(engine) · \(project.sessions) sessions · \(project.working) working").font(.footnote).foregroundColor(Theme.muted)
+          Spacer(minLength: 0)
+          Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundColor(Theme.muted)
+        }
         if project.status == "approval" {
-          Label("Waiting for your approval on the Mac", systemImage: "lock.shield").font(.footnote.weight(.medium)).foregroundColor(Theme.approval)
+          Label("Needs your approval. Tap to review.", systemImage: "lock.shield").font(.footnote.weight(.medium)).foregroundColor(Theme.approval)
         } else if let tool = project.tool, project.status == "working" {
           Label(tool, systemImage: "terminal").font(.footnote).foregroundColor(Theme.muted).lineLimit(1)
         } else if project.attention == "done" {
@@ -183,12 +194,14 @@ struct HQView: View {
         ScrollView {
           LazyVStack(spacing: 6) {
             if !link.isOnline { OfflineBanner(text: "Offline. Orders can't be sent right now.").padding(.bottom, Space.s) }
-            if link.hqItems.isEmpty && link.outbox.isEmpty {
+            if link.hqItems.isEmpty && link.outbox.isEmpty && link.sessionEnded == nil {
               EmptyState(icon: "bubble.left.and.bubble.right", title: "Talk to HQ", detail: "Send an order and follow HQ's replies here.")
             }
             ForEach(link.hqItems) { item in ItemRow(item: item, failed: item.toolId.flatMap { link.toolResults[$0] } ?? false, done: item.toolId.map { link.toolResults[$0] != nil } ?? false) }
             ForEach(link.outbox) { m in OutRow(message: m, retry: { link.retry(m.id) }, discard: { link.discard(m.id) }) }
-            if link.hqStatus == "working" { TypingRow() }
+            if link.isOnline && link.sessionEnded != nil && (!link.outbox.isEmpty || link.hqStatus == "working" || link.hqItems.isEmpty) {
+              StartingRow(text: "HQ is getting ready. Its answers will show up here.")
+            } else if link.hqStatus == "working" { TypingRow() }
             Color.clear.frame(height: 1).id("end")
           }
           .padding(.horizontal, Space.l).padding(.top, Space.s)
