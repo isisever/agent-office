@@ -19,7 +19,7 @@ import { syncSelect, setProp } from './select-sync.js';
 
 const REFRESH_MS = 5000;   // v3.120 Studio UX: the rows' live state (working, waiting) and the header follow within 5 s
 const THEME_KEY = 'ao.studio.theme';   // Studio's own light / dark choice ('system' | 'light' | 'dark', this window only)
-const CLOSED_KEY = 'ao.studio.closedProjects';   // the project groups the person collapsed (this window only)
+const OPEN_KEY = 'ao.studio.openProjects';   // v3.150 the projects the person expanded (all others start collapsed)
 
 /** @param {string} tag @param {Record<string, any>} [props] @param {...(Node | string | null | false | undefined)} kids */
 function el(tag, props = {}, ...kids) {
@@ -69,9 +69,14 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   let query = '';
   let timer = 0;
   let soon = 0;
-  /** @type {Set<string>} */
-  const closed = (() => { try { return new Set(JSON.parse(localStorage.getItem(CLOSED_KEY) || '[]')); } catch { return new Set(); } })();
-  const saveClosed = () => { try { localStorage.setItem(CLOSED_KEY, JSON.stringify([...closed])); } catch { /* storage off */ } };
+  // v3.150 projects start collapsed: only the expanded ones are stored; `closed` keeps the Set-like shape the view expects
+  const openIds = (() => { try { return new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || '[]')); } catch { return new Set(); } })();
+  const closed = /** @type {Set<string>} */ (/** @type {unknown} */ ({
+    has: (/** @type {string} */ id) => !openIds.has(id),
+    add: (/** @type {string} */ id) => { openIds.delete(id); return closed; },
+    delete: (/** @type {string} */ id) => { const was = !openIds.has(id); openIds.add(id); return was; },
+  }));
+  const saveClosed = () => { try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openIds])); } catch { /* storage off */ } };
 
   const search = /** @type {HTMLInputElement} */ (el('input', { type: 'search', class: 'st-search', oninput: () => { query = search.value.trim(); draw(); },
     onkeydown: (/** @type {KeyboardEvent} */ e) => { if (escClearsFilter(e.key, search.value)) { e.preventDefault(); e.stopPropagation(); search.value = ''; query = ''; draw(); } } }));

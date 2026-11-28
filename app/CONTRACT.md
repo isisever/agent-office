@@ -3991,3 +3991,4 @@ The Projects section of Studio's sidebar is one flat list that is quick to scan.
   (`canCloseSession`), session names come from `sessionNames`.
 - The existing filter box at the top of the sidebar filters projects by name or account (`studioGroups`) and sessions by
   title as you type; matching projects open. Esc clears the text.
+- v3.150 follow-up: projects start collapsed. The sidebar stores the expanded projects (`ao.studio.openProjects`) instead of the collapsed ones; the current project and a project a new session was started in open themselves (`expandProject`), and a filter opens matching projects while it has text.
