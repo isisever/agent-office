@@ -17,7 +17,7 @@ import { hasText } from './i18n.js';
 import { anchorAbove } from '../src/menu-anchor.mjs';
 import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText, defaultModelName } from '../src/studio-ux.mjs';
 import { syncSelect, setProp } from './select-sync.js';
-import { remoteOpenArgs, OPEN_REMOTE_EVENT } from '../src/studio-remote-chat.mjs';
+import { remoteOpenArgs, acceptOpenRemote, OPEN_REMOTE_EVENT } from '../src/studio-remote-chat.mjs';
 import { remoteGroups, remoteDot, machineTag } from '../src/studio-remote.mjs';
 import { mountRemoteView } from './remote-view.js';
 
@@ -412,8 +412,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const rview = api.link?.sessOpen ? mountRemoteView({ api, t, inline: true, onChange: () => draw() }) : null;
   // the HQ board asks for a remote session to open in this chat instead of its popup (the board is left first)
   if (rview) window.addEventListener(OPEN_REMOTE_EVENT, (/** @type {any} */ e) => {
-    const a = e.detail?.args;
-    if (!a || e.detail.handled) return;
+    if (!acceptOpenRemote(e.detail, on)) return;   // classic layout: the board's popup fallback runs
+    const a = e.detail.args;
     e.detail.handled = true;
     document.body.classList.remove('studio-board');
     rview.open(a);

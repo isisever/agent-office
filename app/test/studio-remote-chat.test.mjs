@@ -61,3 +61,13 @@ test('remoteBadgeMachine trims, collapses spaces, caps, and is empty without a m
   assert.equal(remoteBadgeMachine({}), '');
   assert.equal(OPEN_REMOTE_EVENT, 'ao:open-remote');
 });
+
+import { acceptOpenRemote } from '../src/studio-remote-chat.mjs';
+test('acceptOpenRemote: only in Studio mode, with args, and once', () => {
+  const d = () => ({ args: { key: 'k' }, handled: false });
+  assert.equal(acceptOpenRemote(d(), true), true);
+  assert.equal(acceptOpenRemote(d(), false), false);
+  assert.equal(acceptOpenRemote({ args: null, handled: false }, true), false);
+  assert.equal(acceptOpenRemote({ ...d(), handled: true }, true), false);
+  assert.equal(acceptOpenRemote(undefined, true), false);
+});

@@ -64,3 +64,8 @@ export function remoteBadgeMachine(o) {
   const m = o && typeof o.machine === 'string' ? o.machine.replace(/\s+/g, ' ').trim() : '';
   return m.slice(0, 60);
 }
+
+/** Whether Studio takes an open-remote request: only while Studio mode is on, with arguments, and not already handled. @param {any} detail @param {boolean} studioOn */
+export function acceptOpenRemote(detail, studioOn) {
+  return Boolean(studioOn && detail && detail.args && !detail.handled);
+}

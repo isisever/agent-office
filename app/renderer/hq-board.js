@@ -378,7 +378,8 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openCh
         // Studio opens it inline in the main chat; the popup is only the fallback when Studio does not answer
         const detail = { args: remoteOpenArgs(remoteGroup({ ...r, pub, online, status: st })), handled: false };
         if (detail.args) window.dispatchEvent(new CustomEvent(OPEN_REMOTE_EVENT, { detail }));
-        if (!detail.handled) rview?.open({ key: r.key, pub, project: r.id, name: r.name, machine: r.machine, status: st });
+        if (detail.handled) openKey = '';   // the inline chat shows it; the row has no popup open
+        else rview?.open({ key: r.key, pub, project: r.id, name: r.name, machine: r.machine, status: st });
       }
       renderRemote();
     };
