@@ -6815,6 +6815,20 @@ ipcMain.handle('prefs:get', () => prefs());
 const studioSince = new Map();   // pty id → when it was first seen asleep (the 24 h rule; starts again after a restart)
 const studioIds = () => state.projects.map((p) => p.id);
 const studioRecent = () => STU.normalizeRecent(state.studioRecent, studioIds());
+const STUDIO_RECENT_SHOWN = 10;
+/** v3.162 the saved Recent entries plus each project's transcripts, as listSessions' `recent` (per project, newest first). */
+function studioRecentWithHistory() {
+  const kept = studioRecent();
+  const out = [];
+  for (const p of state.projects.filter((x) => !x.hq)) {
+    const mine = kept.filter((r) => r.projectId === p.id);
+    const open = new Set(liveSids());   // sessions that already have a row (running or asleep tabs)
+    for (const id of P.ptyIdsOf(p)) { const sid = studioSid(id, P.resolvePty(state, id)); if (sid) open.add(sid); }
+    const merged = STU.mergeRecent(mine, studioHistory(p), { limit: STUDIO_RECENT_SHOWN, exclude: open });
+    for (const m of merged) out.push({ projectId: p.id, sessionId: m.sessionId, title: m.title, dir: m.dir || p.dir, at: m.at });
+  }
+  return out;
+}
 let studioNameCache = { file: '', mtimeMs: -1, name: '' };
 /** The display name of the Claude account a project runs on (its .claude.json, re-read only when it changes), or ''. */
 function studioUser(p) {
@@ -6836,6 +6850,21 @@ function studioAccountLabel(sp) {
   const a = p ? A.accountOf(state, p) : null;
   return a ? accountName(a) || '' : '';
 }
+// v3.162 the transcripts of a project's folder (all its sessions, not only those Studio closed itself), cached for a few
+// seconds because the sidebar asks every 5 s: [{ id, title, prompt, at }] newest first, 
+const studioHistoryCache = new Map();
+function studioHistory(p) {
+  const now = Date.now();
+  const hit = studioHistoryCache.get(p.id);
+  if (hit && now - hit.at < 15000 && hit.dir === p.dir) return hit.list;
+  let list = [];
+  try {
+    const { configDir } = A.accountOf(state, p);
+    list = CHAT.sessionList(TIO.historyDirsOf(p.dir, configDir, app.getPath('home')), {});
+  } catch {}
+  studioHistoryCache.set(p.id, { at: now, dir: p.dir, list });
+  return list;
+}
 ipcMain.handle('studio:sessions', (e) => {
   if (!fromWin(e)) return null;
   const projects = state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: p.name, group: p.group || '', dir: p.dir, engine: P.engineOf(p), tabs: P.tabsOf(p) }));
@@ -6844,7 +6873,7 @@ ipcMain.handle('studio:sessions', (e) => {
     user: studioUser(P.findProject(state, state.activeId)),
     // v3.153 paired machines' projects (live while online, last known when offline): the Projects list shows them as rows
     remotes: HQ.remoteRows(peerCache(), liveRemotes()),
-    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel, infoOf: studioTabInfo, names: SN.normalizeNames(state.sessionNames) }),
+    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecentWithHistory(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel, infoOf: studioTabInfo, names: SN.normalizeNames(state.sessionNames) }),
   };
 });
 // v3.157 a custom session name (right-click → Rename in Studio's sidebar, the header's rename): kept per Claude session id
@@ -6900,7 +6929,7 @@ ipcMain.handle('studio:open', (e, projectId, ref) => {
     return { ok: true, projectId: p.id, n: ref.n };
   }
   const sid = STU.validSessionId(ref.sessionId);
-  if (!sid || !studioRecent().some((r) => r.projectId === p.id && r.sessionId === sid)) return { ok: false, error: 'invalid' };
+  if (!sid || !(studioRecent().some((r) => r.projectId === p.id && r.sessionId === sid) || studioHistory(p).some((h) => h.id === sid))) return { ok: false, error: 'invalid' };
   const n = P.nextTabNumber(p);
   commit({ ...P.addTab(state, p.id, { n }), studioRecent: STU.dropRecent(studioRecent(), p.id, sid) });
   startPty(P.tabPtyId(p.id, n), { sessionId: sid });

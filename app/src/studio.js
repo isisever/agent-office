@@ -208,6 +208,30 @@ function listSessions({ projects, status, recent, activeId = null, staff = [], a
   });
 }
 
+/**
+ * v3.162 A project's Recent list after a restart: the entries Studio kept (state.json) first, then the sessions found in
+ * Claude Code's transcript folders (chat.sessionList: [{ id, title, prompt, at }], newest first) that are neither
+ * listed yet nor running. Newest first, at most `limit`. `exclude` = session ids of running tabs.
+ * @param {{ sessionId: string, title: string, at: number, dir?: string }[]} kept
+ * @param {{ id: string, title?: string, prompt?: string, at: number }[]} history
+ * @param {{ limit?: number, exclude?: Iterable<string>, names?: Record<string, string> }} [o]
+ */
+function mergeRecent(kept, history, { limit = RECENT_PER_PROJECT, exclude = [], names = {} } = {}) {
+  const skip = new Set(exclude);
+  const seen = new Set();
+  const out = [];
+  for (const r of Array.isArray(kept) ? kept : []) {
+    if (!r || seen.has(r.sessionId)) continue;
+    seen.add(r.sessionId); out.push(r);
+  }
+  for (const h of Array.isArray(history) ? history : []) {
+    if (!h || typeof h.id !== 'string' || seen.has(h.id) || skip.has(h.id)) continue;
+    seen.add(h.id);
+    out.push({ sessionId: h.id, title: names[h.id] || h.title || h.prompt || '', at: h.at });
+  }
+  return out.sort((a, b) => b.at - a.at).slice(0, limit);
+}
+
 /** The Claude account's display name from its `.claude.json` (oauthAccount.displayName), or ''. */
 function accountDisplayName(json) {
   const n = json && typeof json === 'object' ? json.oauthAccount?.displayName : '';
@@ -282,7 +306,7 @@ function guiSessionId(live, last) {
 }
 
 module.exports = {
-  guiSessionId,
+  guiSessionId, mergeRecent,
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
   normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs, guiAutoUpgrade, autoApproveAfterSet, modelListPending,
 };

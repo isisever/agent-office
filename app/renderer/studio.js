@@ -6,7 +6,7 @@
 // Every text from main (project, session, device and account names) is put in with textContent.
 
 import { studioGroups, currentProjectId, filterPalette, expandProject, sessionNames, canCloseSession } from '../src/studio-view.mjs';
-import { showAccountTags, projectRowView, escClearsFilter } from '../src/studio-projects.mjs';
+import { showAccountTags, projectRowView, escClearsFilter, projectClickTarget } from '../src/studio-projects.mjs';
 import { studioSections, planMove, dropSide, groupNameOf, GROUP_MAX } from '../src/studio-order.mjs';
 import { icon } from './studio-icons.js';
 import { meterView, amountText } from '../src/economy-view.mjs';
@@ -391,7 +391,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       v.expandable
         ? el('button', { class: 'st-caret', 'aria-expanded': String(v.expanded), title: g.name, onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); toggle(); } }, icon('chevron', 12))
         : el('span', { class: 'st-caret-gap', 'aria-hidden': 'true' }),
-      el('span', { class: 'st-proj-text', onclick: () => { picked = g.id; hooks.selectProject(g.id); refresh(); } },
+      el('span', { class: 'st-proj-text', onclick: () => { picked = g.id; const target = projectClickTarget(g); if (target) { open(g.id, target); return; } hooks.selectProject(g.id); refresh(); } },
         el('span', { class: 'st-project' }, g.name),
         tags && g.account ? el('span', { class: 'st-acct', title: `${t('studio.account')}: ${g.account}` }, g.account) : null),
       g.attention ? el('span', { class: `sb-attn ${g.attention}` }, '●') : null,
