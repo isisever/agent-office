@@ -1351,6 +1351,7 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
   // every start of a personal desk (open, restore, wake, restart on another account): its folder is trusted in the account it runs on
   trustPersonalDesk(id);
   trustDeskWorktree(id);   // v3.94 the same for a desk's worktree the app made
+  trustDeskProjectFolder(id);   // and the project's own folder, for a desk on its member's own account
   stoppedHere.delete(id);   // v3.99 started again: the person's earlier stop no longer holds
   guiEnded.delete(id);      // v3.108 a new start: the last end's note goes
   killPty(id);
@@ -4911,6 +4912,19 @@ function trustPersonalDesk(id) {
   const r = P.resolvePty(state, id);
   if (!r?.tab?.staffId || !r.project.staffOwner || r.project.appMade !== true || r.dir !== r.project.dir) return;
   try { PD.trustFolder(A.accountOf(state, r.project).configDir, app.getPath('home'), r.dir); } catch (e) { console.error('personal trust:', e.message); }
+}
+/**
+ * A desk on its member's own account that works in the folder the person picked (no worktree of its own): the trust the
+ * person gave that folder in the project's account is carried to the desk's account on every start, so Claude Code's
+ * trust dialog does not wait for Enter. Nothing is written when the project's account does not trust the folder.
+ */
+function trustDeskProjectFolder(id) {
+  const r = P.resolvePty(state, id);
+  if (!r?.tab?.staffId || r.project.appMade === true || r.dir !== r.project.dir) return;
+  try {
+    const own = P.findProject(state, r.project.id);
+    if (own) PD.carryFolderTrust(A.accountOf(state, own).configDir, A.accountOf(state, r.project).configDir, app.getPath('home'), r.dir);
+  } catch (e) { console.error('desk folder trust:', e.message); }
 }
 /**
  * v3.94 a parallel desk's worktree the app made (userData/work/<project>/<member>, ST.appMadeWorktree; never a folder
