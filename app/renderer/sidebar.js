@@ -1554,7 +1554,13 @@ export function mountSidebar(el, on) {
       if (!p) return null;
       const map = new Map();
       badFields.clear();
-      const body = h('div', { class: 'st-set-project' }, accountSelect(p), economySelect(p), budgetControl(p), autoApproveToggle(p), skipPermissionsToggle(p), shareMcpToggle(p), contextCapSelect(p));
+      // v3.148 grouped for Studio's form: each control is one row (label left, control right) under a small group title
+      const group = (/** @type {string} */ title, /** @type {Node[]} */ ...rows) => h('div', { class: 'st-pgroup' }, h('div', { class: 'st-pgroup-title' }, title), ...rows);
+      const body = h('div', { class: 'st-set-project' },
+        group(t('studio.set.pgAccount'), accountSelect(p), economySelect(p), contextCapSelect(p)),
+        group(t('studio.set.pgBudget'), budgetControl(p)),
+        group(t('studio.set.pgPermissions'), autoApproveToggle(p), skipPermissionsToggle(p)),
+        group(t('studio.set.pgMcp'), shareMcpToggle(p)));
       // the controls queue into `draft`: point it at this map before their own change handlers run (capture phase)
       for (const type of ['change', 'input']) body.addEventListener(type, () => { draft = map; }, true);
       return {

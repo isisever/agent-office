@@ -3992,3 +3992,12 @@ The Projects section of Studio's sidebar is one flat list that is quick to scan.
 - The existing filter box at the top of the sidebar filters projects by name or account (`studioGroups`) and sessions by
   title as you type; matching projects open. Esc clears the text.
 - v3.150 follow-up: projects start collapsed. The sidebar stores the expanded projects (`ao.studio.openProjects`) instead of the collapsed ones; the current project and a project a new session was started in open themselves (`expandProject`), and a filter opens matching projects while it has text.
+
+## Studio settings: Projects page layout (v3.148)
+- `sidebar.projectInline(id)` (used only by Studio's Settings -> Projects page) now returns its body grouped: `.st-pgroup` blocks
+  with a `.st-pgroup-title` (Account & model, Budget, Permissions, MCP; keys `studio.set.pgAccount|pgBudget|pgPermissions|pgMcp`).
+- Each control stays the Office's own `control()` label (`.sb-acct-wrap`), restyled by Studio-scoped CSS only: one setting per row,
+  label left, control right, dividers like the other `st-set-card` rows. The Office popup's markup and CSS are untouched.
+- The economy detail line sits under its row as a muted hint; the budget inputs share the select height; checkboxes are a
+  fixed 16px box at the right of their label. Footer: "All project settings..." secondary, Save primary, right aligned.
+- No behaviour change: same controls, same draft map, same save order (account first).
