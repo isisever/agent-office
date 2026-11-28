@@ -26,10 +26,15 @@ targets:
         SWIFT_VERSION: 5.0
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "2"
     info:
       path: AgentOfficeRemote/Info.plist
       properties:
         CFBundleDisplayName: Agent Office Remote
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         NSLocalNetworkUsageDescription: Finds your Agent Office desktop on the local network.
     entitlements:
