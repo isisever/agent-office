@@ -11,6 +11,7 @@ import { templatesButton } from './templates-ui.js';
 import { isFreeOption, liveStatus, openOnScreen, screenKey, mustUseTerminal } from '../src/tui-menu.mjs';
 import { slashQuery, matchCommands } from '../src/slash-match.mjs';
 import { withReply, quoteExcerpt } from '../src/chat-reply.mjs';
+import { limitFlow } from '../src/chat-superseded.mjs';
 import { blocks as mdBlocks } from '../src/chat-md.mjs';
 import { chipInfo, addChips, dropText, withMentions, splitMentions, pickerState, managerOffNote, modelChoices, modeChoices } from '../src/composer.mjs';
 import { icon } from './studio-icons.js';
@@ -107,6 +108,9 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   const bannerText = h('span', {});
   const bannerBtn = h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() });
   const banner = h('div', { class: 'chat-banner' }, bannerText, bannerBtn);
+  const fbText = h('span', {});   // v3.165 which account the session switched to (or that there is none)
+  const fbBar = h('div', { class: 'chat-fallback', title: t('app.close'), onclick: () => { fbBar.hidden = true; } }, fbText);
+  fbBar.hidden = true;
   const input = h('textarea', { class: 'chat-input', rows: '1' });
   const sendLabel = h('span', { class: 'chat-label' });
   const send = h('button', { class: 'chat-send', onclick: () => submit() }, sendLabel, icon('arrowUp', 18));
@@ -211,7 +215,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   picker.hidden = true;
   agentView.tabIndex = -1;
   agentView.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeAgent(); } });
-  el.append(banner, list, empty, agentView, picker, live, card, endBox, contBox, agentBar, replyBar, composer, why);
+  el.append(banner, fbBar, list, empty, agentView, picker, live, card, endBox, contBox, agentBar, replyBar, composer, why);
   // v3.120 Studio UX: "jump to latest" while the list is scrolled up
   const jump = h('button', { class: 'chat-jump chat-studio-only', type: 'button', title: t('chat.jumpLatest'), 'aria-label': t('chat.jumpLatest'), onclick: () => { list.scrollTo?.({ top: list.scrollHeight, behavior: 'smooth' }); } }, icon('down', 14), h('span', {}, t('chat.jumpLatest')));
   jump.hidden = true;
@@ -367,6 +371,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   function actButton(cls, name, label, title, onclick) {
     return h('button', { class: cls, type: 'button', title: title || label, 'aria-label': title || label, onclick }, icon(name, 15), h('span', { class: 'chat-act-label' }, label));
   }
+  let openLimits = [];   // v3.164 keys of limit errors with no progress after them yet
+  function markSuperseded(row) { row.classList.add('superseded'); row.title = t('chat.limitSuperseded'); }
   function message(kind, text, body, ro = false) {
     const copy = actButton('chat-act', 'copy', t('chat.copy'), '', () => copyText(String(text), copy));
     const reply = actButton('chat-act', 'reply', t('chat.reply'), '', () => replyTo(String(text)));
@@ -422,6 +428,10 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     if (!items.length) return;
     const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
     const frag = document.createDocumentFragment();
+    // v3.164 a limit error the session went on after (a fallback's carry-on) is shown as history
+    const flow = limitFlow(openLimits, items);
+    openLimits = flow.open;
+    const gone = new Set(flow.superseded);
     for (const it of items) {
       // v3.121 the echo's image thumbnails move to the transcript's copy (the transcript only knows how many)
       let carry = null;
@@ -433,8 +443,11 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
         try { n = typeof it?.text === 'string' ? message(it.kind === 'user' ? 'user' : 'assistant', it.text, textBody(it.text)) : null; } catch (e2) { console.error(e2); }
       }
       if (n && carry && it.kind === 'user') { const count = n.querySelector('.chat-images'); if (count) count.replaceWith(carry); else n.firstElementChild?.append(carry); }
+      if (n && it.key !== undefined) n.dataset.key = String(it.key);
       if (n) frag.append(n);
     }
+    for (const row of /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('.chat-msg.error'))) if (gone.has(row.dataset.key)) markSuperseded(row);
+    for (const row of /** @type {NodeListOf<HTMLElement>} */ (frag.querySelectorAll('.chat-msg.error'))) if (gone.has(row.dataset.key)) markSuperseded(row);
     // v3.139 the streaming bubble stays the last row: a finished answer replaces it, anything else goes above it
     const answerCame = items.some((it) => it.kind === 'assistant' || it.kind === 'error');
     if (answerCame) dropStream();
@@ -1344,6 +1357,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       window.clearInterval(timer);
       window.clearInterval(menuTimer);
     },
+    /** v3.165 the account-switch notice (chat-fallback.mjs fallbackNote), or null to clear it. */
+    setFallback(note) { fbText.textContent = note ? t(note.key, note.params) : ''; fbBar.hidden = !note; },
     /** The project's attention ('permission' shows the banner: Claude Code waits for an answer in the terminal). */
     setAttention(a) { attention = a; banner.hidden = Boolean(gui) || hidesBanner() || a !== 'permission'; },
     texts() { texts(); if (gui) { askShown = ''; setGui(gui); return; } menuShown = ''; drawMenu(); },

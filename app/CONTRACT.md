@@ -4174,3 +4174,21 @@ the message. The default is off: HQ dispatches, resume/limit prompts, inbox and 
 
 ## v3.164 Project home account label
 Studio project rows carry `home` (label of the account a project was moved away from, or ''). Choosing the account a project is already on, while it remembers a home, goes through `projects:setAccount` and forgets the home.
+
+## Studio: account fallback resumes on the new account (v3.164)
+
+After a usage-limit fallback the chat no longer shows the stopped account's limit error as a live failure.
+
+- Root cause (read from a real session, not guessed): the fallback itself was correct. The project's own account
+  (`homeAccount`) hit its limit, `fallbackTo` moved the project to Default, and the session restarted with
+  `CLAUDE_CONFIG_DIR` unset (Default) and the carry-on prompt; Default answered normally. But the session's first
+  restart prompt ("Your last turn ... did not finish") had run on the limited account and got "You've hit your 5-hour
+  limit" written into the transcript; `moveProjectData` copies that whole transcript to the new account, so the chat
+  showed user bubble, red limit error, then the carry-on and the real work, which read as "this account is full".
+- Fix: `limitFlow` (`src/chat-superseded.mjs`) marks a usage-limit error bubble `superseded` once any later answer or
+  tool call appears (also across incremental reads). `renderer/chat.js` dims it with a dashed border and a tooltip
+  (`chat.limitSuperseded`). A limit error that ends the transcript stays a normal red error.
+- Not changed: the account choice, `moveProject`, transcript copying, and the limit marks.
+- Tests: `test/chat-superseded.test.mjs`.
+- At app start, a project whose account still has an unexpired limit mark (or usage at 100 %) is moved to the fallback account `planLimitMove` picks (`FB.limitedStartMove`, `moveLimitedAtStart` in main.js) before its "did not finish" prompt is sent, so that prompt runs on an account with quota. The home-account return (`maybeReturn` / `FB.shouldReturn`) is unchanged. Test: `app/test/fallback-startup.test.cjs`.
+- v3.165 Studio/GUI limit fallback: a GUI chat's own stream-json limit error (`FB.guiLimitHit`, `w.guiHit`) and an idle GUI chat on an account another tab marked limited (`FB.idleLimitHit`) now count as limit hits in `checkLimits`, so the project moves to the backup account and resumes the same session (no transcript or quota reading needed). `account:fallback` carries `fromName`/`toName`; the chat shows a strip (`chat.accountFallback.*`, `src/chat-fallback.mjs`) naming the target account or that none is available. Tests: `test/fallback-startup.test.cjs`, `test/chat-fallback.test.mjs`.

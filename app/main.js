@@ -1546,7 +1546,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     const a = activity.get(id);
     if (a) a.at = Date.now();
     const text = GS.errorText(m);
-    if (text) watchLimit(id, text, startedAt);
+    if (text) {
+      watchLimit(id, text, startedAt);
+      const g = FB.guiLimitHit(text, Date.now());   // v3.165 the stream's own limit error is a hit by itself
+      const w = ptyLimit.get(id);
+      if (g && w) w.guiHit = g;
+    } else if (m?.type === 'assistant') { const w = ptyLimit.get(id); if (w) w.guiHit = null; }   // the session went on: the old error is history
   });   // v3.108 read once claude is up (stdin waits for it)
   if (gui) send('pty:data', id, `\x1b[2m${T('main.guiTerminalNote')}\x1b[0m\r\n`);   // its terminal stays empty otherwise
   attachPty(terms, id, t, {
@@ -3799,13 +3804,57 @@ app.on('will-quit', (e) => {
   Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, 1000))]).catch(() => {}).finally(() => app.quit());
 });
 
+/**
+ * v3.164 a project whose account still has an active limit is moved to its fallback account before its interrupted
+ * tabs start, so the "did not finish" prompt runs on an account with quota (FB.limitedStartMove decides).
+ */
+function moveLimitedAtStart(ids) {
+  // ids: every unfinished tab (started or typed into); the running ones restart on the new account with the carry-on prompt
+  const moved = new Set();   // tabs a whole-project move already restarted
+  if (!fallbackOn()) return moved;
+  scanUsage();
+  const now = Date.now();
+  const seen = new Set();
+  for (const id of ids) {
+    const r = P.resolvePty(state, id);
+    const p = r && P.findProject(state, r.project.id);
+    if (!p || seen.has(p.id) || P.engineOf(p) !== 'claude') continue;
+    seen.add(p.id);
+    const account = A.accountOf(state, p);
+    const model = currentModel(p, account, []);
+    const second = FB.secondModel({ current: model, setting: P.limitModelOf(p), order: P.MODEL_ORDER });
+    const own = P.fallbackModelOf(p) ? P.bossModelOf(p) : model;
+    const plan = FB.limitedStartMove({ usage: usages.get(account.id), mark: limitMarks()[account.id], choice: P.backupOf(p), model, own, second, current: account.id, home: p.homeAccount || null, accounts: fallbackAccounts(), marks: limitMarks(), modelMarks: modelMarks(), now });
+    const to = plan && accountById(plan.id);
+    if (!to) continue;
+    const allowed = FB.switchAllowed(switches.get(p.id), now);   // the same loop guard as a live move
+    switches.set(p.id, allowed.history);
+    if (!allowed.ok) continue;
+    const next = P.fallbackTo(state, p.id, to.id, plan.model ? { model: plan.model } : {});
+    if (next === state) continue;
+    switches.set(p.id, [...allowed.history, now]);
+    const running = accountTabs(p).some((tid) => terms.has(tid));   // a mid-session call: running tabs must move too
+    commit(next);
+    fallbackNotice(p, 'switched', T('main.fallbackSwitchedTo', { from: accountName(account), to: accountName(to), limit: T('main.fallbackLimitUnknown'), model: modelLabel(plan.model || model), why: T('main.fallbackWhySame', { model: modelLabel(model) }) }), { from: account.id, to: to.id, model: plan.model || model || null, step: plan.step, ptyIds: accountTabs(p) });
+    if (running) {
+      const mine = ids.filter((tid) => accountTabs(p).includes(tid));
+      const stopped = mine.filter((tid) => !terms.has(tid));   // resumeUnfinished starts these (with the prompt) on the new account
+      const restarted = accountTabs(p).filter((tid) => !stopped.includes(tid) && !asleep.has(tid));
+      moveProject(p.id, account, { carryOn: mine, prompt: R.UNFINISHED_PROMPT, skip: stopped });
+      for (const tid of restarted) moved.add(tid);
+    } else moveProjectFiles(p, account);
+  }
+  return moved;
+}
 /** @returns {{ resumed: { id: string, name: string }[], skipped: { id: string, name: string }[] }} */
 function resumeUnfinished() {
   if (!state || !win || !isLoaded) return { resumed: [], skipped: [] };
   const tabs = unfinishedTabs();
   const nameOf = (id) => ({ id, name: tabs.find((x) => x.id === id)?.name || id });
   const { actions, skipped } = R.unfinishedActions(tabs);
+  const moved = moveLimitedAtStart(actions.map((a) => a.id));
   for (const a of actions) {
+    if (moved.has(a.id)) continue;
     if (a.how === 'type') typePrompt(a.id, R.UNFINISHED_PROMPT);
     else startPty(a.id, { sessionId: a.sessionId || null, resume: true, prompt: R.UNFINISHED_PROMPT });
   }
@@ -3871,6 +3920,18 @@ function sleepIdle() {
   }
   if (slept) broadcast();
 }
+function moveProjectFiles(p, from) {
+  const home = app.getPath('home');
+  const to = A.accountOf(state, p);
+  try {
+    PD.moveProjectData({
+      from: from.configDir || null, to: to.configDir || null, home,
+      dirs: [p.dir, ...P.tabsOf(p).filter((t) => !t.shell && P.followsProjectAccount(state, P.tabPtyId(p.id, t.n))).map((t) => t.dir).filter(Boolean)],
+      otherDirs: state.projects.filter((x) => x.id !== p.id).map((x) => x.dir),
+      skipPermissions: P.skipPermissionsArgs(p).length > 0, // v3.76: the old account's bypass mode acceptance goes with it
+    });
+  } catch (e) { console.error('proje verisi taşınamadı:', e.message); }
+}
 // A project moved to another account (contract v3.16): its tabs stop, its Claude Code data (transcripts, file
 // history, prompt history, the .claude.json projects entry; src/project-data.js) is copied into the new account's
 // folder and merged there, and each tab starts again in the conversation it was in (--resume <its session>, else
@@ -3880,16 +3941,15 @@ function sleepIdle() {
 // Skip permissions project the bypass mode warning), written before any tab starts, so no dialog stops a moved tab.
 // carryOn (v3.17): tabs that stopped at the usage limit; they are told to carry on like a tab cut off mid-turn.
 // An Antigravity project (v3.22) ignores accounts: nothing moves and its tabs keep running.
-function moveProject(projectId, from, { carryOn = [], prompt = '' } = {}) {
+function moveProject(projectId, from, { carryOn = [], prompt = '', skip = [] } = {}) {
   const p = P.findProject(state, projectId);
   if (!p || P.engineOf(p) !== 'claude') return; // accounts change nothing for agy or Command Code (v3.22, v3.25)
-  const home = app.getPath('home');
   const plan = [];
   // v3.83 fix: only the tabs on the project's account move. A desk on its member's own account keeps running: its
   // account did not change, and its pid file and transcripts are not in `from`.
   for (const id of accountTabs(p)) {
     const r = P.resolvePty(state, id);
-    if (asleep.has(id)) continue;
+    if (asleep.has(id) || skip.includes(id)) continue;
     let sid = lastSid.get(id) || '';
     let busy = false;
     const wasGui = Boolean(terms.get(id)?.gui);   // a GUI chat restarts as a chat (GS.keepsGui)
@@ -3902,15 +3962,7 @@ function moveProject(projectId, from, { carryOn = [], prompt = '' } = {}) {
     // v3.111: a tab stopped by the limit gets the limit carry-on prompt (re-run the sub-agents that failed on it)
     plan.push({ id, opts: { ...PD.restartAfterMove({ sessionId: validSid(sid) || null, continues: !r?.tab || Boolean(r.tab.worktree), busy }, prompt && carryOn.includes(id) ? prompt : R.UNFINISHED_PROMPT), keepGui: wasGui } });
   }
-  const to = A.accountOf(state, p);
-  try {
-    PD.moveProjectData({
-      from: from.configDir || null, to: to.configDir || null, home,
-      dirs: [p.dir, ...P.tabsOf(p).filter((t) => !t.shell && P.followsProjectAccount(state, P.tabPtyId(p.id, t.n))).map((t) => t.dir).filter(Boolean)],
-      otherDirs: state.projects.filter((x) => x.id !== p.id).map((x) => x.dir),
-      skipPermissions: P.skipPermissionsArgs(p).length > 0, // v3.76: the old account's bypass mode acceptance goes with it
-    });
-  } catch (e) { console.error('proje verisi taşınamadı:', e.message); }
+  moveProjectFiles(p, from);
   for (const { id, opts } of plan) startPty(id, opts);
 }
 
@@ -3930,6 +3982,8 @@ const accountTabs = (p) => P.ptyIdsOf(p).filter((id) => P.followsProjectAccount(
 const limitMarks = () => state.accountLimits || {};
 const switches = new Map();   // projectId → times of its automatic moves (FB.switchAllowed)
 const limitDone = new Set();  // "<pty id>|<limit time>": a limit already acted on
+const retryAt = new Map();   // projectId → FB.retryEntry: a plan with nowhere to go is not redone every tick
+const stuckShown = new Set();   // projects whose chat strip says "could not switch"
 const stuckSaid = new Set();  // "<project>|<account>|<reason>|<until>": a "no backup" notice already shown
 let returnTick = 0;
 /** The tab's output: usage-limit words after the first seconds of its start are a hint (FB.scanPty). */
@@ -4044,7 +4098,8 @@ const modelLabel = (m) => m || T('main.fallbackModelUnknown');
 const limitLabel = (hits) => (hits.map((h) => String(h.hit.text || '').split(' · ')[0].trim()).find(Boolean) || T('main.fallbackLimitUnknown')).slice(0, 80);
 /** Tells the renderer (a hint over the project's terminals) and the system (a notification). */
 function fallbackNotice(p, kind, text, extra = {}) {
-  send('account:fallback', { projectId: p.id, kind, text, ...extra });
+  const nameOf = (id) => { const a = id && accountById(id); return a ? accountName(a) : null; };
+  send('account:fallback', { projectId: p.id, kind, text, fromName: nameOf(extra.from), toName: nameOf(extra.to), ...extra });
   notify(p.name, text, p.id);
 }
 /** v3.155: a usage-limit stop with a reset time → the account's quota (U.applyLimitHit), saved like a reading. */
@@ -4059,6 +4114,13 @@ function recordLimitHits(account, hits, now) {
     fs.writeFileSync(path.join(dir, U.LAST), JSON.stringify(usage));
   } catch {}
   sendAccounts();
+}
+/** A real hit's own time; an idle hit (its `at` follows every quota scan) counts as the one limit window it belongs to. */
+const hitStamp = (hits) => Math.max(...hits.map((h) => (h.hit.idle ? 1 : h.hit.at)));
+function clearStuck(p) {
+  retryAt.delete(p.id);
+  for (const k of [...stuckSaid]) if (k.startsWith(`${p.id}|`)) stuckSaid.delete(k);
+  if (stuckShown.delete(p.id)) send('account:fallback', { projectId: p.id, kind: 'cleared', text: '' });
 }
 /** Every 1.5 s (checkTurns): a limit in any running tab; every ~15 s, projects on a backup that may go home. */
 function checkLimits() {
@@ -4077,19 +4139,25 @@ function checkLimits() {
       let hit = transcriptLimit(id, r.dir, account.configDir);
       const w = ptyLimit.get(id);
       if (!hit) hit = compactionSeen(id, r.dir, account.configDir, w, now);
+      if (!hit && w?.guiHit && terms.get(id)?.gui) hit = w.guiHit;   // v3.165 Studio/GUI chat: the stream error, no transcript needed
+      // v3.165 an idle GUI chat on an account another tab marked limited moves before its next message fails
+      if (!hit && terms.get(id)?.gui && !terms.get(id).live().busy && FB.idleMoveReady(accountTabs(p).map((o) => terms.has(o) && !tabIdle(o, account.configDir)))) hit = FB.idleLimitHit({ usage: usages.get(account.id), mark: limitMarks()[account.id], now });
       if (!hit && w?.hitAt && now - w.hitAt < 60000 && usageFull()) hit = { at: w.hitAt, resetsAt: null, type: null, text: '' };
       if (hit && !limitDone.has(`${id}|${hit.at}`)) hits.push({ id, hit });
     }
     if (hits.length) recordLimitHits(account, hits, now); // v3.155: the quota shows the stop, fallback on or off
     if (!fallbackOn()) continue;
-    if (hits.length) onLimit(p, account, hits, now);
-    else if (returning && p.homeAccount) maybeReturn(p, account, now);
+    if (hits.length) {
+      if (FB.retryGate(retryAt.get(p.id), { hitAt: hitStamp(hits), now })) onLimit(p, account, hits, now, hitStamp(hits));
+    } else if (stuckShown.has(p.id) && !FB.limitedUntil({ usage: usages.get(account.id), mark: limitMarks()[account.id], now })) {
+      clearStuck(p);   // the limit reset: the strip goes
+    } else if (returning && p.homeAccount) maybeReturn(p, account, now);
   }
 }
 // v3.111 owner policy, fully automatic (FB.planLimitMove): the explicit backup, then the same model on the other
 // accounts in order, then the second model (the project's setting; default the next model below) on them, else wait
 // for the earliest reset (looked at again every 1.5 s). Backup "None" no longer stops it.
-function onLimit(p, account, hits, now) {
+function onLimit(p, account, hits, now, hitAt = 0) {
   scanUsage(); // the quota files as they are now: an account whose reset passed is read again before it is chosen
   const resets = hits.map((h) => h.hit.resetsAt).filter(Number.isFinite);
   const stale = resets.length === hits.length && resets.every((t) => t <= now); // the limit seen has reset already
@@ -4121,17 +4189,22 @@ function onLimit(p, account, hits, now) {
         limitDone.add(`${h.id}|${h.hit.at}`);
         typed++;
       }
+      if (typed) clearStuck(p);
       if (typed) fallbackNotice(p, 'resumed', T('main.fallbackResumed', { from: accountName(account), model: modelLabel(model) }), { from: account.id });
       return;
     }
+    retryAt.set(p.id, FB.retryEntry({ wait: plan.wait, hitAt, now }));
     const key = `${p.id}|${account.id}|${plan.reason}|${plan.wait}`;
-    if (plan.reason !== 'none' && !stuckSaid.has(key)) {
+    if (plan.reason === 'none') {   // only the chat strip says so (the terminal hint stays quiet)
+      if (!stuckSaid.has(key)) { stuckSaid.add(key); stuckShown.add(p.id); send('account:fallback', { projectId: p.id, kind: 'stuck', reason: 'none', text: '', fromName: accountName(account) }); }
+    } else if (!stuckSaid.has(key)) {
       stuckSaid.add(key);
       const at = plan.wait ? new Date(plan.wait).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '?';
       const text = second
         ? T('main.fallbackWaitBoth', { from: accountName(account), limit, model: modelLabel(model), second, at })
         : T('main.fallbackWait', { from: accountName(account), limit, model: modelLabel(model), at });
-      fallbackNotice(p, 'stuck', text, { reason: plan.reason });
+      stuckShown.add(p.id);
+      fallbackNotice(p, 'stuck', text, { reason: plan.reason, from: account.id });
     }
     return;
   }
@@ -4148,6 +4221,8 @@ function onLimit(p, account, hits, now) {
   const to = accountById(plan.id);
   if (!to) return;
   done();
+  retryAt.delete(p.id);
+  stuckShown.delete(p.id);
   switches.set(p.id, [...allowed.history, now]);
   const next = P.fallbackTo(state, p.id, to.id, plan.model ? { model: plan.model } : {});
   if (next === state) return;

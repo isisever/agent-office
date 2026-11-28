@@ -983,6 +983,8 @@
     "personalTitle": "Personelin proje dışı işler için kendi çalışma alanı (ilk kullanımda Belgeler/Agent Office altında açılır)"
   },
   "chat": {
+    "accountFallback": {"switched": "{from} sınırı → {to} ile devam ediliyor", "returned": "{to} hesabına geri dönüldü", "none": "{from} sınırı. Geçilecek yedek hesap yok", "notLoggedIn": "{from} sınırı. Giriş yapılmış yedek hesap yok", "allLimited": "{from} sınırı. Tüm yedek hesaplar sınırda; sıfırlanma bekleniyor", "stuck": "{from} sınırı. Şu an hesap değiştirilemiyor"},
+    "limitSuperseded": "Bu hesap sınıra ulaştı; oturum sonrasında devam etti",
     "placeholder": "Mesaj… (Enter gönderir, Shift+Enter: yeni satır)",
     "send": "Gönder",
     "terminal": "Terminal",
