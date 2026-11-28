@@ -3868,3 +3868,16 @@ as ⌘K → Usage. With no current project it does nothing.
 Amends v3.123. With more than 8 steps (several versions' items after a long gap) the page indicator is a "3 / 22"
 counter (`.wn-count`) instead of a dot per step; the footer wraps and its buttons never break their labels, so every
 button stays inside the card. The open card is drawn again on a language change (`whatsNew.redraw()`).
+## Chat: the answer as it is written (v3.139)
+
+Amends v3.108 (a GUI chat tab showed the answer being written only as an ellipsized one-line `.chat-live` status).
+
+- In a GUI chat tab (Studio and Office chat mode) the answer being written is one assistant row at the end of the list,
+  `.chat-msg.assistant.streaming`, with the same markdown rendering (`mdBody`) as a finished answer plus a subtle caret.
+  It is rebuilt only when `gui.live.text` changed, and the list stays pinned to the bottom only if it already was.
+- `gui.live.text` keeps the start of the answer and grows up to 60000 characters (was the last 4000); the transcript has all.
+- Dedup: `append()` removes the streaming row when a finished `assistant` or `error` item arrives, and puts other new
+  rows (tools, user echoes) above it; the row is also removed when the live text is empty, the turn ends (`result`) or
+  the tab is no longer a GUI tab. The main process clears `live.text` when the whole message arrives.
+- The bottom `.chat-live` line stays for the turn, showing the working text (or the running tool) and never repeats the answer.
+- Terminal-backed chat tabs are unchanged.

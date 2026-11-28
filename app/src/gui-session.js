@@ -15,7 +15,7 @@ const GUI_FLAGS = ['-p', '--input-format', 'stream-json', '--output-format', 'st
 /** v3.120 the model probe's flags: the SDK protocol without the account's MCP servers (a throwaway session) */
 const PROBE_FLAGS = [...GUI_FLAGS, '--strict-mcp-config'];
 const LINE_MAX = 64 * 1024 * 1024;   // a line longer than this is dropped (claude's lines are messages, not files)
-const LIVE_MAX = 4000;               // characters of the answer being written shown live (the transcript has it all)
+const LIVE_MAX = 60000;              // characters of the answer being written shown live as it grows (the start is kept; the transcript has it all)
 const ASKS_MAX = 20;                 // open requests kept per tab (claude asks one at a time per agent)
 const QUESTION_TOOLS = ['AskUserQuestion', 'ExitPlanMode'];
 
@@ -215,7 +215,7 @@ function nextLive(live, msg) {
     if (ev?.type === 'message_start') return { ...live, busy: true, text: '' };
     if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use') return { ...live, busy: true, tool: toolName(ev.content_block.name) };
     if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
-      const text = (live.text + String(ev.delta.text || '')).slice(-LIVE_MAX);
+      const text = live.text.length >= LIVE_MAX ? live.text : (live.text + String(ev.delta.text || '')).slice(0, LIVE_MAX);
       return { ...live, busy: true, text, tool: '' };
     }
     return live;
