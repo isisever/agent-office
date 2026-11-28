@@ -84,3 +84,18 @@ export function pasteAction(clip, platform) {
   const text = clip.text ? { text: clip.text } : null;
   return (platform === 'win32' ? text || image : image || text) || null;
 }
+
+/**
+ * Escape sequence that switches every xterm mouse-reporting mode off (X10/normal/button/any-motion tracking,
+ * UTF-8/SGR/urxvt encodings, focus events). A TUI (claude) turns these on and normally turns them off on exit; when
+ * its pty dies or is restarted first, the terminal would keep forwarding the mouse to nobody and never select text.
+ */
+export const MOUSE_OFF = '\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l';
+
+/**
+ * Whether the terminal should report its size to the pty now. During a splitter drag the size changes on every
+ * pointer move; resizing the pty each time makes claude redraw its whole screen per frame (stutter), so the size is
+ * sent once when the drag ends.
+ * @param {{ dragging: boolean }} s
+ */
+export const shouldReportSize = (s) => !s.dragging;
