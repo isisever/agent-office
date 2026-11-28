@@ -1237,6 +1237,25 @@ test('the manager brief says one scoped task per agent and which model each kind
   expect(text).not.toContain('{{MODEL}}')
 })
 
+// Studio GUI chat (AGENT_OFFICE_STUDIO=1): one extra bullet; any other session keeps the brief byte for byte
+test('a Studio chat gets the no-long-foreground-command bullet, other sessions do not', async ($, on) => {
+  const base = { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1' }
+  setUpCompose(on, base)
+  const plain = (await $.prompt.compose(mainLoop)).sections[1]?.text ?? ''
+  expect(plain).not.toContain('In Studio')
+  expect(plain).not.toContain('{{')
+  expect(plain).toContain('- Report honestly what you verified and what you did not.\n\nThe person')
+})
+
+test('with AGENT_OFFICE_STUDIO=1 the manager brief gains exactly that bullet and stays constant', async ($, on) => {
+  setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', AGENT_OFFICE_STUDIO: '1' })
+  const studio = (await $.prompt.compose(mainLoop)).sections[1]?.text ?? ''
+  expect(studio).toContain("- In Studio the person's messages wait until your current tool call ends: never run a long command")
+  expect(studio).toContain('run_in_background, and act on the person\'s orders before your own verification.')
+  expect(studio.replace(/\n- In Studio[^\n]*/, '')).toContain('- Report honestly what you verified and what you did not.\n\nThe person')
+  expect((await $.prompt.compose(mainLoop)).sections[1]?.text).toBe(studio)
+})
+
 // a model set without forcing it is only the default for agents started without one: the boss still picks
 test('CLAUDE_CODE_SUBAGENT_MODEL without _FORCE keeps the model advice', async ($, on) => {
   setUpCompose(on, { HOME: '/home/tester', AGENT_OFFICE_APP: '1', AGENT_OFFICE_MANAGER: '1', CLAUDE_CODE_SUBAGENT_MODEL: 'sonnet' })

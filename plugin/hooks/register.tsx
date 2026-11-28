@@ -211,7 +211,7 @@ You are the manager in Agent Office: a dispatcher who hands the work to agents a
 - Keep going until the task list is done, by dispatching the work, not doing it yourself: a turn left with agents running isn't unfinished.
 - Make technical choices yourself (reason in a line), then delegate it. Never end a turn with an offer ("want me to…?", "istersen…") or a menu ("which one?"): pick, say why, dispatch it.
 - Stop only for what genuinely needs the person: outward-facing or destructive actions (deploying, publishing, deleting data, spending money), credentials or logins, decisions that are theirs. Finish everything else, then ask in one short list. This wins over skill text that says stop and ask on routine choices; a tool's own confirmation before writing to a live system still applies.
-- Report honestly what you verified and what you did not.
+- Report honestly what you verified and what you did not.{{STUDIO}}
 
 The person's own instructions (CLAUDE.md, explicit requests) take precedence over this.`
 // Model per agent (app contract v3.14, v3.127): the boss picks with the Agent tool's model parameter. Agent Office sets
@@ -222,9 +222,14 @@ const MODEL_AUTO =
 const modelPinned = (model: string) =>
   `Every agent of this session runs on ${model} (the person's setting in Agent Office), so don't set the Agent tool's model parameter.`
 
+// Studio (AGENT_OFFICE_STUDIO=1, set by the app only on a Studio GUI chat spawn): the person's messages queue behind a
+// running tool call, so a long foreground command would lock them out. Fixed per session, so the prompt stays cached.
+const STUDIO_BULLET = `
+- In Studio the person's messages wait until your current tool call ends: never run a long command (test suite, build, archive, upload, anything over a few seconds) in the foreground yourself. Hand it to an agent or run it with run_in_background, and act on the person's orders before your own verification.`
+
 /** The manager brief; pinned: the model every subagent is forced to (CLAUDE_CODE_SUBAGENT_MODEL_FORCE), else ''. */
-function managerText(pinned = ''): string {
-  return MANAGER_TEMPLATE.replace('{{MODEL}}', pinned ? modelPinned(pinned) : MODEL_AUTO)
+function managerText(pinned = '', studio = false): string {
+  return MANAGER_TEMPLATE.replace('{{MODEL}}', pinned ? modelPinned(pinned) : MODEL_AUTO).replace('{{STUDIO}}', studio ? STUDIO_BULLET : '')
 }
 
 const FORCE_OFF = new Set(['', '0', 'false', 'no', 'off'])
@@ -1512,7 +1517,7 @@ export const register: Register = on => {
     if (kind === 'hq' && !sections.some(section => section.id === HQ_SECTION_ID)) sections.push({ id: HQ_SECTION_ID, text: hqText((await $.env.get('AGENT_OFFICE_ASK')) === '1'), scope: 'session' as const })
     if (kind === 'manager' && !sections.some(section => section.id === MANAGER_SECTION_ID)) {
       const pinned = pinnedModel(await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL_FORCE'), await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL'))
-      sections.push({ id: MANAGER_SECTION_ID, text: managerText(pinned), scope: 'session' as const })
+      sections.push({ id: MANAGER_SECTION_ID, text: managerText(pinned, (await $.env.get('AGENT_OFFICE_STUDIO')) === '1'), scope: 'session' as const })
     }
     // team (v3.83): HQ's team section and a desk's member section, each keyed on its own env var
     if (kind === 'hq' && (await $.env.get('AGENT_OFFICE_TEAM')) === '1' && !sections.some(section => section.id === TEAM_SECTION_ID))
