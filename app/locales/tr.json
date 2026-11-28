@@ -217,7 +217,10 @@
       "renameEmpty": "Departmanın bir adı olmalı.",
       "renameFailed": "Bazı üyelerde eski ad kaldı:"
     },
-    "board": "Pano"
+    "board": "Pano",
+    "scene": {
+      "noAgents": "Çalışan ajan yok"
+    }
   },
   "app": {
     "appTitle": "AGENT OFİS",

@@ -3802,6 +3802,39 @@ Amends v3.131 (order cards' `tokens`/`usd` were 0). Pure rules in `src/order-tra
 - Tests: `test/order-track.test.cjs` (sampling, carry, freeze, cleaning, order cost incl. remote/unknown, the card and
   report rows, strip items, progress lines). **Not verified live** in a running app.
 
+## Studio: the Office scene strip (v3.136)
+
+Amends v3.120 (Studio hid the scene). CSS in `renderer/style.css` (Studio block), one guard in `renderer/app.js`.
+
+- **Strip.** In Studio `#office` is shown as a strip at the top of `#app`, above the chat (`#terminal`, still
+  `flex: 1`): fixed height `clamp(110px, 20vh, 160px)`, full width, Studio border and radius. The same canvas and
+  renderer as the Office (`office-view.js`); no second renderer. Clicking a bot still selects it; `#agent-panel` stays
+  hidden in Studio.
+- **Collapse.** `#divider` stays as a thin bar under the strip with `#scene-toggle`. It uses the existing
+  `setSceneHidden` and the shared `officeHidden` setting (the same state as the Office's toggle): collapsed hides the
+  canvas and pauses it (no rendering cost); the bar remains to expand it again. Drag-to-resize is off in Studio.
+- Not shown on Studio's HQ board page (`studio-board`) nor when the strip's renderer failed to load
+  (`no-studio-scene`).
+- **Isometric view (v3.137).** The Office's pixel scene is laid out for a tall area and is cropped in the strip, so
+  Studio draws its own scene: `<canvas id="studio-scene">` (`renderer/studio-scene.js`, Canvas 2D paths only, no images,
+  no WebGL), and `#office` is hidden in Studio. The Office experience is unchanged.
+  - Layout (pure, `src/studio-scene-layout.mjs`, tested): boss desk fixed on the left (lit, animated monitors and a
+    glow while `isBossBusy`), one row of desks in the middle, a server rack with blinking LEDs fixed on the right.
+    Desks share the row between a minimum and maximum pitch; with fewer than 4 workers empty desks fill the row
+    (centred). **Overflow:** when the desks do not fit at the minimum pitch the row scrolls horizontally (wheel or
+    drag; soft fade at the clipped edge) instead of shrinking further.
+  - Workers shown: `doneAt == null`, plus finished ones for 6 s with a ✓ (`isOk`) / ✗ bubble, fading out. Each sits at
+    its desk typing (lit monitor) and has a label: `type` and the current tool (`mcp__server__` prefix stripped; empty →
+    `panel.thinking`; finished → `panel.done` / `panel.failed`). Desk stripe and shirt take a stable per-project hue.
+    No workers: empty desks and `studio.scene.noAgents`.
+  - Click on a worker calls `selectAgent(id)` (same id as the Office). Colours from Studio's `--st-*` tokens on
+    `body`, so it follows Studio light/dark. Crisp at `devicePixelRatio`; sized by `ResizeObserver`; ~12 fps timer.
+  - Data: the same object as the Office (`api.office.onData` → `setData`).
+  - **Only one scene renders** (`syncScenes()` in `app.js`, run on every `body` class change and by
+    `setSceneHidden`): outside Studio the Office's scene (unless collapsed); in Studio the Office's scene is paused and
+    the strip runs, except when collapsed (`officeHidden`) or on the HQ board page. Paused or `document.hidden` → no
+    drawing.
+
 ## Studio: switching to the terminal and back (v3.137)
 
 Amends v3.120 (Studio hid `#chat-switch`, so a Studio tab switched to its terminal had no way back to its chat).

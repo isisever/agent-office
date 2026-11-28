@@ -74,6 +74,18 @@
         },
         "action": "open-board"
       }
+    },
+    {
+      "id": "studio-scene-strip",
+      "experience": "studio",
+      "title": {
+        "en": "See your agents at work",
+        "tr": "Ajanlarınızı çalışırken görün"
+      },
+      "body": {
+        "en": "Studio now shows a small isometric office as a strip above the chat: your boss desk, one desk per working agent with its current tool, and a ✓ or ✗ when an agent finishes. Many agents? Scroll the row sideways. Click an agent to see its details. Use the small arrow under the strip to collapse it; collapsed, it uses no CPU.",
+        "tr": "Studio artık sohbetin üstünde küçük bir izometrik ofis şeridi gösteriyor: patron masası, çalışan her ajan için kullandığı araçla birlikte bir masa ve ajan bitirince ✓ ya da ✗. Çok ajan varsa sırayı yana kaydırın. Ayrıntıları için bir ajana tıklayın. Şeridin altındaki küçük okla daraltın; daraltılmışken işlemci harcamaz."
+      }
     }
   ]
 }

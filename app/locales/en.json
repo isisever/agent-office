@@ -217,7 +217,10 @@
       "renameEmpty": "A department needs a name.",
       "renameFailed": "Some members kept the old name:"
     },
-    "board": "Board"
+    "board": "Board",
+    "scene": {
+      "noAgents": "No agents working"
+    }
   },
   "app": {
     "appTitle": "AGENT OFFICE",
