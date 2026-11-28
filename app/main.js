@@ -5287,13 +5287,14 @@ ipcMain.handle('projects:setAutoApprove', (_e, target, value) => {
 });
 // Skip permissions (contract v3.72): true starts the project's Claude Code tabs with --dangerously-skip-permissions.
 // claude reads its arguments at its start: next start, idle Claude Code tabs at once. Returns the restarted pty ids.
-ipcMain.handle('projects:setSkipPermissions', (_e, target, value) => {
+function setSkipPermissionsOf(target, value) {
   const { next, id } = personalSetting(target, (s, pid) => P.setProjectSkipPermissions(s, pid, value === true));
   if (next === state) return { restarted: [] };
   commit(next);
   const p = P.findProject(state, id);
   return { restarted: p && P.engineOf(p) === 'claude' ? restartIdle(p) : [] };
-});
+}
+ipcMain.handle('projects:setSkipPermissions', (_e, target, value) => setSkipPermissionsOf(target, value));
 // Account delegates (contract v3.56): the account ids the project's claude boss may delegate to (never its own).
 // Applies at the next session start (the manifest + key files are prepared then); idle claude tabs restart to pick it up.
 ipcMain.handle('projects:setDelegates', (_e, projectId, ids) => {
@@ -6350,7 +6351,20 @@ ipcMain.handle('chat:setting', async (e, id, key, value) => {
   if (!fromWin(e)) return 'bad';
   const t = terms.get(String(id));
   if (!t?.gui || typeof t.setting !== 'function') return 'not-running';
-  if (!STU.settingAllowed(guiModeLock.get(String(id)) || '', String(key))) return 'locked';
+  const lock = guiModeLock.get(String(id)) || '';
+  if (STU.leavesBypass(lock, String(key), String(value ?? ''))) {
+    // v3.172 a skip-permissions chat: picking another mode turns the project's Skip permissions off (the Settings
+    // checkbox's own path) and restarts this idle chat on its session with the picked mode (guiPicks); never mid-turn
+    const found = P.resolvePty(state, String(id));
+    const project = found?.project || null;
+    if (!project || project.hq) return 'locked';
+    if (t.live().busy || t.asks().length || !idleSession(String(id))) return 'busy';
+    if (!ML.allowedMode(modesOf(project), String(value ?? ''))) return 'bad';
+    guiPicks.set(String(id), { ...(guiPicks.get(String(id)) || {}), mode: String(value ?? '') });
+    setSkipPermissionsOf(project.id, false);
+    return 'ok';
+  }
+  if (!STU.settingAllowed(lock, String(key))) return 'locked';
   // v3.147 only the model waits for the turn's end; the permission mode is switched at runtime, mid-turn too
   if (String(key) !== 'mode' && (t.live().busy || t.asks().length)) return 'busy';
   // v3.120 a new tab whose initialize answer has not come yet has no model list: 'not-running' (startStep retries)

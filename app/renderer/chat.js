@@ -1033,7 +1033,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     syncSelect(modelSel, modelOptions(st.model), st.model, { force });
     syncSelect(modeSel, modeOptions(), st.mode, { force });
     setProp(modelSel, 'disabled', !st.enabled);
-    setProp(modeSel, 'disabled', !st.modeEnabled);   // also a skip-permissions or desk session's mode (st.lock)
+    setProp(modeSel, 'disabled', !st.modeEnabled);   // a desk's mode, a skip-permissions chat mid-turn (see modeChangeable)
     const why = st.why ? ` · ${t(`chat.pick.why.${st.why}`)}` : '';
     setProp(modelSel, 'title', `${t('chat.pick.modelTitle')}${why}`);
     const ctx = contextUsage(gui?.info?.usage, gui?.info?.model, gui?.contextCap);
@@ -1049,7 +1049,10 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       ctxRing.title = t('chat.context', { used: shortTokens(ctx.used), limit: shortTokens(ctx.limit), pct: ctx.pct });
       ctxRing.setAttribute('aria-label', ctxRing.title);
     }
-    setProp(modeSel, 'title', `${t('chat.pick.modeTitle')}${st.lock ? ` · ${t(`chat.pick.why.${st.lock}`)}` : st.why === 'busy' ? ` · ${t('chat.pick.modeLive')}` : why}`);
+    // a skip-permissions chat: another pick turns Skip permissions off (between turns only), a desk keeps its rules
+    const modeWhy = st.lock === 'bypass' ? (st.modeEnabled ? t('chat.pick.bypassLeave') : t('chat.pick.bypassBusy'))
+      : st.lock ? t(`chat.pick.why.${st.lock}`) : st.why === 'busy' ? t('chat.pick.modeLive') : '';
+    setProp(modeSel, 'title', `${t('chat.pick.modeTitle')}${modeWhy ? ` · ${modeWhy}` : st.why && !st.lock ? why : ''}`);
     // v3.120 Auto-approve turned off in the Office while this chat runs in auto: say so, never change the mode
     const off = managerOffNote(gui, gui?.settings || picks);
     modeNote.hidden = !st.managerNote && !off;

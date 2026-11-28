@@ -733,10 +733,16 @@ test('v3.121 chat:setting: only from the window; a skip-permissions or desk sess
   assert.equal(STU.settingAllowed('desk', 'mode'), false);
   assert.equal(STU.settingAllowed('desk', 'model'), true);
   assert.equal(STU.settingAllowed('bypass', 'model'), true);
+  assert.equal(STU.leavesBypass('bypass', 'mode', 'plan'), true);
+  assert.equal(STU.leavesBypass('bypass', 'mode', 'bypassPermissions'), false);
+  assert.equal(STU.leavesBypass('bypass', 'model', 'opus'), false);
+  assert.equal(STU.leavesBypass('desk', 'mode', 'plan'), false, 'a desk keeps its rules');
+  assert.equal(STU.leavesBypass('', 'mode', 'plan'), false);
   const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
   const h = MAIN.slice(MAIN.indexOf("ipcMain.handle('chat:setting'"), MAIN.indexOf("ipcMain.handle('chat:setting'") + 500);
   assert.match(h, /^ipcMain\.handle\('chat:setting', async \(e, id, key, value\) => \{\n\s+if \(!fromWin\(e\)\) return 'bad';/);
-  assert.match(h, /if \(!STU\.settingAllowed\(guiModeLock\.get\(String\(id\)\) \|\| '', String\(key\)\)\) return 'locked';/);
+  assert.match(MAIN, /STU\.leavesBypass\(lock, String\(key\), String\(value \?\? ''\)\)[\s\S]{0,900}setSkipPermissionsOf\(project\.id, false\)/, 'leaving bypass uses the Settings checkbox store');
+  assert.match(MAIN, /if \(!STU\.settingAllowed\(lock, String\(key\)\)\) return 'locked';/);
   assert.match(MAIN, /guiModeLock\.set\(id, STU\.modeLock\(\{ skip: P\.skipPermissionsArgs\(project\)\.length > 0, desk: Boolean\(mailMcp\) \|\| Boolean\(r\.tab\?\.staffId\) \|\| guarded !== settings \}\)\);/);
   assert.match(MAIN, /modeLock: guiModeLock\.get\(id\) \|\| ''/, 'the chat learns the lock with its GUI info');
 });

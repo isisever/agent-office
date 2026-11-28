@@ -139,10 +139,23 @@ export function managerOffNote(gui, settings = {}) {
 }
 
 /**
+ * May the permission mode be changed now? Free chats: always (also mid-turn). A skip-permissions chat ('bypass'): only
+ * between turns, because leaving bypass turns the project's Skip permissions off and restarts the chat (it resumes
+ * its session). A desk ('desk': its own permission rules) never.
+ * @param {string} lock '' | 'bypass' | 'desk'
+ * @param {boolean} busy a turn runs or a request waits
+ */
+export function modeChangeable(lock, busy) {
+  if (lock === 'desk') return false;
+  if (lock === 'bypass') return !busy;
+  return true;
+}
+
+/**
  * The pickers' state for a tab. gui: the chat's GUI info (null: a terminal tab), settings: what this chat last set.
  * → { enabled, model, mode, why, lock, modeEnabled, managerNote } — why: '' | 'terminal' (a terminal tab: /model there) | 'busy' (a
- * turn runs: wait). lock (gui.modeLock): 'bypass' (started with skip permissions: the mode shows bypassPermissions and
- * cannot change) | 'desk' (a desk's own permission rules: the mode cannot change) | ''. The model picker is never locked.
+ * turn runs: wait). lock (gui.modeLock): 'bypass' (started with skip permissions: the mode shows bypassPermissions; between
+ * turns another pick turns Skip permissions off, see modeChangeable) | 'desk' (a desk's own permission rules: the mode cannot change) | ''. The model picker is never locked.
  */
 export function pickerState(gui, settings = {}) {
   const model = modelChoices(gui).some((m) => m.value === settings?.model) ? settings.model : '';
@@ -153,8 +166,10 @@ export function pickerState(gui, settings = {}) {
   const managerNote = Boolean(gui) && gui.autoApprove === true && !lock && mode !== 'auto';
   if (!gui || gui.ended) return { enabled: false, model, mode, why: 'terminal', lock, modeEnabled: false, managerNote: false };
   // v3.147 the permission mode stays changeable mid-turn (claude's set_permission_mode applies to its next tool request)
-  if (gui.live?.busy || (gui.asks || []).length) return { enabled: false, model, mode, why: 'busy', lock, modeEnabled: !lock, managerNote };
-  return { enabled: true, model, mode, why: '', lock, modeEnabled: !lock, managerNote };
+  const busy = Boolean(gui.live?.busy) || (gui.asks || []).length > 0;
+  const modeEnabled = modeChangeable(lock, busy);
+  if (busy) return { enabled: false, model, mode, why: 'busy', lock, modeEnabled, managerNote };
+  return { enabled: true, model, mode, why: '', lock, modeEnabled, managerNote };
 }
 
 /**

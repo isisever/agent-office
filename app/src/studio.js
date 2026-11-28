@@ -296,6 +296,15 @@ function autoApproveAfterSet({ before = false, after = false, epochBefore = 0, e
 function settingAllowed(lock, key) {
   return key !== 'mode' || !lock;
 }
+/**
+ * chat:setting on a skip-permissions chat ('bypass'): picking a mode other than bypass turns the project's Skip
+ * permissions off (the Settings checkbox's store) and restarts the chat on its session. Only for a mode pick, only
+ * 'bypass' (a desk keeps its rules), and never while a turn runs or the session cannot be restarted at once.
+ * @returns {boolean}
+ */
+function leavesBypass(lock, key, value) {
+  return lock === 'bypass' && key === 'mode' && value !== 'bypassPermissions';
+}
 
 /**
  * v3.156 a GUI chat's session id for the sidebar: the running claude's, else the one it was started to resume (a chat
@@ -332,5 +341,5 @@ module.exports = {
   managerAnswers, restartPickArgs,
   guiSessionId, mergeRecent,
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
-  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs, guiAutoUpgrade, autoApproveAfterSet, modelListPending,
+  normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, leavesBypass, turnsAutoApproveOn, guiStartModeArgs, guiAutoUpgrade, autoApproveAfterSet, modelListPending,
 };

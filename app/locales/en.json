@@ -1094,6 +1094,8 @@
         "not-running": "This session is not running as a chat.",
         "other": "Could not change it."
       },
+      "bypassLeave": "Skip permissions is on for this project: picking another mode turns it off and restarts this chat",
+      "bypassBusy": "Skip permissions is on for this project: change the mode once the current turn has ended",
       "modeLive": "A turn is running: the new mode applies from its next tool request",
       "managerNote": "Manager answers",
       "managerNoteTitle": "This project's Auto-approve is on: the manager still answers its prompts",

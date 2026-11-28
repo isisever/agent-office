@@ -87,7 +87,7 @@ export function startPickers(caps) {
   const st = pickerState(caps.gui === true ? { modeLock: caps.modeLock || '', live: { busy: false }, asks: [] } : null, {});
   /** @type {'' | 'bypass' | 'desk'} */
   const lock = st.lock === 'bypass' || st.lock === 'desk' ? st.lock : '';
-  return { model: st.enabled, mode: st.modeEnabled, lock, shownMode: lock === 'bypass' ? st.mode : '' };
+  return { model: st.enabled, mode: st.modeEnabled && lock !== 'bypass', lock, shownMode: lock === 'bypass' ? st.mode : '' };
 }
 
 /** How long the start screen waits for a new tab's chat to take a setting or the prompt. */

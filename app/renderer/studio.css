@@ -569,7 +569,11 @@ body.studio .wn-tip {
 }
 
 /* ---- v3.122 Settings page: a nav of sections, rows in rounded cards, switches and segmented controls ---- */
-body.studio #studio-sidebar .st-account { display: flex; align-items: center; }
+body.studio #studio-sidebar .st-account { display: flex; align-items: center; flex: none; }
+/* the sidebar does not scroll as a whole: the project list scrolls above the pinned account footer */
+body.studio #studio-sidebar { overflow: hidden; }
+body.studio #studio-sidebar .st-lists { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+body.studio #studio-sidebar .st-new, body.studio #studio-sidebar .st-searchbox, body.studio #studio-sidebar .st-pins, body.studio #studio-sidebar .st-machines, body.studio #studio-sidebar .st-team { flex: none; }
 body.studio #studio-sidebar .st-account-btn { flex: 1 1 auto; }
 body.studio #studio-sidebar .st-gear {
   flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--st-radius-s);

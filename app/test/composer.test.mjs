@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatSize, fileKind, chipInfo, baseName, withMentions, splitMentions, pickerState, managerOffNote, modelChoices, mention } from '../src/composer.mjs';
+import { formatSize, fileKind, chipInfo, baseName, withMentions, splitMentions, pickerState, managerOffNote, modelChoices, modeChangeable, mention } from '../src/composer.mjs';
 import * as C from '../src/composer.mjs';
 import fs from 'node:fs';
 
@@ -62,10 +62,17 @@ test('pickerState: terminal tabs and busy chats cannot switch; values are checke
 
 test('v3.121 pickerState: a skip-permissions session shows bypassPermissions and a desk keeps its mode; the model stays free', () => {
   const idle = { live: { busy: false }, asks: [] };
-  assert.deepEqual(pickerState({ ...idle, modeLock: 'bypass' }, { model: 'opus', mode: 'plan' }), { enabled: true, model: 'opus', mode: 'bypassPermissions', why: '', lock: 'bypass', modeEnabled: false, managerNote: false });
+  assert.deepEqual(pickerState({ ...idle, modeLock: 'bypass' }, { model: 'opus', mode: 'plan' }), { enabled: true, model: 'opus', mode: 'bypassPermissions', why: '', lock: 'bypass', modeEnabled: true, managerNote: false });
   assert.deepEqual(pickerState({ ...idle, modeLock: 'desk' }, { mode: 'acceptEdits' }), { enabled: true, model: '', mode: 'acceptEdits', why: '', lock: 'desk', modeEnabled: false, managerNote: false });
   assert.equal(pickerState({ ...idle, modeLock: 'other' }).modeEnabled, true, 'an unknown lock is ignored');
   assert.equal(pickerState({ live: { busy: true }, asks: [], modeLock: 'bypass' }).mode, 'bypassPermissions', 'shown while busy too');
+  // a skip-permissions chat may leave bypass between turns only (the pick turns the project's Skip permissions off)
+  assert.equal(pickerState({ live: { busy: true }, asks: [], modeLock: 'bypass' }).modeEnabled, false);
+  assert.equal(pickerState({ live: { busy: false }, asks: [{ id: 'a' }], modeLock: 'bypass' }).modeEnabled, false);
+  assert.equal(modeChangeable('', true), true);
+  assert.equal(modeChangeable('bypass', false), true);
+  assert.equal(modeChangeable('bypass', true), false);
+  assert.equal(modeChangeable('desk', false), false);
   const R = fs.readFileSync(new URL('../renderer/chat.js', import.meta.url), 'utf8');
   assert.match(R, /setProp\(modeSel, 'disabled', !st\.modeEnabled\);/);
   assert.match(R, /\{ value: 'bypassPermissions', label: t\('chat\.pick\.mode\.bypassPermissions'\), disabled: true, hidden: true \}/, 'listed only to show it, never to pick it');

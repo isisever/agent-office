@@ -1084,6 +1084,8 @@
         "not-running": "Bu oturum sohbet olarak çalışmıyor.",
         "other": "Değiştirilemedi."
       },
+      "bypassLeave": "Bu projede izinleri atla açık: başka bir mod seçmek onu kapatır ve bu sohbeti yeniden başlatır",
+      "bypassBusy": "Bu projede izinleri atla açık: modu, çalışan tur bittikten sonra değiştirin",
       "modeLive": "Bir tur çalışıyor: yeni mod turun sonraki araç isteğinden itibaren geçerli olur",
       "managerNote": "Yönetici yanıtlıyor",
       "managerNoteTitle": "Bu projede Otomatik onay açık: izin sorularını yine yönetici yanıtlıyor",
