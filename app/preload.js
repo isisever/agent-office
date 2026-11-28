@@ -165,6 +165,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     onMoved: listen('chat:moved'),                                       // a tab restarted in the other mode (its terminal starts over)
   },
   work: {
+    continueTab: (id) => ipcRenderer.invoke('work:continueTab', id), // v3.146 Continue an interrupted tab → 'ok' | 'none' | 'not-running'
     resumeUnfinished: () => ipcRenderer.invoke('work:resumeUnfinished'), // v3.8: { resumed: [{ id, name }], skipped: [{ id, name }] }
     onResumed: listen('work:resumed'),                  // the same result after the menu item
   },

@@ -3868,3 +3868,18 @@ as ⌘K → Usage. With no current project it does nothing.
 Amends v3.123. With more than 8 steps (several versions' items after a long gap) the page indicator is a "3 / 22"
 counter (`.wn-count`) instead of a dot per step; the footer wraps and its buttons never break their labels, so every
 button stays inside the card. The open card is drawn again on a language change (`whatsNew.redraw()`).
+
+## Studio: carry on interrupted work (v3.146)
+
+Amends v3.8 and the launch resume. A Studio GUI chat has no Claude Code pid file, so `checkTurns` used to see it as
+never busy and never marked it interrupted. Now a chat's own state feeds the same marks (`src/resume.js`
+`guiTurn(gui)` -> `{ busy, sessionId }` -> `nextInterrupted`), so a chat that was mid-turn when the app quit or
+restarted carries on at the next launch exactly like a terminal tab (`--resume <id>` plus the carry-on prompt, GUI
+chat kept). The setting is the same stored pair as the Office (`resume`, `resumeWork`), already in Studio's Settings
+page (General).
+
+When a setting is off, the marked tabs are not dropped silently: `offers` (`offerTargets(marks, ptyIds, prefs)`,
+the exact complement of `resumeTargets`) keeps them in memory for this launch. The chat view shows a "Continue
+interrupted work" box (`chat:read` gui info `interrupted: true`); the button calls `agentOffice.work.continueTab(ptyId)`
+(`work:continueTab` -> `'ok' | 'none' | 'not-running'`): a running idle chat of that session gets the prompt typed,
+else the tab starts with `--resume <session id>` and the prompt. A chat turning busy, or Continue, clears the offer.

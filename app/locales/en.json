@@ -1108,7 +1108,9 @@
       },
       "ended": "The session ended (exit {code}). Start it again to go on with the same conversation.",
       "endedError": "Claude stopped with an error (exit {code}):",
-      "restart": "Start again"
+      "restart": "Start again",
+      "interrupted": "This session was interrupted while it was working.",
+      "interruptedContinue": "Continue interrupted work"
     },
     "edit": "Edit",
     "editTitle": "Put this message back in the input to edit and send it again",

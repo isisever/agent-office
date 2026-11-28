@@ -117,6 +117,11 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   const endBox = h('div', { class: 'chat-end' }, endText, endPre, h('div', { class: 'chat-menu-nav' }, endBtn));
   endBox.hidden = true;
   let endShown = '';
+  // v3.146 Studio: an interrupted session is offered a one-click Continue (main's offers; src/resume.js)
+  const contText = h('div', { class: 'chat-end-title' });
+  const contBtn = h('button', { class: 'chat-send', onclick: () => { contBox.hidden = true; api.work?.continueTab(ptyId); setTimeout(poll, 500); } });
+  const contBox = h('div', { class: 'chat-end' }, contText, h('div', { class: 'chat-menu-nav' }, contBtn));
+  contBox.hidden = true;
   const why = h('span', { class: 'chat-why' });
   const card = h('div', { class: 'chat-menu' });
   // the "/" list above the input (Claude Code's commands for this tab, chat:commands)
@@ -198,7 +203,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   picker.hidden = true;
   agentView.tabIndex = -1;
   agentView.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeAgent(); } });
-  el.append(banner, list, empty, agentView, picker, live, card, endBox, agentBar, replyBar, composer, why);
+  el.append(banner, list, empty, agentView, picker, live, card, endBox, contBox, agentBar, replyBar, composer, why);
   // v3.120 Studio UX: "jump to latest" while the list is scrolled up
   const jump = h('button', { class: 'chat-jump chat-studio-only', type: 'button', title: t('chat.jumpLatest'), 'aria-label': t('chat.jumpLatest'), onclick: () => { list.scrollTo?.({ top: list.scrollHeight, behavior: 'smooth' }); } }, icon('down', 14), h('span', {}, t('chat.jumpLatest')));
   jump.hidden = true;
@@ -219,7 +224,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   let cursor = null;
   let sid;   // undefined until the first read
   const tools = new Map();   // tool call id → its line (marked done/failed by its result)
-  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, ended?: { code: number, text: string, at: number }, settings?: { model: string, mode: string }, info?: { model: string, usage: any }, contextCap?: number, models?: { value: string, label: string, description: string, resolved?: string }[] }} */
+  /** @type {null | { asks: any[], live: { busy: boolean, text: string, tool: string }, interrupted?: boolean, ended?: { code: number, text: string, at: number }, settings?: { model: string, mode: string }, info?: { model: string, usage: any }, contextCap?: number, models?: { value: string, label: string, description: string, resolved?: string }[] }} */
   let gui = null;   // v3.108 a GUI chat tab's open requests and live line (null: a terminal tab)
   const ASK_REDRAW = '\u0000';   // askShown that matches no request: the next setGui draws the card again
   let askShown = '';   // the open request's id, as drawn
@@ -239,6 +244,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     attach.setAttribute('aria-label', t('chat.attach'));
     stopLabel.textContent = t('chat.gui.stop');
     endBtn.textContent = t('chat.gui.restart');
+    contText.textContent = t('chat.gui.interrupted');
+    contBtn.textContent = t('chat.gui.interruptedContinue');
     endShown = '';
     stop.title = t('chat.gui.stopTitle');
     bannerText.textContent = t('chat.permission');
@@ -602,8 +609,9 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     gui = g ? { ...g, asks: (g.asks || []).filter((a) => !answered.has(a.id)) } : null;
     drawPicks();
     if (gui && !was) { menu = null; menuShown = ''; texts(); }
-    if (!gui) { if (was) { askShown = ''; card.hidden = true; card.replaceChildren(); stop.hidden = true; endBox.hidden = true; texts(); } return; }
+    if (!gui) { if (was) { askShown = ''; card.hidden = true; card.replaceChildren(); stop.hidden = true; endBox.hidden = true; contBox.hidden = true; texts(); } return; }
     drawEnd(gui.ended || null);
+    contBox.hidden = !gui.interrupted;
     const first = gui.asks[0] || null;
     banner.hidden = true;   // another tab's request is no terminal dialog to open here: the badge shows it
     if ((first?.id || '') !== askShown) drawAsk(first);

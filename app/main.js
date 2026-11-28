@@ -516,6 +516,14 @@ function checkTurns() {
   for (const [id, t] of terms) {
     const r = P.resolvePty(state, id);
     if (!r || P.engineOf(r.project) !== 'claude') continue; // agy and Command Code keep no Claude Code pid file (v3.22, v3.25)
+    if (t.gui) {   // v3.146 a GUI chat: its own live state and session (src/resume.js guiTurn)
+      const g = R.guiTurn(t);
+      if (g.sessionId) lastSid.set(id, g.sessionId);
+      if (g.busy) offers.delete(id);
+      next = R.nextInterrupted(next, id, g);
+      if (g.busy) working++;
+      continue;
+    }
     const { configDir } = A.accountOf(state, r.project);
     const claude = readJson(Z.claudePidFile(configDir, home, t.pid));
     const sid = validSid(claude?.sessionId);
@@ -1849,6 +1857,21 @@ function startOpenCode(id, { project, tab, dir: cwd }, { resume = false, prompt 
 // Tabs whose claude was mid-turn when the app went away start right away and are told to carry on (src/resume.js),
 // once per launch; marks left over (a setting off, a tab that cannot resume) are dropped.
 let launched = false;
+/** v3.146 interrupted tabs waiting for the person's Continue: pty id → session id ('' unknown). In memory: per launch. */
+const offers = new Map();
+/** Continue an offered tab: a running chat of that session gets the prompt, else it starts with --resume. */
+function continueOffered(id) {
+  id = String(id);
+  if (!state || !offers.has(id)) return 'none';
+  const sid = offers.get(id) || '';
+  offers.delete(id);
+  const t = terms.get(id);
+  if (t?.gui && !t.live().busy && (!sid || validSid(t.sessionId()) === sid)) return typePrompt(id, R.RESUME_PROMPT) ? 'ok' : 'not-running';
+  if (t) killPty(id);
+  startPty(id, { sessionId: sid || null, resume: true, prompt: R.RESUME_PROMPT });
+  return 'ok';
+}
+ipcMain.handle('work:continueTab', (_e, id) => continueOffered(id));
 function startMissing() {
   if (!launched) {
     launched = true;
@@ -1857,6 +1880,8 @@ function startMissing() {
     for (const id of R.resumeTargets(at, ids, { resume: state.resume !== false, resumeWork: state.resumeWork !== false })) {
       if (!terms.has(id)) startPty(id, { sessionId: at[id] || null, resume: true, prompt: R.RESUME_PROMPT });
     }
+    // v3.146 Studio: with a setting off, the marked tabs are offered a one-click Continue instead (chat view)
+    for (const [id, sid] of Object.entries(R.offerTargets(at, ids, { resume: state.resume !== false, resumeWork: state.resumeWork !== false }))) offers.set(id, sid);
     setMarks(R.clearInterrupted(marks(), Object.keys(at)));
   }
   for (const p of state.projects) {
@@ -6064,13 +6089,13 @@ function guiInfo(id) {
   const t = terms.get(id);
   if (t?.gui) {
     const project = P.resolvePty(state, id)?.project || null;
-    return { asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, models: ML.pickerModels(t.models?.()), modeLock: guiModeLock.get(id) || '', info: t.info?.() || { model: '', usage: null }, contextCap: project ? P.effectiveContextCap(project) : 0,
+    return { interrupted: offers.has(id), asks: t.asks(), live: t.live(), settings: t.settings?.() || { model: '', mode: '' }, models: ML.pickerModels(t.models?.()), modeLock: guiModeLock.get(id) || '', info: t.info?.() || { model: '', usage: null }, contextCap: project ? P.effectiveContextCap(project) : 0,
       modes: modesOf(project), autoApprove: Boolean(project) && !project.hq && P.autoApproveOf(project) };   // v3.120 auto mode
   }
   const r = P.resolvePty(state, id);
   if (!r || terms.has(id) || !guiTab(id, r)) return null;
   const ended = guiEnded.get(id);
-  return { asks: [], live: { busy: false, text: '', tool: '' }, ...(ended ? { ended } : {}) };
+  return { asks: [], live: { busy: false, text: '', tool: '' }, interrupted: offers.has(id), ...(ended ? { ended } : {}) };
 }
 ipcMain.handle('chat:answer', (_e, id, askId, answer) => {
   id = String(id);

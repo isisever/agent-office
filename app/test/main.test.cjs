@@ -5078,3 +5078,13 @@ test('v3.121 macOS paste: every copied file from the JXA output, never a path ma
   assert.match(MAIN, /execFile\('\/usr\/bin\/osascript', \['-l', 'JavaScript', '-e', OS\.MAC_CLIPBOARD_FILES_JXA\]/);
   assert.match(MAIN, /files, dirs: clipboardDirs\(files\)/);
 });
+
+test('resume: offerTargets is the complement of resumeTargets; guiTurn reads a chat', () => {
+  const R = require('../src/resume.js');
+  const marks = { 'a': 's-1', 'b': '', 'gone': 'x' };
+  assert.deepStrictEqual(R.offerTargets(marks, ['a', 'b', 'c'], { resume: true, resumeWork: false }), { a: 's-1', b: '' });
+  assert.deepStrictEqual(R.offerTargets(marks, ['a', 'b'], { resume: false, resumeWork: true }), { a: 's-1', b: '' });
+  assert.deepStrictEqual(R.offerTargets(marks, ['a', 'b'], { resume: true, resumeWork: true }), {});
+  assert.deepStrictEqual(R.guiTurn({ live: () => ({ busy: true }), sessionId: () => 'abc-1' }), { busy: true, sessionId: 'abc-1' });
+  assert.deepStrictEqual(R.guiTurn({ live: () => ({ busy: false }), sessionId: () => 'bad id!' }), { busy: false, sessionId: '' });
+});
