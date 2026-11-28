@@ -3868,3 +3868,8 @@ as ⌘K → Usage. With no current project it does nothing.
 Amends v3.123. With more than 8 steps (several versions' items after a long gap) the page indicator is a "3 / 22"
 counter (`.wn-count`) instead of a dot per step; the footer wraps and its buttons never break their labels, so every
 button stays inside the card. The open card is drawn again on a language change (`whatsNew.redraw()`).
+
+## Studio: closing an enlarged image keeps the window (v3.145)
+- The enlarged image (`previewImage` in `renderer/chat.js`) closes on a click or Escape, stops that event there, and hands the focus back to the composer; only one preview exists at a time.
+- Closing it never calls window or app close APIs; the preview is a plain overlay in the page.
+- `main.js` logs `render-process-gone` (reason and exit code) so a renderer crash leaves a trace. This is log only.

@@ -843,8 +843,17 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   }
   /** v3.121 an image in the image bar, larger, over the chat; a click or Escape closes it. */
   function previewImage(/** @type {string} */ src) {
-    const o = h('div', { class: 'chat-preview', role: 'dialog', 'aria-label': t('chat.imageAlt'), tabindex: '-1', onclick: () => o.remove(), onkeydown: (/** @type {KeyboardEvent} */ e) => { if (e.key === 'Escape') { e.stopPropagation(); o.remove(); } } },
+    document.querySelector('.chat-preview')?.remove();   // one preview at a time
+    const o = h('div', { class: 'chat-preview', role: 'dialog', 'aria-label': t('chat.imageAlt'), tabindex: '-1' },
       h('img', { src, alt: t('chat.imageAlt') }));
+    // closing never lets the event reach the app: the focus goes back to the composer, not to the body
+    const close = (/** @type {Event} */ e) => {
+      e.preventDefault(); e.stopPropagation();
+      o.remove();
+      try { input.focus(); } catch { /* input gone */ }
+    };
+    o.addEventListener('click', close);
+    o.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => { if (e.key === 'Escape') close(e); });
     document.body.append(o);
     o.focus();
   }

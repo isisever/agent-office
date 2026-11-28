@@ -6477,6 +6477,8 @@ async function createWindow() {
   }
 
   // If the pty starts before the renderer sets up its size and listeners, output is lost; wait for the load.
+  // log only: a renderer that dies (crash, OOM, killed) leaves a trace in the console, behaviour unchanged
+  win.webContents.on('render-process-gone', (_e, details) => { console.error('[agent-office] render-process-gone:', details?.reason, 'exitCode', details?.exitCode); });
   win.webContents.on('did-finish-load', () => { isLoaded = true; startMissing(); flushImports(); });
   await win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   startPolling();
