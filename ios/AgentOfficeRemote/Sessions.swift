@@ -298,6 +298,7 @@ struct SessionView: View {
         .padding(.horizontal, Space.m).padding(.vertical, 10)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.stroke))
+      DictationButton(text: $draft)
       Button {
         if sid != nil && !followMain {   // an older session is picked: the reply lands in the main session
           link.unwatch(projectId, sid: sid); followMain = true; link.watch(projectId, sid: nil)

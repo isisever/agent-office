@@ -29,6 +29,10 @@
 	<string>Scans the pairing QR code shown in Agent Office on your Mac.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Finds your Agent Office desktop on the local network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Lets you dictate messages by voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Turns your speech into text for the message you are writing.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

@@ -1,2 +1,4 @@
 "NSCameraUsageDescription" = "Mac'indeki Agent Office'te görünen eşleştirme QR kodunu tarar.";
 "NSLocalNetworkUsageDescription" = "Yerel ağda Agent Office masaüstünü bulur.";
+"NSMicrophoneUsageDescription" = "Mesajları sesle yazmanı sağlar.";
+"NSSpeechRecognitionUsageDescription" = "Yazdığın mesaj için konuşmanı metne çevirir.";

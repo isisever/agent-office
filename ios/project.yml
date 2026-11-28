@@ -37,6 +37,8 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         NSCameraUsageDescription: Scans the pairing QR code shown in Agent Office on your Mac.
+        NSMicrophoneUsageDescription: Lets you dictate messages by voice.
+        NSSpeechRecognitionUsageDescription: Turns your speech into text for the message you are writing.
         CFBundleLocalizations: [en, tr]
         CFBundleDevelopmentRegion: en
         NSLocalNetworkUsageDescription: Finds your Agent Office desktop on the local network.
