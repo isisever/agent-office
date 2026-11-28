@@ -1,0 +1,29 @@
+{
+  "version": "0.22.55",
+  "items": [
+    {
+      "id": "phone-remote-control",
+      "experience": "both",
+      "title": {
+        "en": "Control your offices from your phone",
+        "tr": "Ofislerini telefonundan yönet"
+      },
+      "body": {
+        "en": "From a paired phone you can enter projects, see their sessions, watch a session live, send messages, approve or deny requests and stop a session. HQ orders from the phone no longer open a consent dialog on the Mac, and HQ answers come back to the phone.",
+        "tr": "Eşleşmiş telefonundan projelere girebilir, oturumları görebilir, bir oturumu canlı izleyebilir, mesaj gönderebilir, istekleri onaylayıp reddedebilir ve oturumu durdurabilirsin. Telefondan verilen HQ emirleri artık Mac'te onay penceresi açmıyor; HQ cevapları telefona dönüyor."
+      }
+    },
+    {
+      "id": "studio-older-chats",
+      "experience": "studio",
+      "title": {
+        "en": "Older renamed chats in the Studio sidebar",
+        "tr": "Studio kenar çubuğunda eski adlandırılmış sohbetler"
+      },
+      "body": {
+        "en": "Chats you renamed earlier now show up in the Studio sidebar again. In a Studio chat the manager no longer runs long commands in the foreground.",
+        "tr": "Daha önce adını değiştirdiğin sohbetler Studio kenar çubuğunda yeniden görünüyor. Studio sohbetinde yönetici artık uzun komutları ön planda çalıştırmıyor."
+      }
+    }
+  ]
+}
