@@ -131,6 +131,8 @@ function spawnGui(spawn, file, args, { cwd, env, spawnExtra = {} }, { onAsk, onM
     write() {},     // no terminal: keys from a hidden xterm go nowhere
     resize() {},
     kill(signal = 'SIGTERM') {
+      // Windows has no process groups: taskkill /T ends the cmd.exe shim and the claude tree under it
+      if (process.platform === 'win32' && child.pid) { try { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on?.('error', () => {}); return; } catch {} }
       try { if (child.pid) killGroup(-child.pid, signal); else child.kill(signal); } catch { try { child.kill(signal); } catch {} }
     },
     /** The person's or the app's message; false when claude is gone. */
