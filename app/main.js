@@ -6723,6 +6723,8 @@ ipcMain.handle('studio:sessions', (e) => {
   return {
     experience: STU.normalizeExperience(state.experience),
     user: studioUser(P.findProject(state, state.activeId)),
+    // v3.153 paired machines' projects (live while online, last known when offline): the Projects list shows them as rows
+    remotes: HQ.remoteRows(peerCache(), liveRemotes()),
     projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel, infoOf: studioTabInfo }),
   };
 });

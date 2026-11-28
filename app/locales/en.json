@@ -234,6 +234,12 @@
     "board": "Kanban board",
     "scene": {
       "noAgents": "No agents working"
+    },
+    "remote": {
+      "heading": "On other machines",
+      "runsOn": "Runs on {machine}",
+      "offline": "{machine} is offline, showing last known state",
+      "view": "View session"
     }
   },
   "app": {

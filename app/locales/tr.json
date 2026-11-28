@@ -234,6 +234,12 @@
     "board": "Kanban pano",
     "scene": {
       "noAgents": "Çalışan ajan yok"
+    },
+    "remote": {
+      "heading": "Diğer makineler",
+      "runsOn": "{machine} makinesinde çalışır",
+      "offline": "{machine} çevrim dışı, son bilinen durum gösteriliyor",
+      "view": "Oturumu görüntüle"
     }
   },
   "app": {
