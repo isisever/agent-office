@@ -179,9 +179,10 @@ function tabTitle(project, tab, staff) {
  * is named like /resume (v3.118: /rename, Claude Code's title, the first prompt; '' when none, the renderer shows "New
  * session"), with the git branch, the last activity and the live state (busy: a turn runs; waiting: an approval or a
  * question is open). The tab's own label (staff member, worktree branch, folder) is kept as `label`.
- * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[], accountOf?: (p: any) => unknown, infoOf?: (ptyId: string) => any }} o
+ * names: { [session id]: custom name } (v3.157, session-names.js): a custom name wins over every automatic title.
+ * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[], accountOf?: (p: any) => unknown, infoOf?: (ptyId: string) => any, names?: Record<string, string> }} o
  */
-function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '', infoOf = () => null }) {
+function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '', infoOf = () => null, names = {} }) {
   const byId = new Map((status || []).map((s) => [s.id, s]));
   const rec = Array.isArray(recent) ? recent : [];
   return (projects || []).map((p) => {
@@ -190,8 +191,9 @@ function listSessions({ projects, status, recent, activeId = null, staff = [], a
     const tabs = (Array.isArray(p.tabs) ? p.tabs : []).filter((t) => !t.shell).slice().sort((a, b) => a.n - b.n);
     const row = (ptyId, n, label, isRunning, isAsleep, staffId = '') => {
       const info = (isRunning && infoOf(ptyId)) || null;
-      const name = info ? String(info.title || info.prompt || '').slice(0, 200) : '';
-      return { ptyId, n, title: name, label, branch: info?.branch || '', at: Number(info?.at) || 0,
+      const custom = info && typeof info.sessionId === 'string' ? String(names[info.sessionId] || '') : '';
+      const name = custom || (info ? String(info.title || info.prompt || '').slice(0, 200) : '');
+      return { ptyId, n, title: name, sessionId: info && typeof info.sessionId === 'string' ? info.sessionId : '', custom: Boolean(custom), label, branch: info?.branch || '', at: Number(info?.at) || 0,
         busy: info?.busy === true, waiting: info?.waiting === true, isRunning, isAsleep, ...(staffId ? { staffId } : {}) };
     };
     const running = [
@@ -199,7 +201,7 @@ function listSessions({ projects, status, recent, activeId = null, staff = [], a
       ...tabs.map((t) => row(`${p.id}:${t.n}`, t.n, tabTitle(p, t, staff), tabSt.get(t.n)?.isRunning === true, tabSt.get(t.n)?.isAsleep === true, t.staffId || '')),
     ];
     const recentHere = rec.filter((r) => r.projectId === p.id).sort((a, b) => b.at - a.at).slice(0, RECENT_PER_PROJECT)
-      .map((r) => ({ sessionId: r.sessionId, title: r.title || baseName(r.dir) || p.name, at: r.at }));
+      .map((r) => ({ sessionId: r.sessionId, title: names[r.sessionId] || r.title || baseName(r.dir) || p.name, at: r.at }));
     const label = accountOf(p);
     const account = typeof label === 'string' ? label.trim().slice(0, 80) : '';
     return { id: p.id, name: p.name, group: typeof p.group === 'string' ? p.group : '', dir: p.dir, engine: p.engine || 'claude', account, active: p.id === activeId, attention: st.attention || null, running, recent: recentHere };

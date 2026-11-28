@@ -4067,3 +4067,23 @@ A backup-account switch (`moveProject`) resumes each tab's session on the new ac
 - **The chat reads the new account's file.** `chat:read` (and the paired-device `linkSessionOf`) cache the transcript found per tab. The cache is valid only for the same session id AND the same account folder (`CHAT.chatFileCurrent`); after a switch the file is found again under the new account. Before, the cache kept the old account's file (same session id, file still existing), so new replies never appeared in the chat view.
 - **The title stays.** A restarted GUI chat reports no session id until its first message. The Studio sidebar then uses the id the tab was started to resume (`STU.guiSessionId`, `lastSid`), so the row keeps its title instead of "New session".
 - **Not changed (note).** If the resumed process exits non-zero within `RESUME_GRACE_MS`, `startPty` starts a fresh session (no resume); that would also show as a separate untitled entry. It was not investigated or changed here.
+
+## Studio: rename sessions, account menu anchored (v3.157)
+
+- **Rename a session.** Right-click a session row in Studio's sidebar (a running session or a recent one) opens a
+  context menu with "Rename". The row's title becomes a text box: Enter saves, Esc cancels, an empty name removes the
+  custom name (the automatic title returns: /rename, Claude Code's title, the first prompt). Leaving the box saves.
+- **Storage.** The custom name is kept per Claude session id in the app's own `state.json` under `sessionNames`
+  (`{ [session id]: name }`, `src/session-names.js`): one line, control characters removed, at most 120 characters,
+  at most 500 names (oldest dropped). IPC `studio:renameSession(sessionId, name)` → `{ ok, name }` | `{ ok: false }`
+  (bad id or foreign window). It survives restarts and is never written to the transcript or to `~/.claude*`.
+- **Display.** `studio:sessions` rows carry `sessionId` and `custom`; a custom name wins over every automatic title in
+  the sidebar (running and recent rows) and so in the chat header, which uses the same row. The header's own rename
+  still sends `/rename` (Claude Code's transcript title) and now also stores the custom name. A running session
+  without an id yet falls back to `/rename` only.
+- **Account menu.** The footer's account menu (Studio theme, Accounts, Settings, Office) is positioned with
+  `position: fixed` from the account button's bounding box (`anchorAbove`, `src/menu-anchor.mjs`): left edges aligned,
+  its bottom edge 6 px above the button, clamped to an 8 px margin inside the window; it only flips below the button
+  when there is no room above.
+- Strings: `studio.renameSession` (en "Rename", tr "Yeniden adlandır"). Tests: `session-names.test.cjs`,
+  `menu-anchor.test.mjs`.

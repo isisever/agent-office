@@ -14,6 +14,7 @@ import { mountSettingsPage } from './studio-settings.js';
 import { mountTeamPage } from './studio-team.js';
 import { teamGroups, whoOptions, whoPlan } from '../src/studio-team.mjs';
 import { hasText } from './i18n.js';
+import { anchorAbove } from '../src/menu-anchor.mjs';
 import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText, defaultModelName } from '../src/studio-ux.mjs';
 import { syncSelect, setProp } from './select-sync.js';
 import { remoteGroups, remoteDot, machineTag } from '../src/studio-remote.mjs';
@@ -283,6 +284,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       draw();
       if (!save || !name || name === shown?.title) return;
       try {
+        if (shown?.sessionId) await api.studio.renameSession(shown.sessionId, name);
         const r = await api.chat.rename(pty, name);
         if (r === 'terminal') await api.chat.send(pty, `/rename ${name}`);
       } catch (e) { console.error(e); }
@@ -316,21 +318,70 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     return el('button', { class: 'st-x', title: t('app.closeTab'), 'aria-label': t('app.closeTab'),
       onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); hooks.closeSession(g.id, s.n); setTimeout(refresh, 300); } }, icon('close', 12));
   }
+  // v3.157 right-click a session row → Rename (inline): Enter saves, Esc cancels, empty = the automatic title again.
+  // The name is kept per Claude session id in the app's state.json (studio:renameSession); a running session that has
+  // no id yet falls back to the header's /rename. `renaming` survives the sidebar's redraws (the box is rebuilt each time).
+  /** @type {{ key: string, value: string, focus: boolean } | null} */
+  let renaming = null;
+  const ctx = el('div', { class: 'st-menu st-ctx', role: 'menu', hidden: true });
+  document.body.append(ctx);
+  const closeCtx = () => { ctx.hidden = true; };
+  function sessionMenu(/** @type {MouseEvent} */ e, /** @type {string} */ key, /** @type {string} */ name, /** @type {string} */ sid, /** @type {string} */ pty) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctx.replaceChildren(el('button', { class: 'st-menu-item', role: 'menuitem', type: 'button',
+      onclick: () => { closeCtx(); renaming = { key, value: name, focus: true }; draw(); } }, icon('edit', 14), el('span', { class: 'st-title' }, t('studio.renameSession'))));
+    ctx.hidden = false;
+    ctx.dataset.sid = sid;
+    ctx.dataset.pty = pty;
+    const r = ctx.getBoundingClientRect();
+    const view = { width: window.innerWidth, height: window.innerHeight };
+    ctx.style.left = `${Math.min(e.clientX, Math.max(8, view.width - r.width - 8))}px`;
+    ctx.style.top = `${Math.min(e.clientY, Math.max(8, view.height - r.height - 8))}px`;
+  }
+  async function saveName(/** @type {string} */ sid, /** @type {string} */ pty, /** @type {string} */ value) {
+    const name = renameText(value);
+    try {
+      if (sid) await api.studio.renameSession(sid, name);
+      else if (name && pty) { const r = await api.chat.rename(pty, name); if (r === 'terminal') await api.chat.send(pty, `/rename ${name}`); }
+    } catch (e) { console.error(e); }
+    refresh();
+  }
+  /** The row's title: the name, or the inline box while this row is being renamed. */
+  function titleEl(/** @type {string} */ key, /** @type {string} */ name, /** @type {string} */ sid, /** @type {string} */ pty) {
+    if (renaming?.key !== key) return el('span', { class: 'st-title' }, name);
+    const st = renaming;
+    const box = /** @type {HTMLInputElement} */ (el('input', { class: 'st-row-input', value: st.value, maxlength: '120', 'aria-label': t('studio.renameSession') }));
+    const end = (/** @type {boolean} */ save) => { if (renaming !== st) return; renaming = null; if (box.isConnected) box.remove(); draw(); if (save) saveName(sid, pty, box.value); };
+    box.addEventListener('input', () => { st.value = box.value; });
+    box.addEventListener('click', (e) => e.stopPropagation());
+    box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); end(true); } else if (e.key === 'Escape') { e.preventDefault(); end(false); } });
+    box.addEventListener('blur', () => { if (box.isConnected && renaming === st && !st.focus) end(true); });
+    if (st.focus) setTimeout(() => { st.focus = false; box.focus(); box.select(); }, 0);
+    return box;
+  }
+  document.addEventListener('mousedown', (e) => { if (!ctx.hidden && !(e.target instanceof Node && ctx.contains(e.target))) closeCtx(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !ctx.hidden) closeCtx(); });
+  window.addEventListener('blur', closeCtx);
   function sessionRow(/** @type {any} */ g, /** @type {any} */ s, /** @type {number} */ i, /** @type {string} */ name) {
     const active = hooks.activePty() === s.ptyId;
     const state = s.isRunning ? 'live' : s.isAsleep ? 'asleep' : '';
     const live = stateEl(s);
-    return el('div', { class: `st-row st-session${active ? ' active' : ''}`, title: [name, s.label, s.branch].filter(Boolean).join(' · '), onclick: () => open(g.id, { n: s.n }) },
+    const key = `run:${s.ptyId}`;
+    return el('div', { class: `st-row st-session${active ? ' active' : ''}`, title: [name, s.label, s.branch].filter(Boolean).join(' · '), onclick: () => { if (renaming?.key !== key) open(g.id, { n: s.n }); },
+      oncontextmenu: (/** @type {MouseEvent} */ e) => sessionMenu(e, key, s.title || '', s.sessionId || '', s.ptyId) },
       s.busy && !s.waiting ? live : el('span', { class: `sb-dot ${state}` }),
-      el('span', { class: 'st-title' }, name),
+      titleEl(key, name, s.sessionId || '', s.ptyId),
       s.waiting ? live : null,
       s.at ? el('span', { class: 'st-time' }, rel(s.at)) : null,
       closeBtn(g, s),
       g.current && i < 9 ? el('span', { class: 'st-key' }, `${modLabel}${i + 1}`) : null);
   }
   function recentRow(/** @type {any} */ g, /** @type {any} */ r) {
-    return el('div', { class: 'st-row st-session st-recent', title: new Date(r.at).toLocaleString(), onclick: () => open(g.id, { sessionId: r.sessionId }) },
-      el('span', { class: 'sb-dot' }), el('span', { class: 'st-title' }, r.title || t('studio.untitled')), r.at ? el('span', { class: 'st-time' }, rel(r.at)) : null);
+    const key = `rec:${r.sessionId}`;
+    return el('div', { class: 'st-row st-session st-recent', title: new Date(r.at).toLocaleString(), onclick: () => { if (renaming?.key !== key) open(g.id, { sessionId: r.sessionId }); },
+      oncontextmenu: (/** @type {MouseEvent} */ e) => sessionMenu(e, key, r.title || '', r.sessionId, '') },
+      el('span', { class: 'sb-dot' }), titleEl(key, r.title || t('studio.untitled'), r.sessionId, ''), r.at ? el('span', { class: 'st-time' }, rel(r.at)) : null);
   }
   /** v3.150 One flat project row: caret, name (wraps), small account tag, state, session count, hover "+". Sessions only while expanded. */
   function groupEl(/** @type {any} */ g, /** @type {boolean} */ tags) {
@@ -708,6 +759,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   function toggleMenu(/** @type {boolean} */ force = menu.hidden) {
     menu.hidden = !force;
     if (menu.hidden) return;
+    closeCtx();
     const item = (/** @type {string} */ ic, /** @type {string} */ label, /** @type {string} */ key, /** @type {() => void} */ run, /** @type {boolean} */ checked = false) =>
       el('button', { class: `st-menu-item${checked ? ' checked' : ''}`, role: 'menuitem', type: 'button', onclick: () => { menu.hidden = true; run(); } }, icon(ic, 14), el('span', { class: 'st-title' }, label), key ? el('span', { class: 'st-key' }, key) : null);
     const theme = studioTheme();
@@ -721,6 +773,20 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       item('user', t('studio.accounts'), '', () => hooks.showAccounts()),
       item('gear', t('studio.settings'), hooks.isMac ? '⌘,' : 'Ctrl+,', () => openSettings()),
       item('office', t('studio.toOffice'), hooks.isMac ? '⌘⇧E' : 'Ctrl+Shift+E', () => hooks.toggle()));
+    placeMenu();
+  }
+  // v3.157 the menu opens directly above the account button (left-aligned, its bottom edge just above it) inside the window
+  function placeMenu() {
+    const btn = account.querySelector('.st-account-btn');
+    if (!btn) return;
+    const a = btn.getBoundingClientRect();
+    menu.style.cssText = 'position: fixed; right: auto; bottom: auto;';
+    const w = Math.min(Math.max(a.width, 200), window.innerWidth - 16);
+    menu.style.width = `${w}px`;
+    const m = menu.getBoundingClientRect();
+    const p = anchorAbove(a, { width: w, height: m.height }, { width: window.innerWidth, height: window.innerHeight });
+    menu.style.left = `${p.left}px`;
+    menu.style.top = `${p.top}px`;
   }
   document.addEventListener('mousedown', (e) => { if (!menu.hidden && e.target instanceof Node && !menu.contains(e.target) && !account.contains(e.target)) menu.hidden = true; });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) menu.hidden = true; });

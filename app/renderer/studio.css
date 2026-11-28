@@ -1033,3 +1033,8 @@ body.studio .chat-bash-stop { height: 22px; padding: 0 8px; border: 1px solid va
 body.studio .chat-bash-out { margin: 0; padding: 8px 12px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-all; border-top: 1px solid var(--st-border); font: 12px/1.5 var(--st-mono); color: var(--st-text); }
 body.studio .chat-bash-err { color: var(--danger); }
 body:not(.studio) .chat-code-run { display: none; }
+
+/* v3.157 rename a session inline; the context menu floats at the pointer; the account menu is placed by JS above its button */
+body.studio .st-row-input { flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--st-raised); border: 1px solid var(--st-accent); border-radius: var(--st-radius-s); padding: 2px 6px; outline: none; }
+body.studio .st-menu.st-ctx { position: fixed; right: auto; bottom: auto; left: 0; top: 0; width: auto; min-width: 160px; z-index: 60; }
+body.studio .st-menu[hidden] { display: none; }
