@@ -50,6 +50,13 @@ function agoText(ms, now) {
   return hr < 24 ? t('sidebar.hrAgo', { n: hr }) : t('sidebar.dayAgo', { n: Math.round(hr / 24) });
 }
 const STALE_MS = 30 * 60e3;
+const OLD_READING_MS = 15 * 60e3; // v3.155: a reading older than this shows when it was measured
+/** "12:57" today, "Mon 12:57" otherwise. */
+function clock(ms, now) {
+  const d = new Date(ms);
+  const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return now - ms < 24 * 3600e3 ? hm : `${t(`sidebar.days.${d.getDay()}`)} ${hm}`;
+}
 
 /** "$3.52" under $10, "$170" above (an estimate at list prices; contract v3.13). */
 const usdText = (v) => `$${(Number(v) || 0).toLocaleString(locale(), { maximumFractionDigits: v < 10 ? 2 : 0, minimumFractionDigits: v < 10 && v > 0 ? 2 : 0 })}`;
@@ -1262,24 +1269,30 @@ export function mountSidebar(el, on) {
     if (!u || a.auth?.state !== 'in') return null;
     const now = Date.now();
     const ago = agoText(u.updatedAt, now);
-    const row = (label, name, w) => {
-      if (!w) return null;
-      const isReset = w.resetsAt != null && w.resetsAt <= now;
-      const pct = isReset ? 0 : Math.round(w.pct);
-      const when = w.resetsAt == null ? '' : isReset ? t('sidebar.reset') : resetText(w.resetsAt, now);
-      const level = pct >= 90 ? ' hi' : pct >= 70 ? ' mid' : '';
+    const full = u.limited && u.limited.resetsAt > now; // v3.155: stopped at a limit that is not a 5 h/weekly window
+    const row = (label, name, w, other) => {
+      if (!w && !other) return null;
+      const isReset = w ? w.resetsAt != null && w.resetsAt <= now : false;
+      const resetsAt = w ? w.resetsAt : u.limited.resetsAt;
+      const atLimit = !isReset && (w ? w.pct >= 100 : true);
+      const pct = isReset ? 0 : w ? Math.round(w.pct) : 100;
+      const when = resetsAt == null ? '' : isReset ? t('sidebar.reset') : resetText(resetsAt, now);
+      const level = atLimit ? ' full' : pct >= 90 ? ' hi' : pct >= 70 ? ' mid' : '';
       const tip = t('sidebar.used', { name, pct })
-        + (w.resetsAt == null ? '' : '\n' + (isReset ? t('sidebar.wasReset') : t('sidebar.resetsAt', { when: new Date(w.resetsAt).toLocaleString(locale(), { weekday: 'long', hour: '2-digit', minute: '2-digit' }) })))
+        + (resetsAt == null ? '' : '\n' + (isReset ? t('sidebar.wasReset') : t('sidebar.resetsAt', { when: new Date(resetsAt).toLocaleString(locale(), { weekday: 'long', hour: '2-digit', minute: '2-digit' }) })))
         + '\n' + t('sidebar.lastInfo', { ago });
       return h('div', { class: 'sb-usage' + level, title: tip },
         h('span', { class: 'sb-usage-label' }, label),
         h('span', { class: 'sb-usage-bar' }, h('span', { style: `width:${pct}%` })),
-        h('span', { class: 'sb-usage-pct' }, t('sidebar.pct', { pct })),
-        h('span', { class: 'sb-usage-when' }, when));
+        atLimit ? null : h('span', { class: 'sb-usage-pct' }, t('sidebar.pct', { pct })),
+        h('span', { class: 'sb-usage-when' }, atLimit ? (when ? t('sidebar.limitResets', { when }) : t('sidebar.limitFull')) : when));
     };
+    const old = now - u.updatedAt > OLD_READING_MS;
     return h('div', { class: 'sb-usages' + (now - u.updatedAt > STALE_MS ? ' stale' : '') },
       row(t('sidebar.fiveHour'), t('sidebar.fiveHourName'), u.fiveHour),
-      row(t('sidebar.week'), t('sidebar.weekName'), u.sevenDay));
+      row(t('sidebar.week'), t('sidebar.weekName'), u.sevenDay),
+      full && !(u.fiveHour?.pct >= 100) && !(u.sevenDay?.pct >= 100) ? row(t('sidebar.limit'), t('sidebar.limitName'), null, true) : null,
+      old && !full ? h('div', { class: 'sb-usage-at' }, t('sidebar.measuredAt', { time: clock(u.updatedAt, now) })) : null);
   }
 
   /** "Use Default's plugins, skills and MCP servers" (default on); applies when the account's sessions start next. */

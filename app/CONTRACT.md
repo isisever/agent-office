@@ -4036,3 +4036,15 @@ field (`HQ.remoteRows`: live while the machine is online, last known from the pe
   legend, and a plain muted footnote instead of the dashed orange box.
 - The cost series uses `--st-muted` (the Office's `--amber` is not a Studio token). Office mode CSS and markup are unchanged;
   no text strings changed.
+
+## Account quota at the usage limit (v3.155)
+
+The quota normally comes from the status line input, which stops arriving once Claude Code refuses requests (and is
+not refreshed by sub-agent traffic), so the Accounts panel could keep showing an old low reading. When `checkLimits`
+sees a usage-limit stop in a tab's transcript (`apiError: usage_limit_reached`, `rate_limit_info`) with a reset time,
+`recordLimitHits` applies the pure `applyLimitHit` (src/usage.js) to the account's usage and saves it to `last.json`:
+`five_hour` sets `fiveHour = { pct: 100, resetsAt }`, `seven_day` sets `sevenDay` likewise, any other type sets
+`limited = { type, resetsAt }`. `updatedAt` becomes the stop's time, so a status line reading written after the stop
+replaces it and one from before cannot; once `resetsAt` passes the window shows as reset. This runs whether or not the
+backup-account switch is on. The panel (renderer/sidebar.js `usageRows`) shows a full row as "Limit reached · resets
+HH:MM" (tr: "Limit doldu · sıfırlanma HH:MM") and, for a reading older than 15 minutes, a dim "measured at HH:MM" line.

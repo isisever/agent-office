@@ -379,6 +379,9 @@ body.sidebar-collapsed #sidebar { display: none; }
 .sb-usage.mid .sb-usage-bar > span { background: var(--amber); }
 .sb-usage.hi .sb-usage-bar > span { background: var(--err); }
 .sb-usage-pct { flex: 0 0 28px; text-align: right; font-variant-numeric: tabular-nums; opacity: .85; }
+.sb-usage.full .sb-usage-bar > span { background: var(--err); }
+.sb-usage.full .sb-usage-when { flex: 1 1 auto; opacity: .9; color: var(--err); }
+.sb-usage-at { opacity: .5; font-size: 9px; }
 .sb-usage-when { flex: 0 0 56px; text-align: right; opacity: .55; white-space: nowrap; }
 .sb-btn {
   flex: 0 0 auto;
