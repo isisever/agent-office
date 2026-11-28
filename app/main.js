@@ -5820,10 +5820,10 @@ function linkSessionOf(id) {
   const sid = chatSession(id, r, configDir);
   if (!sid) return { reason: 'no-session' };
   let known = chatFiles.get(id);
-  if (!known || known.sid !== sid || !fs.existsSync(known.file)) {
+  if (!CHAT.chatFileCurrent(known, { sid, configDir })) {
     const f = TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file;
     if (!f) return { reason: 'no-session' };
-    known = { sid, file: f };
+    known = { sid, file: f, configDir };
     chatFiles.set(id, known);
   }
   return { file: known.file };
@@ -5836,10 +5836,10 @@ ipcMain.handle('chat:read', (_e, id, cursor) => {
   const sid = chatSession(id, r, configDir);
   if (!sid) return { sid: null, cursor: null, items: [], reset: true, more: false, gui: guiInfo(id) };
   let known = chatFiles.get(id);
-  if (!known || known.sid !== sid || !fs.existsSync(known.file)) {
+  if (!CHAT.chatFileCurrent(known, { sid, configDir })) {   // v3.156 also when the account changed (backup switch)
     const f = TIO.findTranscript(r.dir, sid, configDir, app.getPath('home'))?.file;
     if (!f) return { sid, cursor: null, items: [], reset: true, more: false, gui: guiInfo(id) };   // written with the first prompt
-    known = { sid, file: f };
+    known = { sid, file: f, configDir };
     chatFiles.set(id, known);
   }
   return { sid, ...CHAT.readChat(known.file, cursor && typeof cursor === 'object' ? cursor : null), gui: guiInfo(id) };
@@ -6849,7 +6849,7 @@ function studioTabInfo(ptyId) {
   const r = P.resolvePty(state, ptyId);
   if (!tt || !r) return null;
   const { configDir } = A.accountOf(state, r.project);
-  const sid = tt.gui ? validSid(tt.sessionId()) : validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), tt.pid))?.sessionId);
+  const sid = tt.gui ? STU.guiSessionId(tt.sessionId(), lastSid.get(ptyId)) : validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), tt.pid))?.sessionId);
   const live = tt.gui ? { busy: tt.live().busy === true, waiting: tt.asks().length > 0 } : { busy: false, waiting: attention.get(ptyId) === 'permission' };
   if (!sid) return { title: '', prompt: '', branch: '', at: 0, sessionId: '', ...live };
   for (const dir of TIO.historyDirsOf(r.dir, configDir, app.getPath('home'))) {

@@ -414,4 +414,17 @@ function linkItems(items, { redact = (s) => require('./hq.js').redact(s), toolDe
   return out;
 }
 
-module.exports = { sessionList, sessionInfo, sessionNames, AGENT_TOOLS, agentFile, chatAgents, IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };
+/**
+ * v3.156 is a cached transcript still the tab's? It must be for the same session AND the same account folder: a
+ * backup-account switch resumes the same session id on another account, whose transcript is a new file while the old
+ * account's copy stays on disk (and stops growing).
+ * @param {{ sid?: string, file?: string, configDir?: string | null } | null | undefined} known
+ * @param {{ sid: string, configDir?: string | null, exists?: (f: string) => boolean }} now
+ */
+function chatFileCurrent(known, { sid, configDir = null, exists = (f) => fs.existsSync(f) }) {
+  if (!known || !known.file || known.sid !== sid) return false;
+  if ((known.configDir || '') !== (configDir || '')) return false;
+  return Boolean(exists(known.file));
+}
+
+module.exports = { chatFileCurrent, sessionList, sessionInfo, sessionNames, AGENT_TOOLS, agentFile, chatAgents, IMAGES_MAX, IMAGE_MAX, cleanImages, TAIL, STEP_MAX, TEXT_MAX, LINK_TOOL_DETAIL, linkItems, chatItems, readChat, lastAnswer, toolDetail, toolName, sendRefused, menuKeys };

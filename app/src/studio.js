@@ -271,7 +271,16 @@ function settingAllowed(lock, key) {
   return key !== 'mode' || !lock;
 }
 
+/**
+ * v3.156 a GUI chat's session id for the sidebar: the running claude's, else the one it was started to resume (a chat
+ * restarted by a backup-account switch reports none until its first message, which showed "New session").
+ */
+function guiSessionId(live, last) {
+  return validSessionId(live) || validSessionId(last) || '';
+}
+
 module.exports = {
+  guiSessionId,
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
   normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs, guiAutoUpgrade, autoApproveAfterSet, modelListPending,
 };

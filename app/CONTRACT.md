@@ -4059,3 +4059,11 @@ Logic lives in `src/chat-bash.mjs` (pure, tested in `test/chat-bash.test.mjs`); 
 - **Run buttons.** Assistant-message code blocks tagged bash, sh, shell, zsh or console get a Run button (finished messages only, not the live stream, not read-only views). Nothing runs until it is clicked. A multi-line script, or one containing `sudo` or `rm `, first shows an inline "Run this script? Run / Cancel" in place of the button. Output is shown and queued exactly as for `!`.
 - **Disabled.** HQ chats, non-GUI tabs and chats whose permission mode is held (bypass or desk) refuse (`runAllowed`); main answers `refused` and the chat shows a note. The renderer cannot see the mode lock, so main is the authority.
 - **Limits and cleanup.** At most `MAX_RUNNING` commands per chat; a command still running after `TIMEOUT_MS` is killed. Commands die (whole process tree) on Stop, when the chat or tab closes (`killBashFor`), and when the chat view is destroyed.
+
+## Studio chat follows the session across a backup-account switch (v3.156)
+
+A backup-account switch (`moveProject`) resumes each tab's session on the new account. `moveProjectData` copies the transcript into the new account's `projects/` folder and leaves the old account's copy on disk, where it stops growing.
+
+- **The chat reads the new account's file.** `chat:read` (and the paired-device `linkSessionOf`) cache the transcript found per tab. The cache is valid only for the same session id AND the same account folder (`CHAT.chatFileCurrent`); after a switch the file is found again under the new account. Before, the cache kept the old account's file (same session id, file still existing), so new replies never appeared in the chat view.
+- **The title stays.** A restarted GUI chat reports no session id until its first message. The Studio sidebar then uses the id the tab was started to resume (`STU.guiSessionId`, `lastSid`), so the row keeps its title instead of "New session".
+- **Not changed (note).** If the resumed process exits non-zero within `RESUME_GRACE_MS`, `startPty` starts a fresh session (no resume); that would also show as a separate untitled entry. It was not investigated or changed here.
