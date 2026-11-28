@@ -357,42 +357,32 @@ export function mountStudio({ api, t, modLabel, hooks }) {
 
   // ---- v3.153 paired machines' projects as rows of the Projects list: same row shape, a small machine tag, dimmed while
   // that machine is offline. Only what the device link allows: session view, command box, start/wake/sleep/stop/restart ----
-  const rview = api.link?.sessOpen ? mountRemoteView({ api, t }) : null;
+  const rview = api.link?.sessOpen ? mountRemoteView({ api, t, inline: true, onChange: () => draw() }) : null;
   const remoteOpen = /** @type {Set<string>} */ (new Set());   // expanded remote rows (this window)
-  const remoteDrafts = /** @type {Map<string, string>} */ (new Map());
   const remoteBusy = /** @type {Set<string>} */ (new Set());
   let remoteLink = /** @type {any} */ (null);
   function remoteEl(/** @type {any} */ g) {
     const open = remoteOpen.has(g.key) || Boolean(query);
     const dot = remoteDot(g);
-    const toggle = () => {
-      if (remoteOpen.has(g.key)) { remoteOpen.delete(g.key); rview?.close(); } else {
-        remoteOpen.add(g.key);
-        if (g.canView && rview) rview.open({ key: g.key, pub: g.pub, project: g.projectId, name: g.name, machine: g.machine, status: g.status || 'idle' });
-      }
+    // v3.158 a click selects the row: its session opens in the main chat (like a local session); the caret only expands
+    const viewable = g.canView || g.dim;   // an offline machine opens too: last known content, read-only
+    const select = () => {
+      remoteOpen.add(g.key);
+      if (viewable && rview) rview.open({ key: g.key, pub: g.pub, project: g.projectId, name: g.name, machine: g.machine, status: g.status || 'idle', online: g.online, canSend: g.canSend });
       draw();
     };
-    const head = el('div', { class: `st-group-head st-proj st-remote${g.dim ? ' st-dim' : ''}`, title: g.dim ? `${g.name} · ${t('studio.remote.offline', { machine: g.machine })}` : `${g.name} · ${t('studio.remote.runsOn', { machine: g.machine })}` },
+    if (rview?.isOpen(g.key) && rview.sync({ key: g.key, online: g.online, canSend: g.canSend, status: g.status || 'idle' })) setTimeout(select, 0);   // the machine came back: reopen live
+    const toggle = () => { if (remoteOpen.has(g.key)) remoteOpen.delete(g.key); else remoteOpen.add(g.key); draw(); };
+    const head = el('div', { class: `st-group-head st-proj st-remote${rview?.isOpen(g.key) ? ' current' : ''}${g.dim ? ' st-dim' : ''}`, title: g.dim ? `${g.name} · ${t('studio.remote.offline', { machine: g.machine })}` : `${g.name} · ${t('studio.remote.runsOn', { machine: g.machine })}` },
       el('button', { class: 'st-caret', 'aria-expanded': String(open), title: g.name, onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); toggle(); } }, icon('chevron', 12)),
-      el('span', { class: 'st-proj-text', onclick: toggle },
+      el('span', { class: 'st-proj-text', onclick: select },
         el('span', { class: 'st-project' }, g.name),
         el('span', { class: 'st-acct st-mach', title: t('studio.remote.runsOn', { machine: g.machine }) }, [machineTag(g), g.account].filter(Boolean).join(' · '))),
       dot ? el('span', { class: `sb-dot ${dot}`, 'aria-hidden': 'true' }) : null);
     const kids = [];
     if (open) {
       if (g.dim) kids.push(el('div', { class: 'st-sub' }, t('studio.remote.offline', { machine: g.machine })));
-      if (g.canView && rview) kids.push(el('div', { class: 'st-row st-session', onclick: () => rview.open({ key: g.key, pub: g.pub, project: g.projectId, name: g.name, machine: g.machine, status: g.status || 'idle' }) },
-        el('span', { class: 'sb-dot' }), el('span', { class: 'st-title' }, t('studio.remote.view'))));
-      if (g.canSend && api.link?.send) {
-        const input = /** @type {HTMLInputElement} */ (el('input', { name: 'text', maxlength: 8192, placeholder: t('devices.prompt', { project: g.name }), oninput: () => remoteDrafts.set(g.key, input.value) }));
-        input.value = remoteDrafts.get(g.key) || '';
-        kids.push(el('form', { class: 'st-rcmd', onsubmit: (/** @type {Event} */ e) => {
-          e.preventDefault();
-          if (!input.value.trim()) return;
-          const text = input.value; remoteDrafts.delete(g.key); input.value = '';
-          Promise.resolve(api.link.send(g.pub, g.projectId, text)).then(() => refresh(), () => {});
-        } }, input, el('button', { class: 'st-add', type: 'submit', title: t('devices.send') }, icon('plus', 14))));
-      } else if (!g.dim && g.engine && g.engine !== 'claude') kids.push(el('div', { class: 'st-sub' }, t('devices.claudeOnly')));
+      if (!g.dim && g.engine && g.engine !== 'claude') kids.push(el('div', { class: 'st-sub' }, t('devices.claudeOnly')));
       for (const o of (remoteLink?.outgoing || []).filter((/** @type {any} */ o) => o.pub === g.pub && o.project === g.projectId).slice(0, 2)) {
         kids.push(el('div', { class: `st-sub cmd-${o.status}` }, `${o.firstLine} — ${o.status === 'rejected' ? t('devices.cmd.rejected', { reason: t(`devices.reason.${o.reason}`) }) : t(`devices.cmd.${o.status}`)}`));
       }
@@ -529,7 +519,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       el('div', { class: 'st-row st-pin', title: t('studio.usageTitle'), onclick: () => hooks.showPanel('#usage-panel') }, icon('coins'), el('span', { class: 'st-title' }, t('studio.usage'))),
       el('div', { class: 'st-row st-pin', onclick: () => hooks.openBoard() }, icon('clock'), el('span', { class: 'st-title' }, t('studio.routines'))),
       el('div', { class: 'st-row st-pin', title: `${modLabel}K`, onclick: () => openPalette() }, icon('command'), el('span', { class: 'st-title' }, t('studio.commands')), el('span', { class: 'st-key' }, `${modLabel}K`)));
-    lists.replaceChildren(...projectsList(studioGroups(view.projects, { query, currentId: currentId(), ordered: true })));
+    lists.replaceChildren(...projectsList(studioGroups(view.projects, { query, currentId: rview?.active() ? '' : currentId(), ordered: true })));
     // paired machines: read-only (a remote target is send-as-task plus a read-only view, from HQ's board)
     machines.replaceChildren(...(devices.length ? [el('div', { class: 'st-head' }, t('studio.machines')),
       ...devices.map((d) => el('div', { class: 'st-row st-device', title: d.online ? t('studio.online') : t('studio.offline') },

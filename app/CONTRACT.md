@@ -4059,3 +4059,16 @@ Logic lives in `src/chat-bash.mjs` (pure, tested in `test/chat-bash.test.mjs`); 
 - **Run buttons.** Assistant-message code blocks tagged bash, sh, shell, zsh or console get a Run button (finished messages only, not the live stream, not read-only views). Nothing runs until it is clicked. A multi-line script, or one containing `sudo` or `rm `, first shows an inline "Run this script? Run / Cancel" in place of the button. Output is shown and queued exactly as for `!`.
 - **Disabled.** HQ chats, non-GUI tabs and chats whose permission mode is held (bypass or desk) refuse (`runAllowed`); main answers `refused` and the chat shows a note. The renderer cannot see the mode lock, so main is the authority.
 - **Limits and cleanup.** At most `MAX_RUNNING` commands per chat; a command still running after `TIMEOUT_MS` is killed. Commands die (whole process tree) on Stop, when the chat or tab closes (`killBashFor`), and when the chat view is destroyed.
+
+## Studio: remote sessions open in the main chat (v3.158)
+
+A paired machine's project session now opens in the main chat area, like a local session, instead of the side popup.
+
+- **Same view.** `mountRemoteView({ inline: true })` (`renderer/remote-view.js`) fills `#terminal` and mounts the normal `mountChat` with a `source` (`read(cursor)` over `link.sessOpen/sessKeep/onSess`) plus an optional `source.send(text)` that calls `link.send(pub, project, text)`. No second chat implementation and no close X.
+- **Selection.** Clicking a remote project row in the Studio sidebar opens it (`select()` in `renderer/studio.js`); the row gets `current`. The caret only expands or collapses. The old "View session" sub-row and the inline command form are gone.
+- **Local highlight.** While a remote view is open, the local list is drawn with no current row (`rview.active()`).
+- **Closing.** Only user-initiated selection closes the view: `app.js` dispatches `ao:local-select` through `userSelect()` from tab clicks, shortcuts, tab cycling and the selectSession/newSession/selectProject/selectHq hooks. Programmatic selects (open project, start session, initial HQ) do not.
+- **Hidden remotely.** The composer keeps the text box and Send; attachments, `!` commands, run buttons, slash and @ pickers, the more menu, the terminal button and Stop are hidden (`.chat-remote`) or refused (`source` mode).
+- **Echo.** A sent message shows as a pending bubble (`echo()`); the first user item from the remote replaces it.
+- **Offline.** The last known items (`rememberItems`, at most 20 rows per machine and 400 items per row, in memory) are shown read-only with the note `studio.remote.offlineReadOnly`; no session is opened. When the machine comes back online the view reopens. A machine that is not sendable shows `studio.remote.readOnly` and no composer.
+- **Pure logic** lives in `src/studio-remote-chat.mjs` (`remoteChatMode`, `rememberItems`, `lastKnown`, `sendOk`), tested in `test/studio-remote-chat.test.mjs`.

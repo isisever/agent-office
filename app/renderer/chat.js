@@ -93,11 +93,12 @@ function textBody(text) {
 
 /**
  * @param {HTMLElement} el the pane's chat host
- * @param {{ ptyId: string, onTerminal: () => void, onCommand?: (how: 'moved' | 'typed', text: string) => void, screen: () => string[], source?: { read: (cursor: any) => Promise<any> } | null }} opts
+ * @param {{ ptyId: string, onTerminal: () => void, onCommand?: (how: 'moved' | 'typed', text: string) => void, screen: () => string[], source?: { read: (cursor: any) => Promise<any>, send?: (text: string) => Promise<boolean> } | null }} opts
  *   onTerminal: the person wants the terminal; onCommand (v3.117): a command with a screen of its own was started in the
  *   tab's terminal ('moved': a GUI tab restarted there; 'typed'); screen: the tab's terminal screen lines; source (v3.100): another
  *   place the items come from (read answers like chat:read), shown read-only: no input, no menu buttons, no reply
- *   (renderer/remote-view.js: a session on another machine)
+ *   (renderer/remote-view.js: a session on another machine). v3.158: a source with send() also shows a plain text composer
+ *   (attachments, pickers, mic, slash and @ menus, ! commands and the terminal stay hidden/off); its text goes to send().
  */
 export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(), screen, source = null }) {
   const api = window.agentOffice;
@@ -184,7 +185,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   const row = h('div', { class: 'chat-row' }, attach, mic, tplBtn, h('span', { class: 'chat-row-gap chat-studio-only' }), pickers,
     h('span', { class: 'chat-more-wrap chat-studio-only' }, more, moreMenu), stop, send);
   const form = h('div', { class: 'chat-form' }, slash, atList, input, row, term);
-  form.hidden = Boolean(source);
+  form.hidden = Boolean(source && !source.send);
+  if (source?.send) el.classList.add('chat-remote');   // v3.158 CSS hides what cannot work on another machine
   const composer = h('div', { class: 'chat-composer' }, dropHint, imgBar, chipBar, form);
   // v3.115 sub-agents: the running ones above the input (as the terminal lists them); one opens its own conversation
   // in place of the chat (read-only; ← Back returns). A paired device's chat has none (source).
@@ -835,7 +837,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   }
   async function updateAt() {
     const q = atQuery();
-    if (q === null || !api.chat.files) { closeAt(); return; }
+    if (q === null || !api.chat.files || source) { closeAt(); return; }
     const seq = ++atSeq;
     let list = [];
     try { list = await api.chat.files(ptyId, q); } catch (e) { console.error(e); }
@@ -1146,6 +1148,15 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     const text = input.value;
     const files = fileChips.map((f) => f.path);
     if (!text.trim() && !images.length && !files.length) return;
+    if (source?.send) {   // v3.158 a remote session: plain text through the device link, no commands/attachments
+      let ok = false;
+      try { ok = await source.send(text); } catch (e) { console.error(e); }
+      if (!ok) { note(t('studio.remote.sendFailed')); return; }
+      echo(text);
+      input.value = ''; fitInput(); note('');
+      setTimeout(poll, 150);
+      return;
+    }
     if (menu && !gui) { note(t('chat.why.menu')); return; }   // typed text would go into the open menu
     // v3.154 "!command" in a GUI chat runs in the project folder instead of going to the model
     const bang = gui && !source && !images.length && !files.length ? parseBang(text) : null;
@@ -1274,7 +1285,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   }
   async function updateSlash() {
     const q = slashQuery(input.value, input.selectionStart ?? input.value.length);
-    if (q === null) { closeSlash(); return; }
+    if (q === null || source) { closeSlash(); return; }
     await loadCommands();
     const again = slashQuery(input.value, input.selectionStart ?? input.value.length);
     if (again === null) { closeSlash(); return; }

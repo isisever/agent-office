@@ -245,7 +245,9 @@
       "heading": "Diğer makineler",
       "runsOn": "{machine} makinesinde çalışır",
       "offline": "{machine} çevrim dışı, son bilinen durum gösteriliyor",
-      "view": "Oturumu görüntüle"
+      "offlineReadOnly": "{machine} çevrim dışı, son bilinen içerik gösteriliyor (salt okunur)",
+      "readOnly": "Bu oturum buradan yönetilemez (salt okunur)",
+      "sendFailed": "Mesaj diğer makineye gönderilemedi"
     }
   },
   "app": {
