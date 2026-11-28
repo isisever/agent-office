@@ -4059,3 +4059,23 @@ Logic lives in `src/chat-bash.mjs` (pure, tested in `test/chat-bash.test.mjs`); 
 - **Run buttons.** Assistant-message code blocks tagged bash, sh, shell, zsh or console get a Run button (finished messages only, not the live stream, not read-only views). Nothing runs until it is clicked. A multi-line script, or one containing `sudo` or `rm `, first shows an inline "Run this script? Run / Cancel" in place of the button. Output is shown and queued exactly as for `!`.
 - **Disabled.** HQ chats, non-GUI tabs and chats whose permission mode is held (bypass or desk) refuse (`runAllowed`); main answers `refused` and the chat shows a note. The renderer cannot see the mode lock, so main is the authority.
 - **Limits and cleanup.** At most `MAX_RUNNING` commands per chat; a command still running after `TIMEOUT_MS` is killed. Commands die (whole process tree) on Stop, when the chat or tab closes (`killBashFor`), and when the chat view is destroyed.
+
+## Studio: rename sessions, account menu anchored (v3.157)
+
+- **Rename a session.** Right-click a session row in Studio's sidebar (a running session or a recent one) opens a
+  context menu with "Rename". The row's title becomes a text box: Enter saves, Esc cancels, an empty name removes the
+  custom name (the automatic title returns: /rename, Claude Code's title, the first prompt). Leaving the box saves.
+- **Storage.** The custom name is kept per Claude session id in the app's own `state.json` under `sessionNames`
+  (`{ [session id]: name }`, `src/session-names.js`): one line, control characters removed, at most 120 characters,
+  at most 500 names (oldest dropped). IPC `studio:renameSession(sessionId, name)` → `{ ok, name }` | `{ ok: false }`
+  (bad id or foreign window). It survives restarts and is never written to the transcript or to `~/.claude*`.
+- **Display.** `studio:sessions` rows carry `sessionId` and `custom`; a custom name wins over every automatic title in
+  the sidebar (running and recent rows) and so in the chat header, which uses the same row. The header's own rename
+  still sends `/rename` (Claude Code's transcript title) and now also stores the custom name. A running session
+  without an id yet falls back to `/rename` only.
+- **Account menu.** The footer's account menu (Studio theme, Accounts, Settings, Office) is positioned with
+  `position: fixed` from the account button's bounding box (`anchorAbove`, `src/menu-anchor.mjs`): left edges aligned,
+  its bottom edge 6 px above the button, clamped to an 8 px margin inside the window; it only flips below the button
+  when there is no room above.
+- Strings: `studio.renameSession` (en "Rename", tr "Yeniden adlandır"). Tests: `session-names.test.cjs`,
+  `menu-anchor.test.mjs`.

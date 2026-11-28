@@ -225,6 +225,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
   // v3.120 Studio experience: its sidebar's sessions (running and recent per project) and opening one
   studio: {
     sessions: () => ipcRenderer.invoke('studio:sessions'),                        // { experience, user: { name, email, account }, projects: StudioProject[] } | null
+    renameSession: (sessionId, name) => ipcRenderer.invoke('studio:renameSession', sessionId, name),   // v3.157 custom session name, '' clears it → { ok, name }
     open: (projectId, ref) => ipcRenderer.invoke('studio:open', projectId, ref),   // ref { n } | { sessionId } → { ok, projectId, n } | { ok: false, error }
   },
   link: {

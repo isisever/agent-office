@@ -9,6 +9,7 @@ const MS = require('./src/mcp-servers.js');
 const SEALED = require('./src/sealed.js');
 const MF = require('./src/mcp-files.js');
 const SF = require('./src/state-file.js');
+const SN = require('./src/session-names.js');
 const A = require('./src/accounts.js');
 const U = require('./src/usage.js');
 const EM = require('./src/effective-model.js');
@@ -6835,8 +6836,18 @@ ipcMain.handle('studio:sessions', (e) => {
     user: studioUser(P.findProject(state, state.activeId)),
     // v3.153 paired machines' projects (live while online, last known when offline): the Projects list shows them as rows
     remotes: HQ.remoteRows(peerCache(), liveRemotes()),
-    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel, infoOf: studioTabInfo }),
+    projects: STU.listSessions({ projects, status: snapshot().status, recent: studioRecent(), activeId: state.activeId, staff: state.staff || [], accountOf: studioAccountLabel, infoOf: studioTabInfo, names: SN.normalizeNames(state.sessionNames) }),
   };
+});
+// v3.157 a custom session name (right-click → Rename in Studio's sidebar, the header's rename): kept per Claude session id
+// in state.json (`sessionNames`) so it survives restarts; '' removes it (the automatic title returns). → { ok, name } | { ok: false }
+ipcMain.handle('studio:renameSession', (e, sessionId, name) => {
+  if (!fromWin(e)) return { ok: false };
+  const r = SN.setName(state.sessionNames, STU.validSessionId(sessionId), name);
+  if (!STU.validSessionId(sessionId)) return { ok: false };
+  state = { ...state, sessionNames: r.names };
+  saveState();
+  return { ok: true, name: r.name };
 });
 // v3.120 Studio UX: a running session's name, branch and last activity from its transcript (read again only when the
 // file changed) and its live state (GUI chat: a turn runs, an approval or a question is open).
