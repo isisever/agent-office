@@ -170,7 +170,7 @@ test('main.js: chat:send types through typePrompt; chatView is written only once
   assert.match(chat, /const keyOf = screenKey;/);
   assert.match(chat.slice(chat.indexOf('function checkMenu('), chat.indexOf('function checkMenu(') + 300), /m = openOnScreen\(screen\(\)\)/, 'the card reads the screen the same way');
   // one item that throws while it is rendered does not drop the rest of the batch
-  const app = chat.slice(chat.indexOf('function append('), chat.indexOf('function append(') + 900);
+  const app = chat.slice(chat.indexOf('function append('), chat.indexOf('function append(') + 1300);
   assert.match(app, /try \{ n = item\(it\); \} catch/);
   assert.match(app, /textBody\(it\.text\)/);
   const term = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'terminal.js'), 'utf8');
