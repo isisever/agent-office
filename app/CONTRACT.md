@@ -3939,3 +3939,12 @@ Fixes three Studio problems with HQ; the Office look and behaviour are unchanged
 - The enlarged image (`previewImage` in `renderer/chat.js`) closes on a click or Escape, stops that event there, and hands the focus back to the composer; only one preview exists at a time.
 - Closing it never calls window or app close APIs; the preview is a plain overlay in the page.
 - `main.js` logs `render-process-gone` (reason and exit code) so a renderer crash leaves a trace. This is log only.
+
+## Studio settings: Projects page layout (v3.148)
+- `sidebar.projectInline(id)` (used only by Studio's Settings -> Projects page) now returns its body grouped: `.st-pgroup` blocks
+  with a `.st-pgroup-title` (Account & model, Budget, Permissions, MCP; keys `studio.set.pgAccount|pgBudget|pgPermissions|pgMcp`).
+- Each control stays the Office's own `control()` label (`.sb-acct-wrap`), restyled by Studio-scoped CSS only: one setting per row,
+  label left, control right, dividers like the other `st-set-card` rows. The Office popup's markup and CSS are untouched.
+- The economy detail line sits under its row as a muted hint; the budget inputs share the select height; checkboxes are a
+  fixed 16px box at the right of their label. Footer: "All project settings..." secondary, Save primary, right aligned.
+- No behaviour change: same controls, same draft map, same save order (account first).
