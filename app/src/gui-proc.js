@@ -13,14 +13,14 @@ const SETTING_WAIT = 10000;   // ms to wait for claude's answer to a setting req
 
 /**
  * @param {(file: string, args: string[], opts: object) => any} spawn child_process.spawn (or a fake)
- * @param {string} file @param {string[]} args @param {{ cwd: string, env: object }} opts
+ * @param {string} file @param {string[]} args @param {{ cwd: string, env: object, spawnExtra?: object }} opts
  * @param {{ onAsk?: (ask: any, input: any) => boolean, onModels?: (models: import('./model-list.js').ModelOption[]) => void, killGroup?: (pid: number, signal: string) => void }} [hooks]
  *   onAsk: true when main answered the request itself; onModels: the models claude reported at start (v3.120);
  *   killGroup: process.kill (a test passes a fake)
  */
-function spawnGui(spawn, file, args, { cwd, env }, { onAsk, onModels, killGroup = process.kill } = {}) {
+function spawnGui(spawn, file, args, { cwd, env, spawnExtra = {} }, { onAsk, onModels, killGroup = process.kill } = {}) {
   // its own process group (as a pty's session is): a stop reaches claude's shells and MCP servers too, not only claude
-  const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+  const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', ...spawnExtra });
   const lines = GS.createLines();
   /** @type {Set<(d: string) => void>} */
   const dataFns = new Set();

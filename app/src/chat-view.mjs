@@ -6,14 +6,16 @@
 // empty terminal where keys go nowhere.
 
 /**
- * @typedef {{ chatView: boolean, studio: boolean, win: boolean, isGui: boolean, chatOff: boolean, hq?: boolean }} ChatFacts
- * chatView: the chat view setting; studio: Studio is on; win: Windows (no GUI chat there); chatOff: the person
+ * @typedef {{ chatView: boolean, studio: boolean, win?: boolean, isGui: boolean, chatOff: boolean, hq?: boolean }} ChatFacts
+ * chatView: the chat view setting; studio: Studio is on; win: Windows (unused since v3.161); chatOff: the person
  * switched this tab to its terminal from the chat.
  */
 
 /** Is the tab in chat mode (its chat shown unless the person switched it to its terminal)? @param {ChatFacts} f */
-export function chatShownFor({ chatView, studio, win, isGui, chatOff, hq = false }) {
-  return chatView || isGui || (studio && !win && (chatOff || hq));   // HQ's chat is the view of its transcript (v3.80)
+export function chatShownFor({ chatView, studio, isGui }) {
+  // v3.161 Studio always opens in the chat view, on every platform (Windows included): the terminal shows only after the
+  // person switches to it (chatOff). `win` and `hq` no longer decide it.
+  return chatView || isGui || studio;   // HQ's chat is the view of its transcript (v3.80)
 }
 
 /**
@@ -25,5 +27,5 @@ export function chatShownFor({ chatView, studio, win, isGui, chatOff, hq = false
 export function chatButtonFor(f) {
   if (!f.capable) return false;
   if (chatShownFor(f) && f.chatOff) return true;
-  return f.studio && !f.win && !f.isGui && !f.hq;
+  return f.studio && !f.isGui && !f.hq;
 }

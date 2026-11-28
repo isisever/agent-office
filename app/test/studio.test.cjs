@@ -113,12 +113,12 @@ test('hotkeys: the toggle everywhere, Studio keys only in Studio', async () => {
   assert.equal(otherExperience('studio'), 'office');
 });
 
-test('guiEligible: Studio shows Claude Code tabs as a chat, except on Windows', () => {
+test('guiEligible: Studio shows Claude Code tabs as a chat, on every platform', () => {
   const GS = require('../src/gui-session.js');
   const base = { chatView: false, terminal: false, engine: 'claude', hq: false, shell: false, platform: 'darwin' };
   assert.equal(GS.guiEligible(base), false, 'Office without the chat view');
   assert.equal(GS.guiEligible({ ...base, studio: true }), true);
-  assert.equal(GS.guiEligible({ ...base, studio: true, platform: 'win32' }), false, 'Windows: terminal-backed sessions');
+  assert.equal(GS.guiEligible({ ...base, studio: true, platform: 'win32' }), true, 'Windows: the GUI chat too (v3.161)');
   assert.equal(GS.guiEligible({ ...base, studio: true, terminal: true }), false, 'a tab switched to its terminal stays there');
   assert.equal(GS.guiEligible({ ...base, studio: true, hq: true }), false, 'HQ keeps its terminal');
 });
@@ -200,9 +200,9 @@ test('chat view: a GUI tab always shows its chat; Studio offers the Chat button 
   assert.equal(chatShownFor(f), false, 'Office, chat view off, a terminal tab');
   assert.equal(chatShownFor({ ...f, isGui: true }), true, 'a GUI tab started in Studio, now in the Office: its chat, not an empty terminal');
   assert.equal(chatShownFor({ ...f, isGui: true, chatView: true }), true, 'chat view on');
-  assert.equal(chatShownFor({ ...f, studio: true }), false, 'Studio: a tab running in a terminal shows it');
+  assert.equal(chatShownFor({ ...f, studio: true }), true, 'Studio: always the chat view (v3.161)');
   assert.equal(chatShownFor({ ...f, studio: true, chatOff: true }), true, 'switched from its chat: chat mode (the button brings it back)');
-  assert.equal(chatShownFor({ ...f, studio: true, win: true, chatOff: true }), false, 'Windows: terminals');
+  assert.equal(chatShownFor({ ...f, studio: true, win: true }), true, 'Windows: the chat too (v3.161)');
   assert.equal(chatShownFor({ ...f, studio: true, hq: true }), true, 'HQ in Studio: its chat');
   assert.equal(chatShownFor({ ...f, hq: true }), false, 'HQ in the Office without the chat view');
   const b = { ...f, capable: true, hq: false };
@@ -211,7 +211,7 @@ test('chat view: a GUI tab always shows its chat; Studio offers the Chat button 
   assert.equal(chatButtonFor({ ...b, studio: true }), true, 'Studio: a terminal tab can move on a click');
   assert.equal(chatButtonFor({ ...b, studio: true, isGui: true }), false, 'already a GUI chat');
   assert.equal(chatButtonFor({ ...b, studio: true, hq: true }), false, 'HQ switches the view only');
-  assert.equal(chatButtonFor({ ...b, studio: true, win: true }), false, 'Windows');
+  assert.equal(chatButtonFor({ ...b, studio: true, win: true }), true, 'Windows: same as elsewhere (v3.161)');
   assert.equal(chatButtonFor({ ...b, studio: true, capable: false }), false, 'a shell or another engine');
 });
 

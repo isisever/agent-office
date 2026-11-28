@@ -4059,3 +4059,16 @@ Logic lives in `src/chat-bash.mjs` (pure, tested in `test/chat-bash.test.mjs`); 
 - **Run buttons.** Assistant-message code blocks tagged bash, sh, shell, zsh or console get a Run button (finished messages only, not the live stream, not read-only views). Nothing runs until it is clicked. A multi-line script, or one containing `sudo` or `rm `, first shows an inline "Run this script? Run / Cancel" in place of the button. Output is shown and queued exactly as for `!`.
 - **Disabled.** HQ chats, non-GUI tabs and chats whose permission mode is held (bypass or desk) refuse (`runAllowed`); main answers `refused` and the chat shows a note. The renderer cannot see the mode lock, so main is the authority.
 - **Limits and cleanup.** At most `MAX_RUNNING` commands per chat; a command still running after `TIMEOUT_MS` is killed. Commands die (whole process tree) on Stop, when the chat or tab closes (`killBashFor`), and when the chat view is destroyed.
+
+## Studio: always opens in chat view (v3.161)
+
+Entering Studio, and opening or selecting a session inside Studio, always shows the chat view, on every platform. The
+terminal view appears only after the person clicks the "Switch to terminal" toggle (`chatOff`).
+
+- Root cause: Windows was excluded twice. `guiEligible` (src/gui-session.js) returned false for `win32`, and
+  `chatShownFor` / `chatButtonFor` (src/chat-view.mjs) required `!win`, so a Windows Studio tab landed in its terminal.
+- `chatShownFor` is `chatView || isGui || studio || hq`; `chatButtonFor` no longer looks at the platform.
+- Windows now starts the GUI chat with claude spawned directly (the `.cmd` shim through cmd.exe, `windowsHide`, piped
+  stdio, not detached) instead of a POSIX login shell. If it cannot start, the chat view shows the ended/error state;
+  it never falls back to the terminal.
+- Tests: test/studio-chat-default.test.mjs (decision logic), test/gui-session.test.cjs, test/studio.test.cjs.

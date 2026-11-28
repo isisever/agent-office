@@ -21,12 +21,11 @@ const QUESTION_TOOLS = ['AskUserQuestion', 'ExitPlanMode'];
 
 /**
  * Does this tab run as a GUI chat? The chat view is on (or the Studio experience, v3.120), the person has not switched it to the terminal, Claude Code,
- * not a plain shell tab and not HQ (HQ keeps its terminal: its keys are held and minted, v3.46/v3.47). Not on Windows
- * yet: claude is a `.cmd` shim there and its pipes are untested.
- * @param {{ chatView: boolean, studio?: boolean, terminal: boolean, engine: string, hq: boolean, shell: boolean, platform: string }} o
+ * not a plain shell tab and not HQ (HQ keeps its terminal: its keys are held and minted, v3.46/v3.47).
+ * @param {{ chatView: boolean, studio?: boolean, terminal: boolean, engine: string, hq: boolean, shell: boolean, platform?: string }} o
  */
-function guiEligible({ chatView, studio = false, terminal, engine, hq, shell, platform }) {
-  return (chatView === true || studio === true) && !terminal && engine === 'claude' && !hq && !shell && platform !== 'win32';
+function guiEligible({ chatView, studio = false, terminal, engine, hq, shell }) {
+  return (chatView === true || studio === true) && !terminal && engine === 'claude' && !hq && !shell;   // v3.161 Windows included: Studio never falls back to a terminal
 }
 
 /**
