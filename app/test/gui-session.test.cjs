@@ -445,3 +445,20 @@ test('GUI chat: a restart by a backup-account move keeps a chat a chat (keepsGui
   assert.equal(opts.prompt, 'carry on');
   assert.ok(opts.sessionId || opts.resume);
 });
+
+test('v3.170 a message sent while a question card is open declines the card so claude answers the message', () => {
+  const written = [];
+  const child = Object.assign(new EventEmitter(), { pid: 43, stdin: Object.assign(new EventEmitter(), { destroyed: false, write: (s) => { written.push(s); return true; } }), stdout: new EventEmitter(), stderr: new EventEmitter(), kill() {} });
+  const t = spawnGui(() => child, 'sh', [], { cwd: '/', env: {} }, { killGroup: () => {} });
+  const input = { questions: [{ question: 'Which color?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: '' }, { label: 'Blue', description: '' }] }] };
+  child.stdout.emit('data', `${JSON.stringify({ type: 'control_request', request_id: 'q1', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input } })}\n`);
+  assert.equal(t.asks().length, 1);
+  assert.equal(t.sendUser('what do you mean?'), true);
+  const lines = written.slice(-2).map(JSON.parse);
+  assert.equal(lines[0].response.request_id, 'q1');
+  assert.equal(lines[0].response.response.behavior, 'deny');
+  assert.equal(lines[1].type, 'user');
+  assert.equal(lines[1].message.content, 'what do you mean?');
+  assert.deepEqual(t.asks(), [], 'the card is taken down');
+  assert.equal(t.live().busy, true);
+});

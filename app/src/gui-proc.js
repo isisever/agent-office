@@ -137,6 +137,11 @@ function spawnGui(spawn, file, args, { cwd, env, spawnExtra = {} }, { onAsk, onM
     },
     /** The person's or the app's message; false when claude is gone. */
     sendUser: (text, images = []) => {
+      // v3.170 a message sent while a card (question, plan, permission) is open used to queue behind it: claude waits for
+      // that answer first, so the message got no reply. The open cards are declined, so claude moves on to the message.
+      if (asks.size && !ended) {
+        for (const a of [...asks.values()]) { asks.delete(a.ask.id); put(GS.denyLine(a.ask.id, GS.SUPERSEDED_NOTE)); }
+      }
       const ok = put(GS.userLine(text, images));
       if (ok) { live = { ...live, busy: true }; sent++; }
       return ok;

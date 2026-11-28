@@ -16,6 +16,7 @@ const GUI_FLAGS = ['-p', '--input-format', 'stream-json', '--output-format', 'st
 const PROBE_FLAGS = [...GUI_FLAGS, '--strict-mcp-config'];
 const LINE_MAX = 64 * 1024 * 1024;   // a line longer than this is dropped (claude's lines are messages, not files)
 const LIVE_MAX = 60000;              // characters of the answer being written shown live as it grows (the start is kept; the transcript has it all)
+const SUPERSEDED_NOTE = 'The person sent a new message instead of answering this. Read their next message and answer it.';
 const ASKS_MAX = 20;                 // open requests kept per tab (claude asks one at a time per agent)
 const QUESTION_TOOLS = ['AskUserQuestion', 'ExitPlanMode'];
 
@@ -261,4 +262,4 @@ function renameCommand(name) {
   return n ? `/rename ${n}` : '';
 }
 
-module.exports = { keepsGui, PROBE_FLAGS, renameCommand, settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
+module.exports = { keepsGui, PROBE_FLAGS, renameCommand, settingLine, SET_MODELS, SET_MODES, isCommand, switchWhy, typesInput, endNote, errorText, GUI_FLAGS, ASKS_MAX, SUPERSEDED_NOTE, guiEligible, cleanTermTabs, switchPlan, guiArgs, userLine, interruptLine, allowLine, denyLine, createLines, askOf, autoAllows, answerLine, nextLive, questionsOf };
