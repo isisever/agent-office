@@ -337,6 +337,8 @@ struct TypingRow: View {
 
 struct ReportsView: View {
   @ObservedObject var link: WorkletModel
+  // Demo/screenshot hook: launch with `-uiReportDetail YES` to open the first report.
+  @State private var showFirst = UserDefaults.standard.bool(forKey: "uiReportDetail")
 
   var body: some View {
     NavigationStack {
@@ -357,6 +359,7 @@ struct ReportsView: View {
       }
       .background(Theme.background)
       .refreshable { await link.refreshReports() }
+      .navigationDestination(isPresented: $showFirst) { if let r = link.reports.first { ReportDetail(report: r) } }
       .navigationTitle("Reports")
       .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ConnectionBadge(state: link.state) } }
     }
@@ -386,7 +389,7 @@ struct ReportDetail: View {
       VStack(alignment: .leading, spacing: Space.m) {
         Text(report.project).font(.subheadline.weight(.semibold)).foregroundColor(Theme.accent)
         Text(report.title).font(.title2.weight(.bold))
-        Text(report.date.formatted(date: .abbreviated, time: .shortened)).font(.footnote).foregroundColor(Theme.muted)
+        Text(report.date.formatted(.dateTime.day().month(.abbreviated).year().hour().minute().locale(Locale(identifier: Bundle.main.preferredLocalizations.first ?? "en")))).font(.footnote).foregroundColor(Theme.muted)
         Text(Bubble.markdown(report.summary)).font(.body).textSelection(.enabled)
       }
       .padding(Space.l).frame(maxWidth: .infinity, alignment: .leading)
