@@ -1686,7 +1686,7 @@ body.voice-recording #voice-hud { border-color: var(--danger, #c0392b); }
    is the Office's own #terminal, filling the window. Removing the class shows the Office exactly as it was. Studio's
    own design (tokens, fonts, sidebar, chat, composer) is in studio.css, scoped under body.studio. */
 #studio-sidebar { display: none; }
-body.studio #sidebar, body.studio #office, body.studio #divider, body.studio #tabs, body.studio #tab-add,
+body.studio #sidebar, body.studio #tabs, body.studio #tab-add,
 body.studio #agent-panel, body.studio #usage-panel, body.studio #machines-panel, body.studio #hq-board,
 body.studio #chat-switch { display: none !important; }
 body.studio #terminal { flex: 1 1 0; max-height: none; }
@@ -1694,6 +1694,23 @@ body.studio #terminal #empty { display: none; }
 /* the HQ board (reports, routines) in place of the chat, opened from Studio's pinned entries */
 body.studio.studio-board #hq-board { display: block !important; flex: 1 1 0; overflow: auto; }
 body.studio.studio-board #terminal { display: none; }
+/* v3.136 the Office scene as a strip above the chat, so running agents are always visible. The divider stays as a
+   thin bar carrying the collapse toggle (the shared officeHidden setting; collapsed pauses the canvas). No drag-resize
+   in Studio (app.js), no strip on the HQ board page. */
+body.studio #office {
+  flex: 0 0 clamp(110px, 20vh, 160px); min-height: 0; margin: 8px 8px 0; width: auto;
+  border: 1px solid var(--st-border); border-bottom: 0; border-radius: var(--st-radius) var(--st-radius) 0 0;
+}
+body.studio #divider {
+  flex: 0 0 12px; margin: 0 8px 4px; cursor: default; filter: none;
+  background: var(--st-side); border: 1px solid var(--st-border); border-radius: 0 0 var(--st-radius-s) var(--st-radius-s);
+}
+body.studio.office-hidden #divider { margin-top: 8px; border-radius: var(--st-radius-s); }
+body.studio #scene-toggle {
+  top: 0; height: 12px; line-height: 10px; color: var(--st-muted); background: transparent; border: 0;
+}
+body.studio.studio-board #office, body.studio.studio-board #divider, body.studio.no-office #office,
+body.studio.no-office #divider { display: none; }
 body.studio #studio-sidebar {
   flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px;
   overflow-y: auto; background: var(--status-bg); border: var(--line-w) solid var(--line); border-radius: var(--radius);

@@ -74,6 +74,18 @@
         },
         "action": "open-board"
       }
+    },
+    {
+      "id": "studio-scene-strip",
+      "experience": "studio",
+      "title": {
+        "en": "See your agents at work",
+        "tr": "Ajanlarınızı çalışırken görün"
+      },
+      "body": {
+        "en": "Studio now shows the office as a strip above the chat, so you can see at a glance which agents are working. Use the small arrow under it to collapse or expand it; collapsed, it uses no CPU.",
+        "tr": "Studio artık ofisi sohbetin üstünde bir şerit olarak gösteriyor; hangi ajanların çalıştığını bir bakışta görürsünüz. Altındaki küçük okla daraltıp genişletin; daraltılmışken işlemci harcamaz."
+      }
     }
   ]
 }

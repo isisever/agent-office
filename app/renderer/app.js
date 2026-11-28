@@ -1262,7 +1262,8 @@ let sceneInit = () => {};   // set by the splitter block below; run once the off
   let endDrag = null;
   div.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || endDrag) return;
-    if (document.body.classList.contains('office-hidden') || /** @type {HTMLElement} */ (e.target).closest('#scene-toggle')) return;
+    if (document.body.classList.contains('office-hidden') || document.body.classList.contains('studio')   // v3.136 Studio's strip has a fixed height
+      || /** @type {HTMLElement} */ (e.target).closest('#scene-toggle')) return;
     e.preventDefault(); // no native text selection starting from the bar
     const pointerId = e.pointerId;
     try { div.setPointerCapture(pointerId); } catch { /* pointer already gone */ }
