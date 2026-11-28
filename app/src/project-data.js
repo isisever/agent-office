@@ -279,6 +279,17 @@ function trustFolder(configDir, home, dir) {
   return changed;
 }
 
+/**
+ * A folder the person trusted in one account is trusted in another account that is about to run claude there (a desk
+ * on its member's own account in the project's folder): only that folder's own entry in the target's .claude.json
+ * (trustFolder). Nothing is written when the source account does not trust the folder. → whether the file was written
+ */
+function carryFolderTrust(fromConfigDir, toConfigDir, home, dir) {
+  if ((fromConfigDir || null) === (toConfigDir || null)) return false;
+  if (!folderTrusted(readJson(claudeJson(fromConfigDir, home))?.projects, dir)) return false;
+  return trustFolder(toConfigDir, home, dir);
+}
+
 // ---- the bypass mode warning (contract v3.76)
 
 const BYPASS_KEY = 'skipDangerousModePermissionPrompt';      // user settings.json; what Claude Code 2.1.325 writes
@@ -430,5 +441,5 @@ function restartAfterMove({ sessionId = null, continues = false, busy = false } 
 
 module.exports = {
   restartAfterMove, claudeRoot, claudeJson, projectPaths, mergeJsonl, mergeFile, mergeTree, mergeEntry, mergeProjectEntries, mergeClaudeJson,
-  historyLines, mergeHistory, trustedIn, folderTrusted, trustFolder, appMadeFolder, bypassAccepted, carryBypassAcceptance, moveProjectData,
+  historyLines, mergeHistory, trustedIn, folderTrusted, trustFolder, carryFolderTrust, appMadeFolder, bypassAccepted, carryBypassAcceptance, moveProjectData,
 };
