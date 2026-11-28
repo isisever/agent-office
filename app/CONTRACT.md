@@ -4149,3 +4149,4 @@ After a usage-limit fallback the chat no longer shows the stopped account's limi
   (`chat.limitSuperseded`). A limit error that ends the transcript stays a normal red error.
 - Not changed: the account choice, `moveProject`, transcript copying, and the limit marks.
 - Tests: `test/chat-superseded.test.mjs`.
+- At app start, a project whose account still has an unexpired limit mark (or usage at 100 %) is moved to the fallback account `planLimitMove` picks (`FB.limitedStartMove`, `moveLimitedAtStart` in main.js) before its "did not finish" prompt is sent, so that prompt runs on an account with quota. The home-account return (`maybeReturn` / `FB.shouldReturn`) is unchanged. Test: `app/test/fallback-startup.test.cjs`.

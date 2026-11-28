@@ -3794,12 +3794,41 @@ app.on('will-quit', (e) => {
   Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, 1000))]).catch(() => {}).finally(() => app.quit());
 });
 
+/**
+ * v3.164 a project whose account still has an active limit is moved to its fallback account before its interrupted
+ * tabs start, so the "did not finish" prompt runs on an account with quota (FB.limitedStartMove decides).
+ */
+function moveLimitedAtStart(ids) {
+  if (!fallbackOn()) return;
+  scanUsage();
+  const now = Date.now();
+  const seen = new Set();
+  for (const id of ids) {
+    const r = P.resolvePty(state, id);
+    const p = r && P.findProject(state, r.project.id);
+    if (!p || seen.has(p.id) || P.engineOf(p) !== 'claude') continue;
+    seen.add(p.id);
+    const account = A.accountOf(state, p);
+    const model = currentModel(p, account, []);
+    const second = FB.secondModel({ current: model, setting: P.limitModelOf(p), order: P.MODEL_ORDER });
+    const own = P.fallbackModelOf(p) ? P.bossModelOf(p) : model;
+    const plan = FB.limitedStartMove({ usage: usages.get(account.id), mark: limitMarks()[account.id], choice: P.backupOf(p), model, own, second, current: account.id, home: p.homeAccount || null, accounts: fallbackAccounts(), marks: limitMarks(), modelMarks: modelMarks(), now });
+    const to = plan && accountById(plan.id);
+    if (!to) continue;
+    const next = P.fallbackTo(state, p.id, to.id, plan.model ? { model: plan.model } : {});
+    if (next === state) continue;
+    commit(next);
+    moveProjectFiles(p, account);
+    fallbackNotice(p, 'switched', T('main.fallbackSwitchedTo', { from: accountName(account), to: accountName(to), limit: T('main.fallbackLimitUnknown'), model: modelLabel(plan.model || model), why: T('main.fallbackWhySame', { model: modelLabel(model) }) }), { from: account.id, to: to.id, model: plan.model || model || null, step: plan.step, ptyIds: accountTabs(p) });
+  }
+}
 /** @returns {{ resumed: { id: string, name: string }[], skipped: { id: string, name: string }[] }} */
 function resumeUnfinished() {
   if (!state || !win || !isLoaded) return { resumed: [], skipped: [] };
   const tabs = unfinishedTabs();
   const nameOf = (id) => ({ id, name: tabs.find((x) => x.id === id)?.name || id });
   const { actions, skipped } = R.unfinishedActions(tabs);
+  moveLimitedAtStart(actions.filter((a) => a.how !== 'type').map((a) => a.id));
   for (const a of actions) {
     if (a.how === 'type') typePrompt(a.id, R.UNFINISHED_PROMPT);
     else startPty(a.id, { sessionId: a.sessionId || null, resume: true, prompt: R.UNFINISHED_PROMPT });
@@ -3866,6 +3895,18 @@ function sleepIdle() {
   }
   if (slept) broadcast();
 }
+function moveProjectFiles(p, from) {
+  const home = app.getPath('home');
+  const to = A.accountOf(state, p);
+  try {
+    PD.moveProjectData({
+      from: from.configDir || null, to: to.configDir || null, home,
+      dirs: [p.dir, ...P.tabsOf(p).filter((t) => !t.shell && P.followsProjectAccount(state, P.tabPtyId(p.id, t.n))).map((t) => t.dir).filter(Boolean)],
+      otherDirs: state.projects.filter((x) => x.id !== p.id).map((x) => x.dir),
+      skipPermissions: P.skipPermissionsArgs(p).length > 0, // v3.76: the old account's bypass mode acceptance goes with it
+    });
+  } catch (e) { console.error('proje verisi taşınamadı:', e.message); }
+}
 // A project moved to another account (contract v3.16): its tabs stop, its Claude Code data (transcripts, file
 // history, prompt history, the .claude.json projects entry; src/project-data.js) is copied into the new account's
 // folder and merged there, and each tab starts again in the conversation it was in (--resume <its session>, else
@@ -3878,7 +3919,6 @@ function sleepIdle() {
 function moveProject(projectId, from, { carryOn = [], prompt = '' } = {}) {
   const p = P.findProject(state, projectId);
   if (!p || P.engineOf(p) !== 'claude') return; // accounts change nothing for agy or Command Code (v3.22, v3.25)
-  const home = app.getPath('home');
   const plan = [];
   // v3.83 fix: only the tabs on the project's account move. A desk on its member's own account keeps running: its
   // account did not change, and its pid file and transcripts are not in `from`.
@@ -3897,15 +3937,7 @@ function moveProject(projectId, from, { carryOn = [], prompt = '' } = {}) {
     // v3.111: a tab stopped by the limit gets the limit carry-on prompt (re-run the sub-agents that failed on it)
     plan.push({ id, opts: { ...PD.restartAfterMove({ sessionId: validSid(sid) || null, continues: !r?.tab || Boolean(r.tab.worktree), busy }, prompt && carryOn.includes(id) ? prompt : R.UNFINISHED_PROMPT), keepGui: wasGui } });
   }
-  const to = A.accountOf(state, p);
-  try {
-    PD.moveProjectData({
-      from: from.configDir || null, to: to.configDir || null, home,
-      dirs: [p.dir, ...P.tabsOf(p).filter((t) => !t.shell && P.followsProjectAccount(state, P.tabPtyId(p.id, t.n))).map((t) => t.dir).filter(Boolean)],
-      otherDirs: state.projects.filter((x) => x.id !== p.id).map((x) => x.dir),
-      skipPermissions: P.skipPermissionsArgs(p).length > 0, // v3.76: the old account's bypass mode acceptance goes with it
-    });
-  } catch (e) { console.error('proje verisi taşınamadı:', e.message); }
+  moveProjectFiles(p, from);
   for (const { id, opts } of plan) startPty(id, opts);
 }
 

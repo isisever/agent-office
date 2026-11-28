@@ -491,6 +491,17 @@ function planLimitMove({ choice = null, model = null, own = model, second = null
   return { wait: ends.length ? Math.min(...ends) : null, reason: !others.length ? 'none' : !loggedIn.length ? 'notLoggedIn' : 'allLimited' };
 }
 
+/**
+ * v3.164 a project about to start its interrupted tab on an account still at its limit (usage at 100 % or an unexpired
+ * mark) → the move planLimitMove picks ({ id, model, step }), or null (the account is free, or there is nowhere to go:
+ * it then starts where it is). Takes planLimitMove's arguments plus the account's usage and mark.
+ */
+function limitedStartMove({ usage = null, mark = null, now = Date.now(), current, ...rest }) {
+  if (!limitedUntil({ usage, mark, now })) return null;
+  const plan = planLimitMove({ ...rest, current, now });
+  return plan.id ? plan : null;
+}
+
 /** The model of the session's last real answer (an assistant entry's message.model, not '<synthetic>'), or null. */
 function modelFromTranscript(tail) {
   const lines = String(tail || '').split('\n');
@@ -574,6 +585,6 @@ module.exports = {
   isUsageLimitText, isCompactionLimitText, parseResetText, limitFromTranscript, plainText, scanPty,
   inputAfter, startInput, compactionSighting, compactionContradicted, compactionVerdict, compactionHit, limitMark, mergeMarks,
   limitedUntil, markFor, fullness, pickBackup, switchAllowed, shouldReturn, normalizeMarks,
-  FAMILIES, modelFamily, limitFamily, modelMarkKey, modelLimitedUntil, normalizeModelMarks, secondModel, planLimitMove,
+  FAMILIES, modelFamily, limitFamily, modelMarkKey, modelLimitedUntil, normalizeModelMarks, secondModel, planLimitMove, limitedStartMove,
   modelFromTranscript, subagentLimits,
 };
