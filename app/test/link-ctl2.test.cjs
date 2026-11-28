@@ -118,3 +118,48 @@ test('ctl-proj answers with the project row and the host sessions', () => {
   x.l.handleCtl(x.conn, x.dev, { t: 'ctl-proj', id: 'r3', project: 'nope' });
   assert.deepEqual(x.sent.at(-1), { t: 'ctl-proj', id: 'r3', project: 'nope', error: 'unknown-project' });
 });
+
+test('ctl-send / ctl-answer / ctl-stop reach the host and are acked; refusals carry a reason', () => {
+  const x = fakeLink(['ctl', 'sess', 'ctl2']);
+  const seen = [];
+  x.l.on('ctl-op', (o) => { seen.push([o.op, o.project, o.text, o.askId, o.answer]); o.reply(o.project === 'p1' ? 'ok' : 'not-running'); });
+  const go = (m) => { x.l.handleCtl(x.conn, x.dev, m); return x.sent.at(-1); };
+  assert.deepEqual(go({ t: 'ctl-send', id: 's1', project: 'p1', text: ' hi\nthere ' }), { t: 'ctl-ack', id: 's1', op: 'send', status: 'queued' });
+  assert.deepEqual(seen.at(-1), ['send', 'p1', 'hi there', undefined, undefined]);
+  assert.deepEqual(go({ t: 'ctl-send', id: 's2', project: 'p2', text: 'x' }), { t: 'ctl-ack', id: 's2', op: 'send', status: 'rejected', reason: 'not-running' });
+  assert.deepEqual(go({ t: 'ctl-send', id: 's3', project: 'p1', text: '   ' }), { t: 'ctl-ack', id: 's3', op: 'send', status: 'rejected', reason: 'empty' });
+  assert.deepEqual(go({ t: 'ctl-answer', id: 'a1', project: 'p1', askId: 'k1', answer: { decision: 'allow' } }), { t: 'ctl-ack', id: 'a1', op: 'answer', status: 'done' });
+  assert.deepEqual(seen.at(-1), ['answer', 'p1', undefined, 'k1', { decision: 'allow' }]);
+  assert.equal(go({ t: 'ctl-answer', id: 'a2', project: 'p2', askId: 'k1', answer: { text: 'y' } }).reason, 'not-running');
+  assert.deepEqual(go({ t: 'ctl-stop', id: 't1', project: 'p1' }), { t: 'ctl-ack', id: 't1', op: 'stop', status: 'done' });
+  assert.equal(go({ t: 'ctl-stop', id: 't2', project: 'p2' }).status, 'rejected');
+  assert.equal(go({ t: 'ctl-stop', id: 't3', project: 'a:b' }).reason, 'unknown-project');
+  x.l.removeAllListeners('ctl-op');
+  assert.equal(go({ t: 'ctl-stop', id: 't4', project: 'p1' }).reason, 'failed');   // no host handler
+  // a phone without ctl2 is ignored
+  const old = fakeLink(['ctl', 'sess']);
+  old.l.handleCtl(old.conn, old.dev, { t: 'ctl-stop', id: 't5', project: 'p1' });
+  assert.ok(!old.sent.some((m) => m.t === 'ctl-ack'));
+});
+
+test('ctl-ask is pushed when an ask appears and ctl-ask-clear when it goes; only to ctl2 phones; no repeat', () => {
+  const x = fakeLink(['ctl', 'sess', 'ctl2']);
+  const old = fakeLink(['ctl', 'sess']);
+  x.l.ctlConns.set(x.dev.pub, { conn: x.conn, sentJson: '', statuses: new Map() });
+  old.l.ctlConns.set(old.dev.pub, { conn: old.conn, sentJson: '', statuses: new Map() });
+  const ask = { askId: 'k1', kind: 'question', at: 5, tool: 'Ask', detail: 'which one?', options: [{ key: '0', label: 'A' }, { key: '1', label: 'B' }] };
+  x.l.setCtlAsks([{ project: 'p1', ask }]);
+  old.l.setCtlAsks([{ project: 'p1', ask }]);
+  const asks = x.sent.filter((m) => m.t === 'ctl-ask');
+  assert.equal(asks.length, 1);
+  assert.deepEqual([asks[0].project, asks[0].ask.askId, asks[0].ask.options.length], ['p1', 'k1', 2]);
+  assert.ok(Number.isInteger(asks[0].seq));
+  assert.ok(!old.sent.some((m) => m.t === 'ctl-ask'));
+  x.l.setCtlAsks([{ project: 'p1', ask }]);   // unchanged: nothing more
+  assert.equal(x.sent.filter((m) => m.t === 'ctl-ask').length, 1);
+  x.l.setCtlAsks([]);
+  const clear = x.sent.filter((m) => m.t === 'ctl-ask-clear');
+  assert.equal(clear.length, 1);
+  assert.deepEqual([clear[0].project, clear[0].askId], ['p1', 'k1']);
+  assert.ok(clear[0].seq > asks[0].seq);
+});

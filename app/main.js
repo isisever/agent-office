@@ -197,6 +197,7 @@ function notify(title, body, projectId) {
   n.show();
 }
 function updateAttention() {
+  pushCtlAsks();   // v3.178 phones see an ask appear or go
   if (!lastOffice) return;
   const r = N.nextAttention(attnState, state.projects, N.withWaits(lastOffice, guiWaits()), seenId(), sessionAliases());
   attnState = r.state;
@@ -1334,7 +1335,7 @@ function guiAsk(id, ask, input, { autoApprove, mailGuard }) {
   if (GS.autoAllows({ tool: ask.tool, input, autoApprove, mailGuard, canAutoApprove: AA ? AA.canAutoApprove : null })) return true;
   const a = activity.get(id);
   if (a) a.at = Date.now();
-  setImmediate(() => { if (lastOffice) updateAttention(); });   // the project waits for the person (badge, notification)
+  setImmediate(() => { pushCtlAsks(); if (lastOffice) updateAttention(); });   // the project waits for the person (badge, notification)
   return false;
 }
 /** v3.108 the open requests of every GUI tab, as the plugin's `waiting` of the project they belong to (attention). */
@@ -3668,6 +3669,8 @@ function startLink() {
       // v3.178 the paired phone is the owner: its HQ order mints a typed request id like the person's own prompt
       type: () => { hqLastKey = Date.now(); hqMintTyped(); return typePrompt(HQ.HQ_ID, text); },
       start: () => { hqMintTyped(); hqWanted = true; startPty(HQ.HQ_ID, { resume: true, prompt: text, forcePrompt: true }); hqRestarter.tick(true); } }),
+    ctlOp,   // v3.178 ctl2: a phone sends, answers or stops
+    ctlAsks: (sink) => { ctlAsksSink = sink; ctlAsksKey = ''; pushCtlAsks(); },
     ctlProj: ctlProjSessions,   // v3.178 a phone's project screen: running + recent sessions
     ctlReports: ctlReportsList,   // v3.121 the newest HQ reports for a phone controller
     stoppedHere: (id) => stoppedHere.get(String(id)) || 0,   // v3.99 the person's own stop: no remote revive for 10 minutes
@@ -6103,7 +6106,9 @@ ipcMain.handle('chat:pick', async (_e, id, wantImages) => {
   return { paths, images, dirs };
 });
 // The person typed in the chat: typed into the tab like a prompt (an HQ request is minted as if typed in its terminal).
-ipcMain.handle('chat:send', (_e, id, text, images) => {
+ipcMain.handle('chat:send', (_e, id, text, images) => chatSend(id, text, images));
+/** The body of chat:send, shared with a phone's ctl-send. */
+function chatSend(id, text, images) {
   id = String(id);
   const r = P.resolvePty(state, id);
   if (!r || r.tab?.shell || P.engineOf(r.project) !== 'claude') return 'unsupported';
@@ -6131,7 +6136,7 @@ ipcMain.handle('chat:send', (_e, id, text, images) => {
   if (typePrompt(id, [body, ...paths.map(FM.mention)].filter(Boolean).join(' '))) { boardNoteRequest(id, r, body); return 'ok'; }
   for (const p of paths) { try { fs.rmSync(p); } catch { /* gone */ } }   // nothing was typed: its files go at once
   return 'not-running';
-});
+}
 // --- v3.154 Studio chat: "!" commands and Run buttons (src/chat-bash.mjs). Only a person's action starts one: a "!"
 // message or a click on a Run button. The command runs in the project's folder in the login shell with the account's
 // env (as other shell spawns); its output streams to the chat bubble and, once finished, goes in front of the next message.
@@ -6473,6 +6478,67 @@ function liveSids() {
   for (const how of asleep.values()) { const s = validSid(how?.sessionId); if (s) out.add(s); }   // v3.118 a sleeping tab resumes its session on wake
   return out;
 }
+/** v3.178 a phone's open approvals as [{ project, ask }] for the link (ctl-ask / ctl-ask-clear): options of a question are its first question's labels. */
+function ctlAskList() {
+  const out = [];
+  for (const [id, t] of terms) {
+    if (!t.gui) continue;
+    const p = P.resolvePty(state, id);
+    if (!p || p.tab) continue;
+    for (const a of t.asks()) {
+      const options = a.kind === 'question' ? (a.questions?.[0]?.options || []).slice(0, 8).map((o, i) => ({ key: String(i), label: String(o?.label || o || '').slice(0, 40) })).filter((o) => o.label) : [];
+      out.push({ project: id, ask: { askId: a.id, kind: a.kind, at: Number(a.since) || 0, tool: String(a.name || a.tool || '').slice(0, 60), detail: LC.cleanLine(HQ.redact(String(a.detail || '')), 300), ...(options.length ? { options } : {}) } });
+    }
+  }
+  return out;
+}
+let ctlAsksSink = null;
+let ctlAsksKey = '';
+/** Pushes the asks to the phones when they changed (called from updateAttention and on a new ask). */
+function pushCtlAsks() {
+  if (!ctlAsksSink) return;
+  try {
+    const list = ctlAskList();
+    const key = JSON.stringify(list);
+    if (key === ctlAsksKey) return;
+    ctlAsksKey = key;
+    ctlAsksSink(list);
+  } catch (e) { console.error('ctl asks:', e.message); }
+}
+/** v3.178 a phone's ctl-send / ctl-answer / ctl-stop → 'ok' or an ack refusal reason. */
+function ctlOp(op, id, { text, askId, answer }) {
+  id = String(id);
+  const r = P.resolvePty(state, id);
+  if (!r || r.tab) return 'unknown-project';
+  if (P.engineOf(r.project) !== 'claude') return 'engine';
+  const t = terms.get(id);
+  if (op === 'send') {
+    if (!t && win && isLoaded && !handoffLocked(id) && String(text || '').trim()) {   // not running: start/resume it with this message like the GUI would
+      boardNoteRequest(id, r, text);
+      startPty(id, { resume: true, prompt: text, forcePrompt: true });
+      return 'ok';
+    }
+    const res = chatSend(id, text, []);
+    const map = { 'too-long': 'too-large', permission: 'busy', draft: 'busy', unsupported: 'engine' };
+    return res === 'ok' ? 'ok' : (map[res] || (['not-running', 'locked', 'empty', 'busy', 'too-large'].includes(res) ? res : 'failed'));
+  }
+  if (!t?.gui) return 'not-running';
+  if (op === 'stop') return t.interrupt() ? 'ok' : 'not-running';
+  if (handoffLocked(id)) return 'locked';
+  const ask = t.asks().find((a) => a.id === askId);
+  if (!ask) return 'stale';
+  let a;
+  if (answer.decision) a = { allow: answer.decision === 'allow' };
+  else {
+    const q = ask.questions?.[0];
+    const label = answer.option != null ? q?.options?.[Number(answer.option)]?.label ?? q?.options?.[Number(answer.option)] : answer.text;
+    if (ask.kind === 'question') { if (!q || !label) return 'failed'; a = { allow: true, answers: { [q.question]: String(label) } }; }
+    else a = { allow: true, message: String(answer.text || '') };   // a plan / permission: a typed text is a message
+  }
+  const res = t.answer(askId, a);
+  if (res === 'ok') { const act = activity.get(id); if (act) act.at = Date.now(); setImmediate(() => { if (lastOffice) updateAttention(); pushCtlAsks(); }); return 'ok'; }
+  return res === 'gone' ? 'stale' : 'failed';
+}
 /** v3.178 the sessions of one project for a phone: the running one first (from its tab), then the recent ones, newest first. */
 function ctlProjSessions(id) {
   id = String(id);
@@ -6482,10 +6548,12 @@ function ctlProjSessions(id) {
   const { configDir } = A.accountOf(state, r.project);
   const out = [];
   const main = validSid(t?.sessionId?.() || '') || (t ? chatSession(id, r, configDir) : '');
-  if (main) out.push({ sid: main, title: 'Current session', at: Date.now(), running: Boolean(t), main: true });
-  const recent = CHAT.sessionList(TIO.historyDirsOf(r.dir, configDir, app.getPath('home')), { exclude: new Set(main ? [main] : []) }) || [];
+  const all = CHAT.sessionList(TIO.historyDirsOf(r.dir, configDir, app.getPath('home')), {}) || [];
+  const mainRow = all.find((x) => x.id === main);
+  if (main) out.push({ sid: main, title: String(mainRow?.title || mainRow?.prompt || 'Current session').slice(0, 80), at: Date.now(), running: Boolean(t), main: true });
+  const recent = all.filter((x) => x.id !== main);
   for (const s of recent) if (validSid(s.id)) out.push({ sid: s.id, title: String(s.title || s.prompt || '').slice(0, 80), at: Number(s.at) || 0, running: false, main: false });
-  return { sessions: out.slice(0, 30) };
+  return { sessions: out.slice(0, 30), pending: ctlAskList().filter((x) => x.project === id).map((x) => x.ask) };
 }
 ipcMain.handle('chat:sessions', (_e, id) => chatSessionsOf(String(id), terms.get(String(id))) || []);
 ipcMain.handle('chat:resume', (_e, id, sid) => {

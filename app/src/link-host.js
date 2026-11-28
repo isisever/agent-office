@@ -212,6 +212,8 @@ function setupLink(d) {
           reply(why ? 'rejected' : 'queued', why || undefined);
         }, () => reply('rejected', 'failed'));
       });
+      if (d.ctlOp) link.on('ctl-op', ({ op, project, text, askId, answer, reply }) => { Promise.resolve().then(() => d.ctlOp(op, project, { text, askId, answer })).then((r) => reply(r), () => reply('failed')); });
+      if (d.ctlAsks) d.ctlAsks((list) => link.setCtlAsks(list));   // the app calls this with its open asks whenever they change
       if (d.ctlProj) link.on('ctl-proj', ({ project, reply }) => { Promise.resolve().then(() => d.ctlProj(project)).then((r) => reply(r?.sessions, r?.pending), () => reply([])); });
       if (d.ctlReports) link.on('ctl-reports', ({ limit, reply }) => { Promise.resolve().then(() => d.ctlReports?.(limit)).then(reply, () => reply([])); });
       link.on('report', ({ device, id, report }) => d.onReport?.({ id, machine: device.name, pub: device.pub, report }));
