@@ -537,7 +537,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   async function sleepNow(/** @type {string} */ id, /** @type {'sleep'|'wake'} */ op) {
     const r = await api.projects.sleepNow(id, op).catch(() => null);
     if (r && r.ok === false) {
-      const note = el('div', { class: 'st-ctx st-sleep-note', role: 'status', style: 'left:16px;bottom:16px;top:auto;padding:8px 12px' }, t('studio.sleepRefused', { reason: t(`studio.sleepWhy_${r.reason}`) }));
+      const why = t(`studio.sleepWhy_${r.reason}`);
+      const note = el('div', { class: 'st-ctx st-sleep-note', role: 'status', style: 'left:16px;bottom:16px;top:auto;padding:8px 12px' }, t('studio.sleepRefused', { reason: why }));
       document.body.append(note);
       setTimeout(() => note.remove(), 4000);
     }

@@ -611,7 +611,8 @@ test('shell status: tabStateOf types into a shell tab; tabWorkRunning still sees
   // HQ relaunch (account/model change) never kills HQ while work runs, a background shell included
   assert.match(MAIN, /relaunch && terms\.has\(HQ\.HQ_ID\) && tabStateOf\(HQ\.HQ_ID\) !== 'busy' && !tabWorkRunning\(HQ\.HQ_ID\)\) killPty\(HQ\.HQ_ID\)/);
   // v3.33 sleep/stop refuse a tab with work running ('ready' includes shell)
-  assert.match(fnBody('projectOp'), /if \(tabWorkRunning\(id\)\) return \{ ok: false, reason: 'busy' \}/);
+  // v3.171 the check moved into PO.opGuard: projectOp passes tabWorkRunning as `working`
+  assert.match(fnBody('projectOp'), /PO\.opGuard\([\s\S]*working: t \? tabWorkRunning\(id\) : false/);
 });
 
 test('v3.48 review 5: report.md keeps report2 sizes (40 KB summary cut with the marker, 30 commits) and fences the summary', () => {

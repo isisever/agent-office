@@ -1,0 +1,17 @@
+{
+  "version": "0.22.51",
+  "items": [
+    {
+      "id": "studio-project-menu-sleep",
+      "experience": "studio",
+      "title": {
+        "en": "Change account and Sleep from a project's right-click menu",
+        "tr": "Projeye sağ tıklayınca hesap değiştir ve uyut"
+      },
+      "body": {
+        "en": "Right-click a project in the Studio sidebar to pick its account or put it to sleep, so a project you are not working on stops using resources. Sleep waits while the project is working, waiting for your approval or has unsent input, and says why.",
+        "tr": "Studio kenar çubuğunda bir projeye sağ tıklayıp hesabını seçebilir ya da onu uyutabilirsiniz; üzerinde çalışmadığınız proje böylece kaynak harcamaz. Proje çalışırken, onayınızı beklerken ya da gönderilmemiş yazı varken uyutma yapılmaz ve nedeni söylenir."
+      }
+    }
+  ]
+}
