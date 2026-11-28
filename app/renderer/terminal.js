@@ -4,7 +4,7 @@ import { Terminal } from '../node_modules/@xterm/xterm/lib/xterm.mjs';
 import { FitAddon } from '../node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
 import { t } from './i18n.js';
 import { platform, isMac, isModKey, keyOf } from './platform.js';
-import { translateKey, isPasteKey, pasteAction } from '../src/terminal-keys.mjs';
+import { translateKey, isPasteKey, pasteAction, MOUSE_OFF, shouldReportSize } from '../src/terminal-keys.mjs';
 import { terminalTheme } from '../src/appearance.mjs';
 
 // Text lives in locales/*.json (terminal.exited). A line already written to the terminal is not rewritten on a language change.
@@ -42,6 +42,7 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     cursorBlink: true,
     allowProposedApi: true,
     macOptionIsMeta: true,
+    macOptionClickForcesSelection: true, // Option+drag selects text even while claude has mouse reporting on
     scrollback: 5000,
     theme: xtermTheme(theme),
   });
@@ -57,6 +58,7 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
   const resize = () => {
     if (!visible()) return; // hidden terminal: resized once visible
     try { fit.fit(); } catch { return; }
+    if (!shouldReportSize({ dragging: document.body.classList.contains('dragging') })) return; // sent when the drag ends
     if (term.cols > 0 && term.rows > 0) pty.resize(projectId, term.cols, term.rows);
   };
   const ro = new ResizeObserver(() => requestAnimationFrame(resize));
@@ -145,6 +147,7 @@ export function mountTerminal(el, { projectId, theme, restartable = !String(proj
     /** pty exited: Enter restarts it (if not restartable, it stops quietly). */
     exit() {
       dead = true;
+      term.write(MOUSE_OFF); // the exited TUI cannot turn its mouse reporting off; selection must work again
       if (!restartable || quietExit) { quietExit = false; return; }
       term.write(`\r\n\x1b[2m${t('terminal.exited')}\x1b[0m\r\n`);
     },

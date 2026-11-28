@@ -1289,12 +1289,13 @@ let sceneInit = () => {};   // set by the splitter block below; run once the off
     const term = panes.get(activePty())?.term;
     const termHadSelection = !!term?.hasSelection?.();
     let lastH = 0;
+    let raf = 0;
     const move = (/** @type {PointerEvent} */ ev) => {
       if (ev.pointerId !== pointerId) return;
       if ((ev.buttons & 1) === 0) { end(); return; } // the release was lost somewhere
       const max = window.innerHeight * 0.8;
       lastH = Math.round(Math.min(max, Math.max(120, window.innerHeight - ev.clientY - 8)));
-      root.style.setProperty('--term-h', lastH + 'px');
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; root.style.setProperty('--term-h', lastH + 'px'); }); // one layout per frame
     };
     const onPointerEnd = (/** @type {PointerEvent} */ ev) => { if (ev.pointerId === pointerId) end(); };
     const onVisibility = () => { if (document.hidden) end(); };
@@ -1309,8 +1310,10 @@ let sceneInit = () => {};   // set by the splitter block below; run once the off
       window.removeEventListener('blur', end);
       document.removeEventListener('visibilitychange', onVisibility);
       try { if (div.hasPointerCapture(pointerId)) div.releasePointerCapture(pointerId); } catch { /* ignore */ }
+      if (raf) { cancelAnimationFrame(raf); raf = 0; if (lastH) root.style.setProperty('--term-h', lastH + 'px'); }
       document.body.classList.remove('dragging');
       if (lastH) store.set('termHeight', lastH);
+      requestAnimationFrame(() => panes.get(activePty())?.term.fit()); // the pty got no resizes while dragging
       // drop any selection the drag may have started (document or the active xterm)
       window.getSelection()?.removeAllRanges();
       try { if (!termHadSelection) term?.clearSelection?.(); } catch { /* ignore */ }
