@@ -54,7 +54,7 @@ test('pickerState: terminal tabs and busy chats cannot switch; values are checke
   const base = { lock: '', modeEnabled: false, managerNote: false };
   assert.deepEqual(pickerState(null), { enabled: false, model: '', mode: 'default', why: 'terminal', ...base });
   assert.equal(pickerState({ live: { busy: false }, asks: [], ended: { code: 0 } }).why, 'terminal');
-  assert.deepEqual(pickerState({ live: { busy: true }, asks: [] }, { model: 'opus' }), { enabled: false, model: 'opus', mode: 'default', why: 'busy', ...base });
+  assert.deepEqual(pickerState({ live: { busy: true }, asks: [] }, { model: 'opus' }), { enabled: false, model: 'opus', mode: 'default', why: 'busy', ...base, modeEnabled: true });
   assert.equal(pickerState({ live: { busy: false }, asks: [{ id: 'a' }] }).why, 'busy');
   assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'gpt', mode: 'bypassPermissions' }), { enabled: true, model: '', mode: 'default', why: '', lock: '', modeEnabled: true, managerNote: false });
   assert.deepEqual(pickerState({ live: { busy: false }, asks: [] }, { model: 'haiku', mode: 'plan' }), { enabled: true, model: 'haiku', mode: 'plan', why: '', lock: '', modeEnabled: true, managerNote: false });
@@ -170,4 +170,13 @@ test('the composer and start-screen pickers are drawn through syncSelect, never 
   }
   const sync = fs.readFileSync(new URL('../renderer/select-sync.js', import.meta.url), 'utf8');
   assert.match(sync, /document\.activeElement === sel/);
+});
+
+test('v3.147 pickerState: the permission mode stays changeable mid-turn unless locked; the model waits', () => {
+  const run = pickerState({ live: { busy: true }, asks: [] });
+  assert.equal(run.enabled, false);
+  assert.equal(run.modeEnabled, true);
+  assert.equal(pickerState({ live: { busy: false }, asks: [{ id: 'a' }] }).modeEnabled, true);
+  assert.equal(pickerState({ live: { busy: true }, asks: [], modeLock: 'desk' }).modeEnabled, false);
+  assert.equal(pickerState({ live: { busy: true }, asks: [], ended: { code: 0 } }).modeEnabled, false);
 });

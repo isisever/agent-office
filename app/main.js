@@ -6090,7 +6090,8 @@ ipcMain.handle('chat:setting', async (e, id, key, value) => {
   const t = terms.get(String(id));
   if (!t?.gui || typeof t.setting !== 'function') return 'not-running';
   if (!STU.settingAllowed(guiModeLock.get(String(id)) || '', String(key))) return 'locked';
-  if (t.live().busy || t.asks().length) return 'busy';
+  // v3.147 only the model waits for the turn's end; the permission mode is switched at runtime, mid-turn too
+  if (String(key) !== 'mode' && (t.live().busy || t.asks().length)) return 'busy';
   // v3.120 a new tab whose initialize answer has not come yet has no model list: 'not-running' (startStep retries)
   if (STU.modelListPending(String(key), typeof t.modelsKnown === 'function' ? t.modelsKnown() : undefined)) return 'not-running';
   // v3.120 Studio UX: a model only from the list this session reported (the fallback aliases when it reported none)

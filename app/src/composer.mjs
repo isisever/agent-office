@@ -152,7 +152,8 @@ export function pickerState(gui, settings = {}) {
   // v3.120 the project's Auto-approve is on but this session runs another mode: the manager still answers its prompts
   const managerNote = Boolean(gui) && gui.autoApprove === true && !lock && mode !== 'auto';
   if (!gui || gui.ended) return { enabled: false, model, mode, why: 'terminal', lock, modeEnabled: false, managerNote: false };
-  if (gui.live?.busy || (gui.asks || []).length) return { enabled: false, model, mode, why: 'busy', lock, modeEnabled: false, managerNote };
+  // v3.147 the permission mode stays changeable mid-turn (claude's set_permission_mode applies to its next tool request)
+  if (gui.live?.busy || (gui.asks || []).length) return { enabled: false, model, mode, why: 'busy', lock, modeEnabled: !lock, managerNote };
   return { enabled: true, model, mode, why: '', lock, modeEnabled: !lock, managerNote };
 }
 
