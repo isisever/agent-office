@@ -305,7 +305,22 @@ function strHash(s) {
 // ---------- layout ----------
 let L
 
-function computeLayout() {
+// Desk grid for a hall of w x h logical pixels (first seat row to the bottom margin). The comfortable pitch is used
+// while it holds `need` desks; otherwise the grid tightens step by step (never a fixed row cap), so the desk count
+// grows with the number of agents until even the densest step is full. Pure: also used by the tests.
+export const DESK_TIERS = [[40, 38], [36, 34], [32, 30]]
+export function deskGrid(w, h, need = 0) {
+  let best = null
+  for (const [pitchX, pitchY] of DESK_TIERS) {
+    const rows = Math.max(1, 1 + Math.floor(h / pitchY))
+    const cols = Math.max(1, Math.floor(w / pitchX))
+    best = { rows, cols, pitchX, pitchY, count: rows * cols }
+    if (best.count >= need) break
+  }
+  return best
+}
+
+function computeLayout(need = 0) {
   const B = 4
   const wallFaceBottom = 26 // back wall of the top rooms
   const dividerY = 90 // wall between the rooms and the work hall
@@ -318,12 +333,9 @@ function computeLayout() {
   const corridorX = 16
   const aisle0 = hallFloorY + 9
   const firstSeat = hallFloorY + 35 // keep the first row's labels off the whiteboard
-  const pitchY = 38
-  const rows = Math.max(1, Math.min(4, 1 + Math.floor((LH - B - 16 - firstSeat) / pitchY)))
-  const pitchX = 40
   const x0 = 34
   const x1 = LW - B - 30
-  const cols = Math.max(1, Math.floor((x1 - x0) / pitchX))
+  const { rows, cols, pitchX, pitchY } = deskGrid(x1 - x0, LH - B - 16 - firstSeat, need)
   const offX = x0 + (x1 - x0 - cols * pitchX) / 2 + pitchX / 2
   const desks = []
   for (let r = 0; r < rows; r++)
@@ -1456,10 +1468,12 @@ function shortType(type) {
 function renderFrame(now, data, focus = '', selected = null) {
   hits = []
   useTheme(themeFor(focus || data.project))
-  const key = `${LW}x${LH}:${themeName}`
+  // desks wanted: every worker on the floor plus two desks per staff member (staff take at most half the desks)
+  const deskNeed = data.workers.length + 2 * (Array.isArray(data.staff) ? data.staff.length : 0)
+  const key = `${LW}x${LH}:${themeName}:${deskGrid(LW - 68, LH - 168, deskNeed).pitchX}`
   if (backgroundKey !== key) {
     fb = new Uint32Array(LW * LH)
-    L = computeLayout()
+    L = computeLayout(deskNeed)
     // seats reset only when the size changes: a focus/theme change must not shuffle the desks
     if (layoutKey !== `${LW}x${LH}`) {
       layoutKey = `${LW}x${LH}`
