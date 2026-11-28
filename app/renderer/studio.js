@@ -16,6 +16,8 @@ import { teamGroups, whoOptions, whoPlan } from '../src/studio-team.mjs';
 import { hasText } from './i18n.js';
 import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText, defaultModelName } from '../src/studio-ux.mjs';
 import { syncSelect, setProp } from './select-sync.js';
+import { remoteGroups, remoteDot, machineTag } from '../src/studio-remote.mjs';
+import { mountRemoteView } from './remote-view.js';
 
 const REFRESH_MS = 5000;   // v3.120 Studio UX: the rows' live state (working, waiting) and the header follow within 5 s
 const THEME_KEY = 'ao.studio.theme';   // Studio's own light / dark choice ('system' | 'light' | 'dark', this window only)
@@ -353,6 +355,56 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     return el('div', { class: `st-group${g.current ? ' current' : ''}` }, head, budgetBar(g.id), ...kids);
   }
 
+  // ---- v3.153 paired machines' projects as rows of the Projects list: same row shape, a small machine tag, dimmed while
+  // that machine is offline. Only what the device link allows: session view, command box, start/wake/sleep/stop/restart ----
+  const rview = api.link?.sessOpen ? mountRemoteView({ api, t }) : null;
+  const remoteOpen = /** @type {Set<string>} */ (new Set());   // expanded remote rows (this window)
+  const remoteDrafts = /** @type {Map<string, string>} */ (new Map());
+  const remoteBusy = /** @type {Set<string>} */ (new Set());
+  let remoteLink = /** @type {any} */ (null);
+  function remoteEl(/** @type {any} */ g) {
+    const open = remoteOpen.has(g.key) || Boolean(query);
+    const dot = remoteDot(g);
+    const toggle = () => {
+      if (remoteOpen.has(g.key)) { remoteOpen.delete(g.key); rview?.close(); } else {
+        remoteOpen.add(g.key);
+        if (g.canView && rview) rview.open({ key: g.key, pub: g.pub, project: g.projectId, name: g.name, machine: g.machine, status: g.status || 'idle' });
+      }
+      draw();
+    };
+    const head = el('div', { class: `st-group-head st-proj st-remote${g.dim ? ' st-dim' : ''}`, title: g.dim ? `${g.name} · ${t('studio.remote.offline', { machine: g.machine })}` : `${g.name} · ${t('studio.remote.runsOn', { machine: g.machine })}` },
+      el('button', { class: 'st-caret', 'aria-expanded': String(open), title: g.name, onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); toggle(); } }, icon('chevron', 12)),
+      el('span', { class: 'st-proj-text', onclick: toggle },
+        el('span', { class: 'st-project' }, g.name),
+        el('span', { class: 'st-acct st-mach', title: t('studio.remote.runsOn', { machine: g.machine }) }, [machineTag(g), g.account].filter(Boolean).join(' · '))),
+      dot ? el('span', { class: `sb-dot ${dot}`, 'aria-hidden': 'true' }) : null);
+    const kids = [];
+    if (open) {
+      if (g.dim) kids.push(el('div', { class: 'st-sub' }, t('studio.remote.offline', { machine: g.machine })));
+      if (g.canView && rview) kids.push(el('div', { class: 'st-row st-session', onclick: () => rview.open({ key: g.key, pub: g.pub, project: g.projectId, name: g.name, machine: g.machine, status: g.status || 'idle' }) },
+        el('span', { class: 'sb-dot' }), el('span', { class: 'st-title' }, t('studio.remote.view'))));
+      if (g.canSend && api.link?.send) {
+        const input = /** @type {HTMLInputElement} */ (el('input', { name: 'text', maxlength: 8192, placeholder: t('devices.prompt', { project: g.name }), oninput: () => remoteDrafts.set(g.key, input.value) }));
+        input.value = remoteDrafts.get(g.key) || '';
+        kids.push(el('form', { class: 'st-rcmd', onsubmit: (/** @type {Event} */ e) => {
+          e.preventDefault();
+          if (!input.value.trim()) return;
+          const text = input.value; remoteDrafts.delete(g.key); input.value = '';
+          Promise.resolve(api.link.send(g.pub, g.projectId, text)).then(() => refresh(), () => {});
+        } }, input, el('button', { class: 'st-add', type: 'submit', title: t('devices.send') }, icon('plus', 14))));
+      } else if (!g.dim && g.engine && g.engine !== 'claude') kids.push(el('div', { class: 'st-sub' }, t('devices.claudeOnly')));
+      for (const o of (remoteLink?.outgoing || []).filter((/** @type {any} */ o) => o.pub === g.pub && o.project === g.projectId).slice(0, 2)) {
+        kids.push(el('div', { class: `st-sub cmd-${o.status}` }, `${o.firstLine} — ${o.status === 'rejected' ? t('devices.cmd.rejected', { reason: t(`devices.reason.${o.reason}`) }) : t(`devices.cmd.${o.status}`)}`));
+      }
+      if (g.buttons.length) kids.push(el('div', { class: 'st-rops' }, ...g.buttons.map((/** @type {string} */ b) => el('button', { class: 'st-rop', disabled: remoteBusy.has(g.key) ? 'disabled' : false, onclick: () => {
+        if (remoteBusy.has(g.key)) return;
+        remoteBusy.add(g.key); draw();
+        Promise.resolve(api.hq.remoteOp(g.key, b)).catch(() => {}).finally(() => { remoteBusy.delete(g.key); refresh(); });
+      } }, b === 'restart' ? t('hq.restart') : t(`machines.op.${b}`)))));
+    }
+    return el('div', { class: `st-group st-remote-group${g.dim ? ' st-dim' : ''}` }, head, ...kids);
+  }
+
   // v3.133 the project groups' thin budget meter (main's tokens:brief, about once a minute)
   /** @type {Map<string, any>} */
   let budgetBriefs = new Map();
@@ -454,14 +506,15 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const heading = el('div', { class: 'st-head st-head-row' }, el('span', {}, t('studio.projects')),
       el('button', { class: 'st-add st-newgroup', title: t('studio.newGroup'), disabled: query ? 'disabled' : false, onclick: () => { editing = { fresh: true }; draw(); } }, icon('plus', 14)));
     const fresh = editing?.fresh ? [el('div', { class: 'st-sect-head st-sect-new' }, nameInput('', t('studio.newGroupPh', { project: target?.name || '' }), (v) => { if (target) applyMove(target.id, { group: v }); }))] : [];
-    if (!groups.length) return [heading, ...fresh, el('div', { class: 'st-none' }, t('studio.none'))];
+    const remote = remoteGroups(view.remotes, query).map((g) => remoteEl(g));
+    if (!groups.length && !remote.length) return [heading, ...fresh, el('div', { class: 'st-none' }, t('studio.none'))];
     const tags = showAccountTags(groups);
     const sections = studioSections(groups);
     const flat = sections.length === 1 && !sections[0].name;
     return [heading, ...fresh, ...sections.flatMap((sec) => {
       const cards = (!query && sec.name && closedSect.has(sec.name)) ? [] : sec.items.map((g) => withDrag(groupEl(g, tags), g));
       return flat ? cards : [sectionHead(sec), ...cards];
-    })];
+    }), ...(remote.length && !flat ? [el('div', { class: 'st-sect-head' }, el('span', { class: 'st-sect-name' }, t('studio.remote.heading')))] : []), ...remote];
   }
   function draw() {
     if (!on || dragId) return;
@@ -676,6 +729,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     if (!on) return;
     const [v, link] = await Promise.all([api.studio.sessions().catch(() => null), api.link?.get?.().catch(() => null)]);
     if (v) view = v;
+    remoteLink = link || null;
     devices = Array.isArray(link?.devices) ? link.devices.filter((/** @type {any} */ d) => d && typeof d.name === 'string') : [];
     draw();
   }

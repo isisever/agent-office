@@ -3999,6 +3999,24 @@ The Projects section of Studio's sidebar is one flat list that is quick to scan.
   title as you type; matching projects open. Esc clears the text.
 - v3.150 follow-up: projects start collapsed. The sidebar stores the expanded projects (`ao.studio.openProjects`) instead of the collapsed ones; the current project and a project a new session was started in open themselves (`expandProject`), and a filter opens matching projects while it has text.
 
+## Studio: remote machines' projects in the Projects list (v3.153)
+
+Paired machines' projects appear in Studio's Projects list as rows like local ones. Pure logic: `src/studio-remote.mjs`
+(`remoteGroup`, `remoteGroups`, `remoteDot`, `machineTag`, `localActionAllowed`); `studio:sessions` returns a `remotes`
+field (`HQ.remoteRows`: live while the machine is online, last known from the peer cache otherwise).
+
+- Remote rows follow the local ones (under a light "On other machines" label when local groups have headings), sorted by
+  machine then name, never mixed into the local drag order. The filter box matches project, machine and account name.
+- Each row has a small muted machine tag (with the account when known), a live / asleep dot, and a caret. An offline
+  machine's rows stay, dimmed, with last-known data and no actions.
+- Expanding a row opens the existing read-only session view (`link:sessOpen`, v3.100), and offers the existing command
+  box (`link:send`, Claude projects only), the last commands' outcomes, and start / wake / sleep / stop / restart through
+  `hq:remoteOp` where the peer allows managing (`remoteButtons`). No new protocol: every command still goes through the
+  link's single-owner checks (paused device, caps, rate limits, trust) on the receiving machine.
+- Not offered for remote rows: new session, drag / group move, close, rename, project settings and "open folder" (they
+  act on this machine). Non-Claude projects are listed but have no view or command box.
+- The sidebar's machine status block stays as a status indicator.
+
 ## Studio settings: Projects page layout (v3.148)
 - `sidebar.projectInline(id)` (used only by Studio's Settings -> Projects page) now returns its body grouped: `.st-pgroup` blocks
   with a `.st-pgroup-title` (Account & model, Budget, Permissions, MCP; keys `studio.set.pgAccount|pgBudget|pgPermissions|pgMcp`).

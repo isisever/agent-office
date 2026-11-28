@@ -1004,3 +1004,11 @@ body.studio .mc-sub, body.studio .mc-note { color: var(--st-muted); opacity: 1; 
 body.studio .mc-amber, body.studio .mc-note.warn { color: var(--st-accent-ink); }
 body.studio .mc-proj { border-top: 1px solid var(--st-border); }
 body.studio .mc-num, body.studio .mc-row { font-variant-numeric: tabular-nums; }
+/* v3.153 paired machines' projects: same rows, machine tag, dimmed while the machine is offline */
+body.studio #studio-sidebar .st-dim { opacity: .55; }
+body.studio #studio-sidebar .st-mach { color: var(--st-faint); }
+body.studio #studio-sidebar .st-rcmd { display: flex; gap: 4px; padding: 2px 8px 4px 28px; }
+body.studio #studio-sidebar .st-rcmd input { flex: 1 1 0; min-width: 0; font: 400 12px/1.3 var(--st-font); }
+body.studio #studio-sidebar .st-remote-group .st-sub { padding-left: 28px; }
+body.studio #studio-sidebar .st-rops { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 8px 6px 28px; }
+body.studio #studio-sidebar .st-rop { font: 500 11px/1.2 var(--st-font); padding: 3px 8px; border-radius: 6px; cursor: pointer; }
