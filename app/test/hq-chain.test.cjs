@@ -343,7 +343,7 @@ test('v3.89 amendment: a report written after the person typed in that session n
 const settled = () => new Promise((r) => setImmediate(r));
 const rowOf = (env, id) => env.board.tasks.find((t) => t.id === id);
 
-test('later turn, end to end: any target goes without a dialog, counted and announced; Skip refused; past 4 refused', async () => {
+test('later turn, end to end: any target goes without a dialog, counted and announced; Skip goes out too (v3.176); past 4 refused', async () => {
   const { env, api } = stageHarness();
   const request = env.minter.mint();
   await api.hqDispatch({ project: 'office', task: 'first', title: 'First', request });     // the live typed id
@@ -357,32 +357,30 @@ test('later turn, end to end: any target goes without a dialog, counted and anno
   assert.deepEqual(env.notices, ['main.hqInitiativeSent{"title":"Fix","target":"erp"}']);
   env.state.projects[0].skipPermissions = true;                                           // office now runs with Skip permissions
   const c = await api.hqDispatch({ project: 'office', task: 'more', title: 'More', request });
-  assert.deepEqual([c.status, c.reason], ['rejected', 'skip-permissions']);                 // refused, never asked
+  assert.equal(c.status, 'queued');                                                       // v3.176 Skip permissions never refuses an HQ task
   assert.equal(env.remoteDialogs, 0);
-  assert.equal(HQ.initiativeSent(env.board, request), 1);
+  assert.equal(HQ.initiativeSent(env.board, request), 2);
   env.state.projects[0].skipPermissions = false;
   const chain = await api.hqDispatch({ project: 'office', task: 's1', title: 'S1', request, then: [{ project: 'erp', task: 's2', title: 'S2' }] });
   assert.equal(env.dialogs.length, 0);
-  assert.equal(HQ.initiativeSent(env.board, request), 3);                                 // every stage counts
+  assert.equal(HQ.initiativeSent(env.board, request), 4);                                 // every stage counts
   assert.deepEqual(chain.stages.map((id) => rowOf(env, id).byInitiative), [true, true]);
-  assert.equal(env.notices.length, 3);
-  await api.hqDispatch({ project: 'office', task: 'fourth', title: 'Fourth', request });
-  assert.equal(HQ.initiativeSent(env.board, request), 4);
+  assert.equal(env.notices.length, 4);
   const fifth = await api.hqDispatch({ project: 'office', task: 'fifth', title: 'Fifth', request });
   assert.deepEqual([fifth.status, fifth.reason], ['rejected', 'follow-up-cap']);
   assert.equal(env.dialogs.length + env.remoteDialogs, 0);
-  assert.equal(env.sent.length, 4);                                                       // first, Fix, S1, Fourth (S2 waits)
+  assert.equal(env.sent.length, 4);                                                       // first, Fix, More, S1 (S2 waits)
 });
 
-test('later turn: a chain with one stage into a Skip project is refused whole and nothing is created; setting on: one dialog', async () => {
+test('later turn: a chain with one stage into a Skip project goes out whole (v3.176); setting on: one dialog', async () => {
   const { env, api } = stageHarness();
   const request = env.minter.mint();
   await api.hqDispatch({ project: 'office', task: 'first', request });
   env.minter.clear();
   env.state.projects[1].skipPermissions = true;
   const r = await api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });
-  assert.deepEqual([r.status, r.reason], ['rejected', 'skip-permissions']);
-  assert.deepEqual([env.dialogs.length, env.remoteDialogs, env.sent.length, env.board.tasks.length, HQ.initiativeSent(env.board, request)], [0, 0, 1, 1, 0]);
+  assert.equal(r.status, 'queued');                                                       // v3.176 no Skip refusal
+  assert.deepEqual([env.dialogs.length, env.remoteDialogs, env.sent.length, env.board.tasks.length, HQ.initiativeSent(env.board, request)], [0, 0, 2, 3, 2]);
   const on = stageHarness({ ask: true });
   const r2 = on.env.minter.mint();
   await on.api.hqDispatch({ project: 'office', task: 'first', request: r2 });
@@ -408,21 +406,18 @@ test('personal workspace not made yet, later turn: a draft with Skip permissions
   await api.hqDispatch({ project: 'office', task: 'first', request });
   env.minter.clear();
   const r = await api.hqDispatch({ staff: 'Ada', task: 'draft it', title: 'Draft', request });
-  assert.deepEqual([r.status, r.reason, env.made || 0, env.sent.length], ['rejected', 'skip-permissions', 0, 1]);
-  assert.equal(env.state.projects.some((p) => p.staffOwner === 's1'), false);
-  // without Skip in the draft the follow-up goes and the workspace is made then
-  env.state.staff[0].personal = {};
-  const ok = await api.hqDispatch({ staff: 'Ada', task: 'draft it', title: 'Draft', request });
-  assert.deepEqual([ok.status, env.made], ['queued', 1]);
+  // v3.176 a draft with Skip permissions no longer refuses: the workspace is made and the task goes
+  assert.deepEqual([r.status, r.reason, env.made || 0, env.sent.length], ['queued', undefined, 1, 2]);
 });
 test('personal workspace not made yet, later turn: the first stage of a follow-up chain is refused before anything is made', async () => {
   const { env, api, request } = teamHarness({ skipPermissions: true });
   await api.hqDispatch({ project: 'office', task: 'first', request });
   env.minter.clear();
   const r = await api.hqDispatch({ staff: 'Ada', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });
-  assert.deepEqual([r.status, r.reason, env.made || 0, env.sent.length, env.board.tasks.length], ['rejected', 'skip-permissions', 0, 1, 1]);
+  assert.equal(r.status, 'queued');   // v3.176 no Skip refusal for the first stage either
+  assert.deepEqual([env.made || 0, env.sent.length], [1, 2]);
 });
-test('personal workspace not made yet, later turn: a released stage whose draft gained Skip is refused at release, nothing made', async () => {
+test('personal workspace not made yet, later turn: a released stage whose draft gained Skip is still sent at release (v3.176)', async () => {
   const { env, api, request } = teamHarness({});
   await api.hqDispatch({ project: 'office', task: 'first', request });
   env.minter.clear();
@@ -432,13 +427,13 @@ test('personal workspace not made yet, later turn: a released stage whose draft 
   report(env, chain.stages[0]);
   api.hqChainSweep();
   await settled();
-  assert.deepEqual([rowOf(env, chain.stages[1]).status, rowOf(env, chain.stages[1]).reason], ['rejected', 'skip-permissions']);
-  assert.deepEqual([env.made || 0, env.sent.length, env.dialogs.length + env.remoteDialogs], [0, 2, 0]);
+  assert.equal(env.board.tasks.some((t) => t.status === 'rejected'), false);   // the stage was renamed to its sent row
+  assert.deepEqual([env.made || 0, env.sent.length, env.dialogs.length + env.remoteDialogs], [1, 3, 0]);
 });
 
 // --- review fix: a later-turn follow-up may go into a target that approves by itself (Auto-approve, or a tab started
 // that way) only when the person's own typed turn sent a task of this request to that same target (main memory)
-test('Auto-approve: a target of the typed turn takes a follow-up; a new Auto-approve target is refused; an ordinary one goes', async () => {
+test('Auto-approve: a target of the typed turn takes a follow-up; a new Auto-approve target goes too (v3.176); an ordinary one goes', async () => {
   const { env, api } = stageHarness();
   env.state.projects[0].autoApprove = true;                                  // office approves by itself
   const request = env.minter.mint();
@@ -450,23 +445,22 @@ test('Auto-approve: a target of the typed turn takes a follow-up; a new Auto-app
   assert.equal(plain.status, 'queued');
   env.state.projects[1].autoApprove = true;                                  // erp: never a target of the typed turn
   const fresh = await api.hqDispatch({ project: 'erp', task: 'new', request });
-  assert.deepEqual([fresh.status, fresh.reason], ['rejected', 'new-unattended-target']);
+  assert.equal(fresh.status, 'queued');                                      // v3.176 no new-unattended-target refusal
   env.state.projects[1].autoApprove = false;
   env.promptless.add('pb');                                                  // its tab still runs from an Auto-approve start
   const tab = await api.hqDispatch({ project: 'erp', task: 'new', request });
-  assert.deepEqual([tab.status, tab.reason], ['rejected', 'new-unattended-target']);
+  assert.equal(tab.status, 'queued');
   const chain = await api.hqDispatch({ project: 'office', task: 's1', request, then: [{ project: 'erp', task: 's2' }] });
-  assert.deepEqual([chain.status, chain.reason], ['rejected', 'new-unattended-target']);   // one such stage refuses the chain
+  assert.deepEqual([chain.status, chain.reason], ['rejected', 'follow-up-cap']);   // only the cap speaks now (4 sent already)
   assert.equal(env.dialogs.length + env.remoteDialogs, 0);
   // another request's typed turn does not count for this one
   const other = env.minter.mint();
   await api.hqDispatch({ project: 'erp', task: 'other', request: other });
   env.minter.clear();
-  assert.equal((await api.hqDispatch({ project: 'erp', task: 'again', request })).reason, 'new-unattended-target');
   assert.equal((await api.hqDispatch({ project: 'erp', task: 'again', request: other })).status, 'queued');
 });
 
-test('Auto-approve: the stages of the typed turn are its targets; a waiting follow-up stage into a new one is refused at release', async () => {
+test('Auto-approve: the stages of the typed turn are its targets; a waiting follow-up stage into a new one is released too (v3.176)', async () => {
   const { env, api } = stageHarness();
   env.state.projects[1].autoApprove = true;
   const request = env.minter.mint();
@@ -483,7 +477,7 @@ test('Auto-approve: the stages of the typed turn are its targets; a waiting foll
   report(h.env, chain.stages[0]);
   h.api.hqChainSweep();
   await settled();
-  assert.deepEqual([rowOf(h.env, chain.stages[1]).status, rowOf(h.env, chain.stages[1]).reason], ['rejected', 'new-unattended-target']);
+  assert.deepEqual([h.env.board.tasks.some((t) => t.status === 'rejected'), h.env.sent.length], [false, 3]);
   assert.equal(h.env.dialogs.length + h.env.remoteDialogs, 0);
 });
 
@@ -495,9 +489,9 @@ test('minter: typed-turn targets only for typed ids, kept per request', () => {
   m.addTarget(rt, 'self|pa|');
   m.addTarget('nope', 'self|pa|');
   assert.deepEqual([m.hasTarget(id, 'self|pa|'), m.hasTarget(id, 'self|pb|'), m.hasTarget(rt, 'self|pa|'), m.hasTarget('nope', 'self|pa|')], [true, false, false, false]);
-  assert.equal(HQ.followRefusal({ request: id, minter: m, board: HQ.emptyBoard(), targets: [{ projectId: 'pa', auto: true, seen: false }] }), 'new-unattended-target');
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board: HQ.emptyBoard(), targets: [{ projectId: 'pa', auto: true, seen: false }] }), null);   // v3.176 seen no longer matters
   assert.equal(HQ.followRefusal({ request: id, minter: m, board: HQ.emptyBoard(), targets: [{ projectId: 'pa', auto: true, seen: true }] }), null);
-  assert.equal(HQ.followRefusal({ request: id, minter: m, board: HQ.emptyBoard(), targets: [{ projectId: 'pa', auto: true, seen: true, skip: true }] }), 'skip-permissions');
+  assert.equal(HQ.followRefusal({ request: id, minter: m, board: HQ.emptyBoard(), targets: [{ projectId: 'pa', auto: true, seen: true, skip: true }] }), null);
 });
 
 // --- v3.91 fix: consent is stamped on the row, and a stage HQ queued on its own is checked again at its release
@@ -554,11 +548,11 @@ test('later-turn release: still allowed, the stage goes without a dialog and its
   assert.equal(env.board.tasks.filter((t) => t.id === 'c4').length, 1);
 });
 
-test('later-turn release, setting off: Skip switch, a tab still running with Skip, or past 2 h: refused with the reason, never asked; the stage behind blocks', async () => {
+test('later-turn release, setting off: Skip no longer refuses (v3.176); past 2 h: refused with the reason, never asked; the stage behind blocks', async () => {
   const real = Date.now;
   const cases = [
-    ['skip-permissions', (env) => { env.state.projects[1].skipPermissions = true; }],
-    ['skip-permissions', (env) => { env.skipStarted.add('pb'); }],              // started with Skip, the switch is off again
+    [null, (env) => { env.state.projects[1].skipPermissions = true; }],
+    [null, (env) => { env.skipStarted.add('pb'); }],              // started with Skip, the switch is off again
     ['request-expired', () => { Date.now = () => real() + HQ.INITIATIVE_MS + 1000; }],
   ];
   for (const [i, [reason, change]] of cases.entries()) {
@@ -570,6 +564,11 @@ test('later-turn release, setting off: Skip switch, a tab still running with Ski
       await settled();
     } finally { Date.now = real; }
     assert.equal(env.dialogs.length + env.remoteDialogs, 0, `case ${i}`);
+    if (!reason) {   // v3.176 a Skip switch or a Skip-started tab: the stage is released and sent
+      assert.equal(env.sent.length, 4, `case ${i}: the stage goes out`);
+      assert.equal(env.board.tasks.some((t) => t.status === 'rejected'), false, `case ${i}`);
+      continue;
+    }
     assert.equal(env.sent.length, 3, `case ${i}: nothing is sent`);
     assert.deepEqual([rowOf(env, chain.stages[1]).status, rowOf(env, chain.stages[1]).reason], ['rejected', reason], `case ${i}`);
     assert.equal(rowOf(env, chain.stages[2]).status, 'blocked', `case ${i}`);
@@ -852,7 +851,7 @@ test('v3.101 askBeforeDispatch on, a chain with a local stage and a stage on a p
   assert.deepEqual([no.env.sent.length, no.env.board.tasks.length, no.env.notices.length], [0, 0, 0]);
 });
 
-test('v3.103 a single dispatch to a paired machine: the typed turn sends without a dialog with the remote notice; a later turn follows the catalog flag', async () => {
+test('v3.103 a single dispatch to a paired machine: the typed turn sends without a dialog with the remote notice; a later turn too, whatever the catalog flag says (v3.176)', async () => {
   const { env, api } = stageHarness({ link: catalogLink({ rp1: false, rp2: true }) });
   const request = env.minter.mint();
   const a = await api.hqDispatch({ project: 'web', machine: 'Studio', task: 'first', title: 'First', request });   // typed turn: even a Skip project
@@ -869,13 +868,13 @@ test('v3.103 a single dispatch to a paired machine: the typed turn sends without
   assert.deepEqual(env.notices, [REMOTE_SENT('web'), REMOTE_SENT('api')]);
   assert.deepEqual([env.sent[1].machine, env.sent[1].project], [R_PUB, 'rp1']);
   const c = await api.hqDispatch({ project: 'web', machine: 'Studio', task: 'other', title: 'Other', request });
-  assert.deepEqual([c.status, c.reason], ['rejected', 'skip-permissions']);
+  assert.equal(c.status, 'queued');   // v3.176 a paired machine's skip flag no longer refuses
   const u = await api.hqDispatch({ project: 'api', machine: 'Nowhere', task: 'lost', title: 'Lost', request });
   assert.deepEqual([u.status, u.reason], ['rejected', 'unknown-machine']);
   const d = await api.hqDispatch({ project: 'office', task: 'local', title: 'Local', request });
   assert.equal(rowOf(env, d.id).byInitiative, true);
   assert.equal(env.notices.at(-1), 'main.hqInitiativeSent{"title":"Local","target":"office"}');
-  assert.deepEqual([env.remoteDialogs, env.dialogs.length, env.sent.length, HQ.initiativeSent(env.board, request)], [0, 0, 3, 2]);
+  assert.deepEqual([env.remoteDialogs, env.dialogs.length, env.sent.length, HQ.initiativeSent(env.board, request)], [0, 0, 4, 3]);
   // the setting on: asked; declined: nothing is sent or queued
   const no = stageHarness({ ask: true, allow: false, link: catalogLink() });
   const r = await no.api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request: no.env.minter.mint() });
@@ -901,33 +900,33 @@ test('v3.103 the dialog has exactly two buttons: with the setting on, and for an
   assert.equal('consentedTarget' in HQ, false);
 });
 
-test('v3.103 a later-turn follow-up into a paired machine\'s project: refused with skip-permissions when its catalog flag `skips` is true or unknown, sent when false', async () => {
-  for (const [project, free] of [['api', true], ['web', false], ['docs', false]]) {
+test('v3.103 a later-turn follow-up into a paired machine\'s project: sent whatever its catalog flag `skips` says (v3.176)', async () => {
+  for (const project of ['api', 'web', 'docs']) {
     const { env, api } = stageHarness({ link: catalogLink({ rp1: false, rp2: true, rp3: null }) });
     const request = env.minter.mint();
     await api.hqDispatch({ project, machine: 'Studio', task: 'first', title: 'First', request });
     env.minter.clear();
     const b = await api.hqDispatch({ project, machine: 'Studio', task: 'fix', title: 'Fix', request });
-    assert.deepEqual([b.status, b.reason], free ? ['queued', undefined] : ['rejected', 'skip-permissions'], project);
+    assert.deepEqual([b.status, b.reason], ['queued', undefined], project);
     assert.equal(env.remoteDialogs + env.dialogs.length, 0, project);         // never asked
-    if (free) assert.equal(rowOf(env, b.id).byInitiative, true, project);
-    assert.equal(HQ.initiativeSent(env.board, request), free ? 1 : 0, project);
-    assert.deepEqual(env.notices, free ? [REMOTE_SENT(project), REMOTE_SENT(project)] : [REMOTE_SENT(project)], project);
+    assert.equal(rowOf(env, b.id).byInitiative, true, project);
+    assert.equal(HQ.initiativeSent(env.board, request), 1, project);
+    assert.deepEqual(env.notices, [REMOTE_SENT(project), REMOTE_SENT(project)], project);
   }
-  // no catalog from that machine at all (an older Agent Office there): unknown, so refused
+  // no catalog from that machine at all (an older Agent Office there): unknown, and still sent (v3.176)
   const { env, api } = stageHarness({ link: remoteLink() });
   const request = env.minter.mint();
   await api.hqDispatch({ project: 'api', machine: 'Studio', task: 'first', title: 'First', request });
   env.minter.clear();
   const b = await api.hqDispatch({ project: 'api', machine: 'Studio', task: 'fix', title: 'Fix', request });
-  assert.deepEqual([b.status, b.reason, env.remoteDialogs, env.sent.length], ['rejected', 'skip-permissions', 0, 1]);
-  // a later-turn chain with a paired stage into a skipping project: the whole chain is refused
+  assert.deepEqual([b.status, b.reason, env.remoteDialogs, env.sent.length], ['queued', undefined, 0, 2]);
+  // a later-turn chain with a paired stage into a skipping project goes out too (v3.176)
   const ch = stageHarness({ link: catalogLink({ rp1: true }) });
   const r3 = ch.env.minter.mint();
   await ch.api.hqDispatch({ project: 'office', task: 'first', request: r3 });
   ch.env.minter.clear();
   const c = await ch.api.hqDispatch({ project: 'office', task: 's1', request: r3, then: [{ project: 'api', machine: 'Studio', task: 's2' }] });
-  assert.deepEqual([c.status, c.reason, ch.env.sent.length, ch.env.dialogs.length], ['rejected', 'skip-permissions', 1, 0]);
+  assert.deepEqual([c.status, c.reason, ch.env.sent.length, ch.env.dialogs.length], ['queued', undefined, 2, 0]);
 });
 
 // --- v3.103 the consent matrix: single dispatch, stages and stage release; setting off and on; typed turn and later turn
@@ -1029,7 +1028,7 @@ test('matrix, caps: 8 per request, 12 open and 4 follow-ups per request; refused
   for (const h of [per, open, fu]) assert.equal(h.env.dialogs.length + h.env.remoteDialogs, 0);
 });
 
-test('matrix: a later-turn follow-up into a local Skip project is refused (the switch, or a desk still running from a Skip start); the typed turn is not', async () => {
+test('matrix: a later-turn follow-up into a local Skip project goes out like the typed turn (v3.176)', async () => {
   for (const change of [(env) => { env.state.projects[1].skipPermissions = true; }, (env) => { env.skipStarted.add('pb'); }]) {
     const { env, api, request } = await primed(false, 'typed');
     change(env);
@@ -1037,9 +1036,9 @@ test('matrix: a later-turn follow-up into a local Skip project is refused (the s
     assert.equal(typed.status, 'queued');
     env.minter.clear();
     const later = await api.hqDispatch({ project: 'erp', task: 'later', request });
-    assert.deepEqual([later.status, later.reason], ['rejected', 'skip-permissions']);
+    assert.deepEqual([later.status, later.reason], ['queued', undefined]);
     assert.equal(env.dialogs.length + env.remoteDialogs, 0);
-    assert.equal(HQ.initiativeSent(env.board, request), 0);
+    assert.equal(HQ.initiativeSent(env.board, request), 1);
   }
 });
 
