@@ -42,12 +42,13 @@ function cap(list, now = Date.now()) {
   const closed = list.filter((r) => !isOpen(r) && now - (r.endedAt || r.at) < KEEP_DONE_MS).sort((a, b) => (b.endedAt || b.at) - (a.endedAt || a.at));
   return [...open, ...closed].slice(0, MAX_REQS);
 }
-/** The latest timestamp (ms) of an assistant or result entry in a transcript tail (0 when none); a cut first line is skipped. */
+/** The latest timestamp (ms) of an assistant or result entry in a transcript tail (0 when none); a cut first line is skipped.
+ * Synthetic entries (usage-limit notices) and API errors do not count: the turn did not do its work. */
 function assistantAtFromTail(text) {
   let at = 0;
   for (const l of String(text ?? '').split('\n')) {
     if (!l.startsWith('{')) continue;
-    try { const j = JSON.parse(l); if (j && (j.type === 'assistant' || j.type === 'result')) at = Math.max(at, Date.parse(j.timestamp) || 0); } catch { /* cut or broken line */ }
+    try { const j = JSON.parse(l); if (j && (j.type === 'assistant' || j.type === 'result') && !j.isApiErrorMessage && j.message?.model !== '<synthetic>') at = Math.max(at, Date.parse(j.timestamp) || 0); } catch { /* cut or broken line */ }
   }
   return at;
 }

@@ -5115,6 +5115,7 @@ ipcMain.handle('projects:setAccount', (e, id, accountId) => {
   const next = P.setProjectAccount(state, id, accountId);
   if (next === state) return;
   commit(next);
+  if (p.accountId === accountId) return;   // only the stale home was forgotten: nothing moves, running tabs keep going
   moveProject(id, from);
 });
 // Per-project manager mode (contract v3.10): true delegates, false does it itself, null follows the global setting.

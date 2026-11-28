@@ -35,3 +35,10 @@ test('Studio project list carries the home label next to the account label', () 
   assert.equal(out[0].account, 'Default');
   assert.equal(out[0].home, 'ThinkOne');
 });
+
+test('re-picking the project own account only forgets the home label and does not move the tabs', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf("ipcMain.handle('projects:setAccount'"), src.indexOf('moveProject(id, from);', src.indexOf("ipcMain.handle('projects:setAccount'")));
+  assert.match(body, /commit\(next\);\s*\n\s*if \(p\.accountId === accountId\) return;/);
+});

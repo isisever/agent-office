@@ -107,6 +107,14 @@ test('assistantAtFromTail reads the latest assistant or result timestamp and ski
   assert.equal(RQ.assistantAtFromTail('{"type":"user"}'), 0);
 });
 
+test('assistantAtFromTail ignores synthetic usage-limit entries and API errors', () => {
+  const tail = ['', JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:00:06.000Z' }),
+    JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:00:08.000Z', message: { model: '<synthetic>' } }),
+    JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:00:09.000Z', isApiErrorMessage: true })].join('\n');
+  assert.equal(RQ.assistantAtFromTail(tail), Date.parse('2026-01-01T00:00:06.000Z'));
+  assert.equal(RQ.assistantAtFromTail(JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:00:08.000Z', message: { model: '<synthetic>' } })), 0);
+});
+
 test('a reply under 3 s after the send is done, not never-started', () => {
   const l0 = RQ.add([], rec(), 1000);
   const l = RQ.observe(l0, 'pty1', { busy: false, assistantAt: 1800 }, 1000 + RQ.GRACE_MS);
