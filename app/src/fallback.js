@@ -502,6 +502,27 @@ function limitedStartMove({ usage = null, mark = null, now = Date.now(), current
   return plan.id ? plan : null;
 }
 
+/**
+ * v3.165 a GUI chat's stream-json error text (claude's own message, no transcript read) → the limit hit it is, or null.
+ * The GUI path acts on this directly: it does not wait for the session id, the transcript or the quota reading.
+ */
+function guiLimitHit(text, now = Date.now()) {
+  const s = String(text || '');
+  if (!isUsageLimitText(s) && !isCompactionLimitText(s)) return null;
+  const resetsAt = parseResetText(s, now);
+  return { at: now, resetsAt: resetsAt && resetsAt > now ? resetsAt : null, type: null, text: s.slice(0, 200) };
+}
+
+/**
+ * v3.165 a GUI chat that is idle (no turn) on an account another tab marked limited: a synthetic hit so the project
+ * moves before the next message fails. null when the account is free. `at` is the mark's time (one hit per mark).
+ */
+function idleLimitHit({ usage = null, mark = null, now = Date.now() }) {
+  const until = limitedUntil({ usage, mark, now });
+  if (!until) return null;
+  return { at: mark?.at || usage?.updatedAt || until, resetsAt: until, type: null, text: '' };
+}
+
 /** The model of the session's last real answer (an assistant entry's message.model, not '<synthetic>'), or null. */
 function modelFromTranscript(tail) {
   const lines = String(tail || '').split('\n');
@@ -585,6 +606,6 @@ module.exports = {
   isUsageLimitText, isCompactionLimitText, parseResetText, limitFromTranscript, plainText, scanPty,
   inputAfter, startInput, compactionSighting, compactionContradicted, compactionVerdict, compactionHit, limitMark, mergeMarks,
   limitedUntil, markFor, fullness, pickBackup, switchAllowed, shouldReturn, normalizeMarks,
-  FAMILIES, modelFamily, limitFamily, modelMarkKey, modelLimitedUntil, normalizeModelMarks, secondModel, planLimitMove, limitedStartMove,
+  FAMILIES, modelFamily, limitFamily, modelMarkKey, modelLimitedUntil, normalizeModelMarks, secondModel, planLimitMove, limitedStartMove, guiLimitHit, idleLimitHit,
   modelFromTranscript, subagentLimits,
 };

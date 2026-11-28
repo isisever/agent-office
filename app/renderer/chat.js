@@ -108,6 +108,9 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   const bannerText = h('span', {});
   const bannerBtn = h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() });
   const banner = h('div', { class: 'chat-banner' }, bannerText, bannerBtn);
+  const fbText = h('span', {});   // v3.165 which account the session switched to (or that there is none)
+  const fbBar = h('div', { class: 'chat-fallback', title: t('app.close'), onclick: () => { fbBar.hidden = true; } }, fbText);
+  fbBar.hidden = true;
   const input = h('textarea', { class: 'chat-input', rows: '1' });
   const sendLabel = h('span', { class: 'chat-label' });
   const send = h('button', { class: 'chat-send', onclick: () => submit() }, sendLabel, icon('arrowUp', 18));
@@ -212,7 +215,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
   picker.hidden = true;
   agentView.tabIndex = -1;
   agentView.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeAgent(); } });
-  el.append(banner, list, empty, agentView, picker, live, card, endBox, contBox, agentBar, replyBar, composer, why);
+  el.append(banner, fbBar, list, empty, agentView, picker, live, card, endBox, contBox, agentBar, replyBar, composer, why);
   // v3.120 Studio UX: "jump to latest" while the list is scrolled up
   const jump = h('button', { class: 'chat-jump chat-studio-only', type: 'button', title: t('chat.jumpLatest'), 'aria-label': t('chat.jumpLatest'), onclick: () => { list.scrollTo?.({ top: list.scrollHeight, behavior: 'smooth' }); } }, icon('down', 14), h('span', {}, t('chat.jumpLatest')));
   jump.hidden = true;
@@ -1354,6 +1357,8 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
       window.clearInterval(timer);
       window.clearInterval(menuTimer);
     },
+    /** v3.165 the account-switch notice (chat-fallback.mjs fallbackNote), or null to clear it. */
+    setFallback(note) { fbText.textContent = note ? t(note.key, note.params) : ''; fbBar.hidden = !note; },
     /** The project's attention ('permission' shows the banner: Claude Code waits for an answer in the terminal). */
     setAttention(a) { attention = a; banner.hidden = Boolean(gui) || hidesBanner() || a !== 'permission'; },
     texts() { texts(); if (gui) { askShown = ''; setGui(gui); return; } menuShown = ''; drawMenu(); },

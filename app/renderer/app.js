@@ -1,6 +1,7 @@
 // Wires everything together: sidebar (projects, accounts), per-project terminal(s) (tabs, v3.0), office and theme colors.
 import { mountTerminal, pasteIntoFocused } from './terminal.js';
 import { mountChat } from './chat.js';
+import { fallbackNote } from '../src/chat-fallback.mjs';
 import { mountSidebar } from './sidebar.js';
 import { shownOrder } from '../src/project-groups.mjs';
 import { mountHq } from './hq-board.js';
@@ -1448,6 +1449,8 @@ api.accounts.onFallback?.((ev) => {
   const ids = proj ? ptyIdsOf(proj) : [ev?.projectId];
   if (ev?.kind === 'switched' || ev?.kind === 'returned') for (const id of ids) panes.get(id)?.term.reset({ restarting: true });
   for (const id of ids) hint(id, ev?.text || '');
+  const note = fallbackNote(ev);   // v3.165 a GUI chat has no visible terminal: the chat shows the target account
+  if (note) for (const id of ids) panes.get(id)?.chat?.setFallback(note);
 });
 setStats(null);
 try { setAccounts(await api.accounts.list()); } catch (e) { console.error(e); }

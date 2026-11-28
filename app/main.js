@@ -1545,7 +1545,12 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     const a = activity.get(id);
     if (a) a.at = Date.now();
     const text = GS.errorText(m);
-    if (text) watchLimit(id, text, startedAt);
+    if (text) {
+      watchLimit(id, text, startedAt);
+      const g = FB.guiLimitHit(text, Date.now());   // v3.165 the stream's own limit error is a hit by itself
+      const w = ptyLimit.get(id);
+      if (g && w) w.guiHit = g;
+    } else if (m?.type === 'assistant') { const w = ptyLimit.get(id); if (w) w.guiHit = null; }   // the session went on: the old error is history
   });   // v3.108 read once claude is up (stdin waits for it)
   if (gui) send('pty:data', id, `\x1b[2m${T('main.guiTerminalNote')}\x1b[0m\r\n`);   // its terminal stays empty otherwise
   attachPty(terms, id, t, {
@@ -4071,7 +4076,8 @@ const modelLabel = (m) => m || T('main.fallbackModelUnknown');
 const limitLabel = (hits) => (hits.map((h) => String(h.hit.text || '').split(' · ')[0].trim()).find(Boolean) || T('main.fallbackLimitUnknown')).slice(0, 80);
 /** Tells the renderer (a hint over the project's terminals) and the system (a notification). */
 function fallbackNotice(p, kind, text, extra = {}) {
-  send('account:fallback', { projectId: p.id, kind, text, ...extra });
+  const nameOf = (id) => { const a = id && accountById(id); return a ? accountName(a) : null; };
+  send('account:fallback', { projectId: p.id, kind, text, fromName: nameOf(extra.from), toName: nameOf(extra.to), ...extra });
   notify(p.name, text, p.id);
 }
 /** v3.155: a usage-limit stop with a reset time → the account's quota (U.applyLimitHit), saved like a reading. */
@@ -4104,6 +4110,9 @@ function checkLimits() {
       let hit = transcriptLimit(id, r.dir, account.configDir);
       const w = ptyLimit.get(id);
       if (!hit) hit = compactionSeen(id, r.dir, account.configDir, w, now);
+      if (!hit && w?.guiHit && terms.get(id)?.gui) hit = w.guiHit;   // v3.165 Studio/GUI chat: the stream error, no transcript needed
+      // v3.165 an idle GUI chat on an account another tab marked limited moves before its next message fails
+      if (!hit && terms.get(id)?.gui && !terms.get(id).live().busy) hit = FB.idleLimitHit({ usage: usages.get(account.id), mark: limitMarks()[account.id], now });
       if (!hit && w?.hitAt && now - w.hitAt < 60000 && usageFull()) hit = { at: w.hitAt, resetsAt: null, type: null, text: '' };
       if (hit && !limitDone.has(`${id}|${hit.at}`)) hits.push({ id, hit });
     }

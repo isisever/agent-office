@@ -614,6 +614,8 @@ body.dragging #terminal, body.dragging #office, body.dragging .chat-host, body.d
 .chat-banner { display: flex; align-items: center; gap: 8px; padding: 5px 8px; color: var(--on-accent); background: var(--approval); border-radius: var(--radius); }
 .chat-banner[hidden] { display: none; }
 .chat-banner span { flex: 1; }
+.chat-fallback { padding: 4px 8px; font-size: 12px; cursor: pointer; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.chat-fallback[hidden] { display: none; }
 .chat-form { flex: 0 0 auto; display: flex; gap: 6px; align-items: flex-end; }
 .chat-input { flex: 1; min-height: 20px; max-height: 160px; resize: none; padding: 6px 8px; font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius); outline: none; }
 .chat-input:focus { border-color: var(--line-strong); }

@@ -989,6 +989,7 @@
     "personalTitle": "The member's own workspace, for work outside any project (made on first use in Documents/Agent Office)"
   },
   "chat": {
+    "accountFallback": {"switched": "{from} limit → continuing on {to}", "returned": "Back on {to}", "none": "{from} limit. No backup account exists to switch to", "notLoggedIn": "{from} limit. No backup account is logged in", "allLimited": "{from} limit. Every backup account is at its limit; waiting for a reset", "stuck": "{from} limit. Cannot switch accounts right now"},
     "limitSuperseded": "This account hit its limit; the session continued afterwards",
     "placeholder": "Message… (Enter sends, Shift+Enter: new line)",
     "send": "Send",
