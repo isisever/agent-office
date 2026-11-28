@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { visibleWorkers, shortTool, clip, projectHue, stripLayout, deskAt, LINGER_MS } from '../src/studio-scene-layout.mjs'
+import { visibleWorkers, shortTool, workerLabel, clip, projectHue, stripLayout, deskAt, LINGER_MS } from '../src/studio-scene-layout.mjs'
 
 test('visibleWorkers keeps active and recently finished workers, oldest first', () => {
   const now = 100000
@@ -42,13 +42,13 @@ test('stripLayout centres few desks, fills with empty desks, never overlaps boss
   assert.ok(L.boss.x < L.row.x0 && L.rack.x > L.row.x1)
   const L3 = stripLayout(900, 150, 3)
   assert.equal(L3.desks.length, 4)
-  for (let i = 1; i < L3.desks.length; i++) assert.ok(L3.desks[i].x - L3.desks[i - 1].x >= 100 - 1e-9)
+  for (let i = 1; i < L3.desks.length; i++) assert.ok(L3.desks[i].x - L3.desks[i - 1].x >= 84 - 1e-9)
 })
 
 test('stripLayout scrolls instead of shrinking below the minimum pitch', () => {
   const L = stripLayout(900, 150, 12)
   assert.equal(L.desks.length, 12)
-  assert.ok(Math.abs(L.pitch - 100) < 1e-9)
+  assert.ok(Math.abs(L.pitch - 84) < 1e-9)
   assert.ok(L.scrollMax > 0)
   assert.equal(L.desks[0].x, L.row.x0 + L.pitch / 2)
   const wide = stripLayout(3000, 150, 12)
@@ -73,4 +73,22 @@ test('the studio scene renderer pauses its timer and skips hidden frames', () =>
     const j = JSON.parse(fs.readFileSync(new URL(`../locales/${f}.json`, import.meta.url), 'utf8'))
     assert.ok(j.studio.scene?.noAgents && j.panel.thinking, f)
   }
+})
+
+test('stripLayout gives every worker a desk and fits more of them before scrolling', () => {
+  for (const n of [4, 5, 6, 8, 13]) assert.equal(stripLayout(900, 150, n).desks.length, n)
+  assert.equal(stripLayout(900, 150, 6).scrollMax, 0)
+  assert.ok(stripLayout(900, 150, 6).pitch >= 84)
+  assert.ok(stripLayout(900, 150, 30).scrollMax > 0)
+})
+
+test('workerLabel shows the task and the project, with the tool as secondary info', () => {
+  const w = { type: 'claude', description: 'Fix missing chat reply after fallback', project: 'strip-desks', tool: 'Bash' }
+  assert.deepEqual(workerLabel(w), { title: 'Fix missing chat reply after fallback', sub: 'strip-desks · Bash' })
+  assert.equal(workerLabel({ ...w, tool: 'mcp__srv__Read' }).sub, 'strip-desks · Read')
+  assert.equal(workerLabel({ type: 'claude', tool: 'Bash' }).title, 'claude')
+  assert.equal(workerLabel({ type: 'claude', description: 'x'.repeat(200) }).title.length, 60)
+  assert.equal(workerLabel({ description: 'a', project: 'p' }, { thinking: 'thinking' }).sub, 'p · thinking')
+  assert.equal(workerLabel({ description: 'a', doneAt: 1, isOk: false }, { failedText: 'failed' }).sub, 'failed')
+  assert.equal(workerLabel({ description: 'a', doneAt: 1, isOk: true, project: 'p' }, { doneText: 'done' }).sub, 'p · done')
 })

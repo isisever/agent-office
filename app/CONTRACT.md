@@ -4087,3 +4087,12 @@ A backup-account switch (`moveProject`) resumes each tab's session on the new ac
   when there is no room above.
 - Strings: `studio.renameSession` (en "Rename", tr "Yeniden adlandır"). Tests: `session-names.test.cjs`,
   `menu-anchor.test.mjs`.
+
+## Studio office strip: desks for every worker, task and project labels (v3.160)
+The Studio strip (renderer/studio-scene.js, pure part src/studio-scene-layout.mjs) draws one desk per visible worker and
+never caps the count. `stripLayout` shrinks the desk pitch down to `minPitch` (84 px at scale 1) so more workers fit,
+and only then scrolls the row (wheel or drag). A desk label has two lines built by `workerLabel(w)`: the task (the
+sub-agent `description`, whitespace collapsed, clipped to 60 characters; the worker type when there is no description)
+and a second line `project · tool` (project name, then the current tool without its `mcp__server__` prefix, or "thinking"
+while no tool runs). A finished worker shows `project · done` or `project · failed`. The label no longer shows only
+"engine / tool".

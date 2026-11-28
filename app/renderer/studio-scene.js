@@ -2,7 +2,7 @@
 // Canvas 2D paths only (no images, no WebGL). Boss desk on the left, one desk per worker in the middle, a server rack on
 // the right. Colours come from Studio's tokens (--st-*) so it follows Studio light/dark. The Office keeps its own
 // pixel scene (office-view.js); this renderer is used only in Studio. Layout maths: ../src/studio-scene-layout.mjs.
-import { visibleWorkers, shortTool, projectHue, stripLayout, deskAt, LINGER_MS } from '../src/studio-scene-layout.mjs'
+import { visibleWorkers, shortTool, workerLabel, projectHue, stripLayout, deskAt, LINGER_MS } from '../src/studio-scene-layout.mjs'
 import { t } from './i18n.js'
 
 const FRAME_MS = 80          // ~12 fps
@@ -374,8 +374,8 @@ export function mountStudioScene(canvas, { onSelect } = {}) {
       labels.push({ cx, bottom: oy - 23 * k, w, tool, proj, done, alpha })
     })
     for (const l of labels) {
-      const sub = l.done ? (l.w.isOk ? t('panel.done') : t('panel.failed')) : (l.tool || t('panel.thinking'))
-      label(l.cx, l.bottom, L.pitch - 6, String(l.w.type || 'agent'), sub, l.proj || pal.accent, l.alpha)
+      const { title, sub } = workerLabel(l.w, { thinking: t('panel.thinking'), doneText: t('panel.done'), failedText: t('panel.failed') })
+      label(l.cx, l.bottom, L.pitch - 6, title, sub, l.proj || pal.accent, l.alpha)
     }
     // soft edges when the row scrolls
     if (L.scrollMax > 0) {
