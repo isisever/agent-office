@@ -1640,6 +1640,7 @@ function openWhatsNew() {
   api.whatsNew?.all().then((entries) => whatsNew.show(entries)).catch((e) => console.error(e));
 }
 api.whatsNew?.onOpen(() => openWhatsNew());
+onLang(() => whatsNew.redraw());   // v3.144 the open card follows a language change
 // v3.138 the title bar's gift: the same card again, for when it was closed before it was read
 {
   const btn = $('whats-new-btn');

@@ -12,6 +12,8 @@ export { stepsFor, splitAction, textOf } from '../src/whats-new-ui.mjs';
  *   run: (action: string) => string | void }} o run performs a "Try it" action; it may return a selector to spotlight
  *   when the item has no target of its own
  */
+const DOTS_MAX = 8;
+
 export function mountWhatsNew({ t, lang, experience, run }) {
   /** @type {HTMLElement | null} */
   let back = null;
@@ -48,7 +50,9 @@ export function mountWhatsNew({ t, lang, experience, run }) {
       el('p', { class: 'wn-body' }, textOf(item.body, l)),
       el('div', { class: 'wn-foot' },
         el('div', { class: 'wn-dots', role: 'img', 'aria-label': t('whatsNew.page', { n: at + 1, total: steps.length }) },
-          ...steps.map((_, i) => el('span', { class: 'wn-dot' + (i === at ? ' on' : '') }))),
+          // v3.144 past DOTS_MAX steps a "3 / 22" counter: a row of dots that long pushed the buttons out of the card
+          ...(steps.length > DOTS_MAX ? [el('span', { class: 'wn-count' }, `${at + 1} / ${steps.length}`)]
+            : steps.map((_, i) => el('span', { class: 'wn-dot' + (i === at ? ' on' : '') })))),
         el('button', { class: 'wn-btn wn-skip', onclick: () => close() }, t('whatsNew.skipAll')),
         el('span', { class: 'wn-gap' }),
         ...(at > 0 ? [el('button', { class: 'wn-btn', onclick: () => go(-1) }, t('whatsNew.back'))] : []),
@@ -131,6 +135,8 @@ export function mountWhatsNew({ t, lang, experience, run }) {
       return true;
     },
     close,
+    /** v3.144 draws the open card again (a language change) */
+    redraw: () => draw(),
     isOpen: () => Boolean(back),
   };
 }

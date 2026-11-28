@@ -3862,3 +3862,9 @@ Amends v3.122 (Studio reached the Office's Usage panel only from ⌘K). Studio's
 (`studio.usage`, `coins` icon) between Reports and Routines. A click calls `hooks.showPanel('#usage-panel')`: the
 Office's own Usage panel (tokens and estimated cost by period, model and agent) for Studio's current project, the same
 as ⌘K → Usage. With no current project it does nothing.
+
+## What's new: the card's footer fits (v3.144)
+
+Amends v3.123. With more than 8 steps (several versions' items after a long gap) the page indicator is a "3 / 22"
+counter (`.wn-count`) instead of a dot per step; the footer wraps and its buttons never break their labels, so every
+button stays inside the card. The open card is drawn again on a language change (`whatsNew.redraw()`).

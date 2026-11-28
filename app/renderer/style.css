@@ -1820,7 +1820,10 @@ body.studio.studio-float #machines-panel.studio-shown { display: block !importan
 .wn-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .25; }
 .wn-dot.on { opacity: .9; background: var(--accent-text); }
 .wn-gap { flex: 1; }
+.wn-count { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wn-foot { flex-wrap: wrap; row-gap: 6px; }
 .wn-btn {
+  white-space: nowrap; flex: none;
   font: inherit; color: inherit; cursor: pointer;
   padding: 4px 10px; background: transparent;
   border: var(--line-w) solid var(--line);
