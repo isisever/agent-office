@@ -15,6 +15,7 @@ import { mountTeamPage } from './studio-team.js';
 import { teamGroups, whoOptions, whoPlan } from '../src/studio-team.mjs';
 import { hasText } from './i18n.js';
 import { anchorAbove } from '../src/menu-anchor.mjs';
+import { accountChoices, accountToSet, pickerUseful } from '../src/studio-account-picker.mjs';
 import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText, defaultModelName } from '../src/studio-ux.mjs';
 import { syncSelect, setProp } from './select-sync.js';
 import { remoteGroups, remoteDot, machineTag } from '../src/studio-remote.mjs';
@@ -692,9 +693,41 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const tdh = shown.staffId ? teamInfo() : null;
     const member = tdh ? tdh.staff.find((/** @type {any} */ m) => m.id === shown.staffId) : null;
     const memberText = member ? [member.name, teamGroups({ staff: [member], presets: tdh.presets, lang: tdh.lang })[0]?.members[0]?.role].filter(Boolean).join(' · ') : '';
-    headChips.replaceChildren(...[chip('team', memberText, t('studio.team.member')), chip('folder', proj?.name || '', t('studio.project')), chip('branch', shown.branch, t('studio.branch')), chip('user', proj?.account || '', t('studio.account'))].filter((x) => x !== null));
+    headChips.replaceChildren(...[chip('team', memberText, t('studio.team.member')), chip('folder', proj?.name || '', t('studio.project')), chip('branch', shown.branch, t('studio.branch')), accountChip(proj)].filter((x) => x !== null));
     headState.replaceChildren(...(shown.waiting ? [el('span', { class: 'st-wait' }, t('studio.waiting'))] : shown.busy ? [el('span', { class: 'st-spin' }), el('span', {}, t('studio.working'))] : []));
   }
+
+  // v3.163 the project's account in its header is a picker: a click lists the accounts, a choice sets this project's
+  // account (the existing projects:setAccount; tabs of the project restart on it and resume their own conversation)
+  const acctMenu = el('div', { class: 'st-menu st-acct-menu', role: 'menu', hidden: true });
+  document.body.append(acctMenu);
+  function accountChip(/** @type {any} */ proj) {
+    if (!proj?.account) return null;
+    const choices = accountChoices(hooks.accounts?.() || [], proj.account);
+    const text = el('span', {}, proj.account);
+    if (!pickerUseful(choices)) return el('span', { class: 'st-chip', title: `${t('studio.account')}: ${proj.account}` }, icon('user', 12), text);
+    return el('button', { class: 'st-chip st-chip-pick', type: 'button', 'aria-haspopup': 'menu', title: `${t('studio.account')}: ${proj.account} - ${t('studio.accountPick')}`,
+      onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); openAcctMenu(/** @type {HTMLElement} */ (e.currentTarget), proj.id, choices); } }, icon('user', 12), text, icon('chevronDown', 10));
+  }
+  function openAcctMenu(/** @type {HTMLElement} */ btn, /** @type {string} */ projectId, /** @type {any[]} */ choices) {
+    if (!acctMenu.hidden) { acctMenu.hidden = true; return; }
+    acctMenu.replaceChildren(el('div', { class: 'st-menu-head' }, t('studio.accountPick')),
+      ...choices.map((c) => el('button', { class: 'st-menu-item', type: 'button', role: 'menuitemradio', 'aria-checked': String(c.current), onclick: () => {
+        acctMenu.hidden = true;
+        const id = accountToSet(choices, c.id);
+        if (id) hooks.setProjectAccount?.(projectId, id);
+      } }, el('span', {}, c.label + (c.signedOut ? ` (${t('studio.accountSignedOut')})` : '')), c.current ? el('span', {}, '\u2713') : null)),
+      el('div', { class: 'st-menu-note' }, t('studio.accountPickNote')));
+    acctMenu.hidden = false;
+    const a = btn.getBoundingClientRect();
+    acctMenu.style.cssText = 'position: fixed; right: auto; bottom: auto; width: 240px;';
+    const m = acctMenu.getBoundingClientRect();
+    const p = anchorAbove({ left: a.left, top: a.bottom + 12 + m.height, bottom: a.bottom }, { width: 240, height: m.height }, { width: window.innerWidth, height: window.innerHeight });
+    acctMenu.style.left = `${p.left}px`;
+    acctMenu.style.top = `${Math.max(8, Math.min(a.bottom + 6, window.innerHeight - m.height - 8))}px`;
+  }
+  document.addEventListener('mousedown', (e) => { if (!acctMenu.hidden && e.target instanceof Node && !acctMenu.contains(e.target)) acctMenu.hidden = true; });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !acctMenu.hidden) acctMenu.hidden = true; });
 
   // ---- v3.122 the Team section: members by department, live state, their open desks ----
   const teamInfo = () => { try { return hooks.sidebar()?.teamData?.() || null; } catch { return null; } };

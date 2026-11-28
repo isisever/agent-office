@@ -1481,6 +1481,8 @@ studio = mountStudio({ api, t, modLabel, hooks: {
   newSession: (projectId) => { userSelect(); leaveBoard(); selectProject(projectId); addTab(projectId, 'same'); },
   closeSession: (projectId, n) => { closeTab(projectId, n); },
   selectProject: (projectId) => { userSelect(); leaveBoard(); selectProject(projectId); },
+  accounts: () => sidebar?.accountList?.() || [],
+  setProjectAccount: (projectId, accountId) => { void setAccount(projectId, accountId); },   // v3.163 header account picker
   selectHq: () => { userSelect(); leaveBoard(); selectProject(HQ_ROW.id); },
   openBoard: (tab) => { userSelect(); selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); hqUi?.showBoard(tab === 'reports' ? 'reports' : 'board'); },   // v3.131 the board (renderer/board-view.js): Board, Reports; Routines
   openOfficeSettings: () => sidebar?.openSettings(),
