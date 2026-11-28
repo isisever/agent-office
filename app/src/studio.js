@@ -305,7 +305,31 @@ function guiSessionId(live, last) {
   return validSessionId(live) || validSessionId(last) || '';
 }
 
+/**
+ * v3.162 Does the manager (the project's Auto-approve) still answer this chat's permission requests? Only while the
+ * session runs claude's auto mode or none was ever set. A person who picked "ask permission" (default), acceptEdits or
+ * plan in the picker gets the cards: before, guiAsk read the project setting alone and answered them anyway, so the
+ * permission picker looked dead.
+ * @param {{ autoApprove?: boolean, mode?: string }} o mode: the session's gui-proc settings().mode
+ */
+function managerAnswers({ autoApprove = false, mode = '' } = {}) {
+  return autoApprove === true && (!mode || mode === 'auto' || mode === 'bypassPermissions');
+}
+/**
+ * v3.162 The launch arguments that bring a restarted chat back to what the person picked (model, permission mode):
+ * claude starts a resumed session in its own defaults, so a restart used to drop both picks.
+ * @param {{ picks?: { model?: string, mode?: string } | null, modes?: string[], lock?: string, models?: string[] }} o
+ * @returns {{ mode: string[], model: string[] }}
+ */
+function restartPickArgs({ picks = null, modes = [], lock = '', models = [] } = {}) {
+  const out = { mode: [], model: [] };
+  if (!picks || typeof picks !== 'object') return out;
+  if (!lock && typeof picks.mode === 'string' && picks.mode && picks.mode !== 'bypassPermissions' && Array.isArray(modes) && modes.includes(picks.mode)) out.mode = ['--permission-mode', picks.mode];
+  if (typeof picks.model === 'string' && picks.model && Array.isArray(models) && models.includes(picks.model)) out.model = ['--model', picks.model];
+  return out;
+}
 module.exports = {
+  managerAnswers, restartPickArgs,
   guiSessionId, mergeRecent,
   EXPERIENCES, ASLEEP_CLOSE_MS, RECENT_MAX, RECENT_PER_PROJECT,
   normalizeExperience, validSessionId, normalizeRecent, addRecent, dropRecent, trackAsleep, dueToClose, sweepStep, closable, prefsPatch, idleMoveTarget, tabTitle, listSessions, accountDisplayName, modeLock, settingAllowed, turnsAutoApproveOn, guiStartModeArgs, guiAutoUpgrade, autoApproveAfterSet, modelListPending,

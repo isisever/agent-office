@@ -262,7 +262,7 @@ test('v3.120 a GUI chat of an Auto-approve project starts in auto mode, never a 
   assert.deepEqual(S.guiStartModeArgs(), []);
   const main = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
   assert.match(main, /const startMode = STU\.guiStartModeArgs\(\{ gui: true, autoApprove: P\.autoApproveOf\(project\), hq: Boolean\(project\.hq\)/);
-  assert.match(main, /GS\.guiArgs\(guiPrompt \? args\.slice\(0, -1\) : args\), \.\.\.startMode\]/, 'only the GUI spawn gets it');
+  assert.match(main, /GS\.guiArgs\(guiPrompt \? args\.slice\(0, -1\) : args\), \.\.\.\(kept\.mode\.length \? kept\.mode : startMode\), \.\.\.kept\.model\]/, 'only the GUI spawn gets it');
 });
 
 test('modelListPending: a model waits (not-running) until the initialize answer; modes and old wrappers do not', () => {
@@ -298,4 +298,27 @@ test('v3.151 guiAutoUpgrade: a chat started without a mode switches to auto once
   assert.equal(S.guiAutoUpgrade({ gui: true, lock: 'bypass', modes }), false, 'never skip-permissions');
   assert.equal(S.guiAutoUpgrade({ gui: false, modes }), false, 'never a terminal');
   assert.equal(S.guiAutoUpgrade(), false);
+});
+
+test('v3.162 managerAnswers: a picked non-auto mode gets the permission cards even with Auto-approve on', () => {
+  assert.equal(S.managerAnswers({ autoApprove: true, mode: 'auto' }), true);
+  assert.equal(S.managerAnswers({ autoApprove: true, mode: '' }), true, 'no mode set yet');
+  for (const mode of ['default', 'acceptEdits', 'plan']) assert.equal(S.managerAnswers({ autoApprove: true, mode }), false, mode);
+  assert.equal(S.managerAnswers({ autoApprove: false, mode: 'auto' }), false);
+});
+
+test('v3.162 restartPickArgs: a restarted chat gets the picked mode and model back', () => {
+  const modes = ['auto', 'default', 'plan'];
+  const models = ['', 'opus', 'sonnet'];
+  assert.deepEqual(S.restartPickArgs({ picks: { mode: 'default', model: 'opus' }, modes, models }), { mode: ['--permission-mode', 'default'], model: ['--model', 'opus'] });
+  assert.deepEqual(S.restartPickArgs({ picks: { mode: 'plan' }, modes, lock: 'bypass', models }), { mode: [], model: [] }, 'a locked session keeps its mode');
+  assert.deepEqual(S.restartPickArgs({ picks: { mode: 'bypassPermissions', model: 'gone' }, modes, models }), { mode: [], model: [] });
+  assert.deepEqual(S.restartPickArgs({ picks: null, modes, models }), { mode: [], model: [] });
+});
+
+test('v3.162 main wires the picks: guiAsk consults the session mode, chat:setting records, the start re-applies', () => {
+  const main = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
+  assert.match(main, /autoApprove = STU\.managerAnswers\(\{ autoApprove, mode: terms\.get\(id\)\?\.settings\?\.\(\)\.mode/);
+  assert.match(main, /if \(r === 'ok'\) guiPicks\.set\(/);
+  assert.match(main, /STU\.restartPickArgs\(\{ picks: guiPicks\.get\(id\)/);
 });
