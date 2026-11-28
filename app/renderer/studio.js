@@ -6,6 +6,7 @@
 // Every text from main (project, session, device and account names) is put in with textContent.
 
 import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
+import { studioSections, planMove, dropSide, groupNameOf, GROUP_MAX } from '../src/studio-order.mjs';
 import { icon } from './studio-icons.js';
 import { meterView, amountText } from '../src/economy-view.mjs';
 import { mountSettingsPage } from './studio-settings.js';
@@ -353,8 +354,106 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     return el('div', { class: `st-budget ${v.level}`, title: t('sidebar.budgetMeter', { pct: v.pct, used: amountText(v.used, v.unit), limit: amountText(v.limit, v.unit), period: t(`sidebar.budget_${v.period}`) }) },
       el('i', { style: `width:${v.width}%` }));
   }
+  // ---- v3.142 project order and groups: the Office's own data (state.projects order, Project.group), changed through
+  // projects:move / projects:renameGroup; the headings collapse with the Office's `ao.closedGroups` ----
+  const closedSect = (() => { try { return new Set(JSON.parse(localStorage.getItem('ao.closedGroups') || '[]')); } catch { return new Set(); } })();
+  const saveClosedSect = () => { try { localStorage.setItem('ao.closedGroups', JSON.stringify([...closedSect])); } catch { /* storage off */ } };
+  let dragId = '';   // the project being dragged
+  /** @type {{ name?: string, fresh?: boolean, projectId?: string } | null} */
+  let editing = null;   // a group heading being renamed, or the "new group" box
+  const ordered = () => (view.projects || []).map((/** @type {any} */ p) => ({ id: p.id, group: p.group || '' }));
+  async function applyMove(/** @type {string} */ id, /** @type {any} */ to) {
+    const plan = planMove(ordered(), id, to);
+    if (plan) { await api.projects?.move?.(id, plan.order, plan.group); await refresh(); }
+  }
+  const clearMarks = () => lists.querySelectorAll('.st-drop-before, .st-drop-after, .st-drop-into').forEach((e) => e.classList.remove('st-drop-before', 'st-drop-after', 'st-drop-into'));
+  const endDrag = () => { dragId = ''; clearMarks(); draw(); };
+  /** Makes a project's card draggable by its head; a drop on the card puts the dragged project before / after it. */
+  function withDrag(/** @type {HTMLElement} */ node, /** @type {any} */ g) {
+    const head = /** @type {HTMLElement | null} */ (node.querySelector('.st-group-head'));
+    if (!head) return node;
+    head.addEventListener('contextmenu', (e) => { e.preventDefault(); projectMenu(g, e.clientX, e.clientY); });
+    if (query) return node;
+    head.draggable = true;
+    head.addEventListener('dragstart', (e) => { dragId = g.id; if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', g.id); } });
+    head.addEventListener('dragend', endDrag);
+    node.addEventListener('dragover', (e) => {
+      if (!dragId || dragId === g.id) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      const r = head.getBoundingClientRect();
+      clearMarks();
+      node.classList.add(dropSide(e.clientY, r.top, r.height) === 'before' ? 'st-drop-before' : 'st-drop-after');
+    });
+    node.addEventListener('drop', (e) => {
+      if (!dragId || dragId === g.id) return;
+      e.preventDefault();
+      const r = head.getBoundingClientRect();
+      const id = dragId;
+      const side = dropSide(e.clientY, r.top, r.height);
+      dragId = '';
+      clearMarks();
+      applyMove(id, side === 'before' ? { beforeId: g.id } : { afterId: g.id });
+    });
+    return node;
+  }
+  /** A project's right-click menu: move it to a group in use, a new group, or out of its group. */
+  function projectMenu(/** @type {any} */ g, /** @type {number} */ x, /** @type {number} */ y) {
+    document.querySelector('.st-ctx')?.remove();
+    const names = studioSections(ordered()).map((x2) => x2.name).filter(Boolean);
+    const row = (/** @type {string} */ label, /** @type {() => void} */ run) => el('div', { class: 'st-ctx-row', onclick: () => { menuEl.remove(); run(); } }, label);
+    const menuEl = el('div', { class: 'st-ctx', style: `left:${x}px;top:${y}px` },
+      el('div', { class: 'st-ctx-title' }, t('studio.moveToGroup')),
+      ...names.filter((n) => n !== g.group).map((n) => row(n, () => applyMove(g.id, { group: n }))),
+      row(t('studio.newGroup'), () => { editing = { fresh: true, projectId: g.id }; draw(); }),
+      ...(g.group ? [row(t('studio.removeFromGroup', { group: g.group }), () => applyMove(g.id, { group: '' }))] : []));
+    document.body.append(menuEl);
+    const off = (/** @type {Event} */ e) => { if (e.target instanceof Node && menuEl.contains(e.target)) return; menuEl.remove(); document.removeEventListener('mousedown', off, true); };
+    document.addEventListener('mousedown', off, true);
+  }
+  function nameInput(/** @type {string} */ value, /** @type {string} */ placeholder, /** @type {(v: string) => void} */ commit) {
+    let done = false;
+    const finish = (/** @type {boolean} */ ok) => { if (done) return; done = true; editing = null; const v = groupNameOf(input.value); draw(); if (ok && v) commit(v); };
+    const input = /** @type {HTMLInputElement} */ (el('input', {
+      class: 'st-group-input', value, placeholder, maxlength: String(GROUP_MAX),
+      onkeydown: (/** @type {KeyboardEvent} */ e) => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') { e.preventDefault(); finish(false); } },
+      onblur: () => finish(true), onclick: (/** @type {Event} */ e) => e.stopPropagation(),
+    }));
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+    return input;
+  }
+  /** A group heading: collapse, rename (double click), ungroup; a project dropped on it goes to the end of the group. */
+  function sectionHead(/** @type {{ name: string, items: any[] }} */ sec) {
+    const shut = !query && Boolean(sec.name) && closedSect.has(sec.name);
+    const head = el('div', { class: 'st-sect-head', 'data-group': sec.name },
+      sec.name ? el('button', { class: 'st-caret', 'aria-expanded': String(!shut), title: t('sidebar.groupToggle'), onclick: () => { if (closedSect.has(sec.name)) closedSect.delete(sec.name); else closedSect.add(sec.name); saveClosedSect(); draw(); } }, icon('chevron', 12)) : null,
+      editing && editing.name === sec.name && sec.name
+        ? nameInput(sec.name, sec.name, (v) => { if (closedSect.delete(sec.name)) { closedSect.add(v); saveClosedSect(); } api.projects?.renameGroup?.(sec.name, v)?.then?.(refresh); })
+        : el('span', { class: 'st-sect-name', title: sec.name ? t('studio.renameGroup') : '', ondblclick: () => { if (sec.name) { editing = { name: sec.name }; draw(); } } }, sec.name || t('studio.ungrouped')),
+      el('span', { class: 'st-sect-count' }, String(sec.items.length)),
+      sec.name ? el('button', { class: 'st-add st-ungroup', title: t('studio.ungroup'), onclick: () => { closedSect.delete(sec.name); api.projects?.renameGroup?.(sec.name, '')?.then?.(refresh); } }, icon('plus', 14)) : null);
+    head.addEventListener('dragover', (e) => { if (!dragId) return; e.preventDefault(); clearMarks(); head.classList.add('st-drop-into'); });
+    head.addEventListener('dragleave', () => head.classList.remove('st-drop-into'));
+    head.addEventListener('drop', (e) => { if (!dragId) return; e.preventDefault(); const id = dragId; dragId = ''; clearMarks(); applyMove(id, { group: sec.name }); });
+    return head;
+  }
+  /** The Projects heading with its "new group" button, the new-group box, and the project cards under group headings. */
+  function projectsList(/** @type {any[]} */ groups) {
+    const cur = current();
+    const target = editing?.projectId ? (view.projects || []).find((/** @type {any} */ p) => p.id === editing?.projectId) : cur;
+    const heading = el('div', { class: 'st-head st-head-row' }, el('span', {}, t('studio.projects')),
+      el('button', { class: 'st-add st-newgroup', title: t('studio.newGroup'), disabled: query ? 'disabled' : false, onclick: () => { editing = { fresh: true }; draw(); } }, icon('plus', 14)));
+    const fresh = editing?.fresh ? [el('div', { class: 'st-sect-head st-sect-new' }, nameInput('', t('studio.newGroupPh', { project: target?.name || '' }), (v) => { if (target) applyMove(target.id, { group: v }); }))] : [];
+    if (!groups.length) return [heading, ...fresh, el('div', { class: 'st-none' }, t('studio.none'))];
+    const sections = studioSections(groups);
+    const flat = sections.length === 1 && !sections[0].name;
+    return [heading, ...fresh, ...sections.flatMap((sec) => {
+      const cards = (!query && sec.name && closedSect.has(sec.name)) ? [] : sec.items.map((g) => withDrag(groupEl(g), g));
+      return flat ? cards : [sectionHead(sec), ...cards];
+    })];
+  }
   function draw() {
-    if (!on) return;
+    if (!on || dragId) return;
     newLabel.textContent = t('studio.newSession');
     newBtn.title = `${t('studio.newSession')} (${modLabel}N · ${t('studio.worktreeKey')} ${hooks.isMac ? '⌘⇧N' : 'Ctrl+Shift+Alt+N'})`;
     search.placeholder = t('studio.search');
@@ -366,9 +465,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       el('div', { class: 'st-row st-pin', title: t('studio.usageTitle'), onclick: () => hooks.showPanel('#usage-panel') }, icon('coins'), el('span', { class: 'st-title' }, t('studio.usage'))),
       el('div', { class: 'st-row st-pin', onclick: () => hooks.openBoard() }, icon('clock'), el('span', { class: 'st-title' }, t('studio.routines'))),
       el('div', { class: 'st-row st-pin', title: `${modLabel}K`, onclick: () => openPalette() }, icon('command'), el('span', { class: 'st-title' }, t('studio.commands')), el('span', { class: 'st-key' }, `${modLabel}K`)));
-    const groups = studioGroups(view.projects, { query, currentId: currentId() });
-    lists.replaceChildren(el('div', { class: 'st-head' }, t('studio.projects')),
-      ...(groups.length ? groups.map(groupEl) : [el('div', { class: 'st-none' }, t('studio.none'))]));
+    lists.replaceChildren(...projectsList(studioGroups(view.projects, { query, currentId: currentId(), ordered: true })));
     // paired machines: read-only (a remote target is send-as-task plus a read-only view, from HQ's board)
     machines.replaceChildren(...(devices.length ? [el('div', { class: 'st-head' }, t('studio.machines')),
       ...devices.map((d) => el('div', { class: 'st-row st-device', title: d.online ? t('studio.online') : t('studio.offline') },

@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('agentOffice', {
     list: () => ipcRenderer.invoke('projects:list'),
     add: () => ipcRenderer.invoke('projects:add'),
     remove: (id) => ipcRenderer.invoke('projects:remove', id),
+    move: (id, order, group) => ipcRenderer.invoke('projects:move', id, order, group),   // v3.142 Studio drag and drop: new id order + the project's group → { ok }
+    renameGroup: (from, to) => ipcRenderer.invoke('projects:renameGroup', from, to),     // v3.142 '' as `to` ungroups → { ok }
     setGroup: (id, group) => ipcRenderer.invoke('projects:setGroup', id, group),   // v3.86 the PROJECTS list's group ('' = none)
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
     setAccount: (id, accountId) => ipcRenderer.invoke('projects:setAccount', id, accountId),

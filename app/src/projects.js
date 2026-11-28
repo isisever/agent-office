@@ -96,6 +96,26 @@ function setGroup(state, id, group) {
   }) };
 }
 
+/** v3.142 the projects in the given id order (the named ones fill their own slots in that order; the others stay where they are; unknown ids are ignored). */
+function reorderProjects(state, ids) {
+  const rank = new Map((Array.isArray(ids) ? ids : []).map((id, i) => [id, i]));
+  const named = state.projects.filter((p) => rank.has(p.id)).sort((a, b) => rank.get(a.id) - rank.get(b.id));
+  let i = 0;
+  return { ...state, projects: state.projects.map((p) => (rank.has(p.id) ? named[i++] : p)) };   // the others (HQ) keep their place
+}
+/** v3.142 every project in group `from` (case and Turkish letters ignored) moves to group `to` ('' = no group: ungroup). */
+function renameGroup(state, from, to) {
+  const key = (g) => cleanGroup(g).toLocaleLowerCase('tr');
+  const k = key(from);
+  if (!k) return state;
+  const g = cleanGroup(to);
+  return { ...state, projects: state.projects.map((p) => {
+    if (key(p.group) !== k) return p;
+    const { group: _old, ...rest } = p;
+    return g ? { ...rest, group: g } : rest;
+  }) };
+}
+
 // --- tabs (contract v3.0)
 // Project.tabs holds only extra tabs; the first tab (main terminal) is implicit, counts as number 1 and cannot be closed.
 // Tab = { n: number (≥ 2), dir?: string, worktree?: { root, repo, branch } }
@@ -744,7 +764,7 @@ module.exports = {
   historyDir,
   MAIN_TAB, normalizeTabs, tabsOf, tabPtyId, parsePtyId, ptyIdsOf, allPtyIdsOf, tabDir, resolvePty, followsProjectAccount,
   nextTabNumber, worktreeRoot, worktreeBranch, worktreeDir, addTab, removeTab, sessionAliases, projectPlaces,
-  setParallel, desksOf, deskOf, setDeskSession, setGroup,
+  setParallel, desksOf, deskOf, setDeskSession, setGroup, reorderProjects, renameGroup,
   newId, projectName, findProject, setHqDir, hqProject, isHqId,
   /** state.hq (v3.46) normalized next to the rest */
   normalizeState: (raw, o) => ({ ...normalizeState(raw, o), hq: HQ.normalizeHq(raw?.hq), routines: ROUT.normalizeRoutines(raw?.routines), routinesCfg: ROUT.normalizeCfg(raw?.routinesCfg) }), findByDir,
