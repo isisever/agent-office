@@ -41,3 +41,33 @@ test('sendOk reads the link view returned by link:send', () => {
   assert.equal(sendOk({ error: null, outgoing: [{ status: 'rejected', reason: 'not-running' }] }), false);
   assert.equal(sendOk({ error: 'off', outgoing: [] }), false);
 });
+
+import { remoteOpenArgs, remoteBadgeMachine, OPEN_REMOTE_EVENT } from '../src/studio-remote-chat.mjs';
+import { remoteGroup } from '../src/studio-remote.mjs';
+
+test('remoteOpenArgs: online claude row opens with send; offline opens read-only; non-claude/invalid do not', () => {
+  const base = { key: 'k', pub: 'p', id: 'proj', name: 'N', machine: 'Mac' };
+  const on = remoteOpenArgs(remoteGroup({ ...base, online: true, status: 'idle' }));
+  assert.deepEqual(on, { key: 'k', pub: 'p', project: 'proj', name: 'N', machine: 'Mac', status: 'idle', online: true, canSend: true });
+  const off = remoteOpenArgs(remoteGroup({ ...base, online: false }));
+  assert.equal(off.online, false); assert.equal(off.canSend, false);
+  assert.equal(remoteOpenArgs(remoteGroup({ ...base, online: true, engine: 'codex' })), null);
+  assert.equal(remoteOpenArgs(null), null);
+});
+
+test('remoteBadgeMachine trims, collapses spaces, caps, and is empty without a machine', () => {
+  assert.equal(remoteBadgeMachine({ machine: '  Mac   mini ' }), 'Mac mini');
+  assert.equal(remoteBadgeMachine({ machine: 'x'.repeat(100) }).length, 60);
+  assert.equal(remoteBadgeMachine({}), '');
+  assert.equal(OPEN_REMOTE_EVENT, 'ao:open-remote');
+});
+
+import { acceptOpenRemote } from '../src/studio-remote-chat.mjs';
+test('acceptOpenRemote: only in Studio mode, with args, and once', () => {
+  const d = () => ({ args: { key: 'k' }, handled: false });
+  assert.equal(acceptOpenRemote(d(), true), true);
+  assert.equal(acceptOpenRemote(d(), false), false);
+  assert.equal(acceptOpenRemote({ args: null, handled: false }, true), false);
+  assert.equal(acceptOpenRemote({ ...d(), handled: true }, true), false);
+  assert.equal(acceptOpenRemote(undefined, true), false);
+});

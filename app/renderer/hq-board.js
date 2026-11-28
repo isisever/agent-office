@@ -28,6 +28,8 @@ function el(tag, attrs = {}, ...kids) {
 
 // engine names on a remote row's status line (brand names, not translated)
 import { mountRemoteView } from './remote-view.js';
+import { remoteGroup } from '../src/studio-remote.mjs';
+import { remoteOpenArgs, OPEN_REMOTE_EVENT } from '../src/studio-remote-chat.mjs';
 import { micButton } from './voice.js';
 import { templatesManager } from './templates-ui.js';
 import { mountBoardView } from './board-view.js';
@@ -372,7 +374,13 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openCh
       const showing = open && (!rview || rview.isOpen(r.key));
       openKey = showing ? '' : r.key;
       if (showing) rview?.close();
-      else if (online) rview?.open({ key: r.key, pub, project: r.id, name: r.name, machine: r.machine, status: st });
+      else if (online) {
+        // Studio opens it inline in the main chat; the popup is only the fallback when Studio does not answer
+        const detail = { args: remoteOpenArgs(remoteGroup({ ...r, pub, online, status: st })), handled: false };
+        if (detail.args) window.dispatchEvent(new CustomEvent(OPEN_REMOTE_EVENT, { detail }));
+        if (detail.handled) openKey = '';   // the inline chat shows it; the row has no popup open
+        else rview?.open({ key: r.key, pub, project: r.id, name: r.name, machine: r.machine, status: st });
+      }
       renderRemote();
     };
     if (open && rview?.isOpen(r.key)) rview.update(st);

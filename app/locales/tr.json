@@ -248,6 +248,7 @@
     "remote": {
       "heading": "Diğer makineler",
       "runsOn": "{machine} makinesinde çalışır",
+      "badge": "uzak · {machine}",
       "offline": "{machine} çevrim dışı, son bilinen durum gösteriliyor",
       "offlineReadOnly": "{machine} çevrim dışı, son bilinen içerik gösteriliyor (salt okunur)",
       "readOnly": "Bu oturum buradan yönetilemez (salt okunur)",
