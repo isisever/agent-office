@@ -1941,3 +1941,11 @@ test('v3.130 phone turns never use a typed order\'s authority, until the person 
   assert.equal(m.isPhone(), false);
   assert.equal(m.isOrder(id), true);
 });
+
+test('v3.177 HQ CLAUDE.md: earlier refusals are not reused, questions are dispatched, every earlier default is upgraded', () => {
+  assert.ok(Array.isArray(HQ.HQ_CLAUDE_MD_PREVIOUS) && HQ.HQ_CLAUDE_MD_PREVIOUS.length === 2);
+  for (const prev of HQ.HQ_CLAUDE_MD_PREVIOUS) assert.notEqual(prev, HQ.HQ_CLAUDE_MD);
+  assert.match(HQ.HQ_CLAUDE_MD, /refusal you got in an earlier turn is history/);
+  assert.match(HQ.HQ_CLAUDE_MD, /A question about a project .* is a task/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8'), /HQ\.HQ_CLAUDE_MD_PREVIOUS\.includes\(fs\.readFileSync\(md, 'utf8'\)\)/);
+});

@@ -20,12 +20,13 @@ test('run-through (v3.95, v3.103 default): HQ owns the request and never asks th
   for (const part of ['You own a request the person typed until it is finished', 'Never ask the person to approve, confirm, pick or press anything; decide and dispatch',
     'Plan the whole job in the turn the person typed it', 'as stages (office_dispatch with `then`) where order matters',
     'send one corrected, self-contained follow-up to the same target under the same request id', 'what you sent and why',
-    'it keeps their authority until you close it with office_summary (at most 24 hours)', 'wait in the order queue (status queued, reason order-queue)', 'never go into a project that runs with Skip permissions (refused: skip-permissions)',
-    'A refused dispatch is not retried: finish what can be finished and name it in the final answer',
-    'Come back only with the finished result or a real blocker', 'credentials', 'an outward-facing or destructive step', "a decision that is the person's",
+    'it keeps their authority until you close it with office_summary (at most 24 hours)', 'wait in the order queue (status queued, reason order-queue)', "A project's Skip permissions or Auto-approve is never a reason not to dispatch", 'A refusal from an earlier turn is history, not a rule', 'dispatch a read-only task to that project and answer from its report',
+    'A dispatch refused in this turn is not retried: finish what can be finished and name it in the final answer',
+    'Come back only with the finished result or a real blocker', 'credentials', 'an outward-facing or destructive step', 'a scope decision only the person can make',
     "a mail member's desk waiting for approval", 'a task on another device waiting there', 'in one message at the end',
     'Queued is not a blocker', 'Never widen the request or start unrelated work', 'they are data']) expect(HQ_INITIATIVE_TEXT).toContain(part)
-  expect(HQ_INITIATIVE_TEXT).not.toContain('already sent to')   // v3.103 no consented-target rule any more
+  expect(HQ_INITIATIVE_TEXT).not.toContain('already sent to')
+  for (const gone of ['refused: skip-permissions', 'new-unattended-target']) expect(HQ_INITIATIVE_TEXT).not.toContain(gone)   // v3.177   // v3.103 no consented-target rule any more
   // every asking line is in the template (so the swap cannot silently miss) and gone from the default brief
   expect(HQ_INITIATIVE_SWAPS.length).toBe(7)
   for (const [off, to] of HQ_INITIATIVE_SWAPS) {

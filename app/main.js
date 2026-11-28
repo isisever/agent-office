@@ -3156,7 +3156,7 @@ function setupHq() {
     fs.chmodSync(dir, 0o700);
     const md = path.join(dir, 'CLAUDE.md');
     // v3.176 written when missing, or when it is still the unedited earlier default
-    if (!fs.existsSync(md) || fs.readFileSync(md, 'utf8') === HQ.HQ_CLAUDE_MD_PREVIOUS) fs.writeFileSync(md, HQ.HQ_CLAUDE_MD, { mode: 0o600 });
+    if (!fs.existsSync(md) || HQ.HQ_CLAUDE_MD_PREVIOUS.includes(fs.readFileSync(md, 'utf8'))) fs.writeFileSync(md, HQ.HQ_CLAUDE_MD, { mode: 0o600 });
   } catch (e) { console.error('hq folder:', e.message); return; }
   P.setHqDir(dir);
   SF.cleanTemps(hqBoardFile());

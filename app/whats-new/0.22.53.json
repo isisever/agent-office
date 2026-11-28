@@ -1,0 +1,17 @@
+{
+  "version": "0.22.53",
+  "items": [
+    {
+      "id": "hq-no-stale-refusals",
+      "experience": "studio",
+      "title": {
+        "en": "HQ answers project questions itself",
+        "tr": "HQ proje sorularını kendisi yanıtlıyor"
+      },
+      "body": {
+        "en": "Ask HQ about a project and it sends that project a read-only task and answers from the report, instead of telling you to go ask in the tab. A task refused before the last update is tried again rather than skipped.",
+        "tr": "HQ'ya bir projeyi sorduğunuzda, size sekmeye gidip sormanızı söylemek yerine o projeye salt okunur bir görev gönderir ve rapordan yanıtlar. Önceki sürümde reddedilmiş bir görev atlanmaz, yeniden denenir."
+      }
+    }
+  ]
+}
