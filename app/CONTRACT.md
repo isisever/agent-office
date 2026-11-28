@@ -3934,3 +3934,8 @@ Fixes three Studio problems with HQ; the Office look and behaviour are unchanged
   claude applies at runtime.
 - Stop recovers a stuck busy state: if no `result` ends the turn within 5 s of the interrupt (a turn lost to a restart, or an
   interrupt claude ignored) `gui-proc` clears `live.busy`, so the composer and a new message work again.
+
+## Studio: closing an enlarged image keeps the window (v3.145)
+- The enlarged image (`previewImage` in `renderer/chat.js`) closes on a click or Escape, stops that event there, and hands the focus back to the composer; only one preview exists at a time.
+- Closing it never calls window or app close APIs; the preview is a plain overlay in the page.
+- `main.js` logs `render-process-gone` (reason and exit code) so a renderer crash leaves a trace. This is log only.
