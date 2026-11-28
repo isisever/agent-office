@@ -226,7 +226,7 @@
       "renameEmpty": "Departmanın bir adı olmalı.",
       "renameFailed": "Bazı üyelerde eski ad kaldı:"
     },
-    "board": "Pano",
+    "board": "Kanban pano",
     "scene": {
       "noAgents": "Çalışan ajan yok"
     }
@@ -1696,7 +1696,7 @@
       }
     },
     "view": {
-      "board": "Pano",
+      "board": "Kanban pano",
       "office": "Ofis"
     }
   },
@@ -1712,7 +1712,7 @@
     "tomorrow": "yarın",
     "edit": "Düzenle",
     "history": "Geçmiş",
-    "back": "← Pano",
+    "back": "← Kanban pano",
     "name": "Ad",
     "prompt": "Ne yapılsın",
     "bytes": "{n} / 8192 bayt",
@@ -2044,7 +2044,7 @@
   },
   "board": {
     "tab": {
-      "board": "Pano",
+      "board": "Kanban pano",
       "reports": "Raporlar"
     },
     "col": {

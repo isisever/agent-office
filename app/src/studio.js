@@ -229,13 +229,14 @@ const turnsAutoApproveOn = (mode) => mode === 'auto';
 
 /**
  * v3.120 manager decision: a GUI chat of an Auto-approve project starts in claude's auto mode, like the person's
- * terminal shows "auto mode on". Never the HQ session, a desk or a guarded session (mail, staff, extra permission
+ * terminal shows "auto mode on". v3.149 (user decision): every GUI chat starts in auto mode, Auto-approve on or off,
+ * instead of claude's ask-permission default. Never the HQ session, a desk or a guarded session (mail, staff, extra permission
  * rules: modeLock 'desk'), never a skip-permissions project (it stays bypass), and only when the account offers `auto`.
- * @param {{ gui?: boolean, autoApprove?: boolean, hq?: boolean, lock?: string, modes?: string[] }} o
+ * @param {{ gui?: boolean, autoApprove?: boolean, hq?: boolean, lock?: string, modes?: string[] }} o (autoApprove: no longer used, v3.149)
  * @returns {string[]} the extra launch arguments
  */
-function guiStartModeArgs({ gui = false, autoApprove = false, hq = false, lock = '', modes = [] } = {}) {
-  if (!gui || autoApprove !== true || hq || lock || !Array.isArray(modes) || !modes.includes('auto')) return [];
+function guiStartModeArgs({ gui = false, hq = false, lock = '', modes = [] } = {}) {
+  if (!gui || hq || lock || !Array.isArray(modes) || !modes.includes('auto')) return [];
   return ['--permission-mode', 'auto'];
 }
 /**

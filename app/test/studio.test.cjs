@@ -252,7 +252,8 @@ test('v3.120 a GUI chat of an Auto-approve project starts in auto mode, never a 
   const modes = ['auto', 'default', 'acceptEdits', 'plan'];
   const auto = ['--permission-mode', 'auto'];
   assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, modes }), auto);
-  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: false, modes }), [], 'Auto-approve off: the default mode');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: false, modes }), auto, 'v3.149 Auto-approve off: auto mode too');
+  assert.deepEqual(S.guiStartModeArgs({ gui: true, modes }), auto, 'v3.149 auto mode by default');
   assert.deepEqual(S.guiStartModeArgs({ gui: false, autoApprove: true, modes }), [], 'the terminal path is unchanged');
   assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, hq: true, modes }), [], 'never HQ');
   assert.deepEqual(S.guiStartModeArgs({ gui: true, autoApprove: true, lock: S.modeLock({ desk: true }), modes }), [], 'a desk or guarded session keeps its rules');

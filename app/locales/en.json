@@ -226,7 +226,7 @@
       "renameEmpty": "A department needs a name.",
       "renameFailed": "Some members kept the old name:"
     },
-    "board": "Board",
+    "board": "Kanban board",
     "scene": {
       "noAgents": "No agents working"
     }
@@ -1724,7 +1724,7 @@
       }
     },
     "view": {
-      "board": "Board",
+      "board": "Kanban board",
       "office": "Office"
     }
   },
@@ -1740,7 +1740,7 @@
     "tomorrow": "tomorrow",
     "edit": "Edit",
     "history": "History",
-    "back": "← Board",
+    "back": "← Kanban board",
     "name": "Name",
     "prompt": "What to do",
     "bytes": "{n} / 8192 bytes",
@@ -2072,7 +2072,7 @@
   },
   "board": {
     "tab": {
-      "board": "Board",
+      "board": "Kanban board",
       "reports": "Reports"
     },
     "col": {

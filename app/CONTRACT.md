@@ -3968,3 +3968,8 @@ projects:renameGroup(from, to) → { ok }                      // every project 
   only through its projects (as in the Office), so a new group takes the current (or right-clicked) project.
 - Strings `studio.newGroup`, `newGroupPh`, `ungrouped`, `moveToGroup`, `removeFromGroup`, `ungroup`, `renameGroup`.
 - **Not verified live** (no running window in this change): the drag itself; the pure parts and the store are tested.
+
+## Studio: auto mode by default, Kanban board name (v3.149)
+
+- Every Studio GUI chat starts with `--permission-mode auto` (`guiStartModeArgs`), whether the project's Auto-approve is on or off, instead of claude's ask-permission default. Unchanged exceptions: the HQ session, desks and guarded sessions (modeLock 'desk'), skip-permissions projects (stay bypass), and accounts that do not report `auto`. Starting in auto does not turn Auto-approve on; only picking Auto in the picker does.
+- The board is named "Kanban board" (tr "Kanban pano") in its tab, the Studio entry, the HQ view switch and the routines back link.
