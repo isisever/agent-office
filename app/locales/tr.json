@@ -945,6 +945,8 @@
     "terminalTitle": "Terminali göster (onaylar, menüler, tuşlar)",
     "chat": "Sohbet",
     "chatTitle": "Bu sekmeyi sohbet olarak göster",
+    "switchTerminal": "Terminale geç",
+    "backToChat": "Sohbete dön",
     "permission": "Bu projede bir sekme onay bekliyor (bu sekme değil): o sekmeyi açın.",
     "empty": "Henüz konuşma yok: ilk mesajı aşağıya yazın.",
     "images": "{count} görsel",

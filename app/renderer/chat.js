@@ -35,6 +35,16 @@ function h(tag, attrs = {}, ...kids) {
   return el;
 }
 
+/**
+ * v3.137 the label of a button that opens the tab's terminal: the Office's "Terminal", and in Studio a switch
+ * ("Switch to terminal", with a terminal icon when asked). Both are drawn; CSS shows the experience's one, so a switch
+ * of experience needs no redraw.
+ * @param {boolean} withIcon
+ */
+function termLabel(withIcon) {
+  return [h('span', { class: 'term-label-office' }, t('chat.terminal')), h('span', { class: 'term-label-studio' }, withIcon ? icon('terminal', 14) : null, t('chat.switchTerminal'))];
+}
+
 /** v3.80 amendment: Claude's markdown (src/chat-md.mjs) as DOM nodes; every text goes in as text, links open outside. */
 function mdInline(kids) {
   return kids.map((k) => {
@@ -219,7 +229,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     input.placeholder = t('chat.placeholder');
     sendLabel.textContent = t('chat.send');
     send.title = t('chat.send');
-    moreTerm.lastElementChild.textContent = t('chat.terminal');
+    moreTerm.replaceChildren(icon('terminal'), ...termLabel(false));
     more.title = t('chat.more');
     more.setAttribute('aria-label', t('chat.more'));
     drawPickOptions();
@@ -232,7 +242,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     endShown = '';
     stop.title = t('chat.gui.stopTitle');
     bannerText.textContent = t('chat.permission');
-    bannerBtn.textContent = t('chat.terminal');
+    bannerBtn.replaceChildren(...termLabel(true));
     empty.textContent = t('chat.empty');
     agentBack.textContent = t('chat.agents.back');
     pickBack.textContent = t('chat.agents.back');
@@ -510,7 +520,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     const locked = mustUseTerminal(menu);
     if (locked) for (const b of btns) b.disabled = true;
     const cut = locked
-      ? h('div', { class: 'chat-menu-cut' }, h('span', {}, t(menu.truncated ? 'chat.menuTruncated' : 'chat.permission')), h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() }, t('chat.terminal')))
+      ? h('div', { class: 'chat-menu-cut' }, h('span', {}, t(menu.truncated ? 'chat.menuTruncated' : 'chat.permission')), h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() }, ...termLabel(true)))
       : null;
     card.replaceChildren(...[h('div', { class: 'chat-menu-title' }, h('pre', { class: 'chat-dialog' }, menu.lines.join('\n'))), cut,
       h('div', { class: 'chat-menu-nav' }, ...btns)].filter(Boolean));
@@ -541,7 +551,7 @@ export function mountChat(el, { ptyId, onTerminal, onCommand = () => onTerminal(
     nav.push(h('button', { class: 'chat-nav', onclick: () => press(['\x1b']) }, t('chat.menuCancel')));
     // the text above the options is cut: say so; an approval is then answered in the terminal
     const cut = menu.truncated
-      ? h('div', { class: 'chat-menu-cut' }, h('span', {}, t('chat.menuTruncated')), h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() }, t('chat.terminal')))
+      ? h('div', { class: 'chat-menu-cut' }, h('span', {}, t('chat.menuTruncated')), h('button', { class: 'chat-banner-btn', onclick: () => onTerminal() }, ...termLabel(true)))
       : null;
     if (mustUseTerminal(menu)) for (const b of [...opts, ...nav]) b.disabled = true;
     card.replaceChildren(...[h('div', { class: 'chat-menu-title' }, ...titles), cut, h('div', { class: 'chat-opts' }, ...opts), h('div', { class: 'chat-menu-nav' }, ...nav)].filter(Boolean));
