@@ -2210,10 +2210,13 @@ async function hqTaskOp(args) {
   return { ok: true, ...(now ? { status: now.status } : { removed: true }) };
 }
 /** A report of a task this office dispatched: kept for office_reports; the boss gets only a fixed "report ready" row. */
+// v3.xxx a report or a finished task pumps the order queue within ~200 ms (a burst runs one pump); hqTick stays the fallback
+const hqPumpKick = HO.createKick(() => { hqOrderPump().catch((e) => console.error('hq orders:', e.message)); }, 200);
 function onOfficeReport({ id, pub, report }) {
   const rec = loadDispatches().get(id);
   if (!rec || rec.pub !== pub || !report || rec.report) return;   // only tasks we dispatched, from the machine we sent them to
   rec.report = report;
+  hqPumpKick();
   rec.status = 'reported';
   saveDispatches();
   const done = hqOnReport(id, report);   // v3.46 board row, tasks/<id>/report.{json,md}; requests whose tasks all ended
@@ -2477,6 +2480,7 @@ function hqStatus(id, status, reason) {
   const { board, done } = HQ.finishRequests(n);
   saveHqBoard(board);
   hqRequestsDone(done);
+  if (HQ.TERMINAL.has(status) && typeof hqPumpKick === 'function') hqPumpKick();   // (typeof: the chain tests eval hqStatus alone)
 }
 function hqRequestsDone(all) {
   const done = routinesOnDone(all);   // v3.47 a routine's own project run ends here: no HQ inbox row
