@@ -142,3 +142,8 @@ test('fan-out (v3.132): the brief names targets[] and role assignment in both mo
     expect(t).toContain('no-member-for-role')
   }
 })
+
+test('v3.178 an interim report is not a result: HQ follows up instead of closing', () => {
+  expect(HQ_INITIATIVE_TEXT).toContain('or only says work is still going')
+  expect(HQ_INITIATIVE_TEXT).toContain('never close the request on it, and never ask the person to check it themselves')
+})
