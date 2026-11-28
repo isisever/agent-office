@@ -1,7 +1,7 @@
 // Read-only view of a project's session on another machine (contract v3.100): the chat view (renderer/chat.js) fed by
 // the device link instead of a local transcript. Nothing is typed here: the row's command box stays the way to type.
 import { mountChat } from './chat.js';
-import { remoteChatMode, rememberItems, lastKnown, sendOk } from '../src/studio-remote-chat.mjs';
+import { remoteChatMode, rememberItems, lastKnown, sendOk, remoteBadgeMachine } from '../src/studio-remote-chat.mjs';
 
 const KEEP = 400;                 // items kept (chat.js keeps as many on screen)
 const KEEP_MS = 2 * 60 * 1000;    // sess-keep while the view is open (the owning machine ends it after 10 quiet minutes)
@@ -17,13 +17,15 @@ export function mountRemoteView({ api, t, inline = false, onChange = () => {} })
   /** @type {any} */ let cur = null;
   const mk = (/** @type {string} */ tag, /** @type {string} */ cls) => { const e = document.createElement(tag); e.className = cls; return e; };
   const title = mk('span', 'rv-title');
+  const badge = mk('span', 'rv-badge');
+  badge.hidden = true;
   const asOf = mk('span', 'rv-asof');
   const closeBtn = mk('button', 'rv-close');
   closeBtn.textContent = '✕';
   closeBtn.hidden = inline;
   closeBtn.addEventListener('click', () => close());
   const head = mk('div', 'rv-head');
-  head.append(title, asOf, closeBtn);
+  head.append(badge, title, asOf, closeBtn);
   const note = mk('div', 'rv-note');
   const body = mk('div', 'rv-body');
   const el = mk('div', 'remote-view');
@@ -41,6 +43,9 @@ export function mountRemoteView({ api, t, inline = false, onChange = () => {} })
   function draw() {
     if (!cur) return;
     title.textContent = `${cur.machine} · ${cur.name}`;
+    const bm = inline ? remoteBadgeMachine(cur) : '';
+    badge.textContent = bm ? t('studio.remote.badge', { machine: bm }) : '';
+    badge.hidden = !bm;
     asOf.textContent = cur.at ? t('hq.remoteView.asOf', { time: time(cur.at) }) : '';
     closeBtn.title = t('hq.remoteView.close');
     closeBtn.setAttribute('aria-label', t('hq.remoteView.close'));

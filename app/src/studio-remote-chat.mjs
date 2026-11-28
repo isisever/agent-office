@@ -43,3 +43,24 @@ export function sendOk(r) {
   }
   return false;
 }
+
+/**
+ * The arguments for opening a remote row's session in the main chat, from a remote group (src/studio-remote.mjs).
+ * Null when the row cannot be shown at all (no key/pub, or an online machine whose project is not a Claude project).
+ * An offline machine still opens (last known content, read-only).
+ * @param {any} g
+ */
+export function remoteOpenArgs(g) {
+  if (!g || typeof g.key !== 'string' || !g.key || typeof g.pub !== 'string' || !g.pub) return null;
+  if (!(g.canView || g.dim)) return null;
+  return { key: g.key, pub: g.pub, project: g.projectId, name: g.name, machine: g.machine, status: g.status || 'idle', online: Boolean(g.online), canSend: Boolean(g.canSend) };
+}
+
+/** Event name: another view (HQ's board) asks Studio to open a remote session inline; Studio sets `detail.handled`. */
+export const OPEN_REMOTE_EVENT = 'ao:open-remote';
+
+/** The machine name the inline header's "remote" badge shows ('' = no badge). @param {any} o */
+export function remoteBadgeMachine(o) {
+  const m = o && typeof o.machine === 'string' ? o.machine.replace(/\s+/g, ' ').trim() : '';
+  return m.slice(0, 60);
+}

@@ -245,6 +245,7 @@
     "remote": {
       "heading": "On other machines",
       "runsOn": "Runs on {machine}",
+      "badge": "remote · {machine}",
       "offline": "{machine} is offline, showing last known state",
       "offlineReadOnly": "{machine} is offline, showing its last known content (read-only)",
       "readOnly": "This session cannot be controlled from here (read-only)",

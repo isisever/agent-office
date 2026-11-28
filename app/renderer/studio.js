@@ -17,6 +17,7 @@ import { hasText } from './i18n.js';
 import { anchorAbove } from '../src/menu-anchor.mjs';
 import { relativeTime, firstName, START_MODELS, START_MODES, startPlan, startPickers, renameText, defaultModelName } from '../src/studio-ux.mjs';
 import { syncSelect, setProp } from './select-sync.js';
+import { remoteOpenArgs, OPEN_REMOTE_EVENT } from '../src/studio-remote-chat.mjs';
 import { remoteGroups, remoteDot, machineTag } from '../src/studio-remote.mjs';
 import { mountRemoteView } from './remote-view.js';
 
@@ -409,6 +410,15 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   // ---- v3.153 paired machines' projects as rows of the Projects list: same row shape, a small machine tag, dimmed while
   // that machine is offline. Only what the device link allows: session view, command box, start/wake/sleep/stop/restart ----
   const rview = api.link?.sessOpen ? mountRemoteView({ api, t, inline: true, onChange: () => draw() }) : null;
+  // the HQ board asks for a remote session to open in this chat instead of its popup (the board is left first)
+  if (rview) window.addEventListener(OPEN_REMOTE_EVENT, (/** @type {any} */ e) => {
+    const a = e.detail?.args;
+    if (!a || e.detail.handled) return;
+    e.detail.handled = true;
+    document.body.classList.remove('studio-board');
+    rview.open(a);
+    draw();
+  });
   const remoteOpen = /** @type {Set<string>} */ (new Set());   // expanded remote rows (this window)
   const remoteBusy = /** @type {Set<string>} */ (new Set());
   let remoteLink = /** @type {any} */ (null);
@@ -419,7 +429,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const viewable = g.canView || g.dim;   // an offline machine opens too: last known content, read-only
     const select = () => {
       remoteOpen.add(g.key);
-      if (viewable && rview) rview.open({ key: g.key, pub: g.pub, project: g.projectId, name: g.name, machine: g.machine, status: g.status || 'idle', online: g.online, canSend: g.canSend });
+      const args = remoteOpenArgs(g);
+      if (viewable && rview && args) rview.open(args);
       draw();
     };
     if (rview?.isOpen(g.key) && rview.sync({ key: g.key, online: g.online, canSend: g.canSend, status: g.status || 'idle' })) setTimeout(select, 0);   // the machine came back: reopen live
