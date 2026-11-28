@@ -10,7 +10,7 @@ const byName = (/** @type {any} */ a, /** @type {any} */ b) => String(a.name || 
 
 /**
  * The sidebar's project groups: every project (by name), its Running sessions (by tab number, main tab first) and its
- * Recent ones (newest first). With a search, a project whose name matches keeps all its sessions; otherwise only the
+ * Recent ones (newest first). With a search, a project whose name or account matches keeps all its sessions; otherwise only the
  * matching sessions stay, and a project with none left is dropped.
  * @param {any[]} projects StudioProject[] from studio:sessions
  * @param {{ query?: string, currentId?: string, ordered?: boolean }} [o] currentId: the project ⌘1…9 and ⌘N act on; ordered (v3.142): keep the given (Office) order instead of sorting by name
@@ -21,7 +21,7 @@ export function studioGroups(projects, { query = '', currentId = '', ordered = f
   const has = (/** @type {unknown} */ s) => !q || lower(s).includes(q);
   const out = [];
   for (const p of (Array.isArray(projects) ? projects : []).filter((x) => x && typeof x.id === 'string').slice().sort(ordered ? () => 0 : byName)) {
-    const all = has(p.name);
+    const all = has(p.name) || has(p.account);
     const running = (Array.isArray(p.running) ? p.running : []).slice().sort((a, b) => a.n - b.n).filter((s) => all || has(s.title));
     const recent = (Array.isArray(p.recent) ? p.recent : []).slice().sort((a, b) => b.at - a.at).filter((r) => all || has(r.title));
     if (q && !all && !running.length && !recent.length) continue;

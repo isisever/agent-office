@@ -6,6 +6,7 @@
 // Every text from main (project, session, device and account names) is put in with textContent.
 
 import { studioGroups, currentProjectId, filterPalette, expandProject, sessionNames, canCloseSession } from '../src/studio-view.mjs';
+import { showAccountTags, projectRowView, escClearsFilter } from '../src/studio-projects.mjs';
 import { studioSections, planMove, dropSide, groupNameOf, GROUP_MAX } from '../src/studio-order.mjs';
 import { icon } from './studio-icons.js';
 import { meterView, amountText } from '../src/economy-view.mjs';
@@ -72,7 +73,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   const closed = (() => { try { return new Set(JSON.parse(localStorage.getItem(CLOSED_KEY) || '[]')); } catch { return new Set(); } })();
   const saveClosed = () => { try { localStorage.setItem(CLOSED_KEY, JSON.stringify([...closed])); } catch { /* storage off */ } };
 
-  const search = /** @type {HTMLInputElement} */ (el('input', { type: 'search', class: 'st-search', oninput: () => { query = search.value.trim(); draw(); } }));
+  const search = /** @type {HTMLInputElement} */ (el('input', { type: 'search', class: 'st-search', oninput: () => { query = search.value.trim(); draw(); },
+    onkeydown: (/** @type {KeyboardEvent} */ e) => { if (escClearsFilter(e.key, search.value)) { e.preventDefault(); e.stopPropagation(); search.value = ''; query = ''; draw(); } } }));
   const newLabel = el('span', { class: 'st-title' });
   const newBtn = el('button', { class: 'st-new st-row', onclick: () => newSession() }, el('span', { class: 'st-new-icon' }, icon('plus', 14)), newLabel);
   const pins = el('div', { class: 'st-pins' });
@@ -323,28 +325,23 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     return el('div', { class: 'st-row st-session st-recent', title: new Date(r.at).toLocaleString(), onclick: () => open(g.id, { sessionId: r.sessionId }) },
       el('span', { class: 'sb-dot' }), el('span', { class: 'st-title' }, r.title || t('studio.untitled')), r.at ? el('span', { class: 'st-time' }, rel(r.at)) : null);
   }
-  function groupEl(/** @type {any} */ g) {
-    const shut = !query && closed.has(g.id);
+  /** v3.150 One flat project row: caret, name (wraps), small account tag, state, session count, hover "+". Sessions only while expanded. */
+  function groupEl(/** @type {any} */ g, /** @type {boolean} */ tags) {
+    const v = projectRowView(g, { closed, query });
     const toggle = () => { if (closed.has(g.id)) closed.delete(g.id); else closed.add(g.id); saveClosed(); draw(); };
-    const head = el('div', { class: `st-group-head${g.active ? ' active' : ''}${g.current ? ' current' : ''}`, title: g.name },
-      el('button', { class: 'st-caret', 'aria-expanded': String(!shut), title: g.name, onclick: toggle }, icon('chevron', 12)),
-      el('span', { class: 'st-title st-project', onclick: () => { picked = g.id; hooks.selectProject(g.id); refresh(); } }, g.name),
+    const head = el('div', { class: `st-group-head st-proj${g.active ? ' active' : ''}${g.current ? ' current' : ''}`, title: g.name },
+      v.expandable
+        ? el('button', { class: 'st-caret', 'aria-expanded': String(v.expanded), title: g.name, onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); toggle(); } }, icon('chevron', 12))
+        : el('span', { class: 'st-caret-gap', 'aria-hidden': 'true' }),
+      el('span', { class: 'st-proj-text', onclick: () => { picked = g.id; hooks.selectProject(g.id); refresh(); } },
+        el('span', { class: 'st-project' }, g.name),
+        tags && g.account ? el('span', { class: 'st-acct', title: `${t('studio.account')}: ${g.account}` }, g.account) : null),
       g.attention ? el('span', { class: `sb-attn ${g.attention}` }, '●') : null,
-      g.account ? el('span', { class: 'st-badge', title: `${t('studio.account')}: ${g.account}` }, g.account) : null,
+      v.busy ? el('span', { class: 'st-spin', role: 'img', 'aria-label': t('studio.working') })
+        : v.live ? el('span', { class: 'sb-dot live', 'aria-hidden': 'true' }) : null,
+      v.count && !v.expanded ? el('span', { class: 'st-count', title: t('studio.sessionCount', { n: String(v.count) }) }, String(v.count)) : null,
       el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => newSession({ projectId: g.id }) }, icon('plus', 14)));
-    // one session and nothing recent: the group stays compact (its head opens that session, the row is not repeated)
-    if (g.running.length === 1 && !g.recent.length && !query) {
-      const s = g.running[0];
-      const active = hooks.activePty() === s.ptyId;
-      return el('div', { class: `st-group compact${g.current ? ' current' : ''}` },
-        el('div', { class: `st-group-head${g.active ? ' active' : ''}${g.current ? ' current' : ''}${active ? ' on' : ''}`, title: [g.name, s.title].filter(Boolean).join(' · '), onclick: (/** @type {MouseEvent} */ e) => { if (!(e.target instanceof Element) || !e.target.closest('.st-add')) open(g.id, { n: s.n }); } },
-          stateEl(s) || el('span', { class: `sb-dot ${s.isRunning ? 'live' : s.isAsleep ? 'asleep' : ''}` }),
-          el('span', { class: 'st-title st-project' }, g.name, el('span', { class: 'st-sub-name' }, s.title || '')),
-          g.attention && !s.waiting ? el('span', { class: `sb-attn ${g.attention}` }, '●') : null,
-          g.account ? el('span', { class: 'st-badge', title: `${t('studio.account')}: ${g.account}` }, g.account) : null,
-          el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => newSession({ projectId: g.id }) }, icon('plus', 14))), budgetBar(g.id));
-    }
-    const kids = shut ? [] : [
+    const kids = !v.expanded ? [] : [
       ...(() => { const names = sessionNames(g.running, t('studio.untitled')); return g.running.map((/** @type {any} */ s, /** @type {number} */ i) => sessionRow(g, s, i, names[i])); })(),
       ...(g.recent.length ? [el('div', { class: 'st-sub' }, t('studio.recent')), ...g.recent.map((/** @type {any} */ r) => recentRow(g, r))] : []),
     ];
@@ -453,10 +450,11 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       el('button', { class: 'st-add st-newgroup', title: t('studio.newGroup'), disabled: query ? 'disabled' : false, onclick: () => { editing = { fresh: true }; draw(); } }, icon('plus', 14)));
     const fresh = editing?.fresh ? [el('div', { class: 'st-sect-head st-sect-new' }, nameInput('', t('studio.newGroupPh', { project: target?.name || '' }), (v) => { if (target) applyMove(target.id, { group: v }); }))] : [];
     if (!groups.length) return [heading, ...fresh, el('div', { class: 'st-none' }, t('studio.none'))];
+    const tags = showAccountTags(groups);
     const sections = studioSections(groups);
     const flat = sections.length === 1 && !sections[0].name;
     return [heading, ...fresh, ...sections.flatMap((sec) => {
-      const cards = (!query && sec.name && closedSect.has(sec.name)) ? [] : sec.items.map((g) => withDrag(groupEl(g), g));
+      const cards = (!query && sec.name && closedSect.has(sec.name)) ? [] : sec.items.map((g) => withDrag(groupEl(g, tags), g));
       return flat ? cards : [sectionHead(sec), ...cards];
     })];
   }
