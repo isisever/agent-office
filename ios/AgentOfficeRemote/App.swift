@@ -8,6 +8,8 @@ struct AgentOfficeRemoteApp: App {
   var body: some Scene {
     WindowGroup {
       ContentView(link: link)
+        .preferredColorScheme(.dark)
+        .onAppear { link.start() }
     }
     .onChange(of: scenePhase) { phase in
       switch phase {
