@@ -1,0 +1,54 @@
+{
+  "version": "0.22.49",
+  "items": [
+    {
+      "id": "studio-remote-inline",
+      "experience": "studio",
+      "title": {
+        "en": "Remote sessions open in the main chat",
+        "tr": "Uzak oturumlar ana sohbette açılır"
+      },
+      "body": {
+        "en": "Click a session on a paired machine and it opens in the main chat area like your own, instead of a side popup. If the machine is offline you see its last known content, read-only, until it comes back.",
+        "tr": "Eşleştirilmiş bir makinedeki oturuma tıkladığınızda yan pencere yerine ana sohbet alanında, kendi oturumlarınız gibi açılır. Makine çevrimdışıysa geri gelene kadar son bilinen içeriği salt okunur görürsünüz."
+      }
+    },
+    {
+      "id": "studio-chat-default",
+      "experience": "studio",
+      "title": {
+        "en": "Studio always opens in the chat view",
+        "tr": "Studio her zaman sohbet görünümünde açılır"
+      },
+      "body": {
+        "en": "Switching to Studio now shows the chat on every platform, Windows included. The terminal appears only when you switch to it yourself.",
+        "tr": "Studio'ya geçince Windows dahil her platformda sohbet görünümü açılır. Terminal yalnızca siz geçtiğinizde görünür."
+      }
+    },
+    {
+      "id": "studio-rename-sessions",
+      "experience": "studio",
+      "title": {
+        "en": "Rename sessions, account menu above its button",
+        "tr": "Oturumları yeniden adlandırın; hesap menüsü butonun üstünde"
+      },
+      "body": {
+        "en": "Right-click a session and choose Rename; the name stays after a restart. The account menu now opens right above the account button. After an account switches because of a limit, the chat keeps showing the reply instead of an empty new session.",
+        "tr": "Bir oturuma sağ tıklayıp Yeniden adlandır'ı seçin; ad uygulama yeniden açılınca da kalır. Hesap menüsü artık hesap butonunun hemen üstünde açılır. Limit yüzünden hesap değiştiğinde sohbet boş yeni oturum yerine yanıtı göstermeye devam eder."
+      }
+    },
+    {
+      "id": "board-project-chats",
+      "experience": "studio",
+      "title": {
+        "en": "Project chat requests on HQ and Kanban",
+        "tr": "Proje sohbeti istekleri HQ ve Kanban'da"
+      },
+      "body": {
+        "en": "Each request you send in a project chat becomes a card on the Kanban board with its account, and HQ sees them too. Desks in the office strip now show the task and \"project · tool\", and more desks fit.",
+        "tr": "Bir proje sohbetinde gönderdiğiniz her istek, hesabıyla birlikte Kanban panoda bir kart olur; HQ da bunları görür. Ofis şeridindeki masalar artık görevi ve \"proje · araç\" bilgisini gösteriyor, daha çok masa sığıyor."
+      },
+      "try": { "label": { "en": "Open the Kanban board", "tr": "Kanban panoyu aç" }, "action": "open-board" }
+    }
+  ]
+}
