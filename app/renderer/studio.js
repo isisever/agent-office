@@ -5,7 +5,7 @@
 // the Office is as it was: panes, tabs and sessions are never touched here.
 // Every text from main (project, session, device and account names) is put in with textContent.
 
-import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
+import { studioGroups, currentProjectId, filterPalette, expandProject, sessionNames, canCloseSession } from '../src/studio-view.mjs';
 import { icon } from './studio-icons.js';
 import { meterView, amountText } from '../src/economy-view.mjs';
 import { mountSettingsPage } from './studio-settings.js';
@@ -38,6 +38,7 @@ function el(tag, props = {}, ...kids) {
  *   api: any, t: (key: string, vars?: Record<string, any>) => string, modLabel: string,
  *   hooks: {
  *     selectSession: (projectId: string, n: number) => void, newSession: (projectId: string) => void,
+ *     closeSession: (projectId: string, n: number) => void,
  *     selectProject: (projectId: string) => void, selectHq: () => void, openBoard: () => void,
  *     openOfficeSettings: () => void, sidebar: () => any, showPanel: (selector: string) => boolean,
  *     appInfo: () => { version: string | null, ready: string | null }, installUpdate: () => void, toggle: () => void,
@@ -192,6 +193,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
   function newSession(/** @type {{ worktree?: boolean, projectId?: string }} */ o = {}) {
     if (o.projectId) picked = o.projectId;
     if (!currentId()) return;
+    expandProject(closed, currentId()); saveClosed();   // v3.140 a collapsed project opens so its sessions stay listed
     teamPage.close();
     starting = true;
     startWorktree.checked = o.worktree === true;
@@ -225,7 +227,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       try { r = await hooks.startDesk(who.projectId, who.staffId, text); } catch (e) { console.error(e); }
       startBusy = false;
       startSend.disabled = false;
-      if (r.ok) { startText.value = ''; startNote.textContent = ''; starting = false; picked = id; refresh(); return; }
+      if (r.ok) { startText.value = ''; startNote.textContent = ''; starting = false; picked = id; expandProject(closed, id); saveClosed(); refresh(); return; }
       // the prompt was not sent: it stays in the box, and the note names why
       if (!startText.value.trim()) startText.value = text;
       const f = r.failed;
@@ -241,7 +243,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     try { r = await hooks.startSession(id, { ...plan, reuseN }, text); } catch (e) { console.error(e); }
     startBusy = false;
     startSend.disabled = false;
-    if (r.ok) { startTab = null; startText.value = ''; startNote.textContent = ''; starting = false; picked = id; refresh(); return; }
+    if (r.ok) { startTab = null; startText.value = ''; startNote.textContent = ''; starting = false; picked = id; expandProject(closed, id); saveClosed(); refresh(); return; }
     startTab = r.n ? { projectId: id, tabMode: plan.tabMode, n: r.n } : null;
     // the prompt was not sent: it stays in the box, and the note names the step that failed and why
     if (!startText.value.trim()) startText.value = text;
@@ -298,16 +300,22 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     refresh();
   }
 
-  function sessionRow(/** @type {any} */ g, /** @type {any} */ s, /** @type {number} */ i) {
+  /** v3.140 the × on a session row: the Office's own close-tab handler (it asks first, also when the session is busy). */
+  function closeBtn(/** @type {any} */ g, /** @type {any} */ s) {
+    if (!canCloseSession(s)) return null;
+    return el('button', { class: 'st-x', title: t('app.closeTab'), 'aria-label': t('app.closeTab'),
+      onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); hooks.closeSession(g.id, s.n); setTimeout(refresh, 300); } }, icon('close', 12));
+  }
+  function sessionRow(/** @type {any} */ g, /** @type {any} */ s, /** @type {number} */ i, /** @type {string} */ name) {
     const active = hooks.activePty() === s.ptyId;
     const state = s.isRunning ? 'live' : s.isAsleep ? 'asleep' : '';
-    const name = s.title || t('studio.untitled');
     const live = stateEl(s);
     return el('div', { class: `st-row st-session${active ? ' active' : ''}`, title: [name, s.label, s.branch].filter(Boolean).join(' · '), onclick: () => open(g.id, { n: s.n }) },
       s.busy && !s.waiting ? live : el('span', { class: `sb-dot ${state}` }),
       el('span', { class: 'st-title' }, name),
       s.waiting ? live : null,
       s.at ? el('span', { class: 'st-time' }, rel(s.at)) : null,
+      closeBtn(g, s),
       g.current && i < 9 ? el('span', { class: 'st-key' }, `${modLabel}${i + 1}`) : null);
   }
   function recentRow(/** @type {any} */ g, /** @type {any} */ r) {
@@ -336,7 +344,7 @@ export function mountStudio({ api, t, modLabel, hooks }) {
           el('button', { class: 'st-add', title: `${t('studio.newSession')} · ${g.name}`, onclick: () => newSession({ projectId: g.id }) }, icon('plus', 14))), budgetBar(g.id));
     }
     const kids = shut ? [] : [
-      ...g.running.map((/** @type {any} */ s, /** @type {number} */ i) => sessionRow(g, s, i)),
+      ...(() => { const names = sessionNames(g.running, t('studio.untitled')); return g.running.map((/** @type {any} */ s, /** @type {number} */ i) => sessionRow(g, s, i, names[i])); })(),
       ...(g.recent.length ? [el('div', { class: 'st-sub' }, t('studio.recent')), ...g.recent.map((/** @type {any} */ r) => recentRow(g, r))] : []),
     ];
     return el('div', { class: `st-group${g.current ? ' current' : ''}` }, head, budgetBar(g.id), ...kids);

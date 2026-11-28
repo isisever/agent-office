@@ -1973,3 +1973,7 @@ body.studio.studio-float #machines-panel.studio-shown { display: block !importan
 .hq-order.is-failed .hq-order-line { color: #ef4444; }
 body.studio .hq-orders { background: var(--st-bg); color: var(--st-text); font-family: var(--st-font); border-bottom-color: var(--st-border, rgba(127,127,127,.25)); }
 body.studio.studio-board .hq-orders { display: none; }
+
+#studio-sidebar .st-x { background: none; border: 0; padding: 0 4px; color: inherit; cursor: pointer; opacity: 0; font: inherit; }
+#studio-sidebar .st-session:hover .st-x, #studio-sidebar .st-x:focus-visible { opacity: 0.8; }
+#studio-sidebar .st-x:hover { opacity: 1; }

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { studioGroups, currentProjectId, filterPalette } from '../src/studio-view.mjs';
+import { studioGroups, currentProjectId, filterPalette, expandProject, sessionNames, canCloseSession } from '../src/studio-view.mjs';
 
 const require = createRequire(import.meta.url);
 const S = require('../src/studio.js');
@@ -76,4 +76,27 @@ test('palette: every word must match label or keywords; prefix first, then word 
   assert.deepEqual(filterPalette(items, 'project account').map((x) => x.id), ['settings']);
   assert.deepEqual(filterPalette(items, 'zzz'), []);
   assert.equal(filterPalette(Array.from({ length: 100 }, (_, i) => ({ label: `x${i}` })), 'x').length, 60);
+});
+
+test('v3.140 a new session in a collapsed one-session project keeps both sessions listed', () => {
+  const before = [{ id: 'a', name: 'Alpha', running: [run(1, '')], recent: [] }];
+  const closed = new Set(['a']);   // collapsed while the project had one session (a compact group ignores it)
+  assert.equal(studioGroups(before)[0].running.length, 1);
+  const after = [{ id: 'a', name: 'Alpha', running: [run(1, ''), run(2, '')], recent: [] }];
+  assert.ok(closed.has('a'), 'the stale collapsed flag would hide both rows');
+  expandProject(closed, 'a');
+  assert.equal(closed.has('a'), false);
+  assert.deepEqual(studioGroups(after)[0].running.map((s) => s.n), [1, 2]);
+});
+
+test('v3.140 untitled sessions are told apart by tab number; titled ones keep their title', () => {
+  assert.deepEqual(sessionNames([run(1, ''), run(2, '')], 'New session'), ['New session 1', 'New session 2']);
+  assert.deepEqual(sessionNames([run(1, 'fix login'), run(2, '')], 'New session'), ['fix login', 'New session']);
+  assert.deepEqual(sessionNames([run(1, '')], 'New session'), ['New session']);
+});
+
+test('v3.140 extra sessions can be closed, the main tab never', () => {
+  assert.equal(canCloseSession({ n: 2 }), true);
+  assert.equal(canCloseSession({ n: 1 }), false);
+  assert.equal(canCloseSession(null), false);
 });
