@@ -4,7 +4,8 @@
 // Every text from a card is put in with textContent: titles and names are data, never markup.
 import { meterView, amountText } from '../src/economy-view.mjs';
 import { saveFromOrder } from './templates-ui.js';
-import { TYPES, GROUPS, RANGES, projectsOf, membersOf, columnsOf, filterOptions, fmtDuration, fmtCost, fmtTokens, rangeOf, typeCounts, reportRows } from '../src/board-view.mjs';
+import { icon } from './studio-icons.js';
+import { orderTag, TYPES, GROUPS, RANGES, projectsOf, membersOf, columnsOf, filterOptions, fmtDuration, fmtCost, fmtTokens, rangeOf, typeCounts, reportRows } from '../src/board-view.mjs';
 
 const POLL_MS = 30000;   // a fallback only: main pushes board:cards whenever the store changes
 
@@ -22,11 +23,11 @@ function el(tag, attrs = {}, ...kids) {
 
 /**
  * @param {{ api: any, t: (k: string, v?: any) => string,
- *   renderTasks: (card: any) => Node[], openChat: (card: any) => void }} o
+ *   renderTasks: (card: any) => Node[], openChat: (card: any) => void, onBack?: () => void }} o
  *   renderTasks draws an order's tasks with the HQ board's task detail and actions (Cancel, Continue, Allow);
  *   openChat opens a chat card's session (an Office tab or a Studio session).
  */
-export function mountBoardView({ api, t, renderTasks, openChat }) {
+export function mountBoardView({ api, t, renderTasks, openChat, onBack }) {
   /** @type {any} */ let view = { columns: [], cards: [] };
   let tab = 'board';
   /** @type {{ project: string, type: string, member: string, q: string, request: string }} */
@@ -42,7 +43,7 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
   const pick = (key) => /** @type {HTMLSelectElement} */ (el('select', { class: 'bv-pick', 'aria-label': t(`board.filter.${key}`), onchange: (/** @type {Event} */ e) => { f[key] = /** @type {HTMLSelectElement} */ (e.target).value; draw(); } }));
   const projectSel = pick('project'); const typeSel = pick('type'); const memberSel = pick('member');
   const search = /** @type {HTMLInputElement} */ (el('input', { type: 'search', class: 'bv-search', placeholder: t('board.search'), oninput: () => { f.q = search.value; draw(); } }));
-  const requestChip = el('button', { class: 'bv-chip bv-request', hidden: true, title: t('board.showAll'), onclick: () => { f.request = ''; draw(); } });
+  const requestChip = el('button', { class: 'bv-chip bv-request', hidden: true, title: t('board.allOrdersTip'), onclick: () => { f.request = ''; draw(); } });
   const filters = el('div', { class: 'bv-filters' }, projectSel, typeSel, memberSel, search, requestChip);
   // reports controls
   const rangeSel = /** @type {HTMLSelectElement} */ (el('select', { class: 'bv-pick', 'aria-label': t('board.range.label'), onchange: () => { rep.range = rangeSel.value; drawReportControls(); loadReport(); } },
@@ -53,7 +54,13 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
     ...GROUPS.map((g) => el('option', { value: g }, t(`board.groupBy.${g}`)))));
   const reportBar = el('div', { class: 'bv-filters', hidden: true }, rangeSel, fromIn, toIn, groupSel);
   const body = el('div', { class: 'bv-body' });
-  const root = el('div', { class: 'bv-root' }, el('div', { class: 'bv-head' }, tabs, filters, reportBar), body);
+  // v3.143 Studio's way back to HQ's chat (CSS shows it only in Studio); Esc does the same
+  const back = onBack ? el('button', { class: 'bv-back', type: 'button', title: t('board.backToHq'), onclick: () => onBack() }, icon('back', 14), t('board.backToHq')) : null;
+  const root = el('div', { class: 'bv-root' }, back, el('div', { class: 'bv-head' }, tabs, filters, reportBar), body);
+  if (onBack) document.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
+    const tag = /** @type {HTMLElement} */ (e.target)?.tagName;
+    if (e.key === 'Escape' && !menuFor && !/^(INPUT|TEXTAREA|SELECT)$/.test(tag || '') && document.body.classList.contains('studio-board') && root.isConnected) onBack();
+  });
   root.addEventListener('click', () => { if (menuFor) { menuFor = ''; draw(); } });
 
   /** Fills a filter menu, keeping the choice (or an "all" entry when the choice is gone). */
@@ -107,7 +114,7 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
       isOrder && c.progress?.total ? el('span', { class: 'bv-progress', title: t('board.progressTip') }, `${c.progress.done}/${c.progress.total}`) : null,
       isOrder ? cardMenu(c) : null),
     el('div', { class: 'bv-title' }, c.title || c.request || c.id),
-    el('div', { class: 'bv-meta' }, ...projectsOf(c).map((p) => el('span', { class: 'bv-chip bv-proj' }, p)),
+    el('div', { class: 'bv-meta' }, orderTag(c) ? el('span', { class: 'bv-chip bv-order-tag', title: t('board.orderTagTip', { id: c.request }) }, `${t('board.order')} ${orderTag(c)}`) : null, ...projectsOf(c).map((p) => el('span', { class: 'bv-chip bv-proj' }, p)),
       ...membersOf(c).map((m) => el('span', { class: 'bv-chip bv-member' }, `@${m}`))),
     isOrder && (c.tasks || []).length > 1 ? el('div', { class: 'bv-targets' }, ...c.tasks.map((/** @type {any} */ x) => el('span', { class: `bv-chip bv-target bv-c-${x.column}`, title: `${x.title || x.id} · ${x.status}` },
       `${x.project}${x.member ? ` @${x.member}` : ''}${x.machine && x.machine !== 'self' ? ` · ${x.machine}` : ''}`))) : null,   // v3.132 a fan-out target shows its assigned member
@@ -126,7 +133,7 @@ export function mountBoardView({ api, t, renderTasks, openChat }) {
     fill(typeSel, 'type', opts.types, typeName);
     fill(memberSel, 'member', opts.members, (v) => v);
     requestChip.hidden = !f.request;
-    requestChip.textContent = f.request ? `✕ ${f.request}` : '';
+    requestChip.textContent = f.request ? `← ${t('board.allOrders')} · ${f.request}` : '';
     const cols = columnsOf(view, f);
     body.replaceChildren(...(note ? [el('p', { class: 'bv-note', role: 'status' }, note)] : []),
       el('div', { class: 'bv-cols' }, ...cols.map((col) => el('section', { class: `bv-col bv-col-${col.id}` },

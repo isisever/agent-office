@@ -2062,7 +2062,6 @@
       "member": "Tüm üyeler"
     },
     "search": "Kartlarda ara",
-    "showAll": "Tüm kartları göster",
     "typeTip": "Türü değiştir",
     "typeByPerson": "senin seçimin",
     "done": "Bitti",
@@ -2099,7 +2098,12 @@
     "none": "(yok)",
     "noReport": "Bu aralıkta kapanan bir şey yok.",
     "pickDates": "Bir başlangıç ve bitiş tarihi seç.",
-    "more": "Diğer"
+    "more": "Diğer",
+    "allOrders": "Tüm emirler",
+    "allOrdersTip": "Tüm emirleri panoda göster",
+    "backToHq": "HQ’ya dön",
+    "order": "Emir",
+    "orderTagTip": "Emir {id}"
   },
   "templates": {
     "button": "Şablonlar",
@@ -2140,6 +2144,8 @@
       "needs": "{who}, {project} projesinde seni bekliyor",
       "done": "{who}, {project} projesinde bitirdi",
       "failed": "{who}, {project} projesinde başarısız oldu"
-    }
+    },
+    "all": "Tümü",
+    "allTip": "Tüm emirleri birlikte panoda aç"
   }
 }

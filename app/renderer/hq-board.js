@@ -35,8 +35,8 @@ import { progressLine } from '../src/board-view.mjs';
 
 const ENGINE_NAMES = { claude: 'Claude Code', agy: 'Antigravity', commandcode: 'Command Code', opencode: 'OpenCode' };
 
-/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void }, openBoard?: () => void, openChat?: (card: any) => void, fillHq?: ((text: string) => void) | null }} o */
-export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openChat, openBoard, fillHq = null }) {
+/** @param {{ sidebar: HTMLElement, office: HTMLElement | null, api: any, t: (k: string, v?: any) => string, onSelect: () => void, isMac: boolean, link?: { view: () => any, onView: (cb: (v: any) => void) => void }, openBoard?: () => void, onBack?: () => void, openChat?: (card: any) => void, fillHq?: ((text: string) => void) | null }} o */
+export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openChat, openBoard, onBack, fillHq = null }) {
   if (!api?.hq || !sidebar) return null;
   let view = { board: { tasks: [], requests: [] }, settings: { enabled: true }, running: false, stopped: false, remotes: [] };
   let selected = false;
@@ -260,6 +260,7 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openCh
     api, t,
     renderTasks: (card) => (card.tasks || []).map((ct) => (view.board.tasks || []).find((x) => x.id === ct.id) || ct).map(taskEl),
     openChat: (card) => openChat?.(card),
+    onBack,
   }) : null;
   function renderBoard() {
     if (rtSel && renderRoutine()) return;
@@ -438,7 +439,9 @@ export function mountHq({ sidebar, office, api, t, onSelect, isMac, link, openCh
   // Office's HQ terminal). They come from main's view (`orders`), never from HQ's transcript, and cost no tokens.
   // One row per order, updated in place; a click opens the order's card on the board.
   const strip = el('div', { class: 'hq-orders', id: 'hq-orders', role: 'status', 'aria-live': 'polite', hidden: true },
-    el('span', { class: 'hq-orders-head' }, t('orders.title')));
+    el('span', { class: 'hq-orders-head' }, t('orders.title')),
+    // v3.143 the aggregate board: every order's cards together
+    el('button', { class: 'hq-order hq-order-all', type: 'button', title: t('orders.allTip'), onclick: () => openOrder('') }, el('span', { class: 'hq-order-line' }, t('orders.all'))));
   const termPane = document.getElementById('terminal');
   if (termPane) termPane.prepend(strip);
   /** @type {Map<string, HTMLElement>} */ const stripRows = new Map();

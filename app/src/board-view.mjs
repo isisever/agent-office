@@ -170,3 +170,16 @@ export function progressLine(item, t = enT, typeName = (x) => x) {
   }
   return parts.filter(Boolean).join(' · ');
 }
+
+/**
+ * v3.143 Which order a card belongs to: "#abc123" (the request id's first six characters) on an order card, '' on a
+ * chat card. The aggregate board (all orders, no request filter) shows it so every card names its order.
+ * @param {any} card
+ */
+export function orderTag(card) {
+  const id = card && card.kind === 'order' && typeof card.request === 'string' ? card.request.replace(/^r[-_:]?/i, '') : '';
+  return id ? `#${id.slice(0, 6)}` : '';
+}
+
+/** True when the board shows every order together (no single order picked). */
+export const isAllOrders = (f) => !(f && f.request);
