@@ -284,3 +284,18 @@ test('autoApproveAfterSet: a late set-Auto ok never turns Auto-approve back on a
   assert.equal(S.autoApproveAfterSet({ before: false, after: false, epochBefore: 3, epochAfter: 5 }), false, 'on then off meanwhile');
   assert.equal(S.autoApproveAfterSet({ before: false, after: true, epochBefore: 3, epochAfter: 4 }), false, 'already on');
 });
+
+test('v3.151 guiAutoUpgrade: a chat started without a mode switches to auto once the account offers it', () => {
+  const modes = ['default', 'acceptEdits', 'auto'];
+  assert.equal(S.guiAutoUpgrade({ gui: true, modes }), true, 'untouched chat, auto offered');
+  assert.equal(S.guiAutoUpgrade({ gui: true, modes: ['default', 'plan'] }), false, 'auto not offered');
+  assert.equal(S.guiAutoUpgrade({ gui: true, modes: [] }), false, 'still unprobed');
+  assert.equal(S.guiAutoUpgrade({ gui: true, modes, currentMode: 'plan' }), false, 'the person picked a mode');
+  assert.equal(S.guiAutoUpgrade({ gui: true, modes, currentMode: 'auto' }), false, 'already auto');
+  assert.equal(S.guiAutoUpgrade({ gui: true, modes, currentMode: 'default' }), false, 'the person picked Ask permissions');
+  assert.equal(S.guiAutoUpgrade({ gui: true, hq: true, modes }), false, 'never HQ');
+  assert.equal(S.guiAutoUpgrade({ gui: true, lock: 'desk', modes }), false, 'never a desk or guarded session');
+  assert.equal(S.guiAutoUpgrade({ gui: true, lock: 'bypass', modes }), false, 'never skip-permissions');
+  assert.equal(S.guiAutoUpgrade({ gui: false, modes }), false, 'never a terminal');
+  assert.equal(S.guiAutoUpgrade(), false);
+});

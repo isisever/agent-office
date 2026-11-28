@@ -1503,6 +1503,8 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       }, { onAsk: (ask, input) => guiAsk(id, ask, input, { autoApprove: !project.hq && P.autoApproveOf(P.findProject(state, project.id) || project), mailGuard: Boolean(mailMcp) }),
         onModels: (models) => noteModels(configDir, models) });
       if (!t.pid) throw new Error('claude did not start');
+      // v3.151 an account with no cached modes starts in the default mode: probe it, noteModes then switches this chat to auto
+      if (!startMode.length && !project.hq && !reportedModesOf(project).length) probeModels(configDir);
     } else t = pty.spawn(win32 ? win32.file : shell(), win32 ? ptyArgs(win32) : ['-l', '-i', '-c', cmd, 'claude', ...args], {
       name: 'xterm-256color',
       cols, rows,
@@ -6027,6 +6029,21 @@ function noteModes(configDir, modes) {
   if (!changed) return;
   modelCache = cache;
   try { SF.writeAtomic(modelCachePath(), JSON.stringify(cache)); } catch (e) { console.error('model cache:', e.message); }
+  upgradeUnprobedChats(configDir);
+}
+/** v3.151 the account's modes just became known: live GUI chats that started without a mode (the account was never probed)
+ * switch to auto via set_permission_mode, unless the person picked a mode (STU.guiAutoUpgrade). Not through chat:setting's
+ * Auto path: that would also turn the project's Auto-approve on, which a start in auto does not. */
+function upgradeUnprobedChats(configDir) {
+  const key = ML.accountKey(configDir);
+  for (const [id, t] of terms) {
+    if (!t?.gui || typeof t.setting !== 'function') continue;
+    const project = P.resolvePty(state, id)?.project || null;
+    if (!project || ML.accountKey(A.accountOf(state, project).configDir) !== key) continue;
+    const modes = reportedModesOf(project);
+    if (!STU.guiAutoUpgrade({ gui: true, hq: Boolean(project.hq), lock: guiModeLock.get(id) || '', modes, currentMode: t.settings?.().mode || '' })) continue;
+    Promise.resolve(t.setting('mode', 'auto', modes)).catch(() => {});   // 'busy'/'error': the chat just stays in its default mode
+  }
 }
 /** v3.120 the modes the pickers offer for a project's account: the probed list, else ML.FALLBACK_MODES */
 const reportedModesOf = (project) => (project ? ML.cachedModes(readModelCache(), ML.accountKey(A.accountOf(state, project).configDir)) || [] : []);
