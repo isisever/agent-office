@@ -7,8 +7,10 @@
 const W = require('../../app/src/link-wire.js');
 const { CtlClient } = require('./ctl-client.js');
 
-// what the phone may send through {t:'send'}: an HQ turn, a reports request, and reading the HQ session
-const SENDABLE = new Set(['ctl-hq', 'ctl-reports', 'sess-open', 'sess-keep', 'sess-close']);
+// what the phone may send through {t:'send'}: an HQ turn, a reports request, reading a session, and (ctl2) the project
+// screen, sending a message, answering an approval and stopping a turn
+const SENDABLE = new Set(['ctl-hq', 'ctl-reports', 'sess-open', 'sess-keep', 'sess-close', 'ctl-proj', 'ctl-send', 'ctl-answer', 'ctl-stop']);
+const isId = (s) => typeof s === 'string' && s.length > 0 && s.length <= 64;
 const isHex = (s, n) => typeof s === 'string' && s.length === n * 2 && /^[0-9a-f]+$/.test(s);
 
 /**
@@ -53,7 +55,7 @@ function createController(o) {
       } catch (e) { status('unpaired'); log(`pair failed: ${e.message}`); }
     } else if (m.t === 'send') {
       const msg = m.msg;
-      if (!msg || !SENDABLE.has(msg.t) || (msg.t === 'sess-open' && msg.project !== 'hq')) return log(`refused to send ${msg?.t}`);
+      if (!msg || !SENDABLE.has(msg.t) || (msg.t === 'sess-open' && (!isId(msg.project) || (msg.sid !== undefined && !isId(msg.sid))))) return log(`refused to send ${msg?.t}`);
       if (msg.t.startsWith('ctl-') && !W.validateCtl(msg)) return log(`malformed ${msg.t}`);
       client.write(msg);
     } else if (m.t === 'suspend') {

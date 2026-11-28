@@ -82,6 +82,58 @@ struct Report: Identifiable, Equatable {
   var date: Date { Date(timeIntervalSince1970: at > 100_000_000_000 ? Double(at) / 1000 : Double(at)) }
 }
 
+struct ProjectSession: Identifiable, Equatable {
+  let id: String              // the session id (sid)
+  var title: String
+  var at: Int
+  var running: Bool
+  var main: Bool
+  var date: Date { Date(timeIntervalSince1970: at > 100_000_000_000 ? Double(at) / 1000 : Double(at)) }
+}
+
+struct ProjectDetail: Equatable {
+  var sessions: [ProjectSession] = []
+  var loaded = false
+  var failed = false
+}
+
+struct AskOption: Equatable, Hashable {
+  let key: String
+  let label: String
+}
+
+/// A pending approval or question on the desktop (ctl-ask).
+struct Ask: Identifiable, Equatable {
+  let id: String              // askId
+  var project: String
+  var kind: String            // permission | question | plan
+  var tool: String?
+  var detail: String?
+  var options: [AskOption]
+  var at: Int
+}
+
+/// What one open desktop session has streamed so far.
+struct Stream: Equatable {
+  var items: [HQItem] = []
+  var toolResults: [String: Bool] = [:]   // tool id -> failed
+  var ended: String?
+  var lastSeq = 0
+  var received = false
+}
+
+struct SendIssue: Equatable {
+  var text: String
+  var reason: String
+}
+
+private struct PendingAck {
+  var op: String              // send | answer | stop
+  var project: String
+  var text: String?
+  var askId: String?
+}
+
 // MARK: - Model
 
 /// Owns the Bare worklet (the P2P link stack) and its IPC: newline-delimited JSON both ways, and turns the
@@ -95,10 +147,12 @@ final class WorkletModel: ObservableObject {
   @Published private(set) var hasView = false
   @Published private(set) var hqStatus: String?
   @Published private(set) var delivered = 0
-  @Published private(set) var hqItems: [HQItem] = []
-  @Published private(set) var toolResults: [String: Bool] = [:]   // tool id -> failed
+  @Published private(set) var streams: [String: Stream] = [:]          // "hq" or "<project>/<sid>" or "<project>"
+  @Published private(set) var details: [String: ProjectDetail] = [:]    // project id -> sessions (ctl-proj)
+  @Published private(set) var asks: [String: [Ask]] = [:]               // project id -> pending approvals
+  @Published private(set) var sendIssue: [String: SendIssue] = [:]      // project id -> the last message that was not accepted
+  @Published private(set) var busy: Set<String> = []                    // "send:<project>", "answer:<askId>", "stop:<project>"
   @Published private(set) var outbox: [OutMessage] = []
-  @Published private(set) var sessionEnded: String?
   @Published private(set) var reports: [Report] = []
   @Published private(set) var reportsLoaded = false
   @Published private(set) var networkUp = true
@@ -109,11 +163,19 @@ final class WorkletModel: ObservableObject {
   private var worklet: Worklet?
   private var ipc: IPC?
   private var pending = Data()
-  private var sessionId = ""
+  private var openIds: [String: String] = [:]          // stream key -> the sess-open request id
+  private var wanted: [String: (project: String, sid: String?)] = [:]
+  private var attempts: [String: Int] = [:]
+  private var pendingAcks: [String: PendingAck] = [:]
+  private var watched: [String: Int] = [:]                // project id -> last ctl-proj request time (ms)
+  private var isDemo = false
   private var keepTask: Task<Void, Never>?
   private var reportsStamp = 0
   private let monitor = NWPathMonitor()
 
+  var hqItems: [HQItem] { streams["hq"]?.items ?? [] }
+  var toolResults: [String: Bool] { streams["hq"]?.toolResults ?? [:] }
+  var sessionEnded: String? { streams["hq"]?.ended }
   var isOnline: Bool { state == "online" }
   var hasPairing: Bool { paired != nil }
 
@@ -126,7 +188,7 @@ final class WorkletModel: ObservableObject {
       Task { @MainActor in self?.networkUp = up }
     }
     monitor.start(queue: DispatchQueue(label: "net-monitor"))
-    if let demo = UserDefaults.standard.string(forKey: "uiDemo") { loadDemo(demo); return }
+    if let demo = UserDefaults.standard.string(forKey: "uiDemo") { isDemo = true; loadDemo(demo); return }
     migrateLegacyStorage()
     if let json = Keychain.get("paired"), let data = json.data(using: .utf8),
        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { paired = PairedDesktop(obj) }
@@ -237,18 +299,139 @@ final class WorkletModel: ObservableObject {
     for _ in 0..<40 { if reportsStamp != before { break }; try? await Task.sleep(nanoseconds: 100_000_000) }
   }
 
-  private func openSession() {
-    sessionId = "hq" + String(Int(Date().timeIntervalSince1970 * 1000), radix: 36)
-    sessionEnded = nil
-    send(["t": "send", "msg": ["t": "sess-open", "id": sessionId, "project": "hq"]])
-    keepTask?.cancel()
+  // MARK: sessions (the HQ chat and project sessions share one mechanism)
+
+  static func streamKey(_ project: String, _ sid: String?) -> String { sid.map { "\(project)/\($0)" } ?? project }
+
+  private func newId(_ prefix: String) -> String {
+    prefix + String(Int(Date().timeIntervalSince1970 * 1000), radix: 36) + String(Int.random(in: 0..<36 * 36), radix: 36)
+  }
+
+  /// A screen needs this session live: opens it now (or when the link is back) and re-opens it if the desktop ends it.
+  func watch(_ project: String, sid: String? = nil) {
+    let key = Self.streamKey(project, sid)
+    wanted[key] = (project, sid)
+    attempts[key] = 0
+    if isOnline && openIds[key] == nil { open(key) }
+    startKeeping()
+  }
+
+  /// The screen is gone: closes the session on the desktop.
+  func unwatch(_ project: String, sid: String? = nil) {
+    let key = Self.streamKey(project, sid)
+    wanted[key] = nil
+    if let id = openIds.removeValue(forKey: key) { send(["t": "send", "msg": ["t": "sess-close", "id": id]]) }
+    if key != "hq" && !isDemo { streams[key] = nil }
+  }
+
+  private func open(_ key: String) {
+    guard !isDemo, isOnline, let w = wanted[key] else { return }
+    let id = newId("s")
+    openIds[key] = id
+    streams[key, default: Stream()].ended = nil
+    var msg: [String: Any] = ["t": "sess-open", "id": id, "project": w.project]
+    if let sid = w.sid { msg["sid"] = sid }
+    send(["t": "send", "msg": msg])
+  }
+
+  /// Re-opens a session the desktop ended (HQ has no transcript until its first turn), with a growing delay.
+  private func scheduleReopen(_ key: String) {
+    guard wanted[key] != nil else { return }
+    let n = attempts[key, default: 0]
+    attempts[key] = n + 1
+    let delay = UInt64(min(2 << min(n, 4), 30)) * 1_000_000_000
+    Task { [weak self] in
+      try? await Task.sleep(nanoseconds: delay)
+      guard let self, self.wanted[key] != nil, self.openIds[key] == nil else { return }
+      if self.isOnline { self.open(key) } else { self.scheduleReopen(key) }
+    }
+  }
+
+  private func startKeeping() {
+    guard keepTask == nil, !isDemo else { return }
     keepTask = Task { [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(nanoseconds: 30_000_000_000)
         guard let self, !Task.isCancelled, self.isOnline else { continue }
-        self.send(["t": "send", "msg": ["t": "sess-keep", "id": self.sessionId]])
+        for id in self.openIds.values { self.send(["t": "send", "msg": ["t": "sess-keep", "id": id]]) }
       }
     }
+  }
+
+  private func onOnline() {
+    openIds = [:]
+    for key in wanted.keys { attempts[key] = 0; open(key) }
+    watch("hq")
+    requestReports()
+    for p in watched.keys { requestProject(p) }
+  }
+
+  // MARK: project screen, sending, approving, stopping
+
+  func requestProject(_ project: String) {
+    guard isOnline else { return }
+    watched[project] = Int(Date().timeIntervalSince1970 * 1000)
+    send(["t": "send", "msg": ["t": "ctl-proj", "id": newId("j"), "project": project]])
+  }
+
+  func refreshProject(_ project: String) async {
+    guard isOnline else { return }
+    requestProject(project)
+    try? await Task.sleep(nanoseconds: 700_000_000)
+  }
+
+  func sendToProject(_ project: String, _ text: String) {
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !t.isEmpty else { return }
+    guard isOnline else { sendIssue[project] = SendIssue(text: t, reason: "offline"); return }
+    sendIssue[project] = nil
+    request(PendingAck(op: "send", project: project, text: t), ["t": "ctl-send", "project": project, "text": t], busyKey: "send:\(project)")
+  }
+
+  func retrySend(_ project: String) { if let i = sendIssue[project] { sendToProject(project, i.text) } }
+  func dismissIssue(_ project: String) { sendIssue[project] = nil }
+
+  func answer(_ ask: Ask, _ answer: [String: Any]) {
+    guard isOnline else { return }
+    request(PendingAck(op: "answer", project: ask.project, askId: ask.id), ["t": "ctl-answer", "project": ask.project, "askId": ask.id, "answer": answer], busyKey: "answer:\(ask.id)")
+  }
+
+  func stop(_ project: String) {
+    guard isOnline else { return }
+    request(PendingAck(op: "stop", project: project), ["t": "ctl-stop", "project": project], busyKey: "stop:\(project)")
+  }
+
+  private func request(_ ack: PendingAck, _ body: [String: Any], busyKey: String) {
+    let id = newId("a")
+    var msg = body
+    msg["id"] = id
+    pendingAcks[id] = ack
+    busy.insert(busyKey)
+    send(["t": "send", "msg": msg])
+    Task { [weak self] in   // no ack in 8 s: the link dropped it
+      try? await Task.sleep(nanoseconds: 8_000_000_000)
+      self?.finish(id, status: "rejected", reason: "offline")
+    }
+  }
+
+  private func finish(_ id: String, status: String, reason: String?) {
+    guard let a = pendingAcks.removeValue(forKey: id) else { return }
+    switch a.op {
+    case "send":
+      busy.remove("send:\(a.project)")
+      if status == "rejected" { sendIssue[a.project] = SendIssue(text: a.text ?? "", reason: reason ?? "failed") }
+    case "answer":
+      if let askId = a.askId {
+        busy.remove("answer:\(askId)")
+        if status == "done" || reason == "stale" { removeAsk(a.project, askId) }
+      }
+    default: busy.remove("stop:\(a.project)")
+    }
+  }
+
+  private func removeAsk(_ project: String, _ askId: String) {
+    asks[project]?.removeAll { $0.id == askId }
+    if asks[project]?.isEmpty == true { asks[project] = nil }
   }
 
   // MARK: IPC
@@ -300,7 +483,7 @@ final class WorkletModel: ObservableObject {
     let was = state
     state = s
     if s == "pairing" { pairError = nil }
-    if s == "online" && was != "online" { openSession(); requestReports() }
+    if s == "online" && was != "online" { onOnline() }
     if s == "unpaired" && paired != nil && was != "pairing" { /* the worklet restarted without a pairing: keep the stored one */ }
   }
 
@@ -321,10 +504,14 @@ final class WorkletModel: ObservableObject {
         projects[i].status = status
         projects[i].attention = e["attention"] as? String
       }
+      let now = Int(Date().timeIntervalSince1970 * 1000)
+      if let last = watched[pid], now - last > 1500 { requestProject(pid) }
     case "ctl-hq-status":
       guard let id = msg["id"] as? String, let i = outbox.firstIndex(where: { $0.id == id }) else { return }
       switch msg["status"] as? String {
-      case "queued": outbox[i].status = .queued
+      case "queued":
+        outbox[i].status = .queued
+        if streams["hq"]?.ended != nil { attempts["hq"] = 0; if openIds["hq"] == nil { open("hq") } }   // the first turn creates HQ's transcript
       case "delivered":
         outbox[i].status = .delivered
         Task { [weak self] in try? await Task.sleep(nanoseconds: 3_000_000_000); self?.discard(id) }
@@ -339,25 +526,67 @@ final class WorkletModel: ObservableObject {
       reportsLoaded = true
       reportsStamp += 1
     case "sess-items":
-      guard msg["id"] as? String == sessionId, let items = msg["items"] as? [[String: Any]] else { return }
-      if msg["reset"] as? Bool == true { hqItems = []; toolResults = [:] }
-      for it in items { applySessItem(it) }
-      if hqItems.count > 400 { hqItems.removeFirst(hqItems.count - 400) }
+      guard let id = msg["id"] as? String, let key = openIds.first(where: { $0.value == id })?.key,
+            let items = msg["items"] as? [[String: Any]] else { return }
+      var st = streams[key] ?? Stream()
+      let seq = msg["seq"] as? Int ?? 0
+      if msg["reset"] as? Bool == true { st.items = []; st.toolResults = [:] }
+      else if seq > st.lastSeq + 1 && st.received { openIds[key] = nil; streams[key] = st; open(key); return }   // missed a batch: start over
+      st.lastSeq = seq; st.received = true; st.ended = nil
+      attempts[key] = 0
+      for it in items { Self.apply(it, to: &st) }
+      if st.items.count > 400 { st.items.removeFirst(st.items.count - 400) }
+      streams[key] = st
     case "sess-end":
-      guard msg["id"] as? String == sessionId else { return }
-      sessionEnded = msg["reason"] as? String ?? "ended"
+      guard let id = msg["id"] as? String, let key = openIds.first(where: { $0.value == id })?.key else { return }
+      openIds[key] = nil
+      streams[key, default: Stream()].ended = msg["reason"] as? String ?? "ended"
+      streams[key]?.received = false
+      scheduleReopen(key)
+    case "ctl-proj":
+      guard let project = msg["project"] as? String else { return }
+      if msg["error"] != nil || msg["proj"] == nil {
+        details[project, default: ProjectDetail()].failed = !(details[project]?.loaded ?? false)
+        return
+      }
+      let proj = msg["proj"] as? [String: Any] ?? [:]
+      let list = (proj["sessions"] as? [[String: Any]] ?? []).compactMap { d -> ProjectSession? in
+        guard let sid = d["sid"] as? String else { return nil }
+        return ProjectSession(id: sid, title: d["title"] as? String ?? "", at: d["at"] as? Int ?? 0, running: d["running"] as? Bool ?? false, main: d["main"] as? Bool ?? false)
+      }
+      details[project] = ProjectDetail(sessions: list, loaded: true, failed: false)
+      let pending = (proj["pending"] as? [[String: Any]] ?? []).compactMap { Self.ask($0, project: project) }
+      if pending.isEmpty { asks[project] = nil } else { asks[project] = pending }
+    case "ctl-ask":
+      guard let project = msg["project"] as? String, let d = msg["ask"] as? [String: Any], let a = Self.ask(d, project: project) else { return }
+      var list = asks[project] ?? []
+      if let i = list.firstIndex(where: { $0.id == a.id }) { list[i] = a } else { list.append(a) }
+      asks[project] = list
+    case "ctl-ask-clear":
+      if let project = msg["project"] as? String, let askId = msg["askId"] as? String { removeAsk(project, askId) }
+    case "ctl-ack":
+      if let id = msg["id"] as? String { finish(id, status: msg["status"] as? String ?? "rejected", reason: msg["reason"] as? String) }
     default: break
     }
   }
 
-  private func applySessItem(_ it: [String: Any]) {
+  private static func apply(_ it: [String: Any], to st: inout Stream) {
     guard let kind = it["kind"] as? String, let key = it["key"] as? String else { return }
-    if kind == "toolDone" { if let id = it["id"] as? String { toolResults[id] = it["error"] as? Bool ?? false }; return }
+    if kind == "toolDone" { if let id = it["id"] as? String { st.toolResults[id] = it["error"] as? Bool ?? false }; return }
     var text = it["text"] as? String ?? ""
     if kind == "tool" { text = (it["name"] as? String ?? "tool") + ((it["detail"] as? String).map { " \($0)" } ?? "") }
     if kind == "note" { text = it["note"] as? String ?? "" }
     let item = HQItem(id: key, kind: kind, at: it["at"] as? Int ?? 0, text: text, toolId: it["id"] as? String)
-    if let i = hqItems.firstIndex(where: { $0.id == key }) { hqItems[i] = item } else { hqItems.append(item) }
+    if let i = st.items.firstIndex(where: { $0.id == key }) { st.items[i] = item } else { st.items.append(item) }
+  }
+
+  private static func ask(_ d: [String: Any], project: String) -> Ask? {
+    guard let id = d["askId"] as? String else { return nil }
+    let opts = (d["options"] as? [[String: Any]] ?? []).compactMap { o -> AskOption? in
+      guard let k = o["key"] as? String else { return nil }
+      return AskOption(key: k, label: o["label"] as? String ?? k)
+    }
+    return Ask(id: id, project: project, kind: d["kind"] as? String ?? "permission", tool: d["tool"] as? String, detail: d["detail"] as? String, options: opts, at: d["at"] as? Int ?? 0)
   }
 
   private static func project(_ p: [String: Any]) -> Project? {
@@ -368,9 +597,9 @@ final class WorkletModel: ObservableObject {
   }
 
   private func resetData() {
-    projects = []; hasView = false; hqStatus = nil; delivered = 0; hqItems = []; toolResults = [:]
-    outbox = []; reports = []; reportsLoaded = false; sessionEnded = nil
-    keepTask?.cancel()
+    projects = []; hasView = false; hqStatus = nil; delivered = 0; streams = [:]; details = [:]; asks = [:]; sendIssue = [:]; busy = []
+    outbox = []; reports = []; reportsLoaded = false; openIds = [:]; wanted = [:]; watched = [:]; pendingAcks = [:]
+    keepTask?.cancel(); keepTask = nil
   }
 
   private func append(_ line: String) {
@@ -397,14 +626,37 @@ final class WorkletModel: ObservableObject {
       Project(id: "p4", name: "docs-site", engine: "opencode", status: "idle", working: 0, sessions: 0, attention: nil, tool: nil),
     ]
     hasView = true; hqStatus = "working"; delivered = 12
-    hqItems = [
+    var hq = Stream()
+    hq.items = [
       HQItem(id: "1", kind: "user", at: now - 600_000, text: "What is blocking the release?", toolId: nil),
       HQItem(id: "2", kind: "tool", at: now - 590_000, text: "Read ios/README.md", toolId: "t1"),
       HQItem(id: "3", kind: "assistant", at: now - 580_000, text: "The only open item is the iOS build 4 upload. The archive is ready and agent-office has one pending approval for `npm test`.", toolId: nil),
       HQItem(id: "4", kind: "user", at: now - 120_000, text: "Ask agent-office to run the tests and report back", toolId: nil),
       HQItem(id: "5", kind: "assistant", at: now - 100_000, text: "Dispatched. I will post a report when the run finishes.", toolId: nil),
     ]
-    toolResults = ["t1": false]
+    hq.toolResults = ["t1": false]
+    streams["hq"] = hq
+    var live = Stream()
+    live.items = [
+      HQItem(id: "a1", kind: "user", at: now - 900_000, text: "Run the link tests and fix whatever fails", toolId: nil),
+      HQItem(id: "a2", kind: "assistant", at: now - 880_000, text: "I'll start with the full link suite, then look at any failures.", toolId: nil),
+      HQItem(id: "a3", kind: "tool", at: now - 870_000, text: "Read app/src/link-wire.js", toolId: "u1"),
+      HQItem(id: "a4", kind: "tool", at: now - 860_000, text: "Grep validateCtl", toolId: "u2"),
+      HQItem(id: "a5", kind: "tool", at: now - 850_000, text: "Edit app/src/link.js", toolId: "u3"),
+      HQItem(id: "a6", kind: "assistant", at: now - 800_000, text: "The ctl2 validators are in. Now I'll run the suite to confirm nothing regressed.", toolId: nil),
+      HQItem(id: "a7", kind: "tool", at: now - 30_000, text: "Bash npm test", toolId: "u4"),
+    ]
+    live.toolResults = ["u1": false, "u2": false, "u3": false]
+    streams["p1/s1"] = live
+    streams["p1"] = live   // the main session opens without a sid
+    details["p1"] = ProjectDetail(sessions: [
+      ProjectSession(id: "s1", title: "Run the link tests and fix whatever fails", at: now - 30_000, running: true, main: true),
+      ProjectSession(id: "s2", title: "Add the project screen to the iOS app", at: now - 7_200_000, running: true, main: false),
+      ProjectSession(id: "s3", title: "Why does the pairing QR expire early?", at: now - 86_400_000, running: false, main: false),
+      ProjectSession(id: "s4", title: "Release notes for 0.22.54", at: now - 172_800_000, running: false, main: false),
+    ], loaded: true, failed: false)
+    asks["p1"] = [Ask(id: "k1", project: "p1", kind: "permission", tool: "Bash", detail: "npm test -- --runInBand", options: [], at: now - 20_000)]
+    details["p2"] = ProjectDetail(sessions: [ProjectSession(id: "t1", title: "Polish the viewer smoke test", at: now - 60_000, running: true, main: true)], loaded: true, failed: false)
     outbox = [OutMessage(id: "o1", text: "Pause nodesyai-connect for now", at: Date(), status: .queued, reason: nil)]
     reports = [
       Report(id: "r1", at: now - 3_600_000, project: "agent-office", title: "Link tests green", summary: "All 214 link tests pass on the testnet.\n\nThe controller protocol (ctl-view, ctl-hq, ctl-reports) was exercised end to end. No regressions in pairing."),

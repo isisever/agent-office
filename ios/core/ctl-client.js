@@ -4,6 +4,8 @@
 'use strict';
 const W = require('../../app/src/link-wire.js');
 
+const CTL2_IN = new Set(['ctl-proj', 'ctl-ask', 'ctl-ask-clear', 'ctl-ack']);
+
 class CtlClient {
   /**
    * @param {{ Hyperswarm: any, crypto: any, keyPair: { publicKey: Uint8Array, secretKey: Uint8Array }, name?: string,
@@ -101,7 +103,7 @@ class CtlClient {
   }
   handle(raw) {
     if (raw?.t === 'sess-items' || raw?.t === 'sess-end') return this.onEvent(raw);   // the HQ session (hqSession)
-    const m = W.validateCtl(raw);
+    const m = W.validateCtl(raw);   // ctl2 answers: the Swift side parses them defensively
     if (!m) return;   // ping and hello are not used here
     if (m.t === 'ctl-view') this.view = m.view;
     if (m.t === 'ctl-hq-status' || m.t === 'ctl-reports') { const w = this.hqWaits.get(m.id); if (w) { this.hqWaits.delete(m.id); w(m); } }
