@@ -3939,3 +3939,32 @@ Fixes three Studio problems with HQ; the Office look and behaviour are unchanged
 - The enlarged image (`previewImage` in `renderer/chat.js`) closes on a click or Escape, stops that event there, and hands the focus back to the composer; only one preview exists at a time.
 - Closing it never calls window or app close APIs; the preview is a plain overlay in the page.
 - `main.js` logs `render-process-gone` (reason and exit code) so a renderer crash leaves a trace. This is log only.
+
+## Studio: project order and groups (v3.142)
+
+Studio's sidebar lists projects in the Office's own order and groups, and lets the person change both. There is no second
+store: the order is the order of `state.projects`, the group is `Project.group` (v3.86). The Office list (`groupProjects`)
+keeps the projects of a group in that order, so a drag in Studio shows up there and the other way round.
+
+```ts
+projects:move(id, order: string[], group: string) → { ok }   // order = project ids; the named ones fill their own slots
+                                                             // in that order (HQ and the rest stay in place); group '' = none
+projects:renameGroup(from, to) → { ok }                      // every project of `from` (case / Turkish letters ignored) goes
+                                                             // to `to`; '' ungroups them (the projects stay)
+```
+
+- **Pure logic** (`src/studio-order.mjs`, tests `test/studio-order.test.mjs`): `studioSections(items)` (ungrouped first, then
+  groups by name, order kept), `planMove(projects, id, { beforeId | afterId | group })` → `{ order, group } | null`
+  (a drop on a row takes that row's group; a drop on a group heading goes to the end of that group, `''` = ungrouped),
+  `dropSide(y, top, height)`. Store: `P.reorderProjects`, `P.renameGroup` (`src/projects.js`). `studioGroups(..., { ordered: true })`
+  keeps the given order instead of sorting by name (the ⌘K palette still sorts by name); every project carries its `group`
+  (`studio:sessions` passes `Project.group`).
+- **Drag and drop**: the project's head is draggable (not while searching). A line above or below the card shows where it
+  lands (upper half of the head = before, else after); a drop on a group heading puts it at the end of that group; click,
+  the hover "+" and the child session rows are unchanged.
+- **Groups**: with groups in use, headings (collapse with the Office's `ao.closedGroups`, count, double-click to rename
+  inline, a button to ungroup) divide the list; "No group" heads the ungrouped ones. The "+" next to "Projects" and the
+  project's right-click menu ("Move to group": groups in use, "New group", "Take out of …") open a name box; a group exists
+  only through its projects (as in the Office), so a new group takes the current (or right-clicked) project.
+- Strings `studio.newGroup`, `newGroupPh`, `ungrouped`, `moveToGroup`, `removeFromGroup`, `ungroup`, `renameGroup`.
+- **Not verified live** (no running window in this change): the drag itself; the pure parts and the store are tested.

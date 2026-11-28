@@ -1,6 +1,8 @@
 // Studio experience (contract v3.120): the pure parts of Studio's sidebar and its ⌘K command palette, so they can be
 // tested without a window. renderer/studio.js draws what these return.
 
+import { cleanGroup } from './project-groups.mjs';
+
 const PALETTE_MAX = 60;   // rows the palette shows at most
 
 const lower = (/** @type {unknown} */ s) => String(s ?? '').toLocaleLowerCase();
@@ -11,20 +13,20 @@ const byName = (/** @type {any} */ a, /** @type {any} */ b) => String(a.name || 
  * Recent ones (newest first). With a search, a project whose name matches keeps all its sessions; otherwise only the
  * matching sessions stay, and a project with none left is dropped.
  * @param {any[]} projects StudioProject[] from studio:sessions
- * @param {{ query?: string, currentId?: string }} [o] currentId: the project ⌘1…9 and ⌘N act on
- * @returns {{ id: string, name: string, account: string, active: boolean, current: boolean, attention: string | null, running: any[], recent: any[] }[]}
+ * @param {{ query?: string, currentId?: string, ordered?: boolean }} [o] currentId: the project ⌘1…9 and ⌘N act on; ordered (v3.142): keep the given (Office) order instead of sorting by name
+ * @returns {{ id: string, name: string, group: string, account: string, active: boolean, current: boolean, attention: string | null, running: any[], recent: any[] }[]}
  */
-export function studioGroups(projects, { query = '', currentId = '' } = {}) {
+export function studioGroups(projects, { query = '', currentId = '', ordered = false } = {}) {
   const q = lower(query).trim();
   const has = (/** @type {unknown} */ s) => !q || lower(s).includes(q);
   const out = [];
-  for (const p of (Array.isArray(projects) ? projects : []).filter((x) => x && typeof x.id === 'string').slice().sort(byName)) {
+  for (const p of (Array.isArray(projects) ? projects : []).filter((x) => x && typeof x.id === 'string').slice().sort(ordered ? () => 0 : byName)) {
     const all = has(p.name);
     const running = (Array.isArray(p.running) ? p.running : []).slice().sort((a, b) => a.n - b.n).filter((s) => all || has(s.title));
     const recent = (Array.isArray(p.recent) ? p.recent : []).slice().sort((a, b) => b.at - a.at).filter((r) => all || has(r.title));
     if (q && !all && !running.length && !recent.length) continue;
     out.push({
-      id: p.id, name: String(p.name || ''), account: typeof p.account === 'string' ? p.account : '',
+      id: p.id, name: String(p.name || ''), group: cleanGroup(p.group), account: typeof p.account === 'string' ? p.account : '',
       active: p.active === true, current: p.id === currentId, attention: p.attention || null, running, recent,
     });
   }

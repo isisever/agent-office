@@ -5693,6 +5693,19 @@ ipcMain.handle('projects:setGroup', (_e, id, group) => {
   broadcast();
   return { ok: true };
 });
+// v3.142 Studio's drag and drop: the project list's order (ids, the same state.projects order the Office list keeps inside a
+// group) and the moved project's group in one commit; group rename / ungroup ('' = ungroup)
+ipcMain.handle('projects:move', (_e, id, order, group) => {
+  if (!P.findProject(state, String(id)) || !Array.isArray(order)) return { ok: false };
+  commit(P.setGroup(P.reorderProjects(state, order.map(String)), String(id), group));
+  broadcast();
+  return { ok: true };
+});
+ipcMain.handle('projects:renameGroup', (_e, from, to) => {
+  commit(P.renameGroup(state, String(from || ''), to));
+  broadcast();
+  return { ok: true };
+});
 ipcMain.handle('projects:menu', (_e, id) => {
   const p = P.findProject(state, id);
   if (!p || !win) return;
@@ -6706,7 +6719,7 @@ function studioAccountLabel(sp) {
 }
 ipcMain.handle('studio:sessions', (e) => {
   if (!fromWin(e)) return null;
-  const projects = state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: p.name, dir: p.dir, engine: P.engineOf(p), tabs: P.tabsOf(p) }));
+  const projects = state.projects.filter((p) => !p.hq).map((p) => ({ id: p.id, name: p.name, group: p.group || '', dir: p.dir, engine: P.engineOf(p), tabs: P.tabsOf(p) }));
   return {
     experience: STU.normalizeExperience(state.experience),
     user: studioUser(P.findProject(state, state.activeId)),

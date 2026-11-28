@@ -202,7 +202,7 @@ function listSessions({ projects, status, recent, activeId = null, staff = [], a
       .map((r) => ({ sessionId: r.sessionId, title: r.title || baseName(r.dir) || p.name, at: r.at }));
     const label = accountOf(p);
     const account = typeof label === 'string' ? label.trim().slice(0, 80) : '';
-    return { id: p.id, name: p.name, dir: p.dir, engine: p.engine || 'claude', account, active: p.id === activeId, attention: st.attention || null, running, recent: recentHere };
+    return { id: p.id, name: p.name, group: typeof p.group === 'string' ? p.group : '', dir: p.dir, engine: p.engine || 'claude', account, active: p.id === activeId, attention: st.attention || null, running, recent: recentHere };
   });
 }
 
