@@ -1500,7 +1500,9 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
     // Windows: claude starts directly in a ConPTY (CLAUDE_CONFIG_DIR is already in env: no rc files to override it)
     const win32 = IS_WIN ? windowsClaude(args, env) : null;
     if (IS_WIN && !win32) { sendNoClaude(id); return broadcast(); }
+    delete env.AGENT_OFFICE_STUDIO; // v3.173 only a Studio GUI chat tells the plugin's manager brief that messages wait for the current tool call
     if (gui) {
+      env.AGENT_OFFICE_STUDIO = '1';
       // v3.149 every GUI chat starts in auto mode (v3.120: Auto-approve projects only; never HQ, a desk, a guarded or a skip session)
       const startMode = STU.guiStartModeArgs({ gui: true, autoApprove: P.autoApproveOf(project), hq: Boolean(project.hq), modes: reportedModesOf(project),
         lock: STU.modeLock({ skip: P.skipPermissionsArgs(project).length > 0, desk: Boolean(mailMcp) || Boolean(r.tab?.staffId) || guarded !== settings }) });
