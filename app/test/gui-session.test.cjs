@@ -18,7 +18,7 @@ test('GUI chat: which tabs run as a GUI chat (v3.108)', () => {
   assert.equal(GS.guiEligible({ ...base, engine: 'agy' }), false, 'another engine');
   assert.equal(GS.guiEligible({ ...base, hq: true }), false, 'HQ keeps its terminal');
   assert.equal(GS.guiEligible({ ...base, shell: true }), false, 'a plain shell tab');
-  assert.equal(GS.guiEligible({ ...base, platform: 'win32' }), false, 'not on Windows yet');
+  assert.equal(GS.guiEligible({ ...base, platform: 'win32' }), true, 'Windows runs the GUI chat too (v3.161)');
 });
 
 test('GUI chat: argv puts the protocol flags first, the tab arguments after', () => {

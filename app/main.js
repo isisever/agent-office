@@ -1499,9 +1499,14 @@ function startPty(id, { resume = false, sessionId = null, imported = false, prom
       // v3.149 every GUI chat starts in auto mode (v3.120: Auto-approve projects only; never HQ, a desk, a guarded or a skip session)
       const startMode = STU.guiStartModeArgs({ gui: true, autoApprove: P.autoApproveOf(project), hq: Boolean(project.hq), modes: reportedModesOf(project),
         lock: STU.modeLock({ skip: P.skipPermissionsArgs(project).length > 0, desk: Boolean(mailMcp) || Boolean(r.tab?.staffId) || guarded !== settings }) });
-      t = guiProc = GP.spawnGui(spawn, shell(), ['-l', '-i', '-c', cmd, 'claude', ...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args), ...startMode], {
+      const guiArgv = [...GS.guiArgs(guiPrompt ? args.slice(0, -1) : args), ...startMode];
+      // v3.161 Windows: claude starts directly (its .cmd shim through cmd.exe), piped, no console window; no login shell there
+      const winGui = IS_WIN ? windowsClaude(guiArgv, env) : null;
+      if (IS_WIN && !winGui) { sendNoClaude(id); return broadcast(); }
+      t = guiProc = GP.spawnGui(spawn, winGui ? winGui.file : shell(), winGui ? (winGui.verbatim ? [winGui.args.join(' ')] : winGui.args) : ['-l', '-i', '-c', cmd, 'claude', ...guiArgv], {
         cwd: isDir(cwd) ? cwd : app.getPath('home'),
         env,
+        spawnExtra: winGui ? { windowsHide: true, windowsVerbatimArguments: Boolean(winGui.verbatim) } : {},
       }, { onAsk: (ask, input) => guiAsk(id, ask, input, { autoApprove: !project.hq && P.autoApproveOf(P.findProject(state, project.id) || project), mailGuard: Boolean(mailMcp) }),
         onModels: (models) => noteModels(configDir, models) });
       if (!t.pid) throw new Error('claude did not start');

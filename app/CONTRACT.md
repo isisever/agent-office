@@ -4120,3 +4120,16 @@ A paired machine's project session now opens in the main chat area, like a local
 - **Echo.** A sent message shows as a pending bubble (`echo()`); the first user item from the remote replaces it.
 - **Offline.** The last known items (`rememberItems`, at most 20 rows per machine and 400 items per row, in memory) are shown read-only with the note `studio.remote.offlineReadOnly`; no session is opened. When the machine comes back online the view reopens. A machine that is not sendable shows `studio.remote.readOnly` and no composer.
 - **Pure logic** lives in `src/studio-remote-chat.mjs` (`remoteChatMode`, `rememberItems`, `lastKnown`, `sendOk`), tested in `test/studio-remote-chat.test.mjs`.
+
+## Studio: always opens in chat view (v3.161)
+
+Entering Studio, and opening or selecting a session inside Studio, always shows the chat view, on every platform. The
+terminal view appears only after the person clicks the "Switch to terminal" toggle (`chatOff`).
+
+- Root cause: Windows was excluded twice. `guiEligible` (src/gui-session.js) returned false for `win32`, and
+  `chatShownFor` / `chatButtonFor` (src/chat-view.mjs) required `!win`, so a Windows Studio tab landed in its terminal.
+- `chatShownFor` is `chatView || isGui || studio || hq`; `chatButtonFor` no longer looks at the platform.
+- Windows now starts the GUI chat with claude spawned directly (the `.cmd` shim through cmd.exe, `windowsHide`, piped
+  stdio, not detached) instead of a POSIX login shell. If it cannot start, the chat view shows the ended/error state;
+  it never falls back to the terminal.
+- Tests: test/studio-chat-default.test.mjs (decision logic), test/gui-session.test.cjs, test/studio.test.cjs.
