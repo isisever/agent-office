@@ -213,7 +213,7 @@ function listSessions({ projects, status, recent, activeId = null, staff = [], a
  * Claude Code's transcript folders (chat.sessionList: [{ id, title, prompt, at }], newest first) that are neither
  * listed yet nor running. Newest first, at most `limit`. `exclude` = session ids of running tabs.
  * @param {{ sessionId: string, title: string, at: number, dir?: string }[]} kept
- * @param {{ id: string, title?: string, prompt?: string, at: number }[]} history
+ * @param {{ id: string, title?: string, prompt?: string, headless?: boolean, at: number }[]} history
  * @param {{ limit?: number, exclude?: Iterable<string>, names?: Record<string, string>, known?: Iterable<string> }} [o]
  */
 function mergeRecent(kept, history, { limit = RECENT_PER_PROJECT, exclude = [], names = {}, known = [] } = {}) {
