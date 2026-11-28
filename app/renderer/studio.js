@@ -362,6 +362,8 @@ export function mountStudio({ api, t, modLabel, hooks }) {
       el('div', { class: 'st-row st-pin', onclick: () => hooks.selectHq() }, icon('home'), el('span', { class: 'st-title' }, t('studio.hq'))),
       el('div', { class: 'st-row st-pin', onclick: () => openBoard('board') }, icon('board'), el('span', { class: 'st-title' }, t('studio.board'))),
       el('div', { class: 'st-row st-pin', onclick: () => openBoard('reports') }, icon('report'), el('span', { class: 'st-title' }, t('studio.reports'))),
+      // v3.141 the Office's Usage panel (tokens and cost) for the current project
+      el('div', { class: 'st-row st-pin', title: t('studio.usageTitle'), onclick: () => hooks.showPanel('#usage-panel') }, icon('coins'), el('span', { class: 'st-title' }, t('studio.usage'))),
       el('div', { class: 'st-row st-pin', onclick: () => hooks.openBoard() }, icon('clock'), el('span', { class: 'st-title' }, t('studio.routines'))),
       el('div', { class: 'st-row st-pin', title: `${modLabel}K`, onclick: () => openPalette() }, icon('command'), el('span', { class: 'st-title' }, t('studio.commands')), el('span', { class: 'st-key' }, `${modLabel}K`)));
     const groups = studioGroups(view.projects, { query, currentId: currentId() });

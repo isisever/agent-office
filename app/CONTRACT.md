@@ -3855,3 +3855,10 @@ Amends v3.123 (the What's new card opened once after an update, and from Help, �
 - `#whats-new-btn` sits in the title bar next to the economy leaf (`#economy`), in both experiences, with the `gift`
   icon and the tooltip "What's new in this version" (`app.whatsNewTitle`). A click calls `openWhatsNew()`: the same
   card, items and "Try it" actions as the other entry points. It does not change what counts as seen.
+
+## Studio: Usage & cost in the sidebar (v3.141)
+
+Amends v3.122 (Studio reached the Office's Usage panel only from ⌘K). Studio's pinned rows gain "Usage & cost"
+(`studio.usage`, `coins` icon) between Reports and Routines. A click calls `hooks.showPanel('#usage-panel')`: the
+Office's own Usage panel (tokens and estimated cost by period, model and agent) for Studio's current project, the same
+as ⌘K → Usage. With no current project it does nothing.

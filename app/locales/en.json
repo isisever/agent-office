@@ -7,6 +7,8 @@
     "search": "Search",
     "hq": "HQ",
     "reports": "Reports",
+    "usage": "Usage & cost",
+    "usageTitle": "Tokens and estimated cost of the current project",
     "routines": "Routines",
     "project": "Project",
     "running": "Running",
