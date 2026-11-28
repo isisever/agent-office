@@ -27,6 +27,23 @@ export function shortTool(tool) {
 }
 
 /**
+ * The two label lines of a worker desk: the task (the sub-agent description, else its type) and the project with the
+ * current tool as secondary info. A finished worker shows `doneText` / `failedText` instead of the tool.
+ * @param {any} w
+ * @param {{ thinking?: string, doneText?: string, failedText?: string }} [txt]
+ * @returns {{ title: string, sub: string }}
+ */
+export function workerLabel(w, { thinking = '', doneText = 'done', failedText = 'failed' } = {}) {
+  const desc = String(w?.description ?? '').replace(/\s+/g, ' ').trim()
+  const type = String(w?.type || 'agent')
+  const title = desc ? clip(desc, 60) : type
+  const project = clip(String(w?.project ?? '').trim(), 24)
+  const tool = shortTool(w?.tool)
+  const state = w?.doneAt != null ? (w.isOk ? doneText : failedText) : (tool || thinking)
+  return { title, sub: [project, state].filter(Boolean).join(' · ') }
+}
+
+/**
  * Text cut to max characters with an ellipsis.
  * @param {unknown} s
  * @param {number} max
@@ -57,7 +74,7 @@ export function projectHue(name) {
  * @param {number} n number of workers
  * @param {{ minPitch?: number, maxPitch?: number, minDesks?: number }} [opts]
  */
-export function stripLayout(W, H, n, { minPitch = 100, maxPitch = 150, minDesks = 4 } = {}) {
+export function stripLayout(W, H, n, { minPitch = 84, maxPitch = 150, minDesks = 4 } = {}) {
   const width = Math.max(0, Number(W) || 0)
   const height = Math.max(0, Number(H) || 0)
   const scale = Math.min(1.25, Math.max(0.7, height / 150))
