@@ -3813,4 +3813,24 @@ Amends v3.120 (Studio hid the scene). CSS in `renderer/style.css` (Studio block)
 - **Collapse.** `#divider` stays as a thin bar under the strip with `#scene-toggle`. It uses the existing
   `setSceneHidden` and the shared `officeHidden` setting (the same state as the Office's toggle): collapsed hides the
   canvas and pauses it (no rendering cost); the bar remains to expand it again. Drag-to-resize is off in Studio.
-- Not shown on Studio's HQ board page (`studio-board`) nor when the scene failed to load (`no-office`).
+- Not shown on Studio's HQ board page (`studio-board`) nor when the strip's renderer failed to load
+  (`no-studio-scene`).
+- **Isometric view (v3.137).** The Office's pixel scene is laid out for a tall area and is cropped in the strip, so
+  Studio draws its own scene: `<canvas id="studio-scene">` (`renderer/studio-scene.js`, Canvas 2D paths only, no images,
+  no WebGL), and `#office` is hidden in Studio. The Office experience is unchanged.
+  - Layout (pure, `src/studio-scene-layout.mjs`, tested): boss desk fixed on the left (lit, animated monitors and a
+    glow while `isBossBusy`), one row of desks in the middle, a server rack with blinking LEDs fixed on the right.
+    Desks share the row between a minimum and maximum pitch; with fewer than 4 workers empty desks fill the row
+    (centred). **Overflow:** when the desks do not fit at the minimum pitch the row scrolls horizontally (wheel or
+    drag; soft fade at the clipped edge) instead of shrinking further.
+  - Workers shown: `doneAt == null`, plus finished ones for 6 s with a ✓ (`isOk`) / ✗ bubble, fading out. Each sits at
+    its desk typing (lit monitor) and has a label: `type` and the current tool (`mcp__server__` prefix stripped; empty →
+    `panel.thinking`; finished → `panel.done` / `panel.failed`). Desk stripe and shirt take a stable per-project hue.
+    No workers: empty desks and `studio.scene.noAgents`.
+  - Click on a worker calls `selectAgent(id)` (same id as the Office). Colours from Studio's `--st-*` tokens on
+    `body`, so it follows Studio light/dark. Crisp at `devicePixelRatio`; sized by `ResizeObserver`; ~12 fps timer.
+  - Data: the same object as the Office (`api.office.onData` → `setData`).
+  - **Only one scene renders** (`syncScenes()` in `app.js`, run on every `body` class change and by
+    `setSceneHidden`): outside Studio the Office's scene (unless collapsed); in Studio the Office's scene is paused and
+    the strip runs, except when collapsed (`officeHidden`) or on the HQ board page. Paused or `document.hidden` → no
+    drawing.

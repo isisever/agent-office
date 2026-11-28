@@ -1694,12 +1694,16 @@ body.studio #terminal #empty { display: none; }
 /* the HQ board (reports, routines) in place of the chat, opened from Studio's pinned entries */
 body.studio.studio-board #hq-board { display: block !important; flex: 1 1 0; overflow: auto; }
 body.studio.studio-board #terminal { display: none; }
-/* v3.136 the Office scene as a strip above the chat, so running agents are always visible. The divider stays as a
-   thin bar carrying the collapse toggle (the shared officeHidden setting; collapsed pauses the canvas). No drag-resize
+/* v3.136 a scene strip above the chat, so running agents are always visible; v3.137 in Studio it is the isometric
+   #studio-scene (studio-scene.js) and the Office's #office is hidden (and paused, app.js). The divider stays as a thin
+   bar carrying the collapse toggle (the shared officeHidden setting; collapsed pauses the canvas). No drag-resize
    in Studio (app.js), no strip on the HQ board page. */
-body.studio #office {
-  flex: 0 0 clamp(110px, 20vh, 160px); min-height: 0; margin: 8px 8px 0; width: auto;
+#studio-scene { display: none; }
+body.studio #office { display: none !important; }
+body.studio #studio-scene {
+  display: block; flex: 0 0 clamp(110px, 20vh, 160px); min-height: 0; margin: 8px 8px 0; width: auto;
   border: 1px solid var(--st-border); border-bottom: 0; border-radius: var(--st-radius) var(--st-radius) 0 0;
+  background: var(--st-bg); touch-action: pan-y;
 }
 body.studio #divider {
   flex: 0 0 12px; margin: 0 8px 4px; cursor: default; filter: none;
@@ -1709,8 +1713,8 @@ body.studio.office-hidden #divider { margin-top: 8px; border-radius: var(--st-ra
 body.studio #scene-toggle {
   top: 0; height: 12px; line-height: 10px; color: var(--st-muted); background: transparent; border: 0;
 }
-body.studio.studio-board #office, body.studio.studio-board #divider, body.studio.no-office #office,
-body.studio.no-office #divider { display: none; }
+body.studio.office-hidden #studio-scene, body.studio.studio-board #studio-scene, body.studio.studio-board #divider,
+body.studio.no-studio-scene #studio-scene, body.studio.no-studio-scene #divider { display: none; }
 body.studio #studio-sidebar {
   flex: 0 0 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px;
   overflow-y: auto; background: var(--status-bg); border: var(--line-w) solid var(--line); border-radius: var(--radius);

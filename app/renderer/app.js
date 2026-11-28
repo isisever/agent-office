@@ -596,6 +596,16 @@ api.pty.onExit((id, code) => {
 
 // ---- State ----
 let office = null;
+let studioScene = null;   // v3.137 Studio's isometric strip (studio-scene.js); #office is hidden in Studio
+// Only one scene renders: the Office's pixel scene outside Studio, the isometric strip in Studio (not on the HQ board);
+// both pause while the scene is collapsed (officeHidden). Run on every body class change and by setSceneHidden.
+function syncScenes() {
+  const cl = document.body.classList;
+  const studioOn = cl.contains('studio');
+  const hidden = cl.contains('office-hidden');
+  if (studioOn || hidden) office?.pause?.(); else office?.resume?.();
+  if (studioOn && !hidden && !cl.contains('studio-board')) studioScene?.resume(); else studioScene?.pause();
+}
 // v3.81 the 3D office setting (main's prefs); applied to the office view once it is mounted
 let office3dOn = false;
 function applyOffice3d(p) {
@@ -1315,8 +1325,8 @@ let sceneInit = () => {};   // set by the splitter block below; run once the off
     store.set('officeHidden', hidden ? '1' : '0');
     btn.textContent = hidden ? '\u25BC' : '\u25B2';
     btn.title = btn.ariaLabel = hidden ? t('app.showOffice') : t('app.hideOffice');
-    if (hidden) { try { agentPanel?.hide(); } catch (e) { console.error(e); } office?.pause?.(); }
-    else office?.resume?.();
+    if (hidden) { try { agentPanel?.hide(); } catch (e) { console.error(e); } }
+    syncScenes();
     api.scene?.sendHidden(hidden);
     requestAnimationFrame(() => panes.get(activePty())?.term.fit());
   };
@@ -1383,6 +1393,17 @@ try {
   console.warn('Ofis görünümü yüklenemedi:', e.message);
   document.body.classList.add('no-office');
 }
+try {
+  const { mountStudioScene } = await import('./studio-scene.js');
+  studioScene = mountStudioScene(/** @type {HTMLCanvasElement} */ ($('studio-scene')), { onSelect: (id) => selectAgent(id) });
+  // dev-only hook for visual checks (set localStorage 'sceneDebug' to '1' and reload); off for every normal run
+  try { if (localStorage.getItem('sceneDebug') === '1') /** @type {any} */ (window).__studioScene = studioScene; } catch { /* no storage */ }
+} catch (e) {
+  console.warn('Studio scene could not load:', e.message);
+  document.body.classList.add('no-studio-scene');
+}
+new MutationObserver(syncScenes).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+syncScenes();
 sceneInit();
 onLang(() => sceneInit());
 
@@ -1404,6 +1425,7 @@ api.office.onData((local) => {
   setStats(d);
   sidebar.setStats(d?.projects);
   try { office?.setData(d); } catch (e) { console.error(e); }
+  try { studioScene?.setData(d); } catch (e) { console.error(e); }
   try { agentPanel?.update(d); } catch (e) { console.error(e); }
 });
 
