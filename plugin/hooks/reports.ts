@@ -103,6 +103,14 @@ export class ReportTracker {
   }
 }
 
+/**
+ * How many background jobs of the session are still in flight: working agents plus background shells (Bash
+ * run_in_background) that have not ended. A turn that ends while any is running is not the task's last turn.
+ */
+export function inFlightCount(workers: { doneAt?: number }[], shells: { endAt?: number }[]): number {
+  return workers.filter(w => w.doneAt === undefined).length + shells.filter(s => s.endAt === undefined).length
+}
+
 /** The report of a task: the answer redacted and cut, the commits, the time. */
 export function reportOf(task: PendingTask, commits: JournalCommit[], now: number, partial = false): TaskReport {
   const full = redact(task.answer.trim())

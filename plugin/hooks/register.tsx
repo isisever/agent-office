@@ -22,7 +22,7 @@ import type { VerifyStop } from './harness'
 import type { StopInput } from './finish'
 import { appendEntry, directoryProjects, entryOf, JOURNAL_FILE, LOOKBACK_MS, newsText, parseJournal, placeOfDir, selectNews } from './journal'
 import type { Host, JournalSeen, OfficeProject } from './journal'
-import { readyText, ReportTracker, taskContext, typedTaskId, writeReport } from './reports'
+import { inFlightCount, readyText, ReportTracker, taskContext, typedTaskId, writeReport } from './reports'
 import { blockedText, DELEGATES_SECTION_ID, delegatesText, doneText, HQ_SECTION_ID, hqText, parseDelegates, sectionKind } from './hq'
 import { memberText, parseMember, STAFF_SECTION_ID, TEAM_SECTION_ID, TEAM_TEXT } from './staff'
 import { MAIL_SECTION_ID, MAIL_TEXT, mailGuardDecision } from './mail-guard'
@@ -1814,7 +1814,7 @@ export const register: Register = on => {
       // the office journal: what this turn did, for the other sessions (never fails the turn)
       if (journalOn && rootDir) await journalTurn($, e.turnId, typeof e.answer === 'string' ? e.answer : '').catch(() => undefined)
       // one boss (v3.35): the dispatched task's report, once none of this session's workers is still running
-      const task = reports.complete(typeof e.answer === 'string' ? e.answer : '', workers.filter(w => w.doneAt === undefined).length)
+      const task = reports.complete(typeof e.answer === 'string' ? e.answer : '', inFlightCount(workers, shells))
       if (task && rootDir) await writeReport(hostOf($), rootDir, sessionCwd, task, Date.now(), false, isWindows)
       // still waiting on workers past the limit: the answers so far, as partial
       const late = reports.expired(Date.now())

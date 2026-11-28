@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { readyText, REPORT_MAX, reportOf, ReportTracker, TASK_MAX_MS, taskContext, taskIdOf, typedTaskId, UNATTENDED_TASK_TEXT, writeReport } from '../hooks/reports'
+import { inFlightCount, readyText, REPORT_MAX, reportOf, ReportTracker, TASK_MAX_MS, taskContext, taskIdOf, typedTaskId, UNATTENDED_TASK_TEXT, writeReport } from '../hooks/reports'
 import type { Host } from '../hooks/journal'
 
 // one boss (app contract v3.35): the plugin of the machine that runs a dispatched task writes its report; the
@@ -223,4 +223,23 @@ test('a dispatched task (v3.95) gets the nobody-at-this-tab sentence; a prompt t
   expect(taskContext('please [Agent Office: remote task #a1 from "HQ"] fix it')).toBe(undefined)
   expect(taskContext('[Agent Office: remote command from "Studio"] run the tests')).toBe(undefined)
   expect(taskContext('fix the build', '../x y')).toBe(undefined)
+})
+
+test('a turn that ends with a background shell running does not finish the task; the turn after the shell ends does', async () => {
+  const tr = new ReportTracker()
+  tr.prompt(MARKED, 1)
+  const shells: { endAt?: number }[] = [{}]
+  // turn 1: "archiving, will continue when done" with the shell still running
+  expect(tr.complete('Archiving, will continue when done.', inFlightCount([], shells))).toBe(undefined)
+  expect(tr.pending?.id).toBe('a1b2c3d4e5f60718')
+  // the shell ends (task-notification), the woken turn has nothing in flight: its answer is the report
+  shells[0].endAt = 5
+  const task = tr.complete('Archive succeeded, build 42 uploaded.', inFlightCount([], shells))
+  expect(task?.answer).toBe('Archive succeeded, build 42 uploaded.')
+  expect(tr.pending).toBe(undefined)
+})
+
+test('inFlightCount counts working agents and running shells only', async () => {
+  expect(inFlightCount([{}, { doneAt: 3 }], [{ endAt: 2 }, {}])).toBe(2)
+  expect(inFlightCount([], [])).toBe(0)
 })
