@@ -1475,7 +1475,8 @@ function renderFrame(now, data, focus = '', selected = null) {
   useTheme(themeFor(focus || data.project))
   // desks wanted: every active worker plus two desks per staff member (staff take at most half the desks)
   const deskNeed = data.workers.filter(w => w.doneAt == null).length + 2 * (Array.isArray(data.staff) ? data.staff.length : 0)
-  const key = `${LW}x${LH}:${themeName}:${deskGrid(LW - 68, LH - 168, deskNeed).pitchX}`
+  const grid = deskGrid(LW - 68, LH - 168, deskNeed)
+  const key = `${LW}x${LH}:${themeName}:${grid.pitchX}x${grid.pitchY}:${grid.rows}x${grid.cols}`
   if (backgroundKey !== key) {
     fb = new Uint32Array(LW * LH)
     L = computeLayout(deskNeed)

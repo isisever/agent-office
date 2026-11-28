@@ -44,3 +44,15 @@ test('default layout with no or few agents is the original grid', () => {
   const g = deskGrid(262, 400, 0)
   assert.equal(g.rows, 4, 'the old 4-row cap holds while demand fits')
 })
+
+test('render: the drawn desk count grows with demand at a fixed size, even within one spacing step', () => {
+  setGeometry(1320, 1320)   // 330x330 logical: the original grid and the first growth step share their spacing
+  resetOffice()
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: `g${i}`, spawnAt: i, doneAt: null, project: 'p', type: 'general-purpose', tool: 'Bash' }))
+  const data = (n) => ({ workers: mk(n), delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' })
+  render(5000, data(1))
+  const base = sceneOf().desks.length
+  render(5000, data(30))
+  assert.ok(sceneOf().desks.length > base, 'desks grew from ' + base)
+  assert.ok(sceneOf().desks.length >= 30 || sceneOf().desks.length > 4 * 6)
+})
