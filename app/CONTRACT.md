@@ -4133,3 +4133,19 @@ terminal view appears only after the person clicks the "Switch to terminal" togg
   stdio, not detached) instead of a POSIX login shell. If it cannot start, the chat view shows the ended/error state;
   it never falls back to the terminal.
 - Tests: test/studio-chat-default.test.mjs (decision logic), test/gui-session.test.cjs, test/studio.test.cjs.
+
+## Studio: account fallback resumes on the new account (v3.164)
+
+After a usage-limit fallback the chat no longer shows the stopped account's limit error as a live failure.
+
+- Root cause (read from a real session, not guessed): the fallback itself was correct. The project's own account
+  (`homeAccount`) hit its limit, `fallbackTo` moved the project to Default, and the session restarted with
+  `CLAUDE_CONFIG_DIR` unset (Default) and the carry-on prompt; Default answered normally. But the session's first
+  restart prompt ("Your last turn ... did not finish") had run on the limited account and got "You've hit your 5-hour
+  limit" written into the transcript; `moveProjectData` copies that whole transcript to the new account, so the chat
+  showed user bubble, red limit error, then the carry-on and the real work, which read as "this account is full".
+- Fix: `limitFlow` (`src/chat-superseded.mjs`) marks a usage-limit error bubble `superseded` once any later answer or
+  tool call appears (also across incremental reads). `renderer/chat.js` dims it with a dashed border and a tooltip
+  (`chat.limitSuperseded`). A limit error that ends the transcript stays a normal red error.
+- Not changed: the account choice, `moveProject`, transcript copying, and the limit marks.
+- Tests: `test/chat-superseded.test.mjs`.

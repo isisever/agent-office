@@ -979,6 +979,7 @@
     "personalTitle": "Personelin proje dışı işler için kendi çalışma alanı (ilk kullanımda Belgeler/Agent Office altında açılır)"
   },
   "chat": {
+    "limitSuperseded": "Bu hesap sınıra ulaştı; oturum sonrasında devam etti",
     "placeholder": "Mesaj… (Enter gönderir, Shift+Enter: yeni satır)",
     "send": "Gönder",
     "terminal": "Terminal",

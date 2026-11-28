@@ -989,6 +989,7 @@
     "personalTitle": "The member's own workspace, for work outside any project (made on first use in Documents/Agent Office)"
   },
   "chat": {
+    "limitSuperseded": "This account hit its limit; the session continued afterwards",
     "placeholder": "Message… (Enter sends, Shift+Enter: new line)",
     "send": "Send",
     "terminal": "Terminal",

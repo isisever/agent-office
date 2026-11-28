@@ -1982,3 +1982,4 @@ body.studio.studio-board .hq-orders { display: none; }
 #studio-sidebar .st-x:hover { opacity: 1; }
 .bv-account { max-width: 120px; }
 .bv-source { text-transform: none; }
+.chat-msg.error.superseded { opacity: .55; border-style: dashed; }
