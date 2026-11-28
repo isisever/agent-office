@@ -707,14 +707,14 @@ export function mountStudio({ api, t, modLabel, hooks }) {
     const text = el('span', {}, proj.account);
     if (!pickerUseful(choices)) return el('span', { class: 'st-chip', title: `${t('studio.account')}: ${proj.account}` }, icon('user', 12), text);
     return el('button', { class: 'st-chip st-chip-pick', type: 'button', 'aria-haspopup': 'menu', title: `${t('studio.account')}: ${proj.account} - ${t('studio.accountPick')}`,
-      onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); openAcctMenu(/** @type {HTMLElement} */ (e.currentTarget), proj.id, choices); } }, icon('user', 12), text, icon('chevronDown', 10));
+      onclick: (/** @type {MouseEvent} */ e) => { e.stopPropagation(); openAcctMenu(/** @type {HTMLElement} */ (e.currentTarget), proj.id, choices, Boolean(proj.home)); } }, icon('user', 12), text, icon('chevronDown', 10));
   }
-  function openAcctMenu(/** @type {HTMLElement} */ btn, /** @type {string} */ projectId, /** @type {any[]} */ choices) {
+  function openAcctMenu(/** @type {HTMLElement} */ btn, /** @type {string} */ projectId, /** @type {any[]} */ choices, /** @type {boolean} */ pin = false) {
     if (!acctMenu.hidden) { acctMenu.hidden = true; return; }
     acctMenu.replaceChildren(el('div', { class: 'st-menu-head' }, t('studio.accountPick')),
       ...choices.map((c) => el('button', { class: 'st-menu-item', type: 'button', role: 'menuitemradio', 'aria-checked': String(c.current), onclick: () => {
         acctMenu.hidden = true;
-        const id = accountToSet(choices, c.id);
+        const id = accountToSet(choices, c.id, pin);
         if (id) hooks.setProjectAccount?.(projectId, id);
       } }, el('span', {}, c.label + (c.signedOut ? ` (${t('studio.accountSignedOut')})` : '')), c.current ? el('span', {}, '\u2713') : null)),
       el('div', { class: 'st-menu-note' }, t('studio.accountPickNote')));

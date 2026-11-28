@@ -180,9 +180,9 @@ function tabTitle(project, tab, staff) {
  * session"), with the git branch, the last activity and the live state (busy: a turn runs; waiting: an approval or a
  * question is open). The tab's own label (staff member, worktree branch, folder) is kept as `label`.
  * names: { [session id]: custom name } (v3.157, session-names.js): a custom name wins over every automatic title.
- * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[], accountOf?: (p: any) => unknown, infoOf?: (ptyId: string) => any, names?: Record<string, string> }} o
+ * @param {{ projects: any[], status: any[], recent: any[], activeId?: string | null, staff?: any[], accountOf?: (p: any) => unknown, homeOf?: (p: any) => unknown, infoOf?: (ptyId: string) => any, names?: Record<string, string> }} o
  */
-function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '', infoOf = () => null, names = {} }) {
+function listSessions({ projects, status, recent, activeId = null, staff = [], accountOf = () => '', homeOf = () => '', infoOf = () => null, names = {} }) {
   const byId = new Map((status || []).map((s) => [s.id, s]));
   const rec = Array.isArray(recent) ? recent : [];
   return (projects || []).map((p) => {
@@ -204,7 +204,7 @@ function listSessions({ projects, status, recent, activeId = null, staff = [], a
       .map((r) => ({ sessionId: r.sessionId, title: names[r.sessionId] || r.title || baseName(r.dir) || p.name, at: r.at }));
     const label = accountOf(p);
     const account = typeof label === 'string' ? label.trim().slice(0, 80) : '';
-    return { id: p.id, name: p.name, group: typeof p.group === 'string' ? p.group : '', dir: p.dir, engine: p.engine || 'claude', account, active: p.id === activeId, attention: st.attention || null, running, recent: recentHere };
+    return { id: p.id, name: p.name, group: typeof p.group === 'string' ? p.group : '', dir: p.dir, engine: p.engine || 'claude', account, home: ((l) => (typeof l === 'string' ? l.trim().slice(0, 80) : ''))(homeOf(p)), active: p.id === activeId, attention: st.attention || null, running, recent: recentHere };
   });
 }
 
