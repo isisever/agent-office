@@ -943,3 +943,64 @@ body.studio #studio-sidebar .st-group .st-session { padding-left: 28px; }
 body.studio #studio-sidebar .st-group .st-session .st-title { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.3; padding: 3px 0; }
 /* group headings are light section labels */
 body.studio #studio-sidebar .st-sect-head { font-weight: 500; font-size: 11px; color: var(--st-faint); text-transform: none; background: none; }
+
+/* ---- v3.152 Office panels in Studio's theme: Usage, Machines and any .agent-panel card opened from Studio ---- */
+body.studio .agent-panel, body.studio .machines-panel { font-family: var(--st-font); color: var(--st-text); background: var(--st-raised); }
+body.studio .agent-panel .mono, body.studio .machines-panel .mono { font-family: var(--st-font); font-variant-numeric: tabular-nums; }
+body.studio .ap-head { background: none; color: var(--st-text); padding: 12px 12px 10px 16px; gap: 8px; border-bottom: 1px solid var(--st-border); }
+body.studio .ap-title { font-family: var(--st-font); font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+body.studio .ap-proj, body.studio .ap-from { border: 0; padding: 0; font-size: 12.5px; color: var(--st-muted); }
+body.studio .ap-close {
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--st-radius-s); font-size: 18px; line-height: 28px;
+  color: var(--st-muted); text-align: center;
+}
+body.studio .ap-close:hover { background: var(--st-hover); color: var(--st-text); }
+body.studio .ap-go { border: 1px solid var(--st-border-strong); border-radius: var(--st-radius-s); color: var(--st-text); font-size: 12px; padding: 3px 9px; }
+body.studio .ap-go:hover { background: var(--st-hover); color: var(--st-text); }
+body.studio .ap-body { padding: 14px 16px 16px; font-size: 13px; }
+body.studio .ap-sec { margin-top: 18px; }
+body.studio .ap-label { margin-bottom: 8px; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--st-muted); }
+body.studio .ap-label .ap-dim, body.studio .ap-dim { color: var(--st-faint); opacity: 1; }
+body.studio .ap-mini { border: 1px solid var(--st-border-strong); border-radius: var(--st-radius-s); color: var(--st-text); opacity: 1; padding: 2px 8px; font-size: 12px; }
+body.studio .ap-mini:hover, body.studio .ap-mini.done { background: var(--st-hover); color: var(--st-text); }
+body.studio .ap-text, body.studio .ap-now { background: var(--st-code-bg); border-left: 0; border-radius: var(--st-radius-s); }
+body.studio .ap-tool { color: var(--st-accent-ink); }
+body.studio .ap-note { margin-top: 18px; padding: 0; border: 0; color: var(--st-muted); font-size: 12px; line-height: 1.5; }
+body.studio .ap-empty { color: var(--st-muted); opacity: 1; }
+/* Usage: a segmented range control, a plain total, rounded bars, a quiet chart */
+body.studio .up-periods { gap: 2px; margin-bottom: 14px; padding: 2px; border: 0; border-radius: var(--st-radius-s); background: var(--st-hover); }
+body.studio .up-period {
+  font: 500 12.5px var(--st-font); letter-spacing: 0; text-transform: none; padding: 4px 12px; border-radius: 6px; color: var(--st-muted); opacity: 1;
+}
+body.studio .up-period + .up-period { border-left: 0; }
+body.studio .up-period:hover { color: var(--st-text); }
+body.studio .up-period.on { background: var(--st-raised); color: var(--st-text); font-weight: 600; box-shadow: var(--st-shadow); }
+body.studio .up-big { font: 600 26px var(--st-font); font-variant-numeric: tabular-nums; letter-spacing: -.3px; color: var(--st-text); }
+body.studio .up-usd { font: 600 15px var(--st-font); font-variant-numeric: tabular-nums; color: var(--st-muted); }
+body.studio .up-fp, body.studio .up-since, body.studio .up-astats { font-size: 12.5px; color: var(--st-muted); opacity: 1; }
+body.studio .up-row { padding: 6px 0 7px; border-bottom: 1px solid var(--st-border); font-size: 13px; column-gap: 10px; }
+body.studio .up-list > .up-row:last-child { border-bottom: 0; }
+body.studio .up-num, body.studio .up-share, body.studio .up-sub { font-variant-numeric: tabular-nums; }
+body.studio .up-share, body.studio .up-sub { font-size: 12px; color: var(--st-faint); opacity: 1; }
+body.studio .up-bar { height: 6px; border-radius: 999px; overflow: hidden; background: var(--st-select); box-shadow: none; }
+body.studio .up-bar > span { border-radius: 999px; background: var(--st-accent); }
+body.studio .up-bar.usd > span { background: var(--st-muted); }
+body.studio .up-chart { background: var(--st-code-bg); border-left: 0; border-radius: var(--st-radius-s); }
+body.studio .up-col:hover { background: var(--st-hover); }
+body.studio .up-t { background: var(--st-accent); border-radius: 2px 2px 0 0; }
+body.studio .up-u { background: var(--st-muted); border-radius: 2px 2px 0 0; }
+body.studio .up-tick { color: var(--st-faint); opacity: 1; }
+body.studio .up-legend { font-size: 12px; color: var(--st-muted); opacity: 1; }
+body.studio .up-key { border-radius: 3px; }
+body.studio .up-key.tok { background: var(--st-accent); }
+body.studio .up-key.usd { background: var(--st-muted); }
+body.studio .up-note { font-size: 12px; }
+body.studio .up-fold > summary { color: var(--st-muted); font-size: 12px; font-weight: 500; }
+/* Machines cards */
+body.studio .mc-card { border: 1px solid var(--st-border); border-radius: var(--st-radius); padding: 10px 12px; background: var(--st-raised); }
+body.studio .mc-card.self { border-color: var(--st-border-strong); }
+body.studio .mc-head { font-weight: 600; }
+body.studio .mc-sub, body.studio .mc-note { color: var(--st-muted); opacity: 1; }
+body.studio .mc-amber, body.studio .mc-note.warn { color: var(--st-accent-ink); }
+body.studio .mc-proj { border-top: 1px solid var(--st-border); }
+body.studio .mc-num, body.studio .mc-row { font-variant-numeric: tabular-nums; }

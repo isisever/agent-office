@@ -4001,3 +4001,14 @@ The Projects section of Studio's sidebar is one flat list that is quick to scan.
 - The economy detail line sits under its row as a muted hint; the budget inputs share the select height; checkboxes are a
   fixed 16px box at the right of their label. Footer: "All project settings..." secondary, Save primary, right aligned.
 - No behaviour change: same controls, same draft map, same save order (account first).
+
+## Studio: Office panels in Studio's theme (v3.152)
+- The Usage panel (`#usage-panel`), the Machines panel and any other `.agent-panel` card shown through Studio (`studio-float`) used
+  the Office's pixel look: a solid accent title bar, uppercase letter-spaced headings, monospace numbers, outlined bars.
+- `studio.css` now restyles the shared `ap-*`, `up-*` and `mc-*` classes under `body.studio` only, with Studio tokens and no
+  hard-coded colours (so the dark theme follows): neutral raised card, sentence-case title in the Studio font with a muted project
+  label, an icon-style close button, a segmented range control (selected segment is a raised pill), muted sentence-case section
+  labels, rounded filled bars (`--st-accent` fill on a faint track), tabular-nums in the Studio font, Studio-coloured chart and
+  legend, and a plain muted footnote instead of the dashed orange box.
+- The cost series uses `--st-muted` (the Office's `--amber` is not a Studio token). Office mode CSS and markup are unchanged;
+  no text strings changed.
