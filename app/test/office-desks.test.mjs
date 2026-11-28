@@ -14,7 +14,7 @@ test('deskGrid tightens the pitch instead of capping at 4 rows or 4 desks', () =
   const g = deskGrid(240, 40, need)
   assert.ok(g.count > loose.count)
   assert.ok(g.pitchX < loose.pitchX)
-  const tall = deskGrid(240, 400, 0)
+  const tall = deskGrid(240, 400, 999)
   assert.ok(tall.rows > 4, 'rows are not capped at 4')
 })
 
@@ -26,7 +26,7 @@ test('deskGrid returns the densest grid when the demand is above capacity', () =
 test('the scene grows its desks with the workers and shows the project on the plate', () => {
   setGeometry(1320, 800)
   resetOffice()
-  const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: `w${i}`, spawnAt: i, project: `proj${i % 2}`, type: 'general-purpose', tool: 'Bash' }))
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: `w${i}`, spawnAt: i, doneAt: null, project: `proj${i % 2}`, type: 'general-purpose', tool: 'Bash' }))
   const data = (n) => ({ workers: mk(n), delivered: 0, isBossBusy: false, projects: [], project: '', sessionId: '' })
   render(5000, data(2))
   const few = sceneOf().desks.length
@@ -34,4 +34,13 @@ test('the scene grows its desks with the workers and shows the project on the pl
   const many = sceneOf().desks
   assert.ok(many.length > few, `desks grew from ${few} to ${many.length}`)
   assert.ok(many.some((d) => d.proj && d.proj.name === 'proj0'), 'a desk carries its project')
+})
+
+test('default layout with no or few agents is the original grid', () => {
+  for (const need of [0, 1, 4]) {
+    const g = deskGrid(262, 32, need)
+    assert.deepEqual([g.rows, g.cols, g.pitchX, g.pitchY], [1, 6, 40, 38])
+  }
+  const g = deskGrid(262, 400, 0)
+  assert.equal(g.rows, 4, 'the old 4-row cap holds while demand fits')
 })

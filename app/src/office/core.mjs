@@ -310,6 +310,11 @@ let L
 // grows with the number of agents until even the densest step is full. Pure: also used by the tests.
 export const DESK_TIERS = [[40, 38], [36, 34], [32, 30]]
 export function deskGrid(w, h, need = 0) {
+  // the original grid (4-row cap) stays untouched while it holds the demand
+  const [px0, py0] = DESK_TIERS[0]
+  const old = { rows: Math.max(1, Math.min(4, 1 + Math.floor(h / py0))), cols: Math.max(1, Math.floor(w / px0)), pitchX: px0, pitchY: py0 }
+  old.count = old.rows * old.cols
+  if (old.count >= need) return old
   let best = null
   for (const [pitchX, pitchY] of DESK_TIERS) {
     const rows = Math.max(1, 1 + Math.floor(h / pitchY))
@@ -1468,8 +1473,8 @@ function shortType(type) {
 function renderFrame(now, data, focus = '', selected = null) {
   hits = []
   useTheme(themeFor(focus || data.project))
-  // desks wanted: every worker on the floor plus two desks per staff member (staff take at most half the desks)
-  const deskNeed = data.workers.length + 2 * (Array.isArray(data.staff) ? data.staff.length : 0)
+  // desks wanted: every active worker plus two desks per staff member (staff take at most half the desks)
+  const deskNeed = data.workers.filter(w => w.doneAt == null).length + 2 * (Array.isArray(data.staff) ? data.staff.length : 0)
   const key = `${LW}x${LH}:${themeName}:${deskGrid(LW - 68, LH - 168, deskNeed).pitchX}`
   if (backgroundKey !== key) {
     fb = new Uint32Array(LW * LH)
