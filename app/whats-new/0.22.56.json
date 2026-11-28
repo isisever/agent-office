@@ -1,0 +1,29 @@
+{
+  "version": "0.22.56",
+  "items": [
+    {
+      "id": "phone-reliability",
+      "experience": "both",
+      "title": {
+        "en": "A more reliable phone remote control",
+        "tr": "Daha güvenilir telefon uzaktan kumandası"
+      },
+      "body": {
+        "en": "The phone no longer loses messages sent before the desktop handshake, replies show up on the phone right after you send, and project status follows the Mac. Messages sent while a session is busy, locked or not running are queued and delivered in order.",
+        "tr": "Telefon, masaüstü el sıkışmasından önce gönderilen mesajları artık kaybetmiyor, cevaplar gönderdikten hemen sonra telefonda görünüyor ve proje durumu Mac'i takip ediyor. Oturum meşgulken, kilitliyken veya çalışmıyorken gönderilen mesajlar sıraya alınıp sırayla iletiliyor."
+      }
+    },
+    {
+      "id": "phone-voice-input",
+      "experience": "both",
+      "title": {
+        "en": "Voice input on the phone",
+        "tr": "Telefonda sesli giriş"
+      },
+      "body": {
+        "en": "Dictate your messages in the iOS app instead of typing them. In a Studio chat the manager is also no longer allowed to run commands itself.",
+        "tr": "iOS uygulamasında mesajlarını yazmak yerine sesle söyleyebilirsin. Studio sohbetinde yönetici artık komutları kendisi çalıştıramıyor."
+      }
+    }
+  ]
+}
