@@ -8,7 +8,7 @@ final class WorkletModel: ObservableObject {
   @Published private(set) var state = "stopped"
   @Published private(set) var lines: [String] = []
 
-  private let logger = Logger(subsystem: "com.thinkone.agentoffice.remote", category: "worklet")
+  private let logger = Logger(subsystem: "com.savasisisever.agentoffice.remote", category: "worklet")
   private var worklet: Worklet?
   private var ipc: IPC?
   private var pending = Data()

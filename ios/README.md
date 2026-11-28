@@ -16,7 +16,7 @@ If package resolution hangs on the BareKit binary download, fetch the two releas
 `~/Library/Caches/org.swift.swiftpm/artifacts/https___github_com_holepunchto_bare_kit_swift_releases_download_v2_4_3_<asset with . replaced by _>`,
 then build with `-scmProvider system`.
 
-Launch with `xcrun simctl launch <udid> com.thinkone.agentoffice.remote -pairCode word-word-word-word-word` to connect
+Launch with `xcrun simctl launch <udid> com.savasisisever.agentoffice.remote -pairCode word-word-word-word-word` to connect
 without typing. Worklet log: `log show --predicate 'process == "AgentOfficeRemote" AND category == "worklet"'`.
 
 ## Native scrypt (scrypt-ll)

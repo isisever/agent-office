@@ -1,6 +1,6 @@
 name: AgentOfficeRemote
 options:
-  bundleIdPrefix: com.thinkone.agentoffice
+  bundleIdPrefix: com.savasisisever.agentoffice
   deploymentTarget:
     iOS: "16.6"
 include:
@@ -12,7 +12,7 @@ packages:
     exactVersion: 2.4.3
 settings:
   base:
-    DEVELOPMENT_TEAM: APLT36UD92
+    DEVELOPMENT_TEAM: GLTH2M74NT
 targets:
   AgentOfficeRemote:
     type: application
@@ -20,7 +20,7 @@ targets:
     deploymentTarget: "16.6"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.thinkone.agentoffice.remote
+        PRODUCT_BUNDLE_IDENTIFIER: com.savasisisever.agentoffice.remote
         PRODUCT_NAME: AgentOfficeRemote
         INFOPLIST_KEY_CFBundleDisplayName: Agent Office Remote
         SWIFT_VERSION: 5.0
