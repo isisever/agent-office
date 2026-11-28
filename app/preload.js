@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('agentOffice', {
     renameGroup: (from, to) => ipcRenderer.invoke('projects:renameGroup', from, to),     // v3.142 '' as `to` ungroups → { ok }
     setGroup: (id, group) => ipcRenderer.invoke('projects:setGroup', id, group),   // v3.86 the PROJECTS list's group ('' = none)
     setActive: (id) => ipcRenderer.invoke('projects:setActive', id),
+    sleepNow: (id, op) => ipcRenderer.invoke('projects:sleepNow', id, op),   // v3.171 'sleep' | 'wake' → { ok, reason? } (reason: engine | draft | permission | busy)
     setAccount: (id, accountId) => ipcRenderer.invoke('projects:setAccount', id, accountId),
     setManager: (id, value) => ipcRenderer.invoke('projects:setManager', id, value),   // true | false | null (global setting); { restarted: pty ids } (v3.10)
     setBossModel: (id, value) => ipcRenderer.invoke('projects:setBossModel', id, value), // 'sonnet' | 'opus' | 'haiku' | null (Auto); { restarted: pty ids } (v3.27)
