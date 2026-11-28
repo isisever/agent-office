@@ -226,6 +226,7 @@ struct HQView: View {
         .padding(.horizontal, Space.m).padding(.vertical, 10)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.stroke))
+      DictationButton(text: $draft)
       Button {
         link.sendHq(draft); draft = ""
         UIImpactFeedbackGenerator(style: .light).impactOccurred()

@@ -108,3 +108,12 @@
 
 "Update Agent Office on your Mac" = "Mac'teki Agent Office'i güncelle";
 "Projects can't be opened from your phone until you do." = "Sen güncelleyene kadar projeler telefondan açılamaz.";
+
+"Dictate" = "Sesle yaz";
+"Stop dictation" = "Dikteyi durdur";
+"Dictation" = "Dikte";
+"OK" = "Tamam";
+"Speech recognition isn't allowed. Turn it on in Settings." = "Konuşma tanımaya izin verilmedi. Ayarlar'dan aç.";
+"Microphone access isn't allowed. Turn it on in Settings." = "Mikrofon erişimine izin verilmedi. Ayarlar'dan aç.";
+"Dictation isn't available for this language right now." = "Dikte şu anda bu dil için kullanılamıyor.";
+"Couldn't start the microphone." = "Mikrofon başlatılamadı.";
