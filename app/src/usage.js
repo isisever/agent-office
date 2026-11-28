@@ -125,11 +125,29 @@ function usageFromStatus(obj, updatedAt) {
 function usageFromCache(obj) {
   if (!obj || typeof obj !== 'object' || !Number.isFinite(obj.updatedAt)) return null;
   const ok = (w) => w && Number.isFinite(w.pct);
-  if (!ok(obj.fiveHour) && !ok(obj.sevenDay)) return null;
+  if (!ok(obj.fiveHour) && !ok(obj.sevenDay) && !(obj.limited && Number.isFinite(obj.limited.resetsAt))) return null;
   return obj;
 }
 
+/**
+ * v3.155: a usage-limit stop seen in a transcript ({ at, resetsAt (ms), type }) → the account's quota as the stop
+ * implies: five_hour → fiveHour 100 %, seven_day → sevenDay 100 %, any other type → `limited: { type, resetsAt }`.
+ * The status line stops arriving once requests are refused, so the last reading would stay low. `updatedAt` moves to
+ * the stop's time, so a status line reading written after it replaces this (usageFromStatus + scanUsage's
+ * newer-wins rule) and a reading from before it cannot. Returns `usage` itself when nothing changes: no reset
+ * time, a reset already past, or a reading newer than the stop.
+ */
+function applyLimitHit(usage, hit, now = Date.now()) {
+  if (!hit || !Number.isFinite(hit.at) || !Number.isFinite(hit.resetsAt) || hit.resetsAt <= now) return usage;
+  if (usage && Number.isFinite(usage.updatedAt) && usage.updatedAt >= hit.at) return usage;
+  const next = { ...(usage || {}), updatedAt: hit.at };
+  if (hit.type === 'five_hour') next.fiveHour = { pct: 100, resetsAt: hit.resetsAt };
+  else if (hit.type === 'seven_day') next.sevenDay = { pct: 100, resetsAt: hit.resetsAt };
+  else next.limited = { type: typeof hit.type === 'string' ? hit.type : null, resetsAt: hit.resetsAt };
+  return next;
+}
+
 module.exports = {
-  LAST, SCRIPT, shq, userStatusLine, settingsPaths, statusLineSettings, usageFromStatus, usageFromCache,
+  LAST, SCRIPT, shq, userStatusLine, settingsPaths, statusLineSettings, usageFromStatus, usageFromCache, applyLimitHit,
   WIN_CMD, WIN_SCRIPT_NAME, WIN_SCRIPT, windowsCmdFile, windowsStatusLineSettings,
 };

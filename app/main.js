@@ -4033,9 +4033,22 @@ function fallbackNotice(p, kind, text, extra = {}) {
   send('account:fallback', { projectId: p.id, kind, text, ...extra });
   notify(p.name, text, p.id);
 }
+/** v3.155: a usage-limit stop with a reset time → the account's quota (U.applyLimitHit), saved like a reading. */
+function recordLimitHits(account, hits, now) {
+  let usage = usages.get(account.id);
+  for (const h of hits) usage = U.applyLimitHit(usage, h.hit, now);
+  if (usage === usages.get(account.id)) return;
+  usages.set(account.id, usage);
+  try {
+    const dir = path.join(usageRoot(), account.id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, U.LAST), JSON.stringify(usage));
+  } catch {}
+  sendAccounts();
+}
 /** Every 1.5 s (checkTurns): a limit in any running tab; every ~15 s, projects on a backup that may go home. */
 function checkLimits() {
-  if (!fallbackOn() || !win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed()) return;
   const now = Date.now();
   const returning = returnTick++ % 10 === 0;
   for (const p of state.projects) {
@@ -4053,6 +4066,8 @@ function checkLimits() {
       if (!hit && w?.hitAt && now - w.hitAt < 60000 && usageFull()) hit = { at: w.hitAt, resetsAt: null, type: null, text: '' };
       if (hit && !limitDone.has(`${id}|${hit.at}`)) hits.push({ id, hit });
     }
+    if (hits.length) recordLimitHits(account, hits, now); // v3.155: the quota shows the stop, fallback on or off
+    if (!fallbackOn()) continue;
     if (hits.length) onLimit(p, account, hits, now);
     else if (returning && p.homeAccount) maybeReturn(p, account, now);
   }
