@@ -72,3 +72,5 @@
 "Check that your Mac is online and try again." = "Mac'inin çevrimiçi olduğunu kontrol et ve tekrar dene.";
 "Waiting for your approval on the Mac" = "Mac'te onayın bekleniyor";
 "Finished" = "Bitti";
+
+"%@ · %lld sessions · %lld working" = "%@ · %lld oturum · %lld çalışıyor";

@@ -97,5 +97,6 @@ struct ConnectionBadge: View {
 func relativeTime(_ date: Date) -> String {
   let f = RelativeDateTimeFormatter()
   f.unitsStyle = .short
+  f.locale = Locale(identifier: Bundle.main.preferredLocalizations.first ?? "en")
   return f.localizedString(for: date, relativeTo: Date())
 }
