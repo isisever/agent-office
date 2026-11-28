@@ -191,4 +191,14 @@ function orderKey(file, safeStorage) {
   } catch { return once(); }
 }
 
-module.exports = { ORDER_MS, ORDER_QUEUE_MAX, AUTO_CONTINUE_MAX, AUTO_REASONS, orderOpen, seal, unseal, releaseOrder, aheadOf, nextRelease, queueRefusal, mayAutoContinue, createOrderStore, orderKey, overCapRoute, pumpMay, heldAction, stageSeal, genOk, keychainOk };
+/** A trailing-edge debounce: a burst of calls runs `fn` once, `ms` after the last one. `timers` is injectable for tests. */
+function createKick(fn, ms = 200, timers = { set: setTimeout, clear: clearTimeout }) {
+  let t = null;
+  return () => {
+    if (t) timers.clear(t);
+    t = timers.set(() => { t = null; fn(); }, ms);
+    t?.unref?.();
+  };
+}
+
+module.exports = { createKick, ORDER_MS, ORDER_QUEUE_MAX, AUTO_CONTINUE_MAX, AUTO_REASONS, orderOpen, seal, unseal, releaseOrder, aheadOf, nextRelease, queueRefusal, mayAutoContinue, createOrderStore, orderKey, overCapRoute, pumpMay, heldAction, stageSeal, genOk, keychainOk };

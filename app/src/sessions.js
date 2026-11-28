@@ -4,6 +4,22 @@ const { readdirSync, readFileSync, statSync } = require('node:fs')
 const { homedir } = require('node:os')
 const { join } = require('node:path')
 
+// session files parsed once per (mtime, size): readOffice runs every 500 ms and most files do not change between calls
+let parseCount = 0
+const sessionCache = new Map()   // path -> { key, value }
+function readSessionFile(file) {
+  let st
+  try { st = statSync(file) } catch { sessionCache.delete(file); throw new Error('gone') }
+  const key = `${st.mtimeMs}|${st.size}`
+  const hit = sessionCache.get(file)
+  if (hit && hit.key === key) return structuredClone(hit.value)
+  parseCount++
+  const value = JSON.parse(readFileSync(file, 'utf8'))
+  sessionCache.set(file, { key, value })
+  return structuredClone(value)
+}
+const _cacheSize = () => sessionCache.size
+
 const LIVE_MS = 3 * 60 * 1000
 
 // paths are computed on every call: so tests can change HOME
@@ -191,7 +207,7 @@ function readOffice(projects, now = Date.now(), root = rootDir(), aliases = null
     else try {
       // files changed before today that aren't live carry neither workers nor today's deliveries
       if (statSync(join(sessions, f)).mtimeMs < Math.min(midnight, now - LIVE_MS)) continue
-      s = JSON.parse(readFileSync(join(sessions, f), 'utf8'))
+      s = readSessionFile(join(sessions, f))
     } catch {
       continue
     }
@@ -343,4 +359,4 @@ function readToday(projects, now = Date.now(), root = rootDir(), aliases = null,
   return out
 }
 
-module.exports = { readOffice, readToday, normPath, placeFinder, readSession, readThemes, themesError, dayKey, forgetMs, LIVE_MS, FORMAT }
+module.exports = { _cacheSize, _parseCount: () => parseCount, readOffice, readToday, normPath, placeFinder, readSession, readThemes, themesError, dayKey, forgetMs, LIVE_MS, FORMAT }
