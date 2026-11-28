@@ -4,8 +4,6 @@
 'use strict';
 const W = require('../../app/src/link-wire.js');
 
-const CTL2_IN = new Set(['ctl-proj', 'ctl-ask', 'ctl-ask-clear', 'ctl-ack']);
-
 class CtlClient {
   /**
    * @param {{ Hyperswarm: any, crypto: any, keyPair: { publicKey: Uint8Array, secretKey: Uint8Array }, name?: string,

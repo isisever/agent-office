@@ -84,7 +84,7 @@ function fakeLink(caps) {
   return { l, dev, conn, sent };
 }
 
-test('a ctl2 phone opens any project and a recent session; an old phone only the HQ', (t) => {
+test('a ctl2 phone opens any project and a recent session; an old phone only the HQ', () => {
   const old = fakeLink(['ctl', 'sess']);
   old.l.handleCtl(old.conn, old.dev, { t: 'sess-open', id: 'a', project: 'p1' });
   assert.deepEqual(old.sent.at(-1), { t: 'sess-end', id: 'a', reason: 'not-allowed' });
@@ -107,7 +107,7 @@ test('a ctl2 phone opens any project and a recent session; an old phone only the
 
 test('ctl-proj answers with the project row and the host sessions', () => {
   const x = fakeLink(['ctl', 'sess', 'ctl2']);
-  x.l.on('ctl-proj', ({ project, reply }) => reply([{ sid: 's1', title: 'fix', at: 4, running: true, main: true }]));
+  x.l.on('ctl-proj', ({ reply }) => reply([{ sid: 's1', title: 'fix', at: 4, running: true, main: true }]));
   x.l.handleCtl(x.conn, x.dev, { t: 'ctl-proj', id: 'r1', project: 'p1' });
   const r = x.sent.at(-1);
   assert.equal(r.t, 'ctl-proj'); assert.equal(r.id, 'r1');
