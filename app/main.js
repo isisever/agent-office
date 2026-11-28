@@ -6844,6 +6844,11 @@ function studioRecentWithHistory() {
   }
   return out;
 }
+/** The last 64 KB of a transcript as text ('' when unreadable). */
+function readTailText(/** @type {string} */ file, /** @type {number} */ size) {
+  let fd;
+  try { fd = fs.openSync(file, 'r'); const n = Math.min(size, 65536); const buf = Buffer.alloc(n); fs.readSync(fd, buf, 0, n, size - n); return buf.toString('utf8'); } catch { return ''; } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { /* closed */ } }
+}
 let studioNameCache = { file: '', mtimeMs: -1, name: '' };
 /** The display name of the Claude account a project runs on (its .claude.json, re-read only when it changes), or ''. */
 function studioUser(p) {
@@ -6911,7 +6916,7 @@ ipcMain.handle('studio:renameSession', (e, sessionId, name) => {
 // file changed) and its live state (GUI chat: a turn runs, an approval or a question is open).
 // v3.120 names: the last /rename and Claude Code title seen up to a byte offset, so only what was appended since is read
 // again for them (a rename in the middle of a long transcript is kept once seen; CHAT.sessionNames)
-/** @type {Map<string, { key: string, names: { end: number, custom: string, ai: string }, info: { title: string, prompt: string, branch: string } }>} */
+/** @type {Map<string, { key: string, names: { end: number, custom: string, ai: string }, info: { title: string, prompt: string, branch: string }, assistantAt: number }>} */
 const studioInfoCache = new Map();
 function studioTabInfo(ptyId) {
   const tt = terms.get(ptyId);
@@ -6920,7 +6925,7 @@ function studioTabInfo(ptyId) {
   const { configDir } = A.accountOf(state, r.project);
   const sid = tt.gui ? STU.guiSessionId(tt.sessionId(), lastSid.get(ptyId)) : validSid(readJson(Z.claudePidFile(configDir, app.getPath('home'), tt.pid))?.sessionId);
   const live = tt.gui ? { busy: tt.live().busy === true, waiting: tt.asks().length > 0 } : { busy: false, waiting: attention.get(ptyId) === 'permission' };
-  if (!sid) return { title: '', prompt: '', branch: '', at: 0, sessionId: '', ...live };
+  if (!sid) return { title: '', prompt: '', branch: '', at: 0, assistantAt: 0, sessionId: '', ...live };
   for (const dir of TIO.historyDirsOf(r.dir, configDir, app.getPath('home'))) {
     const file = path.join(dir, `${sid}.jsonl`);
     let st;
@@ -6929,14 +6934,14 @@ function studioTabInfo(ptyId) {
     let hit = studioInfoCache.get(file);
     if (!hit || hit.key !== key) {
       const names = CHAT.sessionNames(file, st.size, hit?.names);
-      hit = { key, names, info: CHAT.sessionInfo(file, st.size, fs, names) };
+      hit = { key, names, info: CHAT.sessionInfo(file, st.size, fs, names), assistantAt: BM.RQ.assistantAtFromTail(readTailText(file, st.size)) };
       studioInfoCache.delete(file);
       studioInfoCache.set(file, hit);
     }
     if (studioInfoCache.size > 200) studioInfoCache.delete(studioInfoCache.keys().next().value);
-    return { ...hit.info, at: Math.round(st.mtimeMs), sessionId: sid, ...live };   // v3.131 sessionId: the board's chat card
+    return { ...hit.info, assistantAt: hit.assistantAt || 0, at: Math.round(st.mtimeMs), sessionId: sid, ...live };   // v3.131 sessionId: the board's chat card
   }
-  return { title: '', prompt: '', branch: '', at: 0, sessionId: '', ...live };
+  return { title: '', prompt: '', branch: '', at: 0, assistantAt: 0, sessionId: '', ...live };
 }
 // ref: { n } a running session (the main tab is 1), { sessionId } a recent one, which opens again as a new tab of its
 // project and continues that conversation. → { ok, projectId, n } | { ok: false, error: 'invalid' | 'gone' }
@@ -7047,7 +7052,7 @@ function boardNoteRequest(/** @type {string} */ id, /** @type {any} */ r, /** @t
     const rec = { id: `q${crypto.randomBytes(6).toString('hex')}`, projectId: r.project.id, ptyId: id, project: r.project.name, account: A.accountOf(state, r.project).label,
       sessionId: STU.validSessionId(studioTabInfo(id)?.sessionId) || '', title: BM.RQ.titleOf(body, HQ.redact), type: BM.classify(body).type, typeBy: 'auto' };
     if (!rec.title) return;
-    if (saveBoardStore({ ...s, reqs: BM.RQ.add(s.reqs || [], rec) })) send('board:cards', boardView());
+    if (saveBoardStore({ ...s, reqs: BM.RQ.add(s.reqs || [], rec, Date.now(), studioTabInfo(id)?.assistantAt || 0) })) send('board:cards', boardView());
   } catch (e) { console.error('board request:', e.message); }
 }
 /** Each tab's live state (busy, waiting) moves its open request cards: running → waiting → done. */
@@ -7059,7 +7064,7 @@ function boardRequestsTick(/** @type {any} */ s, now = Date.now()) {
     const info = studioTabInfo(pid);
     const busy = info?.busy === true || (!tt.gui && tabWorkRunning(pid));
     reqs = BM.RQ.bindSession(reqs, pid, STU.validSessionId(info?.sessionId));
-    reqs = BM.RQ.observe(reqs, pid, { busy, waiting: info?.waiting === true }, now);
+    reqs = BM.RQ.observe(reqs, pid, { busy, waiting: info?.waiting === true, assistantAt: info?.assistantAt || 0 }, now);
   }
   reqs = BM.RQ.detachGone(reqs, new Set(terms.keys()), now);
   return reqs === s.reqs ? s : { ...s, reqs };

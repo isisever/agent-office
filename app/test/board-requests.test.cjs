@@ -16,7 +16,12 @@ test('add makes a running record and finishes older open ones of the same tab', 
   let l = RQ.add([], rec(), 1000);
   assert.equal(l[0].state, 'running');
   l = RQ.add(l, rec({ id: 'qabcdef02' }), 2000);
-  assert.deepEqual(l.map((r) => [r.id, r.state]).sort(), [['qabcdef01', 'done'], ['qabcdef02', 'running']]);
+  assert.deepEqual(l.map((r) => [r.id, r.state]).sort(), [['qabcdef01', 'failed'], ['qabcdef02', 'running']]);
+  assert.equal(l.find((r) => r.id === 'qabcdef01').reason, 'superseded');
+  // a turn that really ran is done when a newer request follows
+  let m = RQ.observe(RQ.add([], rec(), 1000), 'pty1', { busy: true }, 1500);
+  m = RQ.add(m, rec({ id: 'qabcdef02' }), 2000);
+  assert.equal(m.find((r) => r.id === 'qabcdef01').state, 'done');
 });
 
 test('observe: running, waiting, done after busy, failed', () => {
@@ -33,15 +38,20 @@ test('observe: running, waiting, done after busy, failed', () => {
   assert.equal(f[0].state, 'failed');
 });
 
-test('a turn never seen busy ends after the grace period', () => {
+test('a turn never seen busy fails visibly after the grace period instead of closing as done', () => {
   const l = RQ.observe(RQ.add([], rec(), 1000), 'pty1', { busy: false }, 1000 + RQ.GRACE_MS);
-  assert.equal(l[0].state, 'done');
+  assert.equal(l[0].state, 'failed');
+  assert.equal(l[0].reason, 'never-started');
+  assert.equal(RQ.card(l[0]).column, 'needs-you');
+  assert.equal(RQ.clean(l[0]).reason, 'never-started');
 });
 
-test('detachGone finishes records of closed tabs; bindSession fills the session id', () => {
+test('detachGone marks records of closed tabs interrupted; bindSession fills the session id', () => {
   const l = RQ.add([], rec(), 1000);
   assert.equal(RQ.detachGone(l, new Set(['pty1']), 2000), l);
-  assert.equal(RQ.detachGone(l, new Set(), 2000)[0].state, 'done');
+  const g = RQ.detachGone(l, new Set(), 2000)[0];
+  assert.equal(g.state, 'failed');
+  assert.equal(g.reason, 'interrupted');
   const sid = '11111111-2222-3333-4444-555555555555';
   assert.equal(RQ.bindSession(l, 'pty1', sid)[0].sessionId, sid);
 });
@@ -88,4 +98,34 @@ test('loadStore keeps and cleans reqs', () => {
   const s = BM.loadStore({ reqs: [{ ...rec(), state: 'running', at: 5 }, { id: 'bad' }] });
   assert.equal(s.reqs.length, 1);
   assert.deepEqual(BM.loadStore(undefined).reqs, []);
+});
+
+test('assistantAtFromTail reads the latest assistant or result timestamp and skips a cut first line', () => {
+  const tail = ['ned":1}', JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:00:05.000Z' }),
+    JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:00:06.000Z' }), JSON.stringify({ type: 'result', timestamp: '2026-01-01T00:00:07.000Z' })].join('\n');
+  assert.equal(RQ.assistantAtFromTail(tail), Date.parse('2026-01-01T00:00:07.000Z'));
+  assert.equal(RQ.assistantAtFromTail('{"type":"user"}'), 0);
+});
+
+test('a reply under 3 s after the send is done, not never-started', () => {
+  const l0 = RQ.add([], rec(), 1000);
+  const l = RQ.observe(l0, 'pty1', { busy: false, assistantAt: 1800 }, 1000 + RQ.GRACE_MS);
+  assert.equal(l[0].state, 'done');
+  const f = RQ.observe(l0, 'pty1', { busy: false, assistantAt: 900 }, 1000 + RQ.GRACE_MS);   // output from before the send does not count
+  assert.equal(f[0].state, 'failed');
+  assert.equal(f[0].reason, 'never-started');
+});
+
+test('typing again within 15 s closes a turn that ran (never sampled busy) as done, one that did not as superseded', () => {
+  const l0 = RQ.add([], rec(), 1000);
+  const ran = RQ.add(l0, rec({ id: 'qabcdef02' }), 5000, 3000);
+  assert.equal(ran.find((r) => r.id === 'qabcdef01').state, 'done');
+  const idle = RQ.add(l0, rec({ id: 'qabcdef02' }), 5000, 0);
+  assert.equal(idle.find((r) => r.id === 'qabcdef01').reason, 'superseded');
+});
+
+test('a reply typed while a request waits on the person continues it (not superseded or failed)', () => {
+  let l = RQ.observe(RQ.add([], rec(), 1000), 'pty1', { waiting: true }, 2000);
+  l = RQ.add(l, rec({ id: 'qabcdef02' }), 3000);
+  assert.equal(l.find((r) => r.id === 'qabcdef01').state, 'waiting');
 });

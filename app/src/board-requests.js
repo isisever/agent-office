@@ -8,6 +8,9 @@ const KEEP_DONE_MS = 14 * 24 * 60 * 60 * 1000;   // a finished request older tha
 const GRACE_MS = 20 * 1000;                 // a turn not seen busy this long after the send is taken as finished
 const TITLE_MAX = 80;
 const STATES = Object.freeze(['running', 'waiting', 'done', 'failed']);
+// Why a request closed as failed (never silently as done): its turn never started, its tab or the app went away
+// mid-work, or a newer request replaced it before it ran.
+const FAIL_REASONS = Object.freeze(['never-started', 'interrupted', 'superseded']);
 const ID_RE = /^q[0-9a-f]{6,24}$/;
 
 const isObj = (x) => Boolean(x) && typeof x === 'object' && !Array.isArray(x);
@@ -28,7 +31,7 @@ function clean(r) {
   return { id: r.id, projectId: line(r.projectId, 128), ptyId: line(r.ptyId, 140), project: line(r.project, 64), account: line(r.account, 64),
     sessionId: line(r.sessionId, 40), title: line(r.title, TITLE_MAX), type: ['bugfix', 'hotfix', 'feature'].includes(r.type) ? r.type : 'feature',
     typeBy: r.typeBy === 'person' ? 'person' : 'auto', state, at: num(r.at), endedAt: closed ? num(r.endedAt) || num(r.at) : 0,
-    busySeen: r.busySeen === true };
+    busySeen: r.busySeen === true, ...(closed && state === 'failed' && FAIL_REASONS.includes(r.reason) ? { reason: r.reason } : {}) };
 }
 const cleanList = (/** @type {any} */ list) => cap((Array.isArray(list) ? list : []).map(clean).filter(Boolean));
 const isOpen = (/** @type {any} */ r) => r.state === 'running' || r.state === 'waiting';
@@ -39,9 +42,27 @@ function cap(list, now = Date.now()) {
   const closed = list.filter((r) => !isOpen(r) && now - (r.endedAt || r.at) < KEEP_DONE_MS).sort((a, b) => (b.endedAt || b.at) - (a.endedAt || a.at));
   return [...open, ...closed].slice(0, MAX_REQS);
 }
+/** The latest timestamp (ms) of an assistant or result entry in a transcript tail (0 when none); a cut first line is skipped. */
+function assistantAtFromTail(text) {
+  let at = 0;
+  for (const l of String(text ?? '').split('\n')) {
+    if (!l.startsWith('{')) continue;
+    try { const j = JSON.parse(l); if (j && (j.type === 'assistant' || j.type === 'result')) at = Math.max(at, Date.parse(j.timestamp) || 0); } catch { /* cut or broken line */ }
+  }
+  return at;
+}
+/** Did the request's turn run? An assistant or result entry came after it was sent (deterministic, no sampling). */
+const ran = (/** @type {any} */ r, /** @type {any} */ assistantAt) => num(assistantAt) > r.at;
 /** A request was typed: a new running record; older open ones of the same tab are finished (their turn is over). */
-function add(list, rec, now = Date.now()) {
-  const old = list.map((r) => (isOpen(r) && r.ptyId === rec.ptyId ? { ...r, state: 'done', endedAt: now } : r));
+function add(list, rec, now = Date.now(), assistantAt = 0) {
+  // Only a turn that really ran counts as done: seen busy, or an assistant/result entry in the transcript after the send
+  // (`assistantAt`, the latest one). The rest did not get its work.
+  const old = list.map((r) => {
+    if (!isOpen(r) || r.ptyId !== rec.ptyId) return r;
+    // A request the person answers by typing (waiting) is continued by that reply: it stays as it is, not closed.
+    if (r.state === 'waiting') return r;
+    return r.busySeen || ran(r, assistantAt) ? { ...r, state: 'done', endedAt: now } : { ...r, state: 'failed', reason: 'superseded', endedAt: now };
+  });
   const c = clean({ ...rec, state: 'running', at: now });
   return c ? cap([...old, c], now) : list;
 }
@@ -54,16 +75,17 @@ function observe(list, ptyId, live, now = Date.now()) {
     if (live.failed) n = { ...r, state: 'failed', endedAt: now };
     else if (live.waiting) n = { ...r, state: 'waiting', busySeen: true };
     else if (live.busy) n = { ...r, state: 'running', busySeen: true };
-    else if (r.busySeen || now - r.at >= GRACE_MS) n = { ...r, state: 'done', endedAt: now };
+    else if (r.busySeen || ran(r, live.assistantAt)) n = { ...r, state: 'done', endedAt: now };
+    else if (now - r.at >= GRACE_MS) n = { ...r, state: 'failed', reason: 'never-started', endedAt: now };
     if (n !== r && JSON.stringify(n) !== JSON.stringify(r)) { changed = true; return n; }
     return r;
   });
   return changed ? cap(out, now) : list;
 }
-/** Open records whose tab is gone are finished (the person closed the tab or the app quit). */
+/** Open records whose tab is gone are interrupted, not done: the work was cut off (tab closed or app quit). */
 function detachGone(list, live, now = Date.now()) {
   const gone = list.some((r) => isOpen(r) && !live.has(r.ptyId));
-  return gone ? cap(list.map((r) => (isOpen(r) && !live.has(r.ptyId) ? { ...r, state: 'done', endedAt: now } : r)), now) : list;
+  return gone ? cap(list.map((r) => (isOpen(r) && !live.has(r.ptyId) ? { ...r, state: 'failed', reason: 'interrupted', endedAt: now } : r)), now) : list;
 }
 /** The session a tab's open records belong to, once known (a new chat learns its session id after the first turn). */
 function bindSession(list, ptyId, sid) {
@@ -75,7 +97,7 @@ const COLUMN = Object.freeze({ running: 'working', waiting: 'needs-you', failed:
 function card(r) {
   return { id: `q:${r.id}`, kind: 'chat', typed: true, state: r.state, sessionId: r.sessionId, projectId: r.projectId, ptyId: r.ptyId,
     title: r.title, type: r.type, typeBy: r.typeBy, column: COLUMN[r.state], at: r.at, closedAt: isOpen(r) ? 0 : r.endedAt,
-    ...(isOpen(r) ? {} : { closedBy: 'auto' }), durationMs: Math.max(0, (isOpen(r) ? 0 : r.endedAt) - r.at), project: r.project, projects: r.project ? [r.project] : [],
+    ...(isOpen(r) ? {} : { closedBy: 'auto' }), ...(r.reason ? { reason: r.reason } : {}), durationMs: Math.max(0, (isOpen(r) ? 0 : r.endedAt) - r.at), project: r.project, projects: r.project ? [r.project] : [],
     account: r.account, member: '', members: [], tokens: 0, usd: 0, studio: true };
 }
 /** A compact list for HQ's board tool: what the person asked in each project and how far it is. */
@@ -83,4 +105,4 @@ function summary(list, limit = 30) {
   return [...list].sort((a, b) => b.at - a.at).slice(0, limit).map((r) => ({ id: r.id, project: r.project, account: r.account, title: r.title, state: r.state, type: r.type, at: r.at, ...(r.endedAt ? { endedAt: r.endedAt } : {}) }));
 }
 const validId = (/** @type {any} */ id) => typeof id === 'string' && id.startsWith('q:') && ID_RE.test(id.slice(2));
-module.exports = { MAX_REQS, KEEP_DONE_MS, GRACE_MS, STATES, titleOf, clean, cleanList, cap, add, observe, bindSession, detachGone, card, summary, validId, isOpen };
+module.exports = { MAX_REQS, KEEP_DONE_MS, GRACE_MS, STATES, titleOf, assistantAtFromTail, clean, cleanList, cap, add, observe, bindSession, detachGone, card, summary, validId, isOpen };
