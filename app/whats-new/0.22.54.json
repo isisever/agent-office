@@ -1,0 +1,17 @@
+{
+  "version": "0.22.54",
+  "items": [
+    {
+      "id": "task-report-waits-background",
+      "experience": "studio",
+      "title": {
+        "en": "HQ gets the real result of long tasks",
+        "tr": "HQ uzun görevlerin gerçek sonucunu alıyor"
+      },
+      "body": {
+        "en": "A task that starts a long build or command in the background now stays open until that work ends, and HQ gets the final result instead of an \"I'll continue\" note. If a report only says work is still going, HQ asks for the result instead of closing the request.",
+        "tr": "Arka planda uzun bir derleme ya da komut başlatan görev, o iş bitene kadar açık kalıyor; HQ \"devam edeceğim\" notu yerine son sonucu alıyor. Bir rapor yalnızca işin sürdüğünü söylüyorsa HQ isteği kapatmak yerine sonucu soruyor."
+      }
+    }
+  ]
+}
