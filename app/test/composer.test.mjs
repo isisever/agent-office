@@ -120,10 +120,11 @@ test('v3.120 mode picker: the account\'s modes, Auto selected when the session r
   assert.equal(st.mode, 'plan');
   assert.equal(st.managerNote, true, 'Auto-approve on, another mode: the manager still answers');
   assert.equal(pickerState({ ...gui, autoApprove: false }, { mode: 'plan' }).managerNote, false);
-  // a skip-permissions or desk session stays locked and shows no note
+  // v3.172 a skip-permissions session can leave bypass between turns (not mid-turn); a desk stays locked; no note
   st = pickerState({ ...gui, modeLock: 'bypass' }, { mode: 'auto' });
   assert.equal(st.mode, 'bypassPermissions');
-  assert.equal(st.modeEnabled, false);
+  assert.equal(st.modeEnabled, true);
+  assert.equal(pickerState({ ...gui, modeLock: 'bypass', live: { busy: true } }, {}).modeEnabled, false);
   assert.equal(st.managerNote, false);
   st = pickerState({ ...gui, modeLock: 'desk' }, {});
   assert.equal(st.modeEnabled, false);
