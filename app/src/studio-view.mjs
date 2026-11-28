@@ -64,3 +64,35 @@ export function filterPalette(items, query) {
   });
   return scored.sort((a, b) => a.score - b.score || a.i - b.i).slice(0, PALETTE_MAX).map((x) => x.it);
 }
+
+/**
+ * v3.140 The collapsed set after a session was added to or opened in project `id`: that project is expanded, so a new
+ * session never hides its siblings (the old session stays listed and clickable). Returns the same Set.
+ * @param {Set<string>} closed @param {string} id
+ */
+export function expandProject(closed, id) {
+  closed.delete(id);
+  return closed;
+}
+
+/**
+ * v3.140 Row names for a project's sessions: a session's own title when it has one; sessions without a title (no
+ * message yet) are numbered by their tab ("New session 2") once more than one of them is listed, so they can be told
+ * apart. A single untitled session keeps the plain fallback.
+ * @param {{ n: number, title?: string }[]} sessions @param {string} untitled the localized fallback ("New session")
+ * @returns {string[]} one name per session, in the given order
+ */
+export function sessionNames(sessions, untitled) {
+  const list = Array.isArray(sessions) ? sessions : [];
+  const blank = list.filter((s) => !s.title).length;
+  return list.map((s) => s.title || (blank > 1 ? `${untitled} ${s.n}` : untitled));
+}
+
+/**
+ * v3.140 May a session row show a close button? Same rule as the Office's tab ×: an extra tab can be closed, a
+ * project's main tab (n 1) never. The confirmation (also for a busy session) is the Office's own tabs:close dialog.
+ * @param {{ n: number } | null | undefined} s
+ */
+export function canCloseSession(s) {
+  return Boolean(s) && Number.isInteger(s.n) && s.n !== 1;
+}

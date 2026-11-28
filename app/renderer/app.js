@@ -1476,6 +1476,7 @@ const leaveBoard = () => document.body.classList.remove('studio-board');
 studio = mountStudio({ api, t, modLabel, hooks: {
   selectSession: (projectId, n) => { leaveBoard(); selectProject(projectId); selectTab(projectId, n); },
   newSession: (projectId) => { leaveBoard(); selectProject(projectId); addTab(projectId, 'same'); },
+  closeSession: (projectId, n) => { closeTab(projectId, n); },
   selectProject: (projectId) => { leaveBoard(); selectProject(projectId); },
   selectHq: () => { leaveBoard(); selectProject(HQ_ROW.id); },
   openBoard: (tab) => { selectProject(HQ_ROW.id); document.body.classList.add('studio-board'); hqUi?.showBoard(tab === 'reports' ? 'reports' : 'board'); },   // v3.131 the board (renderer/board-view.js): Board, Reports; Routines
