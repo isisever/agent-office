@@ -16,7 +16,12 @@ test('add makes a running record and finishes older open ones of the same tab', 
   let l = RQ.add([], rec(), 1000);
   assert.equal(l[0].state, 'running');
   l = RQ.add(l, rec({ id: 'qabcdef02' }), 2000);
-  assert.deepEqual(l.map((r) => [r.id, r.state]).sort(), [['qabcdef01', 'done'], ['qabcdef02', 'running']]);
+  assert.deepEqual(l.map((r) => [r.id, r.state]).sort(), [['qabcdef01', 'failed'], ['qabcdef02', 'running']]);
+  assert.equal(l.find((r) => r.id === 'qabcdef01').reason, 'superseded');
+  // a turn that really ran is done when a newer request follows
+  let m = RQ.observe(RQ.add([], rec(), 1000), 'pty1', { busy: true }, 1500);
+  m = RQ.add(m, rec({ id: 'qabcdef02' }), 2000);
+  assert.equal(m.find((r) => r.id === 'qabcdef01').state, 'done');
 });
 
 test('observe: running, waiting, done after busy, failed', () => {
@@ -33,15 +38,20 @@ test('observe: running, waiting, done after busy, failed', () => {
   assert.equal(f[0].state, 'failed');
 });
 
-test('a turn never seen busy ends after the grace period', () => {
+test('a turn never seen busy fails visibly after the grace period instead of closing as done', () => {
   const l = RQ.observe(RQ.add([], rec(), 1000), 'pty1', { busy: false }, 1000 + RQ.GRACE_MS);
-  assert.equal(l[0].state, 'done');
+  assert.equal(l[0].state, 'failed');
+  assert.equal(l[0].reason, 'never-started');
+  assert.equal(RQ.card(l[0]).column, 'needs-you');
+  assert.equal(RQ.clean(l[0]).reason, 'never-started');
 });
 
-test('detachGone finishes records of closed tabs; bindSession fills the session id', () => {
+test('detachGone marks records of closed tabs interrupted; bindSession fills the session id', () => {
   const l = RQ.add([], rec(), 1000);
   assert.equal(RQ.detachGone(l, new Set(['pty1']), 2000), l);
-  assert.equal(RQ.detachGone(l, new Set(), 2000)[0].state, 'done');
+  const g = RQ.detachGone(l, new Set(), 2000)[0];
+  assert.equal(g.state, 'failed');
+  assert.equal(g.reason, 'interrupted');
   const sid = '11111111-2222-3333-4444-555555555555';
   assert.equal(RQ.bindSession(l, 'pty1', sid)[0].sessionId, sid);
 });
